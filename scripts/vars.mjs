@@ -34,12 +34,6 @@ export const builtinPlugins = [
     'tabby-auto-sudo-password',
 ]
 
-// Host-specific packages are built and type-checked with the monorepo but are
-// not prepackaged into the Electron application.
-export const hostPackages = [
-    'tabby-tauri',
-]
-
 export const packagesWithDocs = [
     ['.', 'tabby-core'],
     ['terminal', 'tabby-terminal'],
@@ -47,9 +41,11 @@ export const packagesWithDocs = [
     ['settings', 'tabby-settings'],
 ]
 
+// This is the upstream Electron package graph. Tauri host sources are built
+// through app/webpack.config.tauri.mjs and Cargo, and must not be installed or
+// bundled as an Electron plugin during the migration.
 export const allPackages = [
     ...builtinPlugins,
-    ...hostPackages,
     'web',
     'tabby-web-demo',
 ]
