@@ -23,7 +23,7 @@ export default () => ({
     name: 'tabby-tauri-renderer',
     target: 'web',
     entry: {
-        'index.ignore': 'file-loader?name=index.html!pug-html-loader!' + path.resolve(__dirname, 'index.tauri.pug'),
+        'index.ignore': '!!file-loader?name=index.html!pug-html-loader!' + path.resolve(__dirname, 'index.tauri.pug'),
         bundle: path.resolve(__dirname, 'src/entry.tauri.ts'),
     },
     mode: process.env.TABBY_DEV ? 'development' : 'production',
