@@ -34,6 +34,7 @@ pub struct BootstrapData {
     pub config: BTreeMap<String, serde_json::Value>,
     pub executable: String,
     pub is_main_window: bool,
+    #[serde(rename = "windowID")]
     pub window_id: u64,
     pub installed_plugins: Vec<PluginInfo>,
     pub user_plugins_path: String,
@@ -62,10 +63,11 @@ fn built_in_plugin(name: &str, package_name: &str, description: &str) -> PluginI
 
 #[tauri::command]
 pub fn app_bootstrap(
-    _request: EmptyRequest,
+    request: EmptyRequest,
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<BootstrapData, AppError> {
+    let _ = request;
     let executable = std::env::current_exe()?.to_string_lossy().into_owned();
     let user_plugins_path = app
         .path()
@@ -82,26 +84,32 @@ pub fn app_bootstrap(
         window_id: state.next_window_id(),
         installed_plugins: vec![
             built_in_plugin("core", "tabby-core", "Tabby core UI"),
-            built_in_plugin("tauri", "tabby-tauri", "Tabby RS Tauri host providers"),
+            built_in_plugin(
+                "tauri",
+                "tabby-tauri",
+                "Tabby RS Tauri host providers",
+            ),
         ],
         user_plugins_path,
     })
 }
 
 #[tauri::command]
-pub fn app_runtime_info(_request: EmptyRequest) -> Result<RuntimeInfo, AppError> {
+pub fn app_runtime_info(request: EmptyRequest) -> Result<RuntimeInfo, AppError> {
+    let _ = request;
     Ok(current_runtime_info())
 }
 
 #[tauri::command]
-pub fn app_quit(_request: EmptyRequest, app: AppHandle) -> Result<(), AppError> {
+pub fn app_quit(request: EmptyRequest, app: AppHandle) -> Result<(), AppError> {
+    let _ = request;
     app.exit(0);
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::current_runtime_info;
+    use super::{current_runtime_info, BootstrapData};
 
     #[test]
     fn reports_tauri_runtime() {
@@ -110,5 +118,20 @@ mod tests {
         assert!(!info.platform.is_empty());
         assert!(!info.arch.is_empty());
         assert!(info.version.starts_with("1.0.231-tabbyrs."));
+    }
+
+    #[test]
+    fn preserves_legacy_window_id_field_name() {
+        let data = BootstrapData {
+            config: Default::default(),
+            executable: "tabby-rs".into(),
+            is_main_window: true,
+            window_id: 1,
+            installed_plugins: Vec::new(),
+            user_plugins_path: "plugins".into(),
+        };
+        let value = serde_json::to_value(data).unwrap();
+        assert_eq!(value["windowID"], 1);
+        assert!(value.get("windowId").is_none());
     }
 }
