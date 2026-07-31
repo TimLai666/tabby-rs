@@ -10,7 +10,8 @@ const appNodeModules = path.resolve(__dirname, 'node_modules')
 const coreNodeModules = path.resolve(__dirname, '../tabby-core/node_modules')
 const rootNodeModules = path.resolve(__dirname, '../node_modules')
 const webNodeModules = path.resolve(__dirname, '../web/node_modules')
-const processBrowser = path.join(webNodeModules, 'process/browser.js')
+const processBrowser = path.resolve(__dirname, 'src/shims/process.cjs')
+const mixpanelShim = path.resolve(__dirname, 'src/shims/mixpanel.cjs')
 
 const linkerPlugin = createEs2015LinkerPlugin({
     linkerJitMode: true,
@@ -33,6 +34,7 @@ export default () => ({
     mode: process.env.TABBY_DEV ? 'development' : 'production',
     optimization: {
         minimize: false,
+        concatenateModules: false,
     },
     context: __dirname,
     devtool: 'source-map',
@@ -46,8 +48,9 @@ export default () => ({
     resolve: {
         alias: {
             '@ngx-translate/core': path.join(appNodeModules, '@ngx-translate/core'),
-            'process/browser$': processBrowser,
-            'process$': processBrowser,
+            'mixpanel': mixpanelShim,
+            'process/browser': processBrowser,
+            'process': processBrowser,
             'tabby-core': path.resolve(__dirname, '../tabby-core/src/index.ts'),
             'tabby-tauri': path.resolve(__dirname, '../tabby-tauri/src/index.ts'),
         },
@@ -60,7 +63,7 @@ export default () => ({
             webNodeModules,
             path.join(__dirname, 'assets'),
         ],
-        extensions: ['.ts', '.js'],
+        extensions: ['.ts', '.js', '.cjs'],
         mainFields: ['browser', 'module', 'main'],
         fallback: {
             assert: path.join(webNodeModules, 'assert/assert.js'),
