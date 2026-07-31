@@ -4,6 +4,8 @@
     "baseUrl": "..",
     "module": "esnext",
     "moduleResolution": "node",
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
     "paths": {
       "@ngx-translate/core": [
         "app/node_modules/@ngx-translate/core"
