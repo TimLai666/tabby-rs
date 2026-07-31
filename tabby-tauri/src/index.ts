@@ -5,6 +5,7 @@ import {
     HostWindowService,
     LogService,
     PlatformService,
+    UpdaterService,
 } from 'tabby-core'
 
 import { TauriConfigProvider } from './config'
@@ -14,6 +15,7 @@ import { TauriHostAppService } from './services/hostApp.service'
 import { TauriHostWindowService } from './services/hostWindow.service'
 import { TauriLogService } from './services/log.service'
 import { TauriPlatformService } from './services/platform.service'
+import { TauriUpdaterService } from './services/updater.service'
 
 @NgModule({
     providers: [
@@ -23,6 +25,7 @@ import { TauriPlatformService } from './services/platform.service'
         { provide: HostAppService, useClass: TauriHostAppService },
         { provide: HostWindowService, useClass: TauriHostWindowService },
         { provide: LogService, useClass: TauriLogService },
+        { provide: UpdaterService, useClass: TauriUpdaterService },
         { provide: ConfigProvider, useClass: TauriConfigProvider, multi: true },
     ],
 })
