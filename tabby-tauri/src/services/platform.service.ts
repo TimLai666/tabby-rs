@@ -28,7 +28,7 @@ export class TauriPlatformService extends PlatformService {
         @Inject(TAURI_RUNTIME_INFO) private runtimeInfo: RuntimeInfo,
     ) {
         super()
-        this.configContent = JSON.stringify(bootstrapData.config ?? {}, null, 2)
+        this.configContent = JSON.stringify(bootstrapData.config, null, 2)
     }
 
     readClipboard (): string {
@@ -37,8 +37,9 @@ export class TauriPlatformService extends PlatformService {
 
     setClipboard (content: ClipboardContent): void {
         this.clipboardText = content.text
-        if (navigator.clipboard?.writeText) {
-            void navigator.clipboard.writeText(content.text).catch(() => null)
+        const clipboard = Reflect.get(navigator, 'clipboard') as Clipboard | undefined
+        if (clipboard) {
+            void clipboard.writeText(content.text).catch(() => null)
         }
     }
 
@@ -109,8 +110,8 @@ export class TauriPlatformService extends PlatformService {
         const accepted = window.confirm(text)
         return {
             response: accepted
-                ? (options.defaultId ?? 0)
-                : (options.cancelId ?? options.buttons.length - 1),
+                ? options.defaultId ?? 0
+                : options.cancelId ?? options.buttons.length - 1,
         }
     }
 
