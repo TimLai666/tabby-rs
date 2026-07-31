@@ -2,6 +2,8 @@ name: CI
 
 on:
   pull_request:
+    branches:
+      - master
   push:
     branches:
       - master
@@ -36,6 +38,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
+
+      - name: Verify workflow safety
+        run: node scripts/ci/assert-workflow-safety.mjs
 
       - name: Install Linux build dependencies
         run: |
