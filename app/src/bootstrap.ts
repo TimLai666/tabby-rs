@@ -30,17 +30,15 @@ export async function bootstrapTabby (
     window['pluginModules'] = pluginModules
 
     const rootModule = getRootModule(pluginModules)
+    const extraProviders = options.extraProviders ?? []
     const moduleRef = await platformBrowserDynamic([
         { provide: BOOTSTRAP_DATA, useValue: bootstrapData },
-        ...(options.extraProviders ?? []),
+        ...extraProviders,
     ]).bootstrapModule(rootModule)
 
     if (options.debug) {
         const applicationRef = moduleRef.injector.get(ApplicationRef)
-        const componentRef = applicationRef.components[0]
-        if (componentRef) {
-            enableDebugTools(componentRef)
-        }
+        enableDebugTools(applicationRef.components[0])
     }
 
     return moduleRef
