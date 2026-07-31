@@ -32,7 +32,7 @@ async function loadAndBootstrap (
 ): Promise<void> {
     const selectedPlugins = safeMode ? plugins.filter(x => x.isBuiltin) : plugins
     const pluginModules = await loadPlugins(selectedPlugins, (current, total) => {
-        const progressBar = document.querySelector('.progress .bar') as HTMLElement | null
+        const progressBar = document.querySelector<HTMLElement>('.progress .bar')
         if (progressBar) {
             progressBar.style.width = `${100 * current / total}%`
         }
