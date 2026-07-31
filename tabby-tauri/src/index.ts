@@ -29,6 +29,8 @@ import { TauriUpdaterService } from './services/updater.service'
         { provide: ConfigProvider, useClass: TauriConfigProvider, multi: true },
     ],
 })
+// Angular requires a module class even though the providers are declarative.
+// eslint-disable-next-line @typescript-eslint/no-extraneous-class
 export default class TauriModule { }
 
 export * from './api/hostBridge'
