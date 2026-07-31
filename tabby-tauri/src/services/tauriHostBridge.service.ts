@@ -35,7 +35,7 @@ export class TauriHostBridge extends HostBridge {
         command: K,
         request: HostRequestMap[K]['request'],
     ): Promise<HostRequestMap[K]['response']> {
-        const rustCommand = command.replaceAll('.', '_')
+        const rustCommand = command.replace(/\./g, '_')
         return this.api.core.invoke<HostRequestMap[K]['response']>(rustCommand, { request })
     }
 
