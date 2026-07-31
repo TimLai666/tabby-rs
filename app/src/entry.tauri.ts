@@ -15,7 +15,7 @@ import { bootstrapTabby } from './bootstrap'
 location.hash = ''
 
 function updateProgress (percent: number): void {
-    const progressBar = document.querySelector('.progress .bar') as HTMLElement | null
+    const progressBar = document.querySelector<HTMLElement>('.progress .bar')
     if (progressBar) {
         progressBar.style.width = `${percent}%`
     }
