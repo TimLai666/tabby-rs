@@ -8,10 +8,10 @@ interface TauriEvent<T> {
 
 interface TauriGlobal {
     core: {
-        invoke<T> (command: string, args?: Record<string, unknown>): Promise<T>
+        invoke: <T>(command: string, args?: Record<string, unknown>) => Promise<T>
     }
     event: {
-        listen<T> (event: string, handler: (event: TauriEvent<T>) => void): Promise<() => void>
+        listen: <T>(event: string, handler: (event: TauriEvent<T>) => void) => Promise<() => void>
     }
 }
 
