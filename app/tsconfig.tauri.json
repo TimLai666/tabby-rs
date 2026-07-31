@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": "./src",
+    "module": "esnext",
+    "moduleResolution": "node"
+  },
+  "files": [
+    "src/entry.tauri.ts"
+  ]
+}
