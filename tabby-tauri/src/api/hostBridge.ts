@@ -19,7 +19,7 @@ export interface HostRequestMap {
     }
     'app.quit': {
         request: Record<string, never>
-        response: void
+        response: null
     }
 }
 
