@@ -9,6 +9,9 @@ dist
 */typings
 *.tsbuildinfo
 
+src-tauri/target
+src-tauri/gen/schemas
+
 *.xcworkspacedata
 *.xcuserstate
 *.wixpdb
