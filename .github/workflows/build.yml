@@ -26,7 +26,7 @@ jobs:
   quality:
     name: quality (linux)
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 90
 
     steps:
       - name: Checkout
@@ -51,8 +51,12 @@ jobs:
           sudo apt-get install --yes --no-install-recommends \
             cmake \
             libarchive-tools \
+            libayatana-appindicator3-dev \
             libfontconfig1-dev \
-            libsecret-1-dev
+            librsvg2-dev \
+            libsecret-1-dev \
+            libwebkit2gtk-4.1-dev \
+            patchelf
 
       - name: Install Yarn
         run: npm install --global yarn@${{ env.YARN_VERSION }}
@@ -66,16 +70,31 @@ jobs:
       - name: Lint
         run: yarn lint
 
-      - name: Build all packages
+      - name: Build Electron baseline
         run: yarn build
 
-      - name: Verify build outputs
+      - name: Verify Electron build outputs
         run: node scripts/ci/assert-build-output.mjs
+
+      - name: Build Tauri renderer
+        run: yarn build:tauri:frontend
+
+      - name: Verify Tauri renderer output
+        run: node scripts/ci/assert-tauri-output.mjs
+
+      - name: Check Rust formatting
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+
+      - name: Test Rust host
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Build Tauri host
+        run: cargo build --manifest-path src-tauri/Cargo.toml
 
   build:
     name: build (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -105,8 +124,20 @@ jobs:
       - name: Install dependencies
         run: yarn install --frozen-lockfile --network-timeout ${{ env.YARN_NETWORK_TIMEOUT }}
 
-      - name: Build all packages
+      - name: Build Electron baseline
         run: yarn build
 
-      - name: Verify build outputs
+      - name: Verify Electron build outputs
         run: node scripts/ci/assert-build-output.mjs
+
+      - name: Build Tauri renderer
+        run: yarn build:tauri:frontend
+
+      - name: Verify Tauri renderer output
+        run: node scripts/ci/assert-tauri-output.mjs
+
+      - name: Test Rust host
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Build Tauri host
+        run: cargo build --manifest-path src-tauri/Cargo.toml
