@@ -6,6 +6,7 @@ import { AngularWebpackPlugin } from '@ngtools/webpack'
 import { createEs2015LinkerPlugin } from '@angular/compiler-cli/linker/babel'
 
 const __dirname = url.fileURLToPath(new URL('.', import.meta.url))
+const appNodeModules = path.resolve(__dirname, 'node_modules')
 const webNodeModules = path.resolve(__dirname, '../web/node_modules')
 
 const linkerPlugin = createEs2015LinkerPlugin({
@@ -41,12 +42,13 @@ export default () => ({
     },
     resolve: {
         alias: {
+            '@ngx-translate/core': path.join(appNodeModules, '@ngx-translate/core'),
             'tabby-core': path.resolve(__dirname, '../tabby-core/src/index.ts'),
             'tabby-tauri': path.resolve(__dirname, '../tabby-tauri/src/index.ts'),
         },
         modules: [
             path.join(__dirname, 'src'),
-            path.join(__dirname, 'node_modules'),
+            appNodeModules,
             path.resolve(__dirname, '../node_modules'),
             webNodeModules,
             path.join(__dirname, 'assets'),
