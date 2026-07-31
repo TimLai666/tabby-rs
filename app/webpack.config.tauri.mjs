@@ -7,7 +7,10 @@ import { createEs2015LinkerPlugin } from '@angular/compiler-cli/linker/babel'
 
 const __dirname = url.fileURLToPath(new URL('.', import.meta.url))
 const appNodeModules = path.resolve(__dirname, 'node_modules')
+const coreNodeModules = path.resolve(__dirname, '../tabby-core/node_modules')
+const rootNodeModules = path.resolve(__dirname, '../node_modules')
 const webNodeModules = path.resolve(__dirname, '../web/node_modules')
+const processBrowser = path.join(webNodeModules, 'process/browser.js')
 
 const linkerPlugin = createEs2015LinkerPlugin({
     linkerJitMode: true,
@@ -43,13 +46,17 @@ export default () => ({
     resolve: {
         alias: {
             '@ngx-translate/core': path.join(appNodeModules, '@ngx-translate/core'),
+            'process/browser$': processBrowser,
+            'process$': processBrowser,
             'tabby-core': path.resolve(__dirname, '../tabby-core/src/index.ts'),
             'tabby-tauri': path.resolve(__dirname, '../tabby-tauri/src/index.ts'),
         },
         modules: [
+            'node_modules',
             path.join(__dirname, 'src'),
             appNodeModules,
-            path.resolve(__dirname, '../node_modules'),
+            coreNodeModules,
+            rootNodeModules,
             webNodeModules,
             path.join(__dirname, 'assets'),
         ],
@@ -62,7 +69,7 @@ export default () => ({
             crypto: path.join(webNodeModules, 'crypto-browserify/index.js'),
             events: path.join(webNodeModules, 'events/events.js'),
             path: path.join(webNodeModules, 'path-browserify/index.js'),
-            process: path.join(webNodeModules, 'process/browser.js'),
+            process: processBrowser,
             stream: path.join(webNodeModules, 'stream-browserify/index.js'),
             url: path.join(webNodeModules, 'url/url.js'),
             util: path.join(webNodeModules, 'util/util.js'),
@@ -77,6 +84,7 @@ export default () => ({
             readline: false,
             tls: false,
             tty: false,
+            vm: false,
             zlib: false,
         },
     },
@@ -140,8 +148,8 @@ export default () => ({
             'process.env.TABBY_FORCE_ANGULAR_PROD': JSON.stringify(false),
         }),
         new wp.ProvidePlugin({
-            Buffer: ['buffer', 'Buffer'],
-            process: 'process/browser',
+            Buffer: [path.join(webNodeModules, 'buffer/index.js'), 'Buffer'],
+            process: processBrowser,
         }),
         new AngularWebpackPlugin({
             tsconfig: path.resolve(__dirname, 'tsconfig.tauri.json'),
