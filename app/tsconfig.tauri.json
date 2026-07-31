@@ -1,9 +1,20 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "baseUrl": "./src",
+    "baseUrl": "..",
     "module": "esnext",
-    "moduleResolution": "node"
+    "moduleResolution": "node",
+    "paths": {
+      "@ngx-translate/core": [
+        "app/node_modules/@ngx-translate/core"
+      ],
+      "tabby-core": [
+        "tabby-core/src/index.ts"
+      ],
+      "tabby-tauri": [
+        "tabby-tauri/src/index.ts"
+      ]
+    }
   },
   "files": [
     "src/entry.tauri.ts"
