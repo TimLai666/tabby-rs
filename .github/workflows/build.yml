@@ -68,7 +68,7 @@ jobs:
         run: yarn build:typings
 
       - name: Lint
-        run: yarn lint
+        run: yarn lint --format unix
 
       - name: Build Electron baseline
         run: yarn build
