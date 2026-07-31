@@ -1,0 +1,22 @@
+{
+  "name": "tabby-tauri",
+  "version": "1.0.231-tabbyrs.1",
+  "description": "Tauri host providers for Tabby RS",
+  "private": true,
+  "keywords": [
+    "tabby-builtin-plugin"
+  ],
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "webpack --progress --color"
+  },
+  "files": [
+    "dist"
+  ],
+  "license": "MIT",
+  "peerDependencies": {
+    "@angular/core": "^15",
+    "rxjs": "^7",
+    "tabby-core": "*"
+  }
+}
