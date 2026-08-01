@@ -183,8 +183,8 @@ impl AppPaths {
     fn alias_path_in_current_path_directory(&self) -> Option<PathBuf> {
         let executable_dir = self.executable.parent()?;
         let path = env::var_os("PATH")?;
-        let matching_dir = env::split_paths(&path)
-            .find(|directory| same_directory(directory, executable_dir))?;
+        let matching_dir =
+            env::split_paths(&path).find(|directory| same_directory(directory, executable_dir))?;
 
         #[cfg(windows)]
         return Some(matching_dir.join("tabby.cmd"));
