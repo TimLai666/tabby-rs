@@ -1,12 +1,12 @@
 import { Injectable } from '@angular/core'
 import { VaultService } from 'tabby-core'
 
-import { SSHProfile } from '../../tabby-ssh/src/api/interfaces'
+import { SSHProfile } from '../../../tabby-ssh/src/api/interfaces'
 import {
     PasswordStorageService,
     VAULT_SECRET_TYPE_PASSWORD,
     VAULT_SECRET_TYPE_PASSPHRASE,
-} from '../../tabby-ssh/src/services/passwordStorage.service'
+} from '../../../tabby-ssh/src/services/passwordStorage.service'
 import { HostBridge } from '../api/hostBridge'
 import '../api/keychain'
 
