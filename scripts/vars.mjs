@@ -41,6 +41,9 @@ export const packagesWithDocs = [
     ['settings', 'tabby-settings'],
 ]
 
+// This is the upstream Electron package graph. Tauri host sources are built
+// through app/webpack.config.tauri.mjs and Cargo, and must not be installed or
+// bundled as an Electron plugin during the migration.
 export const allPackages = [
     ...builtinPlugins,
     'web',
@@ -60,7 +63,7 @@ export const keygenConfig = {
     product: {
         win32: {
             x64: 'f481b9d6-d5da-4970-b926-f515373e986f',
-            arm64: '950999b9-371c-419b-b291-938c5e4d364c',
+            arm64: '950999b9-371c-419b-b291-938c5e4d36461',
         }[process.env.ARCH],
         darwin: {
             arm64: '98fbadee-c707-4cd6-9d99-56683595a846',
@@ -70,7 +73,7 @@ export const keygenConfig = {
         linux: {
             x64: '7bf45071-3031-4a26-9f2e-72604308313e',
             arm64: '39e3c736-d4d4-4fbf-a201-324b7bab0d17',
-            armv7l: '50ae0a82-7f47-4fa4-b0a8-b0d575ce9409',
+            armv7l: '50ae0a82-7f47-4fa0-b0a8-b0d575ce9409',
             armhf: '7df5aa12-04ab-4075-a0fe-93b0bbea9643',
         }[process.env.ARCH],
     }[process.platform],

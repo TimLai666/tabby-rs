@@ -30,6 +30,7 @@
         "node_modules",
         "*/node_modules",
         "tabby*",
-        "platforms"
+        "platforms",
+        "src/entry.tauri.ts"
     ]
 }

@@ -7,16 +7,11 @@ import './toastr.scss'
 
 // Importing before @angular/*
 import { findPlugins, initModuleLookup, loadPlugins } from './plugins'
-
-import { enableProdMode, NgModuleRef, ApplicationRef } from '@angular/core'
-import { enableDebugTools } from '@angular/platform-browser'
-import { platformBrowserDynamic } from '@angular/platform-browser-dynamic'
 import { ipcRenderer } from 'electron'
 
-import { getRootModule } from './app.module'
-import { BootstrapData, BOOTSTRAP_DATA, PluginInfo } from '../../tabby-core/src/api/mainProcess'
+import { BootstrapData, PluginInfo } from '../../tabby-core/src/api/mainProcess'
+import { bootstrapTabby } from './bootstrap'
 
-// Always land on the start view
 location.hash = ''
 
 ;(process as any).enablePromiseAPI = true
@@ -25,38 +20,28 @@ if (process.platform === 'win32' && !('HOME' in process.env)) {
     process.env.HOME = `${process.env.HOMEDRIVE}${process.env.HOMEPATH}`
 }
 
-if (process.env.TABBY_DEV && !process.env.TABBY_FORCE_ANGULAR_PROD) {
+const debug = !!process.env.TABBY_DEV && !process.env.TABBY_FORCE_ANGULAR_PROD
+if (debug) {
     console.warn('Running in debug mode')
-} else {
-    enableProdMode()
 }
 
-async function bootstrap (bootstrapData: BootstrapData, plugins: PluginInfo[], safeMode = false): Promise<NgModuleRef<any>> {
-    if (safeMode) {
-        plugins = plugins.filter(x => x.isBuiltin)
-    }
-
-    const pluginModules = await loadPlugins(plugins, (current, total) => {
-        (document.querySelector('.progress .bar') as HTMLElement).style.width = `${100 * current / total}%` // eslint-disable-line
+async function loadAndBootstrap (
+    bootstrapData: BootstrapData,
+    plugins: PluginInfo[],
+    safeMode = false,
+): Promise<void> {
+    const selectedPlugins = safeMode ? plugins.filter(x => x.isBuiltin) : plugins
+    const pluginModules = await loadPlugins(selectedPlugins, (current, total) => {
+        const progressBar = document.querySelector<HTMLElement>('.progress .bar')
+        if (progressBar) {
+            progressBar.style.width = `${100 * current / total}%`
+        }
     })
-
-    window['pluginModules'] = pluginModules
-
-    const module = getRootModule(pluginModules)
-    const moduleRef = await platformBrowserDynamic([
-        { provide: BOOTSTRAP_DATA, useValue: bootstrapData },
-    ]).bootstrapModule(module)
-    if (process.env.TABBY_DEV) {
-        const applicationRef = moduleRef.injector.get(ApplicationRef)
-        const componentRef = applicationRef.components[0]
-        enableDebugTools(componentRef)
-    }
-    return moduleRef
+    await bootstrapTabby(bootstrapData, pluginModules, { debug })
 }
 
 ipcRenderer.once('start', async (_$event, bootstrapData: BootstrapData) => {
     console.log('Window bootstrap data:', bootstrapData)
-
     initModuleLookup(bootstrapData.userPluginsPath)
 
     let plugins = await findPlugins()
@@ -68,13 +53,13 @@ ipcRenderer.once('start', async (_$event, bootstrapData: BootstrapData) => {
 
     console.log('Starting with plugins:', plugins)
     try {
-        await bootstrap(bootstrapData, plugins)
+        await loadAndBootstrap(bootstrapData, plugins)
     } catch (error) {
         console.error('Angular bootstrapping error:', error)
         console.warn('Trying safe mode')
         window['safeModeReason'] = error
         try {
-            await bootstrap(bootstrapData, plugins, true)
+            await loadAndBootstrap(bootstrapData, plugins, true)
         } catch (error2) {
             console.error('Bootstrap failed:', error2)
         }
