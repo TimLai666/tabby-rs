@@ -80,6 +80,7 @@ pub fn app_bootstrap(
         window_id: state.next_window_id(),
         installed_plugins: vec![
             built_in_plugin("core", "tabby-core", "Tabby core UI"),
+            built_in_plugin("settings", "tabby-settings", "Tabby settings UI"),
             built_in_plugin("tauri", "tabby-tauri", "Tabby RS Tauri host providers"),
         ],
         user_plugins_path: state
