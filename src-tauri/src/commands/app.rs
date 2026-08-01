@@ -71,11 +71,7 @@ pub fn app_bootstrap(
 
     Ok(BootstrapData {
         config: BTreeMap::new(),
-        executable: state
-            .paths()
-            .executable()
-            .to_string_lossy()
-            .into_owned(),
+        executable: state.paths().executable().to_string_lossy().into_owned(),
         is_main_window: true,
         window_id: state.next_window_id(),
         installed_plugins: vec![
@@ -83,11 +79,7 @@ pub fn app_bootstrap(
             built_in_plugin("settings", "tabby-settings", "Tabby settings UI"),
             built_in_plugin("tauri", "tabby-tauri", "Tabby RS Tauri host providers"),
         ],
-        user_plugins_path: state
-            .paths()
-            .plugins_dir()
-            .to_string_lossy()
-            .into_owned(),
+        user_plugins_path: state.paths().plugins_dir().to_string_lossy().into_owned(),
     })
 }
 
