@@ -5,7 +5,9 @@ use chrono::{DateTime, Utc};
 use crate::error::AppError;
 
 use super::{
-    atomic_file::{atomic_write, read_optional_regular_file, read_required_regular_file, sha256_hex},
+    atomic_file::{
+        atomic_write, read_optional_regular_file, read_required_regular_file, sha256_hex,
+    },
     paths::StoragePaths,
     state_file::UpdateChannel,
 };
@@ -133,15 +135,14 @@ pub fn list_backups(paths: &StoragePaths) -> Result<Vec<BackupManifest>, AppErro
     Ok(manifests)
 }
 
-pub fn restore_backup(
-    paths: &StoragePaths,
-    backup_id: &str,
-) -> Result<RestoreReport, AppError> {
+pub fn restore_backup(paths: &StoragePaths, backup_id: &str) -> Result<RestoreReport, AppError> {
     let backup_dir = paths.backup_dir(backup_id)?;
     let manifest_bytes = read_required_regular_file(&backup_dir.join("manifest.json"))?;
     let manifest: BackupManifest = serde_json::from_slice(&manifest_bytes)?;
     if manifest.schema_version != BACKUP_SCHEMA_VERSION || manifest.backup_id != backup_id {
-        return Err(AppError::InvalidData("backup manifest identity mismatch".into()));
+        return Err(AppError::InvalidData(
+            "backup manifest identity mismatch".into(),
+        ));
     }
 
     let mut prepared = Vec::new();
@@ -161,7 +162,8 @@ pub fn restore_backup(
         .absent
         .iter()
         .map(|relative| {
-            target_for_relative(paths, relative).map(|target| (relative.clone(), target.to_path_buf()))
+            target_for_relative(paths, relative)
+                .map(|target| (relative.clone(), target.to_path_buf()))
         })
         .collect::<Result<Vec<_>, _>>()?;
 
@@ -198,10 +200,7 @@ pub fn restore_backup(
     })
 }
 
-fn target_for_relative<'a>(
-    paths: &'a StoragePaths,
-    relative: &str,
-) -> Result<&'a Path, AppError> {
+fn target_for_relative<'a>(paths: &'a StoragePaths, relative: &str) -> Result<&'a Path, AppError> {
     match relative {
         "config.yaml" => Ok(paths.config_file()),
         "tabby-rs.json" => Ok(paths.state_file()),
