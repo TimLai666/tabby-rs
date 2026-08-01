@@ -14,7 +14,7 @@ pub use keychain::{
 };
 pub use session::{
     SecretState, VaultMutationResult, VaultSecretInput, VaultSecretSelector, VaultSnapshot,
-    VaultStatus, VaultSummary,
+    VaultSnapshotSecret, VaultStatus, VaultSummary,
 };
 pub use vault_v1::{
     StoredVault, Vault, VaultCodec, VaultCodecs, VaultError, VaultSecret, VaultV1,
