@@ -7,6 +7,7 @@ import {
     LogService,
     PlatformService,
     UpdaterService,
+    VaultService,
 } from 'tabby-core'
 import { SettingsTabProvider } from 'tabby-settings'
 
@@ -22,6 +23,7 @@ import { TauriLogService } from './services/log.service'
 import { TauriPlatformService } from './services/platform.service'
 import { TauriHostBridge } from './services/tauriHostBridge.service'
 import { TauriUpdaterService } from './services/updater.service'
+import { TauriVaultService } from './services/vault.service'
 
 @NgModule({
     imports: [CommonModule],
@@ -34,6 +36,7 @@ import { TauriUpdaterService } from './services/updater.service'
         { provide: HostWindowService, useClass: TauriHostWindowService },
         { provide: LogService, useClass: TauriLogService },
         { provide: UpdaterService, useClass: TauriUpdaterService },
+        { provide: VaultService, useClass: TauriVaultService },
         { provide: ConfigProvider, useClass: TauriConfigProvider, multi: true },
         { provide: SettingsTabProvider, useClass: IdentitySettingsTabProvider, multi: true },
     ],
@@ -45,3 +48,4 @@ export default class TauriModule { }
 export * from './api/hostBridge'
 export * from './api/secretImporter'
 export { TauriHostBridge }
+export { TauriVaultService }
