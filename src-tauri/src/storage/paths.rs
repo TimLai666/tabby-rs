@@ -72,7 +72,9 @@ pub fn validate_single_component(value: &str, label: &str) -> Result<(), AppErro
     let mut components = path.components();
     let valid = matches!(components.next(), Some(Component::Normal(_)))
         && components.next().is_none()
-        && !value.contains(['/', '\\', '\0']);
+        && !value.contains('/')
+        && !value.contains('\\')
+        && !value.contains('\0');
     if !valid {
         return Err(AppError::InvalidArgument(format!("invalid {label}")));
     }
