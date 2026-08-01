@@ -64,7 +64,9 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), AppError> {
         }
     }
 
-    let existing_permissions = fs::metadata(path).ok().map(|metadata| metadata.permissions());
+    let existing_permissions = fs::metadata(path)
+        .ok()
+        .map(|metadata| metadata.permissions());
     let mut temp = NamedTempFile::new_in(parent)?;
     temp.as_file_mut().write_all(bytes)?;
     temp.as_file_mut().flush()?;
