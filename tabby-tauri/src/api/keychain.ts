@@ -1,3 +1,10 @@
+import './hostBridge'
+
+export interface CredentialAddress {
+    service: string
+    account: string
+}
+
 declare module './hostBridge' {
     interface HostRequestMap {
         'keychain.get': {
@@ -13,11 +20,6 @@ declare module './hostBridge' {
             response: boolean
         }
     }
-}
-
-export interface CredentialAddress {
-    service: string
-    account: string
 }
 
 export { }
