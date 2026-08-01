@@ -13,7 +13,10 @@ pub struct StoragePaths {
 
 impl StoragePaths {
     pub fn from_app_paths(paths: &AppPaths) -> Self {
-        let data_dir = paths.data_dir().clone();
+        Self::from_data_dir(paths.data_dir().clone())
+    }
+
+    pub fn from_data_dir(data_dir: PathBuf) -> Self {
         Self {
             config_file: data_dir.join("config.yaml"),
             state_file: data_dir.join("tabby-rs.json"),
