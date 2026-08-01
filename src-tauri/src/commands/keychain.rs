@@ -3,9 +3,7 @@ use tauri::State;
 
 use crate::{
     error::AppError,
-    security::{
-        CredentialAddress, CredentialNamespace, CredentialState, CredentialStore,
-    },
+    security::{CredentialAddress, CredentialNamespace, CredentialState, CredentialStore},
 };
 
 #[derive(serde::Deserialize)]
