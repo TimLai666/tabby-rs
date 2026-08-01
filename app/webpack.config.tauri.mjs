@@ -8,6 +8,8 @@ import { createEs2015LinkerPlugin } from '@angular/compiler-cli/linker/babel'
 const __dirname = url.fileURLToPath(new URL('.', import.meta.url))
 const appNodeModules = path.resolve(__dirname, 'node_modules')
 const coreNodeModules = path.resolve(__dirname, '../tabby-core/node_modules')
+const localNodeModules = path.resolve(__dirname, '../tabby-local/node_modules')
+const terminalNodeModules = path.resolve(__dirname, '../tabby-terminal/node_modules')
 const rootNodeModules = path.resolve(__dirname, '../node_modules')
 const webNodeModules = path.resolve(__dirname, '../web/node_modules')
 const processBrowser = path.resolve(__dirname, 'src/shims/process.cjs')
@@ -52,14 +54,18 @@ export default () => ({
             'process/browser': processBrowser,
             'process': processBrowser,
             'tabby-core': path.resolve(__dirname, '../tabby-core/src/index.ts'),
+            'tabby-local': path.resolve(__dirname, '../tabby-local/src/index.ts'),
             'tabby-settings': path.resolve(__dirname, '../tabby-settings/src/index.ts'),
             'tabby-tauri': path.resolve(__dirname, '../tabby-tauri/src/index.ts'),
+            'tabby-terminal': path.resolve(__dirname, '../tabby-terminal/src/index.ts'),
         },
         modules: [
             'node_modules',
             path.join(__dirname, 'src'),
             appNodeModules,
             coreNodeModules,
+            localNodeModules,
+            terminalNodeModules,
             rootNodeModules,
             webNodeModules,
             path.join(__dirname, 'assets'),
