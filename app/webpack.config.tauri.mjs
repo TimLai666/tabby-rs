@@ -14,6 +14,7 @@ const rootNodeModules = path.resolve(__dirname, '../node_modules')
 const webNodeModules = path.resolve(__dirname, '../web/node_modules')
 const processBrowser = path.resolve(__dirname, 'src/shims/process.cjs')
 const mixpanelShim = path.resolve(__dirname, 'src/shims/mixpanel.cjs')
+const fsShim = path.resolve(__dirname, 'src/shims/fs.cjs')
 
 const linkerPlugin = createEs2015LinkerPlugin({
     linkerJitMode: true,
@@ -50,6 +51,8 @@ export default () => ({
     resolve: {
         alias: {
             '@ngx-translate/core': path.join(appNodeModules, '@ngx-translate/core'),
+            'fs$': fsShim,
+            'fs/promises$': fsShim,
             'mixpanel': mixpanelShim,
             'process/browser': processBrowser,
             'process': processBrowser,
@@ -85,7 +88,7 @@ export default () => ({
             util: path.join(webNodeModules, 'util/util.js'),
             child_process: false,
             dns: false,
-            fs: false,
+            fs: fsShim,
             http: false,
             https: false,
             module: false,
