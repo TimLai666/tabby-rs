@@ -12,6 +12,9 @@ export interface CLIEvent {
         debug?: boolean,
         hidden?: boolean,
         profileNumber?: number,
+        newWindow?: boolean,
+        safeMode?: boolean,
+        config?: string,
     }
     cwd: string
     secondInstance: boolean

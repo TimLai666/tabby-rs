@@ -52,6 +52,7 @@ export default () => ({
             'process/browser': processBrowser,
             'process': processBrowser,
             'tabby-core': path.resolve(__dirname, '../tabby-core/src/index.ts'),
+            'tabby-settings': path.resolve(__dirname, '../tabby-settings/src/index.ts'),
             'tabby-tauri': path.resolve(__dirname, '../tabby-tauri/src/index.ts'),
         },
         modules: [

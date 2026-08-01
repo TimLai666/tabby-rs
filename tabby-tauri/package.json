@@ -15,8 +15,10 @@
   ],
   "license": "MIT",
   "peerDependencies": {
+    "@angular/common": "^15",
     "@angular/core": "^15",
     "rxjs": "^7",
-    "tabby-core": "*"
+    "tabby-core": "*",
+    "tabby-settings": "*"
   }
 }

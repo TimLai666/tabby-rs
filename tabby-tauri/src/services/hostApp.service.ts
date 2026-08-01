@@ -1,7 +1,7 @@
-import { Inject, Injectable, Injector } from '@angular/core'
-import { HostAppService, Platform } from 'tabby-core'
+import { Inject, Injectable, Injector, NgZone } from '@angular/core'
+import { CLIEvent, CLIHandler, HostAppService, Platform } from 'tabby-core'
 
-import { HostBridge, RuntimeInfo, TAURI_RUNTIME_INFO } from '../api/hostBridge'
+import { HostBridge, LaunchContext, RuntimeInfo, TAURI_RUNTIME_INFO } from '../api/hostBridge'
 
 function mapPlatform (platform: string): Platform {
     switch (platform.toLowerCase()) {
@@ -23,18 +23,41 @@ export class TauriHostAppService extends HostAppService {
     readonly platform: Platform
     readonly configPlatform: Platform
 
+    private ready = false
+    private pendingLaunches: LaunchContext[] = []
+
     constructor (
-        injector: Injector,
+        private injector: Injector,
+        private zone: NgZone,
         private bridge: HostBridge,
         @Inject(TAURI_RUNTIME_INFO) runtimeInfo: RuntimeInfo,
     ) {
         super(injector)
         this.platform = mapPlatform(runtimeInfo.platform)
         this.configPlatform = this.platform
+
+        void this.bridge.listen('app.launch', context => this.enqueueLaunch(context)).catch(error => {
+            this.logger.error('Failed to listen for launch requests:', error)
+        })
+        void this.bridge.invoke('app.initialLaunch', {}).then(context => {
+            if (context) {
+                this.enqueueLaunch(context)
+            }
+        }).catch(error => {
+            this.logger.error('Failed to read the initial launch request:', error)
+        })
     }
 
     newWindow (): void {
-        this.logger.warn('Opening additional windows is not implemented by the Tauri foundation yet')
+        this.logger.warn('Opening additional windows is implemented by the desktop-integration milestone')
+    }
+
+    emitReady (): void {
+        this.ready = true
+        const pending = this.pendingLaunches.splice(0)
+        for (const context of pending) {
+            void this.dispatchLaunch(context)
+        }
     }
 
     relaunch (): void {
@@ -43,5 +66,43 @@ export class TauriHostAppService extends HostAppService {
 
     quit (): void {
         void this.bridge.invoke('app.quit', {})
+    }
+
+    private enqueueLaunch (context: LaunchContext): void {
+        if (!this.ready) {
+            this.pendingLaunches.push(context)
+            return
+        }
+        void this.dispatchLaunch(context)
+    }
+
+    private async dispatchLaunch (context: LaunchContext): Promise<void> {
+        if (context.parseError) {
+            this.logger.warn('Rejected launch request:', context.parseError)
+            return
+        }
+
+        const event: CLIEvent = {
+            argv: context.request.argv,
+            cwd: context.cwd,
+            secondInstance: context.secondInstance,
+        }
+        this.logger.info('CLI arguments received:', event)
+
+        await this.zone.run(async () => {
+            const cliHandlers = this.injector.get(CLIHandler) as unknown as CLIHandler[]
+            cliHandlers.sort((a, b) => b.priority - a.priority)
+
+            let handled = false
+            for (const handler of cliHandlers) {
+                if (handled && handler.firstMatchOnly) {
+                    continue
+                }
+                if (await handler.handle(event)) {
+                    this.logger.info('CLI handler matched:', handler.constructor.name)
+                    handled = true
+                }
+            }
+        })
     }
 }
