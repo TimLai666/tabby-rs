@@ -15,8 +15,8 @@ use commands::{
     migration::{migration_detect, migration_execute},
     vault::{
         vault_get_file, vault_get_secret, vault_lock, vault_put_file, vault_put_secret,
-        vault_remove_secret, vault_set_config, vault_set_enabled, vault_snapshot, vault_status,
-        vault_summary, vault_unlock,
+        vault_remove_secret, vault_replace, vault_set_config, vault_set_enabled, vault_snapshot,
+        vault_status, vault_summary, vault_unlock, vault_update_secret,
     },
 };
 use launch::{parse_launch_context, LaunchContext};
@@ -132,12 +132,14 @@ pub fn run() {
             migration_execute,
             vault_status,
             vault_unlock,
+            vault_replace,
             vault_lock,
             vault_set_enabled,
             vault_summary,
             vault_snapshot,
             vault_get_secret,
             vault_put_secret,
+            vault_update_secret,
             vault_remove_secret,
             vault_set_config,
             vault_put_file,
