@@ -2,13 +2,10 @@ use std::{
     collections::BTreeMap,
     env, fs,
     path::{Path, PathBuf},
+    process::Command,
 };
 
 use serde_json::json;
-use winreg::{
-    enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WOW64_32KEY, KEY_WOW64_64KEY},
-    RegKey,
-};
 
 use super::{
     model::{DetectedShell, ShellType},
@@ -16,7 +13,7 @@ use super::{
 };
 
 pub fn detect(identification: Option<&str>, warnings: &mut Vec<String>) -> Vec<DetectedShell> {
-    let stock = stock_shells(identification);
+    let stock = stock_shells(identification, warnings);
     let powershell_core = powershell_core_shells(identification);
     let wsl = wsl_shells(warnings);
 
@@ -37,8 +34,18 @@ pub fn detect(identification: Option<&str>, warnings: &mut Vec<String>) -> Vec<D
     result.extend(stock);
     result.extend(powershell_core);
     result.extend(cmder_shells());
-    result.extend(cygwin32_shells());
-    result.extend(cygwin64_shells());
+    result.extend(cygwin_shells(
+        "cygwin32",
+        "Cygwin (32 bit)",
+        r"Software\WOW6432Node\Cygwin\setup",
+        RegistryView::Registry32,
+    ));
+    result.extend(cygwin_shells(
+        "cygwin64",
+        "Cygwin",
+        r"Software\Cygwin\setup",
+        RegistryView::Registry64,
+    ));
     result.extend(git_bash_shells(identification));
     result.extend(msys2_shells());
     result.extend(wsl);
@@ -46,20 +53,26 @@ pub fn detect(identification: Option<&str>, warnings: &mut Vec<String>) -> Vec<D
     result
 }
 
-fn stock_shells(identification: Option<&str>) -> Vec<DetectedShell> {
-    let mut clink = DetectedShell::new("windows-stock", "clink", "CMD (clink)", "cmd.exe");
-    clink.args = vec![
-        "/k".into(),
-        clink_path().to_string_lossy().into_owned(),
-        "inject".into(),
-    ];
-    clink.env.insert("WT_SESSION".into(), "0".into());
-    clink.icon = Some("clink".into());
-    clink.shell_type = Some(ShellType::Cmd);
+fn stock_shells(
+    identification: Option<&str>,
+    warnings: &mut Vec<String>,
+) -> Vec<DetectedShell> {
+    let mut result = Vec::new();
+    if let Some(clink_path) = path_text(&clink_path()) {
+        let mut clink = DetectedShell::new("windows-stock", "clink", "CMD (clink)", "cmd.exe");
+        clink.args = vec!["/k".into(), clink_path, "inject".into()];
+        clink.env.insert("WT_SESSION".into(), "0".into());
+        clink.icon = Some("clink".into());
+        clink.shell_type = Some(ShellType::Cmd);
+        result.push(clink);
+    } else {
+        warnings.push("The bundled Clink path is not valid Unicode.".into());
+    }
 
     let mut cmd = DetectedShell::new("windows-stock", "cmd", "CMD (stock)", "cmd.exe");
     cmd.icon = Some("cmd".into());
     cmd.shell_type = Some(ShellType::Cmd);
+    result.push(cmd);
 
     let mut powershell = DetectedShell::new(
         "windows-stock",
@@ -71,27 +84,28 @@ fn stock_shells(identification: Option<&str>) -> Vec<DetectedShell> {
     powershell.env = identification_environment(identification);
     powershell.icon = Some("powershell".into());
     powershell.shell_type = Some(ShellType::Powershell);
-
-    vec![clink, cmd, powershell]
+    result.push(powershell);
+    result
 }
 
 fn powershell_core_shells(identification: Option<&str>) -> Vec<DetectedShell> {
-    let path = registry_string(
-        HKEY_LOCAL_MACHINE,
+    let path = registry_value(
+        "HKLM",
         r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\pwsh.exe",
-        "",
-        KEY_WOW64_64KEY,
+        None,
+        RegistryView::Registry64,
     )
     .or_else(|| {
-        registry_string(
-            HKEY_LOCAL_MACHINE,
+        registry_value(
+            "HKLM",
             r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\pwsh.exe",
-            "",
-            KEY_WOW64_32KEY,
+            None,
+            RegistryView::Registry32,
         )
     })
+    .map(PathBuf::from)
     .or_else(|| standard_pwsh_paths().into_iter().find(|path| path.is_file()))
-    .and_then(path_string);
+    .and_then(|path| existing_file_text(&path));
 
     let Some(path) = path else {
         return Vec::new();
@@ -113,9 +127,10 @@ fn cmder_shells() -> Vec<DetectedShell> {
     let Some(root) = env::var_os("CMDER_ROOT").map(PathBuf::from) else {
         return Vec::new();
     };
-    let init = root.join("vendor").join("init.bat");
-    let profile = root.join("vendor").join("profile.ps1");
-    let (Some(init), Some(profile)) = (path_string(init), path_string(profile)) else {
+    let Some(init) = existing_file_text(&root.join("vendor").join("init.bat")) else {
+        return Vec::new();
+    };
+    let Some(profile) = existing_file_text(&root.join("vendor").join("profile.ps1")) else {
         return Vec::new();
     };
 
@@ -145,58 +160,44 @@ fn cmder_shells() -> Vec<DetectedShell> {
     vec![cmd, powershell]
 }
 
-fn cygwin32_shells() -> Vec<DetectedShell> {
-    cygwin_shell(
-        "cygwin32",
-        "Cygwin (32 bit)",
-        r"Software\WOW6432Node\Cygwin\setup",
-        KEY_WOW64_32KEY,
-    )
-    .into_iter()
-    .collect()
-}
-
-fn cygwin64_shells() -> Vec<DetectedShell> {
-    cygwin_shell(
-        "cygwin64",
-        "Cygwin",
-        r"Software\Cygwin\setup",
-        KEY_WOW64_64KEY,
-    )
-    .into_iter()
-    .collect()
-}
-
-fn cygwin_shell(id: &str, name: &str, key: &str, flags: u32) -> Option<DetectedShell> {
-    let root = registry_string(HKEY_LOCAL_MACHINE, key, "rootdir", flags)?;
-    let command = path_string(root.join("bin").join("bash.exe"))?;
+fn cygwin_shells(
+    id: &str,
+    name: &str,
+    key: &str,
+    view: RegistryView,
+) -> Vec<DetectedShell> {
+    let Some(root) = registry_value("HKLM", key, Some("rootdir"), view) else {
+        return Vec::new();
+    };
+    let Some(command) = existing_file_text(&PathBuf::from(root).join("bin").join("bash.exe")) else {
+        return Vec::new();
+    };
     let mut shell = DetectedShell::new("cygwin", id, name, command);
     shell.args = vec!["--login".into(), "-i".into()];
     shell.env.insert("TERM".into(), "cygwin".into());
     shell.icon = Some("cygwin".into());
     shell.shell_type = Some(ShellType::Unix);
-    Some(shell)
+    vec![shell]
 }
 
 fn git_bash_shells(identification: Option<&str>) -> Vec<DetectedShell> {
-    let root = registry_string(
-        HKEY_LOCAL_MACHINE,
+    let root = registry_value(
+        "HKLM",
         r"Software\GitForWindows",
-        "InstallPath",
-        KEY_WOW64_64KEY,
+        Some("InstallPath"),
+        RegistryView::Registry64,
     )
     .or_else(|| {
-        registry_string(
-            HKEY_CURRENT_USER,
+        registry_value(
+            "HKCU",
             r"Software\GitForWindows",
-            "InstallPath",
-            KEY_READ,
+            Some("InstallPath"),
+            RegistryView::Native,
         )
     });
-    let Some(command) = root
-        .map(|root| root.join("bin").join("bash.exe"))
-        .and_then(path_string)
-    else {
+    let Some(command) = root.and_then(|root| {
+        existing_file_text(&PathBuf::from(root).join("bin").join("bash.exe"))
+    }) else {
         return Vec::new();
     };
     let mut shell = DetectedShell::new("git-bash", "git-bash", "Git Bash", command);
@@ -215,16 +216,13 @@ fn msys2_shells() -> Vec<DetectedShell> {
         return Vec::new();
     };
     let root = parent.join("msys64");
-    if !root.is_dir() {
-        return Vec::new();
-    }
-    let Some(command) = path_string(root.join("msys2_shell.cmd")) else {
+    let Some(command) = existing_file_text(&root.join("msys2_shell.cmd")) else {
         return Vec::new();
     };
     let cwd = env::var_os("USERNAME")
         .map(|username| root.join("home").join(username))
         .filter(|path| path.is_dir())
-        .and_then(path_string);
+        .and_then(|path| path_text(&path));
 
     ["msys", "mingw64", "clang64", "ucrt64"]
         .into_iter()
@@ -259,36 +257,48 @@ fn wsl_shells(warnings: &mut Vec<String>) -> Vec<DetectedShell> {
         return Vec::new();
     }
 
-    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    let Ok(lxss) = hkcu.open_subkey_with_flags(
-        r"Software\Microsoft\Windows\CurrentVersion\Lxss",
-        KEY_READ,
-    ) else {
+    let root = r"Software\Microsoft\Windows\CurrentVersion\Lxss";
+    let default_id = registry_value(
+        "HKCU",
+        root,
+        Some("DefaultDistribution"),
+        RegistryView::Native,
+    );
+    let mut distributions = Vec::new();
+    for subkey in registry_subkeys("HKCU", root) {
+        let child = format!(r"{root}\{subkey}");
+        let Some(name) = registry_value(
+            "HKCU",
+            &child,
+            Some("DistributionName"),
+            RegistryView::Native,
+        ) else {
+            continue;
+        };
+        let base_path = registry_value(
+            "HKCU",
+            &child,
+            Some("BasePath"),
+            RegistryView::Native,
+        );
+        let flags = registry_value(
+            "HKCU",
+            &child,
+            Some("Flags"),
+            RegistryView::Native,
+        )
+        .and_then(|value| parse_registry_dword(&value))
+        .unwrap_or_default();
+        distributions.push((subkey, name, base_path, flags));
+    }
+    distributions.sort_by(|left, right| left.1.to_lowercase().cmp(&right.1.to_lowercase()));
+
+    let Some(wsl_command) = existing_file_text(&wsl) else {
         return bash
             .is_file()
             .then(|| legacy_wsl_shell(&bash))
             .into_iter()
             .collect();
-    };
-
-    let default_id = lxss.get_value::<String, _>("DefaultDistribution").ok();
-    let mut distributions = Vec::new();
-    for subkey in lxss.enum_keys().filter_map(Result::ok) {
-        let Ok(key) = lxss.open_subkey_with_flags(&subkey, KEY_READ) else {
-            continue;
-        };
-        let Ok(name) = key.get_value::<String, _>("DistributionName") else {
-            continue;
-        };
-        let base_path = key.get_value::<String, _>("BasePath").ok();
-        let flags = key.get_value::<u32, _>("Flags").unwrap_or_default();
-        distributions.push((subkey, name, base_path, flags));
-    }
-    distributions.sort_by(|left, right| left.1.to_lowercase().cmp(&right.1.to_lowercase()));
-
-    let Some(wsl_command) = path_string(&wsl) else {
-        warnings.push("The WSL executable path is not valid Unicode.".into());
-        return Vec::new();
     };
     let mut result = Vec::new();
     if let Some((_, name, _, _)) = distributions
@@ -321,11 +331,14 @@ fn wsl_shells(warnings: &mut Vec<String>) -> Vec<DetectedShell> {
     if result.is_empty() && bash.is_file() {
         result.push(legacy_wsl_shell(&bash));
     }
+    if result.is_empty() && default_id.is_some() {
+        warnings.push("WSL is installed but its distributions could not be read.".into());
+    }
     result
 }
 
 fn legacy_wsl_shell(bash: &Path) -> DetectedShell {
-    let command = path_string(bash).unwrap_or_else(|| "bash.exe".into());
+    let command = existing_file_text(bash).unwrap_or_else(|| "bash.exe".into());
     let mut shell = base_wsl_shell("wsl", "WSL / Bash on Windows", &command, "Linux");
     shell.metadata = json!({ "legacy": true });
     shell
@@ -370,7 +383,7 @@ fn visual_studio_shells(warnings: &mut Vec<String>) -> Vec<DetectedShell> {
                 .join("Common7")
                 .join("Tools")
                 .join("VsDevCmd.bat");
-            let Some(bat) = path_string(bat) else {
+            let Some(bat) = existing_file_text(&bat) else {
                 continue;
             };
             let mut shell = DetectedShell::new(
@@ -390,6 +403,89 @@ fn visual_studio_shells(warnings: &mut Vec<String>) -> Vec<DetectedShell> {
     result
 }
 
+#[derive(Clone, Copy)]
+enum RegistryView {
+    Native,
+    Registry32,
+    Registry64,
+}
+
+fn registry_value(
+    root: &str,
+    path: &str,
+    name: Option<&str>,
+    view: RegistryView,
+) -> Option<String> {
+    let key = format!(r"{root}\{path}");
+    let mut command = Command::new("reg.exe");
+    command.arg("query").arg(key);
+    match name {
+        Some(name) => {
+            command.arg("/v").arg(name);
+        }
+        None => {
+            command.arg("/ve");
+        }
+    }
+    add_registry_view(&mut command, view);
+    let output = command.output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_registry_value(&String::from_utf8(output.stdout).ok()?)
+}
+
+fn registry_subkeys(root: &str, path: &str) -> Vec<String> {
+    let key = format!(r"{root}\{path}");
+    let output = Command::new("reg.exe").arg("query").arg(&key).output();
+    let Ok(output) = output else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+    let Ok(text) = String::from_utf8(output.stdout) else {
+        return Vec::new();
+    };
+    let prefix = format!("HKEY_CURRENT_USER\\{path}\\");
+    text.lines()
+        .map(str::trim)
+        .filter_map(|line| line.strip_prefix(&prefix))
+        .filter(|line| !line.is_empty() && !line.contains('\\'))
+        .map(str::to_owned)
+        .collect()
+}
+
+fn add_registry_view(command: &mut Command, view: RegistryView) {
+    match view {
+        RegistryView::Native => {}
+        RegistryView::Registry32 => {
+            command.arg("/reg:32");
+        }
+        RegistryView::Registry64 => {
+            command.arg("/reg:64");
+        }
+    }
+}
+
+fn parse_registry_value(output: &str) -> Option<String> {
+    output.lines().find_map(|line| {
+        let line = line.trim();
+        let marker = line.find("REG_")?;
+        let typed_value = &line[marker..];
+        let value_start = typed_value.find(char::is_whitespace)?;
+        let value = typed_value[value_start..].trim();
+        (!value.is_empty()).then(|| value.to_owned())
+    })
+}
+
+fn parse_registry_dword(value: &str) -> Option<u32> {
+    value
+        .strip_prefix("0x")
+        .and_then(|value| u32::from_str_radix(value, 16).ok())
+        .or_else(|| value.parse().ok())
+}
+
 fn identification_environment(identification: Option<&str>) -> BTreeMap<String, String> {
     match identification {
         Some("wt") => BTreeMap::from([("WT_SESSION".into(), "0".into())]),
@@ -404,7 +500,7 @@ fn powershell_path() -> String {
         .find(|path| path.is_file())
         .or_else(|| find_on_path("pwsh.exe"))
         .or_else(|| find_on_path("powershell.exe"))
-        .and_then(path_string)
+        .and_then(|path| existing_file_text(&path))
         .unwrap_or_else(|| "powershell.exe".into())
 }
 
@@ -421,10 +517,20 @@ fn standard_pwsh_paths() -> Vec<PathBuf> {
         );
     }
     if let Some(program_files) = env::var_os("ProgramFiles") {
-        paths.push(PathBuf::from(program_files).join("PowerShell").join("7").join("pwsh.exe"));
+        paths.push(
+            PathBuf::from(program_files)
+                .join("PowerShell")
+                .join("7")
+                .join("pwsh.exe"),
+        );
     }
     if let Some(program_files) = env::var_os("ProgramFiles(x86)") {
-        paths.push(PathBuf::from(program_files).join("PowerShell").join("7").join("pwsh.exe"));
+        paths.push(
+            PathBuf::from(program_files)
+                .join("PowerShell")
+                .join("7")
+                .join("pwsh.exe"),
+        );
     }
     if let Some(system_root) = env::var_os("SystemRoot") {
         let system_root = PathBuf::from(system_root);
@@ -456,12 +562,6 @@ fn clink_path() -> PathBuf {
         .join(format!("clink_{architecture}.exe"))
 }
 
-fn registry_string(root: isize, path: &str, name: &str, flags: u32) -> Option<PathBuf> {
-    let root = RegKey::predef(root);
-    let key = root.open_subkey_with_flags(path, KEY_READ | flags).ok()?;
-    key.get_value::<String, _>(name).ok().map(PathBuf::from)
-}
-
 fn find_on_path(name: &str) -> Option<PathBuf> {
     let path = env::var_os("PATH")?;
     env::split_paths(&path)
@@ -469,11 +569,11 @@ fn find_on_path(name: &str) -> Option<PathBuf> {
         .find(|candidate| candidate.is_file())
 }
 
-fn path_string(path: impl AsRef<Path>) -> Option<String> {
-    let path = path.as_ref();
-    if !path.is_file() {
-        return None;
-    }
+fn existing_file_text(path: &Path) -> Option<String> {
+    path.is_file().then(|| path_text(path)).flatten()
+}
+
+fn path_text(path: &Path) -> Option<String> {
     path.to_str().map(str::to_owned)
 }
 
@@ -489,5 +589,26 @@ fn wsl_icon(name: &str) -> &'static str {
         "openEuler" => "open-euler",
         "docker-desktop" | "docker-desktop-data" => "docker",
         _ => "linux",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_registry_dword, parse_registry_value};
+
+    #[test]
+    fn parses_registry_string_and_dword_output() {
+        assert_eq!(
+            parse_registry_value(
+                "HKEY_LOCAL_MACHINE\\Software\\Example\r\n    InstallPath    REG_SZ    C:\\Program Files\\Example\r\n"
+            ),
+            Some(r"C:\Program Files\Example".into())
+        );
+        assert_eq!(parse_registry_dword("0x8"), Some(8));
+    }
+
+    #[test]
+    fn rejects_registry_output_without_a_value() {
+        assert_eq!(parse_registry_value("HKEY_LOCAL_MACHINE\\Software"), None);
     }
 }
