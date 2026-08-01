@@ -55,10 +55,12 @@ export class IdentitySettingsTabComponent implements OnInit {
 
     async ngOnInit (): Promise<void> {
         try {
-            ;[this.identity, this.aliasStatus] = await Promise.all([
+            const [identity, aliasStatus] = await Promise.all([
                 this.bridge.invoke('identity.get', {}),
                 this.bridge.invoke('identity.aliasStatus', {}),
             ])
+            this.identity = identity
+            this.aliasStatus = aliasStatus
         } catch (error) {
             this.error = String(error)
         }
