@@ -1,7 +1,5 @@
 import { Inject, Injectable } from '@angular/core'
 import {
-    BOOTSTRAP_DATA,
-    BootstrapData,
     ClipboardContent,
     DirectoryDownload,
     DirectoryUpload,
@@ -20,15 +18,14 @@ import { HostBridge, RuntimeInfo, TAURI_RUNTIME_INFO } from '../api/hostBridge'
 @Injectable()
 export class TauriPlatformService extends PlatformService {
     private clipboardText = ''
-    private configContent: string
+    private configRevision: string | null = null
+    private configPath: string | null = null
 
     constructor (
         private bridge: HostBridge,
-        @Inject(BOOTSTRAP_DATA) bootstrapData: BootstrapData,
         @Inject(TAURI_RUNTIME_INFO) private runtimeInfo: RuntimeInfo,
     ) {
         super()
-        this.configContent = JSON.stringify(bootstrapData.config, null, 2)
     }
 
     readClipboard (): string {
@@ -44,11 +41,24 @@ export class TauriPlatformService extends PlatformService {
     }
 
     async loadConfig (): Promise<string> {
-        return this.configContent
+        const result = await this.bridge.invoke('config.read', {})
+        this.configRevision = result.revision
+        this.configPath = result.path
+        return result.yaml
     }
 
     async saveConfig (content: string): Promise<void> {
-        this.configContent = content
+        const result = await this.bridge.invoke('config.write', {
+            yaml: content,
+            expectedRevision: this.configRevision,
+            requireMissing: this.configRevision === null,
+        })
+        this.configRevision = result.revision
+        this.configPath = result.path
+    }
+
+    getConfigPath (): string | null {
+        return this.configPath
     }
 
     async startDownload (_name: string, _mode: number, _size: number): Promise<FileDownload|null> {
