@@ -9,9 +9,29 @@ use commands::{
     identity::{identity_alias_status, identity_get, identity_set_alias},
     launch::app_initial_launch,
 };
-use launch::{initial_launch_context, parse_launch_context, LaunchContext};
+use launch::{parse_launch_context, LaunchContext};
 use state::AppState;
 use tauri::{Emitter, Manager};
+
+fn initial_launch_context() -> LaunchContext {
+    let cwd = std::env::current_dir()
+        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+        .into_os_string()
+        .into_string();
+    let argv = std::env::args_os()
+        .map(|argument| argument.into_string())
+        .collect::<Result<Vec<_>, _>>();
+
+    match (argv, cwd) {
+        (Ok(argv), Ok(cwd)) => parse_launch_context(&argv, cwd, false),
+        _ => LaunchContext {
+            request: Default::default(),
+            cwd: ".".into(),
+            second_instance: false,
+            parse_error: Some("launch arguments or working directory are not valid UTF-8".into()),
+        },
+    }
+}
 
 fn present_and_dispatch(app: &tauri::AppHandle, context: LaunchContext) {
     if let Some(window) = app.get_webview_window("main") {
@@ -66,10 +86,7 @@ pub fn run() {
                         .unwrap_or_else(|_| std::path::PathBuf::from("."))
                         .to_string_lossy()
                         .into_owned();
-                    present_and_dispatch(
-                        &handle,
-                        parse_launch_context(&argv, cwd, true),
-                    );
+                    present_and_dispatch(&handle, parse_launch_context(&argv, cwd, true));
                 });
             }
 
