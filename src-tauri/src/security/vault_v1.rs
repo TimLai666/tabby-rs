@@ -43,6 +43,8 @@ pub struct Vault {
 
 #[derive(Debug, thiserror::Error)]
 pub enum VaultError {
+    #[error("vault is locked")]
+    Locked,
     #[error("unsupported vault format version {0}")]
     UnsupportedVersion(u32),
     #[error("vault key salt is not valid hexadecimal")]
