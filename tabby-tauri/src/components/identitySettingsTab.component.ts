@@ -9,6 +9,12 @@ import {
     ImportPlan,
     ImportReport,
 } from '../api/hostBridge'
+import {
+    SecretImporter,
+    SecretImportItem,
+    SecretImportPlan,
+    SecretImportReport,
+} from '../api/secretImporter'
 
 @Component({
     selector: 'tabby-rs-identity-settings-tab',
@@ -52,7 +58,7 @@ import {
         <h4>Import from Tabby</h4>
         <p>
             Import is one-way. The original Tabby directory is read-only and remains unchanged.
-            Secret values are not displayed; entries that cannot be transferred are listed for re-entry.
+            Secret values are never included in the configuration migration report.
         </p>
         <div *ngIf="!importPlans.length" class="alert alert-secondary">
             No readable Tabby configuration was detected.
@@ -88,14 +94,14 @@ import {
                 </div>
                 <div *ngIf="plan.secretReferences.length" class="alert alert-warning mt-3">
                     {{ plan.secretReferences.length }} secret-bearing field(s) were detected.
-                    Their paths will be reported without exposing their values.
+                    Use the separate authorized secret import below after configuration migration.
                 </div>
                 <button
                     class="btn btn-primary"
                     [disabled]="busy || !hasImportSelection(plan)"
                     (click)="runImport(plan)"
                 >
-                    Import selected items
+                    Import selected configuration items
                 </button>
             </div>
         </div>
@@ -104,6 +110,78 @@ import {
             Report: <code>{{ lastImportReport.reportPath }}</code>
             <div *ngIf="lastImportReport.requiresSecretReentry.length" class="mt-2">
                 Secret fields requiring review: {{ lastImportReport.requiresSecretReentry.length }}
+            </div>
+        </div>
+
+        <h4 class="mt-4">Authorized secret import</h4>
+        <p>
+            Planning reads metadata only. Secret values are read only after you select items,
+            enable authorization, and confirm the import. Original Vault and keychain entries stay unchanged.
+        </p>
+        <div *ngIf="!secretPlans.length && importPlans.length" class="alert alert-secondary">
+            No transferable Vault or keychain item was detected.
+        </div>
+        <div *ngFor="let plan of secretPlans" class="border rounded p-3 mb-3">
+            <div class="text-break mb-2"><code>{{ plan.sourceDataDir }}</code></div>
+            <div *ngFor="let item of plan.items" class="form-check mb-2">
+                <input
+                    class="form-check-input"
+                    type="checkbox"
+                    [checked]="isSecretItemSelected(plan, item)"
+                    [disabled]="busy"
+                    (change)="toggleSecretItem(plan, item)"
+                >
+                <label class="form-check-label">
+                    {{ item.label }}
+                    <span class="badge bg-secondary ms-2">{{ item.kind }}</span>
+                </label>
+            </div>
+            <div *ngIf="hasVaultSelection(plan)" class="mb-3">
+                <label class="form-label">Original Vault master password</label>
+                <input
+                    class="form-control"
+                    type="password"
+                    autocomplete="current-password"
+                    [value]="vaultPassphrases.get(plan.sourceDataDir) ?? ''"
+                    [disabled]="busy"
+                    (input)="setVaultPassphrase(plan, $event)"
+                >
+                <div class="form-text">
+                    The password is sent only to the Rust import command and is not written to logs or reports.
+                </div>
+            </div>
+            <div class="form-check mb-3">
+                <input
+                    class="form-check-input"
+                    type="checkbox"
+                    [checked]="isSecretImportAuthorized(plan)"
+                    [disabled]="busy"
+                    (change)="toggleSecretImportAuthorization(plan)"
+                >
+                <label class="form-check-label">
+                    I authorize Tabby RS to read the selected original secrets once and copy them to its own storage.
+                </label>
+            </div>
+            <button
+                class="btn btn-warning"
+                [disabled]="busy || !canRunSecretImport(plan)"
+                (click)="runSecretImport(plan)"
+            >
+                Import selected secrets
+            </button>
+        </div>
+        <div *ngIf="lastSecretImportReport" class="alert alert-info">
+            Imported {{ lastSecretImportReport.imported.length }} secret item(s).
+            <div *ngIf="lastSecretImportReport.requiresReentry.length">
+                Requires re-entry: {{ lastSecretImportReport.requiresReentry.length }}
+            </div>
+            <div *ngIf="lastSecretImportReport.failed.length">
+                Failed: {{ lastSecretImportReport.failed.length }}
+                <ul class="mb-0 mt-2">
+                    <li *ngFor="let failure of lastSecretImportReport.failed">
+                        <code>{{ failure.id }}</code>: {{ failure.publicError }}
+                    </li>
+                </ul>
             </div>
         </div>
 
@@ -138,15 +216,23 @@ export class IdentitySettingsTabComponent implements OnInit {
     identity: AppIdentity | null = null
     aliasStatus: CliAliasStatus | null = null
     importPlans: ImportPlan[] = []
+    secretPlans: SecretImportPlan[] = []
     backups: BackupManifest[] = []
     lastImportReport: ImportReport | null = null
+    lastSecretImportReport: SecretImportReport | null = null
     busy = false
     error: string | null = null
+    vaultPassphrases = new Map<string, string>()
 
     private selectedConfig = new Set<string>()
     private selectedPlugins = new Map<string, Set<string>>()
+    private selectedSecretItems = new Map<string, Set<string>>()
+    private authorizedSecretSources = new Set<string>()
 
-    constructor (private bridge: HostBridge) { }
+    constructor (
+        private bridge: HostBridge,
+        private secretImporter: SecretImporter,
+    ) { }
 
     async ngOnInit (): Promise<void> {
         await this.refreshAll()
@@ -183,6 +269,50 @@ export class IdentitySettingsTabComponent implements OnInit {
             || (this.selectedPlugins.get(plan.sourceDataDir)?.size ?? 0) > 0
     }
 
+    isSecretItemSelected (plan: SecretImportPlan, item: SecretImportItem): boolean {
+        return this.selectedSecretItems.get(plan.sourceDataDir)?.has(item.id) ?? false
+    }
+
+    toggleSecretItem (plan: SecretImportPlan, item: SecretImportItem): void {
+        const items = this.selectedSecretItems.get(plan.sourceDataDir) ?? new Set<string>()
+        if (items.has(item.id)) {
+            items.delete(item.id)
+        } else {
+            items.add(item.id)
+        }
+        this.selectedSecretItems.set(plan.sourceDataDir, items)
+    }
+
+    hasVaultSelection (plan: SecretImportPlan): boolean {
+        return plan.items.some(item => item.source === 'vault' && this.isSecretItemSelected(plan, item))
+    }
+
+    setVaultPassphrase (plan: SecretImportPlan, event: Event): void {
+        this.vaultPassphrases.set(
+            plan.sourceDataDir,
+            (event.target as HTMLInputElement).value,
+        )
+    }
+
+    isSecretImportAuthorized (plan: SecretImportPlan): boolean {
+        return this.authorizedSecretSources.has(plan.sourceDataDir)
+    }
+
+    toggleSecretImportAuthorization (plan: SecretImportPlan): void {
+        if (this.authorizedSecretSources.has(plan.sourceDataDir)) {
+            this.authorizedSecretSources.delete(plan.sourceDataDir)
+        } else {
+            this.authorizedSecretSources.add(plan.sourceDataDir)
+        }
+    }
+
+    canRunSecretImport (plan: SecretImportPlan): boolean {
+        const selected = this.selectedSecretItems.get(plan.sourceDataDir)?.size ?? 0
+        const hasPassphrase = !this.hasVaultSelection(plan)
+            || !!this.vaultPassphrases.get(plan.sourceDataDir)
+        return selected > 0 && this.isSecretImportAuthorized(plan) && hasPassphrase
+    }
+
     async toggleAlias (): Promise<void> {
         if (!this.aliasStatus || this.busy) {
             return
@@ -215,6 +345,28 @@ export class IdentitySettingsTabComponent implements OnInit {
         })
     }
 
+    async runSecretImport (plan: SecretImportPlan): Promise<void> {
+        const itemIds = [...this.selectedSecretItems.get(plan.sourceDataDir) ?? new Set<string>()]
+        if (!window.confirm(
+            `Authorize one-time access to ${itemIds.length} selected original secret item(s)?`,
+        )) {
+            return
+        }
+        await this.runBusy(async () => {
+            this.lastSecretImportReport = await this.secretImporter.execute({
+                sourceDataDir: plan.sourceDataDir,
+                authorized: true,
+                itemIds,
+                sourceVaultPassphrase: this.hasVaultSelection(plan)
+                    ? this.vaultPassphrases.get(plan.sourceDataDir)
+                    : null,
+                rememberForSeconds: 300,
+            })
+            this.vaultPassphrases.delete(plan.sourceDataDir)
+            this.authorizedSecretSources.delete(plan.sourceDataDir)
+        })
+    }
+
     async createBackup (): Promise<void> {
         await this.runBusy(async () => {
             await this.bridge.invoke('backup.create', { reason: 'manual' })
@@ -241,11 +393,20 @@ export class IdentitySettingsTabComponent implements OnInit {
                 this.bridge.invoke('migration.detect', {}),
                 this.bridge.invoke('backup.list', {}),
             ])
+            const secretPlans = await Promise.all(importPlans.map(async plan => {
+                try {
+                    return await this.secretImporter.plan(plan.sourceDataDir)
+                } catch {
+                    return null
+                }
+            }))
             this.identity = identity
             this.aliasStatus = aliasStatus
             this.importPlans = importPlans
+            this.secretPlans = secretPlans.filter((plan): plan is SecretImportPlan => !!plan?.items.length)
             this.backups = backups
             this.resetImportSelection(importPlans)
+            this.resetSecretImportSelection(this.secretPlans)
         })
     }
 
@@ -257,6 +418,18 @@ export class IdentitySettingsTabComponent implements OnInit {
                 this.selectedConfig.add(plan.sourceDataDir)
             }
             this.selectedPlugins.set(plan.sourceDataDir, new Set(plan.plugins))
+        }
+    }
+
+    private resetSecretImportSelection (plans: SecretImportPlan[]): void {
+        this.selectedSecretItems.clear()
+        this.authorizedSecretSources.clear()
+        this.vaultPassphrases.clear()
+        for (const plan of plans) {
+            this.selectedSecretItems.set(
+                plan.sourceDataDir,
+                new Set(plan.items.map(item => item.id)),
+            )
         }
     }
 
