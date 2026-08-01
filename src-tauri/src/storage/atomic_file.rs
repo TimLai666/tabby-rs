@@ -34,7 +34,11 @@ pub fn read_required_regular_file(path: &Path) -> Result<Vec<u8>, AppError> {
 
 pub fn sha256_hex(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
-    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+    digest
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<Vec<_>>()
+        .join("")
 }
 
 pub fn file_revision(path: &Path) -> Result<Option<String>, AppError> {
