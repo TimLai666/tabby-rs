@@ -1,8 +1,4 @@
-use std::{
-    collections::BTreeMap,
-    env,
-    path::{Path, PathBuf},
-};
+use std::{collections::BTreeMap, env, path::Path};
 
 use crate::error::AppError;
 
@@ -83,8 +79,7 @@ fn validate_cwd(cwd: Option<String>) -> Result<(Option<String>, bool), AppError>
         return Ok((None, false));
     };
     validate_text("shell working directory", &cwd, false)?;
-    let path = Path::new(&cwd);
-    if path.is_dir() {
+    if Path::new(&cwd).is_dir() {
         return Ok((Some(cwd), false));
     }
     Ok((None, true))
@@ -96,9 +91,8 @@ fn resolve_executable(
 ) -> Result<String, AppError> {
     let path = Path::new(command);
     if path.is_absolute() || command.contains('/') || command.contains('\\') {
-        return executable_string(path).ok_or_else(|| {
-            AppError::InvalidArgument("shell executable was not found".into())
-        });
+        return executable_string(path)
+            .ok_or_else(|| AppError::InvalidArgument("shell executable was not found".into()));
     }
 
     let path_value = environment
@@ -108,7 +102,7 @@ fn resolve_executable(
         .unwrap_or_default();
 
     #[cfg(windows)]
-    let extensions = executable_extensions(environment);
+    let extensions = executable_extensions(command, environment);
     #[cfg(not(windows))]
     let extensions = vec![String::new()];
 
@@ -135,16 +129,11 @@ fn executable_string(path: &Path) -> Option<String> {
 }
 
 #[cfg(windows)]
-fn executable_extensions(environment: &BTreeMap<String, String>) -> Vec<String> {
-    let has_extension = PathBuf::from(
-        environment
-            .get("TABBY_RS_COMMAND_PLACEHOLDER")
-            .map(String::as_str)
-            .unwrap_or_default(),
-    )
-    .extension()
-    .is_some();
-    if has_extension {
+fn executable_extensions(
+    command: &str,
+    environment: &BTreeMap<String, String>,
+) -> Vec<String> {
+    if Path::new(command).extension().is_some() {
         return vec![String::new()];
     }
     environment
