@@ -10,5 +10,6 @@ export default () => config({
     dirname: __dirname,
     alias: {
         'tabby-core': path.resolve(__dirname, '../tabby-core/src/index.ts'),
+        'tabby-settings': path.resolve(__dirname, '../tabby-settings/src/index.ts'),
     },
 })
