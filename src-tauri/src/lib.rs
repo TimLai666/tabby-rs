@@ -6,7 +6,7 @@ mod state;
 
 use commands::{
     app::{app_bootstrap, app_quit, app_runtime_info},
-    identity::identity_get,
+    identity::{identity_alias_status, identity_get, identity_set_alias},
     launch::app_initial_launch,
 };
 use launch::{initial_launch_context, parse_launch_context, LaunchContext};
@@ -81,6 +81,8 @@ pub fn run() {
             app_initial_launch,
             app_quit,
             identity_get,
+            identity_alias_status,
+            identity_set_alias,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Tabby RS");
