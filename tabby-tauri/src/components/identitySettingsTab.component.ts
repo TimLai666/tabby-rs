@@ -195,7 +195,7 @@ export class IdentitySettingsTabComponent implements OnInit {
     }
 
     async runImport (plan: ImportPlan): Promise<void> {
-        const plugins = [...(this.selectedPlugins.get(plan.sourceDataDir) ?? new Set<string>())]
+        const plugins = [...this.selectedPlugins.get(plan.sourceDataDir) ?? new Set<string>()]
         const config = this.isConfigSelected(plan)
         const summary = [
             config ? `configuration with ${plan.profiles} profile(s)` : null,
