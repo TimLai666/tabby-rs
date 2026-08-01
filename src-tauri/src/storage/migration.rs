@@ -171,7 +171,9 @@ fn execute_import_with_plans(
             let source_before = read_optional_regular_file(&source_config)?
                 .ok_or_else(|| AppError::NotFound("source config.yaml".into()))?;
             if source_before.len() > MAX_SOURCE_CONFIG_BYTES {
-                return Err(AppError::InvalidData("source config.yaml is too large".into()));
+                return Err(AppError::InvalidData(
+                    "source config.yaml is too large".into(),
+                ));
             }
             if sha256_hex(&source_before) != plan.source_revision {
                 return Err(AppError::Conflict(
@@ -189,7 +191,10 @@ fn execute_import_with_plans(
             imported.push(ImportReportItem {
                 kind: "config".into(),
                 name: "config.yaml".into(),
-                detail: format!("Imported {} bytes without rewriting YAML.", source_before.len()),
+                detail: format!(
+                    "Imported {} bytes without rewriting YAML.",
+                    source_before.len()
+                ),
             });
             push_journal_step(
                 &journal_path,
@@ -460,10 +465,7 @@ fn inspect_value(
 }
 
 fn is_secret_key(key: &str) -> bool {
-    let normalized = key
-        .to_ascii_lowercase()
-        .replace('-', "")
-        .replace('_', "");
+    let normalized = key.to_ascii_lowercase().replace('-', "").replace('_', "");
     ["password", "passphrase", "privatekey", "token", "secret"]
         .iter()
         .any(|marker| normalized.contains(marker))
@@ -508,9 +510,7 @@ fn write_json(path: &Path, value: &impl serde::Serialize) -> Result<(), AppError
 mod tests {
     use tempfile::tempdir;
 
-    use super::{
-        detect_import_plans_from_candidates, execute_import_with_plans, ImportSelection,
-    };
+    use super::{detect_import_plans_from_candidates, execute_import_with_plans, ImportSelection};
     use crate::storage::{paths::StoragePaths, state_file::load_state};
 
     #[test]
@@ -559,7 +559,10 @@ mod tests {
         )
         .unwrap();
         assert!(report.failed.is_empty());
-        assert_eq!(std::fs::read_to_string(target.config_file()).unwrap(), source_yaml);
+        assert_eq!(
+            std::fs::read_to_string(target.config_file()).unwrap(),
+            source_yaml
+        );
         assert_eq!(
             crate::storage::atomic_file::file_revision(&source.join("config.yaml"))
                 .unwrap()
