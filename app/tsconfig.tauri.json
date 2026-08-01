@@ -13,8 +13,14 @@
       "tabby-core": [
         "tabby-core/src/index.ts"
       ],
+      "tabby-local": [
+        "tabby-local/src/index.ts"
+      ],
       "tabby-tauri": [
         "tabby-tauri/src/index.ts"
+      ],
+      "tabby-terminal": [
+        "tabby-terminal/src/index.ts"
       ]
     }
   },
