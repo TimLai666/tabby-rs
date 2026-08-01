@@ -1,5 +1,4 @@
 import { VaultMutationResult } from './hostBridge'
-import './hostBridge'
 
 export type SecretImportItemSource = 'vault'|'keychain'
 
