@@ -108,7 +108,7 @@ fn execute_import_with_plans(
     let selected_source_text = selected_source.to_string_lossy();
     let plan = plans
         .iter()
-        .find(|plan| plan.source_data_dir == selected_source_text)
+        .find(|plan| plan.source_data_dir == selected_source_text.as_ref())
         .ok_or_else(|| AppError::PermissionDenied("import source was not detected".into()))?;
 
     let allowed_plugins = plan.plugins.iter().cloned().collect::<HashSet<_>>();
@@ -144,7 +144,7 @@ fn execute_import_with_plans(
     let mut journal = MigrationJournal {
         schema_version: MIGRATION_SCHEMA_VERSION,
         source_data_dir: plan.source_data_dir.clone(),
-        started_at,
+        started_at: started_at.clone(),
         steps: Vec::new(),
     };
     push_journal_step(
@@ -236,13 +236,13 @@ fn execute_import_with_plans(
 
     match result {
         Ok((imported, skipped, requires_secret_reentry)) => {
-            let mut report = ImportReport {
+            let report = ImportReport {
                 imported,
                 skipped,
                 failed: Vec::new(),
                 requires_secret_reentry,
                 report_path: report_path.to_string_lossy().into_owned(),
-                backup_id: backup.backup_id,
+                backup_id: backup.backup_id.clone(),
             };
             write_json(&report_path, &report)?;
             push_journal_step(
@@ -260,7 +260,6 @@ fn execute_import_with_plans(
                 report: report.report_path.clone(),
             };
             save_state(paths.state_file(), &state)?;
-            report.backup_id = backup.backup_id;
             Ok(report)
         }
         Err(error) => {
@@ -318,11 +317,9 @@ fn detect_import_plans_from_candidates(
             continue;
         }
         let config_path = candidate.join("config.yaml");
-        let Some(config_bytes) = (match read_optional_regular_file(&config_path) {
-            Ok(bytes) => bytes,
-            Err(_) => continue,
-        }) else {
-            continue;
+        let config_bytes = match read_optional_regular_file(&config_path) {
+            Ok(Some(bytes)) => bytes,
+            Ok(None) | Err(_) => continue,
         };
         if config_bytes.len() > MAX_SOURCE_CONFIG_BYTES {
             continue;
@@ -463,7 +460,10 @@ fn inspect_value(
 }
 
 fn is_secret_key(key: &str) -> bool {
-    let normalized = key.to_ascii_lowercase().replace(['-', '_'], "");
+    let normalized = key
+        .to_ascii_lowercase()
+        .replace('-', "")
+        .replace('_', "");
     ["password", "passphrase", "privatekey", "token", "secret"]
         .iter()
         .any(|marker| normalized.contains(marker))
@@ -567,6 +567,9 @@ mod tests {
             source_revision
         );
         let state = load_state(target.state_file()).unwrap();
-        assert_eq!(state.pending_plugins, ["tabby-plugin-example"]);
+        assert_eq!(
+            state.pending_plugins,
+            vec!["tabby-plugin-example".to_owned()]
+        );
     }
 }
