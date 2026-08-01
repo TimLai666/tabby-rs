@@ -54,7 +54,7 @@ pub fn backup_restore(
         return Err(AppError::NotFound("backup".into()));
     }
 
-    create_backup(
+    let safety = create_backup(
         &paths,
         &BackupRequest {
             reason: "before-restore".into(),
@@ -63,5 +63,16 @@ pub fn backup_restore(
         },
         env!("CARGO_PKG_VERSION"),
     )?;
-    restore_backup(&paths, &request.backup_id)
+
+    match restore_backup(&paths, &request.backup_id) {
+        Ok(report) => Ok(report),
+        Err(restore_error) => match restore_backup(&paths, &safety.backup_id) {
+            Ok(_) => Err(AppError::Io(format!(
+                "restore failed and the safety snapshot was reapplied: {restore_error}"
+            ))),
+            Err(rollback_error) => Err(AppError::Io(format!(
+                "restore failed and the safety rollback also failed: {restore_error}; rollback: {rollback_error}"
+            ))),
+        },
+    }
 }
