@@ -2,6 +2,7 @@ mod commands;
 mod error;
 mod identity;
 mod launch;
+mod security;
 mod state;
 mod storage;
 
