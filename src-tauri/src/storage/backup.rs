@@ -41,6 +41,8 @@ pub struct BackupManifest {
     pub source_version: String,
     pub channel: UpdateChannel,
     pub files: Vec<BackupFile>,
+    #[serde(default)]
+    pub absent: Vec<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -48,6 +50,7 @@ pub struct BackupManifest {
 pub struct RestoreReport {
     pub backup_id: String,
     pub restored: Vec<String>,
+    pub removed: Vec<String>,
 }
 
 pub fn create_backup(
@@ -70,11 +73,13 @@ pub fn create_backup(
     fs::create_dir(&files_dir)?;
 
     let mut files = Vec::new();
+    let mut absent = Vec::new();
     for (relative, source) in [
         ("config.yaml", paths.config_file()),
         ("tabby-rs.json", paths.state_file()),
     ] {
         let Some(bytes) = read_optional_regular_file(source)? else {
+            absent.push(relative.into());
             continue;
         };
         atomic_write(&files_dir.join(relative), &bytes)?;
@@ -96,6 +101,7 @@ pub fn create_backup(
             .unwrap_or_else(|| app_version.to_owned()),
         channel: request.channel.clone().unwrap_or_default(),
         files,
+        absent,
     };
     let mut manifest_bytes = serde_json::to_vec_pretty(&manifest)?;
     manifest_bytes.push(b'\n');
@@ -151,15 +157,44 @@ pub fn restore_backup(
         }
         prepared.push((file.path.clone(), target.to_path_buf(), bytes));
     }
+    let removals = manifest
+        .absent
+        .iter()
+        .map(|relative| {
+            target_for_relative(paths, relative).map(|target| (relative.clone(), target.to_path_buf()))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
 
     let mut restored = Vec::new();
     for (relative, target, bytes) in prepared {
         atomic_write(&target, &bytes)?;
         restored.push(relative);
     }
+    let mut removed = Vec::new();
+    for (relative, target) in removals {
+        match fs::symlink_metadata(&target) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(AppError::PermissionDenied(
+                    "refusing to remove a symbolic link during restore".into(),
+                ));
+            }
+            Ok(metadata) if metadata.is_file() => {
+                fs::remove_file(target)?;
+                removed.push(relative);
+            }
+            Ok(_) => {
+                return Err(AppError::InvalidData(
+                    "restore target is not a regular file".into(),
+                ));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
     Ok(RestoreReport {
         backup_id: backup_id.into(),
         restored,
+        removed,
     })
 }
 
@@ -244,6 +279,27 @@ mod tests {
         atomic_write(paths.config_file(), b"version: 2\n").unwrap();
         restore_backup(&paths, &manifest.backup_id).unwrap();
         assert_eq!(std::fs::read(paths.config_file()).unwrap(), b"version: 1\n");
+    }
+
+    #[test]
+    fn removes_files_that_were_absent_at_backup_time() {
+        let temp = tempdir().unwrap();
+        let paths = StoragePaths::from_data_dir(temp.path().join("data"));
+        paths.ensure_layout().unwrap();
+        let manifest = create_backup(
+            &paths,
+            &BackupRequest {
+                reason: "empty snapshot".into(),
+                source_version: None,
+                channel: None,
+            },
+            "test",
+        )
+        .unwrap();
+        atomic_write(paths.config_file(), b"new file").unwrap();
+        let report = restore_backup(&paths, &manifest.backup_id).unwrap();
+        assert!(report.removed.contains(&"config.yaml".into()));
+        assert!(!paths.config_file().exists());
     }
 
     #[test]
