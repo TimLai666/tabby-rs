@@ -14,6 +14,7 @@ import { SettingsTabProvider } from 'tabby-settings'
 
 import { HostBridge } from './api/hostBridge'
 import './api/keychain'
+import { SecretImporter } from './api/secretImporter'
 import {
     IdentitySettingsTabComponent,
     IdentitySettingsTabProvider,
@@ -24,6 +25,7 @@ import { TauriHostWindowService } from './services/hostWindow.service'
 import { TauriLogService } from './services/log.service'
 import { TauriPasswordStorageService } from './services/passwordStorage.service'
 import { TauriPlatformService } from './services/platform.service'
+import { TauriSecretImporter } from './services/secretImporter.service'
 import { TauriHostBridge } from './services/tauriHostBridge.service'
 import { TauriUpdaterService } from './services/updater.service'
 import { TauriVaultService } from './services/vault.service'
@@ -39,7 +41,10 @@ import { TauriVaultService } from './services/vault.service'
         { provide: HostWindowService, useClass: TauriHostWindowService },
         { provide: LogService, useClass: TauriLogService },
         { provide: UpdaterService, useClass: TauriUpdaterService },
-        { provide: VaultService, useClass: TauriVaultService },
+        TauriVaultService,
+        { provide: VaultService, useExisting: TauriVaultService },
+        TauriSecretImporter,
+        { provide: SecretImporter, useExisting: TauriSecretImporter },
         { provide: PasswordStorageService, useClass: TauriPasswordStorageService },
         { provide: ConfigProvider, useClass: TauriConfigProvider, multi: true },
         { provide: SettingsTabProvider, useClass: IdentitySettingsTabProvider, multi: true },
@@ -54,4 +59,5 @@ export * from './api/keychain'
 export * from './api/secretImporter'
 export { TauriHostBridge }
 export { TauriPasswordStorageService }
+export { TauriSecretImporter }
 export { TauriVaultService }
