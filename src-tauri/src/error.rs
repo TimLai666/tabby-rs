@@ -35,9 +35,35 @@ impl From<serde_yaml::Error> for AppError {
     }
 }
 
+impl From<crate::security::VaultError> for AppError {
+    fn from(error: crate::security::VaultError) -> Self {
+        use crate::security::VaultError;
+
+        match error {
+            VaultError::Locked => Self::PermissionDenied("vault is locked".into()),
+            VaultError::DecryptionFailed => Self::PermissionDenied("vault unlock failed".into()),
+            VaultError::RandomFailed | VaultError::SerializationFailed => {
+                Self::Io("vault operation failed".into())
+            }
+            VaultError::UnsupportedVersion(version) => {
+                Self::InvalidData(format!("unsupported vault format version {version}"))
+            }
+            VaultError::InvalidKeySaltEncoding
+            | VaultError::InvalidKeySaltLength
+            | VaultError::InvalidIvEncoding
+            | VaultError::InvalidIvLength
+            | VaultError::InvalidCiphertextEncoding
+            | VaultError::InvalidCiphertextLength
+            | VaultError::InvalidPlaintext
+            | VaultError::InvalidSecret => Self::InvalidData(error.to_string()),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::AppError;
+    use crate::security::VaultError;
 
     #[test]
     fn serializes_public_error_shape() {
@@ -52,5 +78,12 @@ mod tests {
             serde_json::to_value(AppError::Conflict("config revision changed".into())).unwrap();
         assert_eq!(value["code"], "conflict");
         assert_eq!(value["details"], "config revision changed");
+    }
+
+    #[test]
+    fn redacts_vault_unlock_failures() {
+        let value = serde_json::to_value(AppError::from(VaultError::DecryptionFailed)).unwrap();
+        assert_eq!(value["code"], "permissionDenied");
+        assert_eq!(value["details"], "vault unlock failed");
     }
 }
