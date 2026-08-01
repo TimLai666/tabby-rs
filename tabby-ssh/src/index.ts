@@ -67,4 +67,8 @@ export default class SSHModule { }
 export * from './api'
 export { SFTPFile, SFTPSession } from './session/sftp'
 export { SFTPPanelComponent, SSHTabComponent }
-export { PasswordStorageService } from './services/passwordStorage.service'
+export {
+    PasswordStorageService,
+    VAULT_SECRET_TYPE_PASSWORD,
+    VAULT_SECRET_TYPE_PASSPHRASE,
+} from './services/passwordStorage.service'

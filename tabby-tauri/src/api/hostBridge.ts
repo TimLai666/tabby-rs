@@ -1,5 +1,5 @@
 import { InjectionToken } from '@angular/core'
-import { BootstrapData } from 'tabby-core'
+import { BootstrapData, StoredVault } from 'tabby-core'
 
 export type UpdateChannel = 'stable' | 'nightly'
 
@@ -94,6 +94,46 @@ export interface ImportReport {
     requiresSecretReentry: string[]
     reportPath: string
     backupId: string
+}
+
+export interface VaultStatus {
+    unlocked: boolean
+    expiresInSeconds: number | null
+    secretCount: number
+}
+
+export interface VaultSecretSelector {
+    type: string
+    key: Record<string, unknown>
+}
+
+export interface VaultSecretData extends VaultSecretSelector {
+    value: string
+}
+
+export interface VaultSecretSummary {
+    type: string
+    key: Record<string, unknown>
+}
+
+export interface VaultSummary {
+    config: unknown
+    secrets: VaultSecretSummary[]
+}
+
+export interface VaultSnapshot {
+    config: unknown
+    secrets: VaultSecretData[]
+}
+
+export interface VaultMutationResult {
+    stored: StoredVault
+    summary: VaultSummary
+}
+
+export interface PutVaultFileResult {
+    uri: string
+    mutation: VaultMutationResult
 }
 
 export interface LegacyCliArguments {
@@ -199,6 +239,77 @@ export interface HostRequestMap {
             plugins: string[]
         }
         response: ImportReport
+    }
+    'vault.status': {
+        request: Record<string, never>
+        response: VaultStatus
+    }
+    'vault.unlock': {
+        request: {
+            stored: StoredVault
+            passphrase: string
+            rememberForSeconds: number
+        }
+        response: VaultSummary
+    }
+    'vault.replace': {
+        request: {
+            vault: VaultSnapshot
+            passphrase: string
+            rememberForSeconds: number
+        }
+        response: VaultMutationResult
+    }
+    'vault.lock': {
+        request: Record<string, never>
+        response: null
+    }
+    'vault.setEnabled': {
+        request: {
+            enabled: boolean
+            passphrase?: string | null
+            rememberForSeconds?: number | null
+        }
+        response: VaultMutationResult | null
+    }
+    'vault.summary': {
+        request: Record<string, never>
+        response: VaultSummary
+    }
+    'vault.snapshot': {
+        request: Record<string, never>
+        response: VaultSnapshot
+    }
+    'vault.getSecret': {
+        request: { selector: VaultSecretSelector }
+        response: string | null
+    }
+    'vault.putSecret': {
+        request: { secret: VaultSecretData }
+        response: VaultMutationResult
+    }
+    'vault.updateSecret': {
+        request: {
+            selector: VaultSecretSelector
+            secret: VaultSecretData
+        }
+        response: VaultMutationResult
+    }
+    'vault.removeSecret': {
+        request: { selector: VaultSecretSelector }
+        response: VaultMutationResult
+    }
+    'vault.setConfig': {
+        request: { config: unknown }
+        response: VaultMutationResult
+    }
+    'vault.putFile': {
+        request: { description: string; bytes: number[] }
+        response: PutVaultFileResult
+    }
+    'vault.getFile': {
+        request: { id: string }
+        response: number[]
     }
 }
 

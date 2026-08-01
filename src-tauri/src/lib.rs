@@ -2,18 +2,29 @@ mod commands;
 mod error;
 mod identity;
 mod launch;
+mod security;
 mod state;
 mod storage;
+
+use std::sync::Arc;
 
 use commands::{
     app::{app_bootstrap, app_quit, app_runtime_info},
     backup::{backup_create, backup_list, backup_restore},
     config::{config_read, config_write},
     identity::{identity_alias_status, identity_get, identity_set_alias},
+    keychain::{keychain_delete, keychain_get, keychain_put},
     launch::app_initial_launch,
     migration::{migration_detect, migration_execute},
+    secrets::{secret_import_execute, secret_import_plan},
+    vault::{
+        vault_get_file, vault_get_secret, vault_lock, vault_put_file, vault_put_secret,
+        vault_remove_secret, vault_replace, vault_set_config, vault_set_enabled, vault_snapshot,
+        vault_status, vault_summary, vault_unlock, vault_update_secret,
+    },
 };
 use launch::{parse_launch_context, LaunchContext};
+use security::{CredentialState, SecretState};
 use state::AppState;
 use storage::{
     paths::StoragePaths,
@@ -87,6 +98,8 @@ pub fn run() {
                 save_state(storage_paths.state_file(), &persisted_state)?;
             }
             app.manage(AppState::new(paths, initial_launch));
+            app.manage(Arc::new(SecretState::default()));
+            app.manage(CredentialState::default());
 
             #[cfg(any(target_os = "linux", all(debug_assertions, windows)))]
             app.deep_link().register_all()?;
@@ -120,8 +133,27 @@ pub fn run() {
             identity_get,
             identity_alias_status,
             identity_set_alias,
+            keychain_get,
+            keychain_put,
+            keychain_delete,
             migration_detect,
             migration_execute,
+            secret_import_plan,
+            secret_import_execute,
+            vault_status,
+            vault_unlock,
+            vault_replace,
+            vault_lock,
+            vault_set_enabled,
+            vault_summary,
+            vault_snapshot,
+            vault_get_secret,
+            vault_put_secret,
+            vault_update_secret,
+            vault_remove_secret,
+            vault_set_config,
+            vault_put_file,
+            vault_get_file,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Tabby RS");

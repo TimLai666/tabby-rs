@@ -1,7 +1,7 @@
 import { NgModule } from '@angular/core'
 import { PlatformService, LogService, UpdaterService, DockingService, HostAppService, ThemesService, Platform, AppService, ConfigService, WIN_BUILD_FLUENT_BG_SUPPORTED, isWindowsBuild, HostWindowService, HotkeyProvider, ConfigProvider, FileProvider } from 'tabby-core'
 import { TerminalColorSchemeProvider, TerminalContextMenuItemProvider, TerminalDecorator } from 'tabby-terminal'
-import { SFTPContextMenuItemProvider, SSHProfileImporter, AutoPrivateKeyLocator } from 'tabby-ssh'
+import { SFTPContextMenuItemProvider, SSHProfileImporter, AutoPrivateKeyLocator, PasswordStorageService } from 'tabby-ssh'
 import { PTYInterface, ShellProvider, UACService } from 'tabby-local'
 import { auditTime } from 'rxjs'
 
@@ -16,6 +16,7 @@ import { ElectronFileProvider } from './services/fileProvider.service'
 import { ElectronHostAppService } from './services/hostApp.service'
 import { ElectronService } from './services/electron.service'
 import { DockMenuService } from './services/dockMenu.service'
+import { ElectronPasswordStorageService } from './services/passwordStorage.service'
 import { ElectronUACService } from './services/uac.service'
 
 import { ElectronHotkeyProvider } from './hotkeys'
@@ -54,8 +55,9 @@ import { VSDevToolsProvider } from './shells/vs'
         { provide: FileProvider, useClass: ElectronFileProvider, multi: true },
         { provide: SFTPContextMenuItemProvider, useClass: EditSFTPContextMenu, multi: true },
         { provide: SSHProfileImporter, useExisting: OpenSSHImporter, multi: true },
-        { provide: SSHProfileImporter, useExisting: StaticFileImporter, multi: true },
         { provide: AutoPrivateKeyLocator, useExisting: PrivateKeyLocator, multi: true },
+        { provide: PasswordStorageService, useClass: ElectronPasswordStorageService },
+        { provide: SSHProfileImporter, useExisting: StaticFileImporter, multi: true },
 
         { provide: ShellProvider, useClass: WindowsDefaultShellProvider, multi: true },
         { provide: ShellProvider, useClass: MacOSDefaultShellProvider, multi: true },
