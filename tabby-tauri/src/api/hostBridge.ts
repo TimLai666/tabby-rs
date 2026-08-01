@@ -1,6 +1,8 @@
 import { InjectionToken } from '@angular/core'
 import { BootstrapData } from 'tabby-core'
 
+export type UpdateChannel = 'stable' | 'nightly'
+
 export interface RuntimeInfo {
     host: 'tauri'
     platform: string
@@ -29,6 +31,69 @@ export interface CliAliasStatus {
     aliasPath: string | null
     conflict: string | null
     message: string | null
+}
+
+export interface ConfigReadResult {
+    yaml: string
+    revision: string | null
+    path: string
+}
+
+export interface ConfigWriteResult {
+    revision: string
+    path: string
+}
+
+export interface BackupFile {
+    path: string
+    sha256: string
+    size: number
+}
+
+export interface BackupManifest {
+    schemaVersion: number
+    backupId: string
+    createdAt: string
+    reason: string
+    sourceVersion: string
+    channel: UpdateChannel
+    files: BackupFile[]
+    absent: string[]
+}
+
+export interface RestoreReport {
+    backupId: string
+    restored: string[]
+    removed: string[]
+}
+
+export interface SecretReference {
+    path: string
+    kind: string
+}
+
+export interface ImportPlan {
+    sourceDataDir: string
+    config: boolean
+    profiles: number
+    plugins: string[]
+    secretReferences: SecretReference[]
+    sourceRevision: string
+}
+
+export interface ImportReportItem {
+    kind: string
+    name: string
+    detail: string
+}
+
+export interface ImportReport {
+    imported: ImportReportItem[]
+    skipped: ImportReportItem[]
+    failed: ImportReportItem[]
+    requiresSecretReentry: string[]
+    reportPath: string
+    backupId: string
 }
 
 export interface LegacyCliArguments {
@@ -83,6 +148,34 @@ export interface HostRequestMap {
         request: Record<string, never>
         response: null
     }
+    'backup.create': {
+        request: {
+            reason: string
+            sourceVersion?: string | null
+            channel?: UpdateChannel | null
+        }
+        response: BackupManifest
+    }
+    'backup.list': {
+        request: Record<string, never>
+        response: BackupManifest[]
+    }
+    'backup.restore': {
+        request: { backupId: string }
+        response: RestoreReport
+    }
+    'config.read': {
+        request: Record<string, never>
+        response: ConfigReadResult
+    }
+    'config.write': {
+        request: {
+            yaml: string
+            expectedRevision?: string | null
+            requireMissing?: boolean
+        }
+        response: ConfigWriteResult
+    }
     'identity.get': {
         request: Record<string, never>
         response: AppIdentity
@@ -94,6 +187,18 @@ export interface HostRequestMap {
     'identity.setAlias': {
         request: { enabled: boolean }
         response: CliAliasStatus
+    }
+    'migration.detect': {
+        request: Record<string, never>
+        response: ImportPlan[]
+    }
+    'migration.execute': {
+        request: {
+            sourceDataDir: string
+            config: boolean
+            plugins: string[]
+        }
+        response: ImportReport
     }
 }
 
