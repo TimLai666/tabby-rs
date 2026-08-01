@@ -111,7 +111,10 @@ export interface VaultSecretData extends VaultSecretSelector {
     value: string
 }
 
-export type VaultSecretSummary = VaultSecretSelector
+export interface VaultSecretSummary {
+    type: string
+    key: Record<string, unknown>
+}
 
 export interface VaultSummary {
     config: unknown
