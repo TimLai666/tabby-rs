@@ -17,6 +17,7 @@
   "peerDependencies": {
     "@angular/common": "^15",
     "@angular/core": "^15",
+    "@ng-bootstrap/ng-bootstrap": "^14",
     "rxjs": "^7",
     "tabby-core": "*",
     "tabby-settings": "*"
