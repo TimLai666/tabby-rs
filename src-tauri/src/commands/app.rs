@@ -1,6 +1,6 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, fs};
 
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, State};
 
 use crate::{error::AppError, state::AppState};
 
@@ -64,29 +64,29 @@ fn built_in_plugin(name: &str, package_name: &str, description: &str) -> PluginI
 #[tauri::command]
 pub fn app_bootstrap(
     request: EmptyRequest,
-    app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<BootstrapData, AppError> {
     let _ = request;
-    let executable = std::env::current_exe()?.to_string_lossy().into_owned();
-    let user_plugins_path = app
-        .path()
-        .app_data_dir()
-        .map_err(|error| AppError::Io(error.to_string()))?
-        .join("plugins")
-        .to_string_lossy()
-        .into_owned();
+    fs::create_dir_all(state.paths().plugins_dir())?;
 
     Ok(BootstrapData {
         config: BTreeMap::new(),
-        executable,
+        executable: state
+            .paths()
+            .executable()
+            .to_string_lossy()
+            .into_owned(),
         is_main_window: true,
         window_id: state.next_window_id(),
         installed_plugins: vec![
             built_in_plugin("core", "tabby-core", "Tabby core UI"),
             built_in_plugin("tauri", "tabby-tauri", "Tabby RS Tauri host providers"),
         ],
-        user_plugins_path,
+        user_plugins_path: state
+            .paths()
+            .plugins_dir()
+            .to_string_lossy()
+            .into_owned(),
     })
 }
 
