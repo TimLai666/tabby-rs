@@ -1,18 +1,32 @@
-import { SecretReference } from './hostBridge'
+import { VaultMutationResult } from './hostBridge'
+import './hostBridge'
+
+export type SecretImportItemSource = 'vault'|'keychain'
+
+export interface SecretImportItem {
+    id: string
+    source: SecretImportItemSource
+    kind: string
+    label: string
+    requiresPassphrase: boolean
+}
 
 export interface SecretImportPlan {
     sourceDataDir: string
-    references: SecretReference[]
+    items: SecretImportItem[]
     requiresAuthorization: boolean
 }
 
 export interface SecretImportSelection {
     sourceDataDir: string
-    references: SecretReference[]
+    authorized: boolean
+    itemIds: string[]
+    sourceVaultPassphrase?: string | null
+    rememberForSeconds?: number
 }
 
 export interface SecretImportFailure {
-    path: string
+    id: string
     publicError: string
 }
 
@@ -20,6 +34,20 @@ export interface SecretImportReport {
     imported: string[]
     requiresReentry: string[]
     failed: SecretImportFailure[]
+    vaultMutation?: VaultMutationResult
+}
+
+declare module './hostBridge' {
+    interface HostRequestMap {
+        'secretImport.plan': {
+            request: { sourceDataDir: string }
+            response: SecretImportPlan
+        }
+        'secretImport.execute': {
+            request: SecretImportSelection
+            response: SecretImportReport
+        }
+    }
 }
 
 /**
@@ -27,10 +55,7 @@ export interface SecretImportReport {
  * Implementations must never return, log, or persist plaintext secret values through this API.
  */
 export abstract class SecretImporter {
-    abstract plan (
-        sourceDataDir: string,
-        references: SecretReference[],
-    ): Promise<SecretImportPlan>
+    abstract plan (sourceDataDir: string): Promise<SecretImportPlan>
 
     abstract execute (selection: SecretImportSelection): Promise<SecretImportReport>
 }
