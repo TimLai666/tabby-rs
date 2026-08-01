@@ -25,6 +25,14 @@ pub struct UnlockVaultRequest {
 
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ReplaceVaultRequest {
+    pub vault: VaultSnapshot,
+    pub passphrase: String,
+    pub remember_for_seconds: u64,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SetVaultEnabledRequest {
     pub enabled: bool,
     #[serde(default)]
@@ -35,6 +43,12 @@ pub struct SetVaultEnabledRequest {
 
 #[derive(serde::Deserialize)]
 pub struct PutSecretRequest {
+    pub secret: VaultSecretInput,
+}
+
+#[derive(serde::Deserialize)]
+pub struct UpdateSecretRequest {
+    pub selector: VaultSecretSelector,
     pub secret: VaultSecretInput,
 }
 
@@ -83,6 +97,19 @@ pub fn vault_unlock(
     let remember_for = remember_duration(request.remember_for_seconds)?;
     Ok(state.unlock(
         request.stored,
+        SecretString::new(request.passphrase),
+        remember_for,
+    )?)
+}
+
+#[tauri::command]
+pub fn vault_replace(
+    request: ReplaceVaultRequest,
+    state: State<'_, SecretState>,
+) -> Result<VaultMutationResult, AppError> {
+    let remember_for = remember_duration(request.remember_for_seconds)?;
+    Ok(state.replace(
+        request.vault,
         SecretString::new(request.passphrase),
         remember_for,
     )?)
@@ -149,6 +176,14 @@ pub fn vault_put_secret(
     state: State<'_, SecretState>,
 ) -> Result<VaultMutationResult, AppError> {
     Ok(state.put_secret(request.secret)?)
+}
+
+#[tauri::command]
+pub fn vault_update_secret(
+    request: UpdateSecretRequest,
+    state: State<'_, SecretState>,
+) -> Result<VaultMutationResult, AppError> {
+    Ok(state.update_secret(&request.selector, request.secret)?)
 }
 
 #[tauri::command]
