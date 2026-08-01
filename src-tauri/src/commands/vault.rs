@@ -138,10 +138,9 @@ pub fn vault_set_enabled(
         .passphrase
         .ok_or_else(|| AppError::InvalidArgument("vault passphrase is required".into()))?;
     let remember_for = remember_duration(request.remember_for_seconds.unwrap_or(300))?;
-    Ok(Some(state.create(
-        SecretString::new(passphrase),
-        remember_for,
-    )?))
+    Ok(Some(
+        state.create(SecretString::new(passphrase), remember_for)?,
+    ))
 }
 
 #[tauri::command]
