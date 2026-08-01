@@ -33,13 +33,13 @@ pub struct VaultSecretSummary {
     pub key: Map<String, Value>,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct VaultSnapshot {
     pub config: Value,
     pub secrets: Vec<VaultSnapshotSecret>,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct VaultSnapshotSecret {
     pub r#type: String,
     pub key: Map<String, Value>,
@@ -52,7 +52,7 @@ pub struct VaultSecretSelector {
     pub key: Map<String, Value>,
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(serde::Deserialize)]
 pub struct VaultSecretInput {
     pub r#type: String,
     pub key: Map<String, Value>,
@@ -133,9 +133,34 @@ impl SecretState {
         passphrase: SecretString,
         remember_for: Duration,
     ) -> Result<VaultMutationResult, VaultError> {
+        self.replace(
+            VaultSnapshot {
+                config: Value::Null,
+                secrets: Vec::new(),
+            },
+            passphrase,
+            remember_for,
+        )
+    }
+
+    pub fn replace(
+        &self,
+        snapshot: VaultSnapshot,
+        passphrase: SecretString,
+        remember_for: Duration,
+    ) -> Result<VaultMutationResult, VaultError> {
+        let mut secrets = Vec::with_capacity(snapshot.secrets.len());
+        for secret in snapshot.secrets {
+            validate_secret(&secret.r#type, &secret.key)?;
+            secrets.push(VaultSecret {
+                r#type: secret.r#type,
+                key: secret.key,
+                value: SecretString::new(secret.value),
+            });
+        }
         let vault = Vault {
-            config: Value::Null,
-            secrets: Vec::new(),
+            config: snapshot.config,
+            secrets,
         };
         let stored = self.codecs.encrypt(1, &vault, &passphrase)?;
         let summary = summarize(&vault);
@@ -153,12 +178,12 @@ impl SecretState {
     }
 
     pub fn summary(&self) -> Result<VaultSummary, VaultError> {
-        let mut inner = self.unlocked()?;
+        let inner = self.unlocked()?;
         Ok(summarize(inner.vault.as_ref().expect("checked above")))
     }
 
     pub fn snapshot(&self) -> Result<VaultSnapshot, VaultError> {
-        let mut inner = self.unlocked()?;
+        let inner = self.unlocked()?;
         let vault = inner.vault.as_ref().expect("checked above");
         Ok(VaultSnapshot {
             config: vault.config.clone(),
@@ -176,7 +201,7 @@ impl SecretState {
 
     pub fn get_secret(&self, selector: &VaultSecretSelector) -> Result<Option<String>, VaultError> {
         validate_selector(selector)?;
-        let mut inner = self.unlocked()?;
+        let inner = self.unlocked()?;
         let vault = inner.vault.as_ref().expect("checked above");
         let secret = find_secret(vault, selector).or_else(|| {
             if !selector.key.contains_key("host") {
@@ -200,6 +225,26 @@ impl SecretState {
                 key: input.key,
                 value: SecretString::new(input.value),
             });
+            Ok(())
+        })
+    }
+
+    pub fn update_secret(
+        &self,
+        selector: &VaultSecretSelector,
+        input: VaultSecretInput,
+    ) -> Result<VaultMutationResult, VaultError> {
+        validate_selector(selector)?;
+        validate_secret(&input.r#type, &input.key)?;
+        self.mutate(|vault| {
+            let Some(target) = vault.secrets.iter_mut().find(|secret| {
+                secret.r#type == selector.r#type && key_matches(&selector.key, &secret.key)
+            }) else {
+                return Ok(());
+            };
+            target.r#type = input.r#type;
+            target.key = input.key;
+            target.value = SecretString::new(input.value);
             Ok(())
         })
     }
@@ -382,7 +427,9 @@ mod tests {
     use secrecy::SecretString;
     use serde_json::{json, Map, Value};
 
-    use super::{SecretState, VaultSecretInput, VaultSecretSelector};
+    use super::{
+        SecretState, VaultSecretInput, VaultSecretSelector, VaultSnapshot, VaultSnapshotSecret,
+    };
     use crate::security::vault_v1::{VaultCodec, VaultV1};
 
     fn password_key() -> Map<String, Value> {
@@ -446,5 +493,36 @@ mod tests {
             .unwrap();
         let mutation = state.set_config(json!({ "profiles": ["fixture"] })).unwrap();
         assert_eq!(mutation.summary.config["profiles"][0], "fixture");
+    }
+
+    #[test]
+    fn replaces_the_whole_vault_and_changes_passphrase_once() {
+        let state = SecretState::default();
+        let mutation = state
+            .replace(
+                VaultSnapshot {
+                    config: json!({ "encrypted": true }),
+                    secrets: vec![VaultSnapshotSecret {
+                        r#type: "ssh:password".into(),
+                        key: password_key(),
+                        value: "fixture-secret".into(),
+                    }],
+                },
+                SecretString::new("new-passphrase".into()),
+                Duration::from_secs(60),
+            )
+            .unwrap();
+        assert!(VaultV1
+            .decrypt(
+                &mutation.stored,
+                &SecretString::new("new-passphrase".into())
+            )
+            .is_ok());
+        assert!(VaultV1
+            .decrypt(
+                &mutation.stored,
+                &SecretString::new("old-passphrase".into())
+            )
+            .is_err());
     }
 }
