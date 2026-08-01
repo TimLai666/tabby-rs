@@ -98,11 +98,9 @@ impl SecretState {
         expire_if_needed(&mut inner);
         VaultStatus {
             unlocked: inner.vault.is_some(),
-            expires_in_seconds: inner.expires_at.map(|deadline| {
-                deadline
-                    .saturating_duration_since(Instant::now())
-                    .as_secs()
-            }),
+            expires_in_seconds: inner
+                .expires_at
+                .map(|deadline| deadline.saturating_duration_since(Instant::now()).as_secs()),
             secret_count: inner
                 .vault
                 .as_ref()
@@ -444,7 +442,10 @@ mod tests {
     fn mutations_return_a_decryptable_updated_store() {
         let state = SecretState::default();
         state
-            .create(SecretString::new("passphrase".into()), Duration::from_secs(60))
+            .create(
+                SecretString::new("passphrase".into()),
+                Duration::from_secs(60),
+            )
             .unwrap();
         let mutation = state
             .put_secret(VaultSecretInput {
@@ -454,10 +455,7 @@ mod tests {
             })
             .unwrap();
         let decoded = VaultV1
-            .decrypt(
-                &mutation.stored,
-                &SecretString::new("passphrase".into()),
-            )
+            .decrypt(&mutation.stored, &SecretString::new("passphrase".into()))
             .unwrap();
         assert_eq!(decoded.secrets.len(), 1);
         assert_eq!(
@@ -489,9 +487,14 @@ mod tests {
     fn stores_encrypted_config_in_the_same_session() {
         let state = SecretState::default();
         state
-            .create(SecretString::new("passphrase".into()), Duration::from_secs(60))
+            .create(
+                SecretString::new("passphrase".into()),
+                Duration::from_secs(60),
+            )
             .unwrap();
-        let mutation = state.set_config(json!({ "profiles": ["fixture"] })).unwrap();
+        let mutation = state
+            .set_config(json!({ "profiles": ["fixture"] }))
+            .unwrap();
         assert_eq!(mutation.summary.config["profiles"][0], "fixture");
     }
 
