@@ -3,13 +3,12 @@ import { VaultService } from 'tabby-core'
 import {
     PasswordStorageService,
     SSHProfile,
+    VAULT_SECRET_TYPE_PASSWORD,
+    VAULT_SECRET_TYPE_PASSPHRASE,
 } from 'tabby-ssh'
 
 import { HostBridge } from '../api/hostBridge'
 import '../api/keychain'
-
-const VAULT_SECRET_TYPE_PASSWORD = 'ssh:password'
-const VAULT_SECRET_TYPE_PASSPHRASE = 'ssh:key-passphrase'
 
 @Injectable({ providedIn: 'root' })
 export class TauriPasswordStorageService extends PasswordStorageService {
@@ -17,7 +16,7 @@ export class TauriPasswordStorageService extends PasswordStorageService {
         private tauriVault: VaultService,
         private bridge: HostBridge,
     ) {
-        super(tauriVault)
+        super()
     }
 
     override async savePassword (
