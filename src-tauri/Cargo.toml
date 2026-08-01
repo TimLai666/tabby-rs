@@ -41,3 +41,12 @@ zeroize = "1.7.0"
 
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+
+[target.'cfg(windows)'.dependencies]
+keyring = { version = "=3.6.3", default-features = false, features = ["windows-native"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "=3.6.3", default-features = false, features = ["apple-native"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "=3.6.3", default-features = false, features = ["sync-secret-service", "crypto-rust"] }
