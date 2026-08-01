@@ -10,17 +10,17 @@ import {
 } from 'tabby-core'
 import { SettingsTabProvider } from 'tabby-settings'
 
-import { TauriConfigProvider } from './config'
 import { HostBridge } from './api/hostBridge'
 import {
     IdentitySettingsTabComponent,
     IdentitySettingsTabProvider,
 } from './components/identitySettingsTab.component'
-import { TauriHostBridge } from './services/tauriHostBridge.service'
+import { TauriConfigProvider } from './config'
 import { TauriHostAppService } from './services/hostApp.service'
 import { TauriHostWindowService } from './services/hostWindow.service'
 import { TauriLogService } from './services/log.service'
 import { TauriPlatformService } from './services/platform.service'
+import { TauriHostBridge } from './services/tauriHostBridge.service'
 import { TauriUpdaterService } from './services/updater.service'
 
 @NgModule({
