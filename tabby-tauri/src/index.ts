@@ -11,7 +11,10 @@ import {
 } from 'tabby-core'
 import { SettingsTabProvider } from 'tabby-settings'
 
-import { ShellProvider } from '../../tabby-local/src/api'
+import {
+    PTYInterface,
+    ShellProvider,
+} from '../../tabby-local/src/api'
 import { PasswordStorageService } from '../../tabby-ssh/src/services/passwordStorage.service'
 import { HostBridge } from './api/hostBridge'
 import './api/keychain'
@@ -27,6 +30,7 @@ import { TauriHostWindowService } from './services/hostWindow.service'
 import { TauriLogService } from './services/log.service'
 import { TauriPasswordStorageService } from './services/passwordStorage.service'
 import { TauriPlatformService } from './services/platform.service'
+import { TauriPendingPTYInterface } from './services/ptyInterface.service'
 import { TauriSecretImporter } from './services/secretImporter.service'
 import {
     TauriDetectedShellProvider,
@@ -54,6 +58,7 @@ import { TauriVaultService } from './services/vault.service'
         { provide: PasswordStorageService, useClass: TauriPasswordStorageService },
         { provide: ShellProvider, useClass: TauriDetectedShellProvider, multi: true },
         TauriSpawnRequestService,
+        { provide: PTYInterface, useClass: TauriPendingPTYInterface },
         { provide: ConfigProvider, useClass: TauriConfigProvider, multi: true },
         { provide: SettingsTabProvider, useClass: IdentitySettingsTabProvider, multi: true },
     ],
@@ -69,6 +74,7 @@ export * from './api/shell'
 export { TauriDetectedShellProvider }
 export { TauriHostBridge }
 export { TauriPasswordStorageService }
+export { TauriPendingPTYInterface }
 export { TauriSecretImporter }
 export { TauriSpawnRequestService }
 export { TauriVaultService }
