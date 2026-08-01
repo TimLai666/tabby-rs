@@ -11,6 +11,7 @@ use commands::{
     backup::{backup_create, backup_list, backup_restore},
     config::{config_read, config_write},
     identity::{identity_alias_status, identity_get, identity_set_alias},
+    keychain::{keychain_delete, keychain_get, keychain_put},
     launch::app_initial_launch,
     migration::{migration_detect, migration_execute},
     vault::{
@@ -20,7 +21,7 @@ use commands::{
     },
 };
 use launch::{parse_launch_context, LaunchContext};
-use security::SecretState;
+use security::{CredentialState, SecretState};
 use state::AppState;
 use storage::{
     paths::StoragePaths,
@@ -95,6 +96,7 @@ pub fn run() {
             }
             app.manage(AppState::new(paths, initial_launch));
             app.manage(SecretState::default());
+            app.manage(CredentialState::default());
 
             #[cfg(any(target_os = "linux", all(debug_assertions, windows)))]
             app.deep_link().register_all()?;
@@ -128,6 +130,9 @@ pub fn run() {
             identity_get,
             identity_alias_status,
             identity_set_alias,
+            keychain_get,
+            keychain_put,
+            keychain_delete,
             migration_detect,
             migration_execute,
             vault_status,
