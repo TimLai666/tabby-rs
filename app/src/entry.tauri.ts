@@ -6,6 +6,7 @@ import './global.scss'
 import './toastr.scss'
 
 import CoreModule, { bootstrap as CoreBootstrap } from '../../tabby-core/src'
+import LocalModule from '../../tabby-local/src'
 import SettingsModule from '../../tabby-settings/src'
 import TauriModule, {
     TAURI_RUNTIME_INFO,
@@ -50,10 +51,13 @@ async function main (): Promise<void> {
     const settingsModule = SettingsModule as any
     settingsModule.pluginName = 'settings'
 
+    const localModule = LocalModule as any
+    localModule.pluginName = 'local'
+
     const tauriModule = TauriModule as any
     tauriModule.pluginName = 'tauri'
 
-    await bootstrapTabby(bootstrapData, [coreModule, settingsModule, tauriModule], {
+    await bootstrapTabby(bootstrapData, [coreModule, settingsModule, localModule, tauriModule], {
         debug: false,
         extraProviders: [
             { provide: TAURI_RUNTIME_INFO, useValue: runtimeInfo },
