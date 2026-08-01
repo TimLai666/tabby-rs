@@ -9,9 +9,9 @@ import {
     UpdaterService,
     VaultService,
 } from 'tabby-core'
-import { PasswordStorageService } from 'tabby-ssh'
 import { SettingsTabProvider } from 'tabby-settings'
 
+import { PasswordStorageService } from '../../tabby-ssh/src/services/passwordStorage.service'
 import { HostBridge } from './api/hostBridge'
 import './api/keychain'
 import { SecretImporter } from './api/secretImporter'
