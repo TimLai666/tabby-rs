@@ -35,6 +35,19 @@ impl From<serde_yaml::Error> for AppError {
     }
 }
 
+impl From<crate::security::CredentialError> for AppError {
+    fn from(error: crate::security::CredentialError) -> Self {
+        match error {
+            crate::security::CredentialError::InvalidAddress => {
+                Self::InvalidArgument("credential address is invalid".into())
+            }
+            crate::security::CredentialError::Unavailable => {
+                Self::Io("credential store is unavailable".into())
+            }
+        }
+    }
+}
+
 impl From<crate::security::VaultError> for AppError {
     fn from(error: crate::security::VaultError) -> Self {
         use crate::security::VaultError;
@@ -63,7 +76,7 @@ impl From<crate::security::VaultError> for AppError {
 #[cfg(test)]
 mod tests {
     use super::AppError;
-    use crate::security::VaultError;
+    use crate::security::{CredentialError, VaultError};
 
     #[test]
     fn serializes_public_error_shape() {
@@ -85,5 +98,12 @@ mod tests {
         let value = serde_json::to_value(AppError::from(VaultError::DecryptionFailed)).unwrap();
         assert_eq!(value["code"], "permissionDenied");
         assert_eq!(value["details"], "vault unlock failed");
+    }
+
+    #[test]
+    fn redacts_native_keychain_failures() {
+        let value = serde_json::to_value(AppError::from(CredentialError::Unavailable)).unwrap();
+        assert_eq!(value["code"], "io");
+        assert_eq!(value["details"], "credential store is unavailable");
     }
 }
