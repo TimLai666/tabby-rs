@@ -1,5 +1,6 @@
 import { Injectable } from '@angular/core'
-import { SSHProfile } from '../api'
+
+import { SSHProfile } from '../api/interfaces'
 
 export const VAULT_SECRET_TYPE_PASSWORD = 'ssh:password'
 export const VAULT_SECRET_TYPE_PASSPHRASE = 'ssh:key-passphrase'
