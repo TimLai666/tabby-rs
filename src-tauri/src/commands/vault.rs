@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use secrecy::SecretString;
 use serde_json::Value;
@@ -83,7 +83,7 @@ pub struct PutVaultFileResult {
 #[tauri::command]
 pub fn vault_status(
     request: EmptyRequest,
-    state: State<'_, SecretState>,
+    state: State<'_, Arc<SecretState>>,
 ) -> Result<VaultStatus, AppError> {
     let _ = request;
     Ok(state.status())
@@ -92,7 +92,7 @@ pub fn vault_status(
 #[tauri::command]
 pub fn vault_unlock(
     request: UnlockVaultRequest,
-    state: State<'_, SecretState>,
+    state: State<'_, Arc<SecretState>>,
 ) -> Result<VaultSummary, AppError> {
     let remember_for = remember_duration(request.remember_for_seconds)?;
     Ok(state.unlock(
@@ -105,7 +105,7 @@ pub fn vault_unlock(
 #[tauri::command]
 pub fn vault_replace(
     request: ReplaceVaultRequest,
-    state: State<'_, SecretState>,
+    state: State<'_, Arc<SecretState>>,
 ) -> Result<VaultMutationResult, AppError> {
     let remember_for = remember_duration(request.remember_for_seconds)?;
     Ok(state.replace(
@@ -118,7 +118,7 @@ pub fn vault_replace(
 #[tauri::command]
 pub fn vault_lock(
     request: EmptyRequest,
-    state: State<'_, SecretState>,
+    state: State<'_, Arc<SecretState>>,
 ) -> Result<(), AppError> {
     let _ = request;
     state.lock_now();
@@ -128,7 +128,7 @@ pub fn vault_lock(
 #[tauri::command]
 pub fn vault_set_enabled(
     request: SetVaultEnabledRequest,
-    state: State<'_, SecretState>,
+    state: State<'_, Arc<SecretState>>,
 ) -> Result<Option<VaultMutationResult>, AppError> {
     if !request.enabled {
         state.lock_now();
@@ -147,7 +147,7 @@ pub fn vault_set_enabled(
 #[tauri::command]
 pub fn vault_summary(
     request: EmptyRequest,
-    state: State<'_, SecretState>,
+    state: State<'_, Arc<SecretState>>,
 ) -> Result<VaultSummary, AppError> {
     let _ = request;
     Ok(state.summary()?)
@@ -156,7 +156,7 @@ pub fn vault_summary(
 #[tauri::command]
 pub fn vault_snapshot(
     request: EmptyRequest,
-    state: State<'_, SecretState>,
+    state: State<'_, Arc<SecretState>>,
 ) -> Result<VaultSnapshot, AppError> {
     let _ = request;
     Ok(state.snapshot()?)
@@ -165,7 +165,7 @@ pub fn vault_snapshot(
 #[tauri::command]
 pub fn vault_get_secret(
     request: SecretSelectorRequest,
-    state: State<'_, SecretState>,
+    state: State<'_, Arc<SecretState>>,
 ) -> Result<Option<String>, AppError> {
     Ok(state.get_secret(&request.selector)?)
 }
@@ -173,7 +173,7 @@ pub fn vault_get_secret(
 #[tauri::command]
 pub fn vault_put_secret(
     request: PutSecretRequest,
-    state: State<'_, SecretState>,
+    state: State<'_, Arc<SecretState>>,
 ) -> Result<VaultMutationResult, AppError> {
     Ok(state.put_secret(request.secret)?)
 }
@@ -181,7 +181,7 @@ pub fn vault_put_secret(
 #[tauri::command]
 pub fn vault_update_secret(
     request: UpdateSecretRequest,
-    state: State<'_, SecretState>,
+    state: State<'_, Arc<SecretState>>,
 ) -> Result<VaultMutationResult, AppError> {
     Ok(state.update_secret(&request.selector, request.secret)?)
 }
@@ -189,7 +189,7 @@ pub fn vault_update_secret(
 #[tauri::command]
 pub fn vault_remove_secret(
     request: SecretSelectorRequest,
-    state: State<'_, SecretState>,
+    state: State<'_, Arc<SecretState>>,
 ) -> Result<VaultMutationResult, AppError> {
     Ok(state.remove_secret(&request.selector)?)
 }
@@ -197,7 +197,7 @@ pub fn vault_remove_secret(
 #[tauri::command]
 pub fn vault_set_config(
     request: SetVaultConfigRequest,
-    state: State<'_, SecretState>,
+    state: State<'_, Arc<SecretState>>,
 ) -> Result<VaultMutationResult, AppError> {
     Ok(state.set_config(request.config)?)
 }
@@ -205,7 +205,7 @@ pub fn vault_set_config(
 #[tauri::command]
 pub fn vault_put_file(
     request: PutVaultFileRequest,
-    state: State<'_, SecretState>,
+    state: State<'_, Arc<SecretState>>,
 ) -> Result<PutVaultFileResult, AppError> {
     let (uri, mutation) = state.put_file(request.description, request.bytes)?;
     Ok(PutVaultFileResult { uri, mutation })
@@ -214,7 +214,7 @@ pub fn vault_put_file(
 #[tauri::command]
 pub fn vault_get_file(
     request: GetVaultFileRequest,
-    state: State<'_, SecretState>,
+    state: State<'_, Arc<SecretState>>,
 ) -> Result<Vec<u8>, AppError> {
     Ok(state.get_file(&request.id)?)
 }
