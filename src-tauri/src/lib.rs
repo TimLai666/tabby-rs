@@ -13,8 +13,14 @@ use commands::{
     identity::{identity_alias_status, identity_get, identity_set_alias},
     launch::app_initial_launch,
     migration::{migration_detect, migration_execute},
+    vault::{
+        vault_get_file, vault_get_secret, vault_lock, vault_put_file, vault_put_secret,
+        vault_remove_secret, vault_set_config, vault_set_enabled, vault_snapshot, vault_status,
+        vault_summary, vault_unlock,
+    },
 };
 use launch::{parse_launch_context, LaunchContext};
+use security::SecretState;
 use state::AppState;
 use storage::{
     paths::StoragePaths,
@@ -88,6 +94,7 @@ pub fn run() {
                 save_state(storage_paths.state_file(), &persisted_state)?;
             }
             app.manage(AppState::new(paths, initial_launch));
+            app.manage(SecretState::default());
 
             #[cfg(any(target_os = "linux", all(debug_assertions, windows)))]
             app.deep_link().register_all()?;
@@ -123,6 +130,18 @@ pub fn run() {
             identity_set_alias,
             migration_detect,
             migration_execute,
+            vault_status,
+            vault_unlock,
+            vault_lock,
+            vault_set_enabled,
+            vault_summary,
+            vault_snapshot,
+            vault_get_secret,
+            vault_put_secret,
+            vault_remove_secret,
+            vault_set_config,
+            vault_put_file,
+            vault_get_file,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Tabby RS");
