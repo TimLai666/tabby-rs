@@ -3,14 +3,22 @@ mod error;
 mod identity;
 mod launch;
 mod state;
+mod storage;
 
 use commands::{
     app::{app_bootstrap, app_quit, app_runtime_info},
+    backup::{backup_create, backup_list, backup_restore},
+    config::{config_read, config_write},
     identity::{identity_alias_status, identity_get, identity_set_alias},
     launch::app_initial_launch,
+    migration::{migration_detect, migration_execute},
 };
 use launch::{parse_launch_context, LaunchContext};
 use state::AppState;
+use storage::{
+    paths::StoragePaths,
+    state_file::{load_state, save_state},
+};
 use tauri::{Emitter, Manager};
 
 fn initial_launch_context() -> LaunchContext {
@@ -71,6 +79,13 @@ pub fn run() {
             }
 
             let paths = identity::AppPaths::detect(app.handle())?;
+            let storage_paths = StoragePaths::from_app_paths(&paths);
+            storage_paths.ensure_layout()?;
+            let state_file_existed = std::fs::symlink_metadata(storage_paths.state_file()).is_ok();
+            let persisted_state = load_state(storage_paths.state_file())?;
+            if !state_file_existed {
+                save_state(storage_paths.state_file(), &persisted_state)?;
+            }
             app.manage(AppState::new(paths, initial_launch));
 
             #[cfg(any(target_os = "linux", all(debug_assertions, windows)))]
@@ -97,9 +112,16 @@ pub fn run() {
             app_runtime_info,
             app_initial_launch,
             app_quit,
+            backup_create,
+            backup_list,
+            backup_restore,
+            config_read,
+            config_write,
             identity_get,
             identity_alias_status,
             identity_set_alias,
+            migration_detect,
+            migration_execute,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Tabby RS");
