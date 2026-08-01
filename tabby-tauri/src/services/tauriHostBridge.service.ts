@@ -21,6 +21,12 @@ declare global {
     }
 }
 
+function toRustCommand (command: string): string {
+    return command
+        .replace(/\./g, '_')
+        .replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`)
+}
+
 @Injectable({ providedIn: 'root' })
 export class TauriHostBridge extends HostBridge {
     private get api (): TauriGlobal {
@@ -35,8 +41,7 @@ export class TauriHostBridge extends HostBridge {
         command: K,
         request: HostRequestMap[K]['request'],
     ): Promise<HostRequestMap[K]['response']> {
-        const rustCommand = command.replace(/\./g, '_')
-        return this.api.core.invoke<HostRequestMap[K]['response']>(rustCommand, { request })
+        return this.api.core.invoke<HostRequestMap[K]['response']>(toRustCommand(command), { request })
     }
 
     async listen<K extends keyof HostEventMap> (
