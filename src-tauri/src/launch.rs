@@ -68,11 +68,7 @@ pub fn initial_launch_context() -> LaunchContext {
     parse_launch_context(&argv, cwd, false)
 }
 
-pub fn parse_launch_context(
-    argv: &[String],
-    cwd: String,
-    second_instance: bool,
-) -> LaunchContext {
+pub fn parse_launch_context(argv: &[String], cwd: String, second_instance: bool) -> LaunchContext {
     match parse_launch_request(argv, &cwd) {
         Ok(request) => LaunchContext {
             request,
@@ -162,7 +158,10 @@ fn parse_launch_request(argv: &[String], cwd: &str) -> Result<LaunchRequest, Str
             }
             "open" => {
                 request.argv.commands = vec!["open".into()];
-                let directory = tokens.get(index + 1).cloned().unwrap_or_else(|| cwd.to_owned());
+                let directory = tokens
+                    .get(index + 1)
+                    .cloned()
+                    .unwrap_or_else(|| cwd.to_owned());
                 validate_scalar(&directory, "directory")?;
                 set_scalar(&mut request.cwd, directory.clone(), "cwd")?;
                 request.argv.directory = Some(directory);
@@ -182,7 +181,10 @@ fn parse_launch_request(argv: &[String], cwd: &str) -> Result<LaunchRequest, Str
             "paste" => {
                 request.argv.commands = vec!["paste".into()];
                 let mut values = tokens[(index + 1)..].to_vec();
-                if values.first().is_some_and(|value| value == "-e" || value == "--escape") {
+                if values
+                    .first()
+                    .is_some_and(|value| value == "-e" || value == "--escape")
+                {
                     request.argv.escape = true;
                     values.remove(0);
                 }
@@ -208,11 +210,8 @@ fn parse_launch_request(argv: &[String], cwd: &str) -> Result<LaunchRequest, Str
                     index + 1,
                     "quickConnect providerId",
                 )?);
-                request.argv.query = Some(required_value(
-                    &tokens,
-                    index + 2,
-                    "quickConnect query",
-                )?);
+                request.argv.query =
+                    Some(required_value(&tokens, index + 2, "quickConnect query")?);
                 if tokens.len() != index + 3 {
                     return Err("quickConnect accepts exactly providerId and query".into());
                 }
@@ -315,7 +314,10 @@ fn collect_query(url: &Url) -> Result<BTreeMap<String, String>, String> {
     for (key, value) in url.query_pairs() {
         validate_scalar(&key, "query key")?;
         validate_scalar(&value, &key)?;
-        if result.insert(key.into_owned(), value.into_owned()).is_some() {
+        if result
+            .insert(key.into_owned(), value.into_owned())
+            .is_some()
+        {
             return Err("duplicate URL query parameter".into());
         }
     }
@@ -430,7 +432,10 @@ mod tests {
     use super::{parse_launch_context, LaunchRequest};
 
     fn parse(args: &[&str]) -> LaunchRequest {
-        let argv = args.iter().map(|value| (*value).to_owned()).collect::<Vec<_>>();
+        let argv = args
+            .iter()
+            .map(|value| (*value).to_owned())
+            .collect::<Vec<_>>();
         let context = parse_launch_context(&argv, "/work".into(), false);
         assert_eq!(context.parse_error, None);
         context.request
