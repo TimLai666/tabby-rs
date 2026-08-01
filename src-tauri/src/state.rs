@@ -1,6 +1,6 @@
 use std::sync::{
     atomic::{AtomicU64, Ordering},
-    Mutex,
+    Mutex, MutexGuard,
 };
 
 use crate::{identity::AppPaths, launch::LaunchContext};
@@ -8,6 +8,7 @@ use crate::{identity::AppPaths, launch::LaunchContext};
 pub struct AppState {
     next_window_id: AtomicU64,
     initial_launch: Mutex<Option<LaunchContext>>,
+    storage_lock: Mutex<()>,
     paths: AppPaths,
 }
 
@@ -16,6 +17,7 @@ impl AppState {
         Self {
             next_window_id: AtomicU64::new(0),
             initial_launch: Mutex::new(Some(initial_launch)),
+            storage_lock: Mutex::new(()),
             paths,
         }
     }
@@ -29,6 +31,12 @@ impl AppState {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .take()
+    }
+
+    pub fn lock_storage(&self) -> MutexGuard<'_, ()> {
+        self.storage_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     pub fn paths(&self) -> &AppPaths {
