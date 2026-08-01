@@ -249,6 +249,14 @@ export interface HostRequestMap {
         }
         response: VaultSummary
     }
+    'vault.replace': {
+        request: {
+            vault: VaultSnapshot
+            passphrase: string
+            rememberForSeconds: number
+        }
+        response: VaultMutationResult
+    }
     'vault.lock': {
         request: Record<string, never>
         response: null
@@ -275,6 +283,13 @@ export interface HostRequestMap {
     }
     'vault.putSecret': {
         request: { secret: VaultSecretData }
+        response: VaultMutationResult
+    }
+    'vault.updateSecret': {
+        request: {
+            selector: VaultSecretSelector
+            secret: VaultSecretData
+        }
         response: VaultMutationResult
     }
     'vault.removeSecret': {
