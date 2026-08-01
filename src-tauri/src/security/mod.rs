@@ -16,6 +16,4 @@ pub use session::{
     SecretState, VaultMutationResult, VaultSecretInput, VaultSecretSelector, VaultSnapshot,
     VaultSnapshotSecret, VaultStatus, VaultSummary,
 };
-pub use vault_v1::{
-    StoredVault, Vault, VaultCodec, VaultCodecs, VaultError, VaultSecret, VaultV1,
-};
+pub use vault_v1::{StoredVault, Vault, VaultCodec, VaultCodecs, VaultError, VaultSecret, VaultV1};
