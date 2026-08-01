@@ -13,8 +13,7 @@ use sha2::{Digest, Sha256};
 use crate::{
     error::AppError,
     storage::{
-        atomic_file::read_required_regular_file,
-        migration::detect_import_plans,
+        atomic_file::read_required_regular_file, migration::detect_import_plans,
         paths::StoragePaths,
     },
 };
@@ -118,8 +117,7 @@ pub fn execute_secret_import(
             "secret import requires explicit authorization".into(),
         ));
     }
-    if selection.remember_for_seconds == 0
-        || selection.remember_for_seconds > MAX_REMEMBER_SECONDS
+    if selection.remember_for_seconds == 0 || selection.remember_for_seconds > MAX_REMEMBER_SECONDS
     {
         return Err(AppError::InvalidArgument(
             "secret import remember timeout is invalid".into(),
@@ -155,11 +153,10 @@ pub fn execute_secret_import(
     let mut failed = Vec::new();
     let mut vault_mutation = None;
 
-    if let Some(vault_item) = plan
-        .public
-        .items
-        .iter()
-        .find(|item| item.source == SecretImportItemSource::Vault && selected.contains(&item.id))
+    if let Some(vault_item) =
+        plan.public.items.iter().find(|item| {
+            item.source == SecretImportItemSource::Vault && selected.contains(&item.id)
+        })
     {
         match import_vault(
             plan.source_vault
@@ -187,23 +184,26 @@ pub fn execute_secret_import(
             continue;
         };
         match credentials.get(CredentialNamespace::OriginalTabby, &item.address) {
-            Ok(Some(value)) => match credentials.put(
-                CredentialNamespace::TabbyRs,
-                &item.address,
-                value.expose_secret(),
-            ) {
-                Ok(()) => imported.push(id),
-                Err(_) => failed.push(SecretImportFailure {
-                    id,
-                    public_error: "Could not write this credential to the Tabby RS keychain namespace."
-                        .into(),
-                }),
-            },
+            Ok(Some(value)) => {
+                match credentials.put(
+                    CredentialNamespace::TabbyRs,
+                    &item.address,
+                    value.expose_secret(),
+                ) {
+                    Ok(()) => imported.push(id),
+                    Err(_) => failed.push(SecretImportFailure {
+                        id,
+                        public_error:
+                            "Could not write this credential to the Tabby RS keychain namespace."
+                                .into(),
+                    }),
+                }
+            }
             Ok(None) => requires_reentry.push(id),
             Err(_) => failed.push(SecretImportFailure {
                 id,
-                public_error: "Could not read this credential from the original keychain namespace."
-                    .into(),
+                public_error:
+                    "Could not read this credential from the original keychain namespace.".into(),
             }),
         }
     }
@@ -216,10 +216,7 @@ pub fn execute_secret_import(
     })
 }
 
-fn build_plan(
-    paths: &StoragePaths,
-    source: &SecretImportSource,
-) -> Result<InternalPlan, AppError> {
+fn build_plan(paths: &StoragePaths, source: &SecretImportSource) -> Result<InternalPlan, AppError> {
     let source_dir = validate_source(paths, &source.source_data_dir)?;
     build_plan_from_source(source_dir)
 }
