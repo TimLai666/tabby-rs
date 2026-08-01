@@ -43,4 +43,5 @@ import { TauriUpdaterService } from './services/updater.service'
 export default class TauriModule { }
 
 export * from './api/hostBridge'
+export * from './api/secretImporter'
 export { TauriHostBridge }
