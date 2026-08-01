@@ -107,7 +107,7 @@ export class TauriVaultService {
         }
         try {
             return await this.snapshot()
-        } catch (error) {
+        } catch {
             this.clearOpenState()
             return this.decrypt(this.store, passphrase)
         }
@@ -324,6 +324,6 @@ function fingerprint (stored: StoredVault): string {
     return `${stored.version}:${stored.keySalt}:${stored.iv}:${stored.contents}`
 }
 
-function sameSecrets (left: VaultSecretData[], right: VaultSecret[]): boolean {
+function sameSecrets (left: VaultSecret[], right: VaultSecret[]): boolean {
     return JSON.stringify(left) === JSON.stringify(right)
 }
