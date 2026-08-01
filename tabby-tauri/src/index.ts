@@ -38,6 +38,8 @@ import { TauriUpdaterService } from './services/updater.service'
         { provide: SettingsTabProvider, useClass: IdentitySettingsTabProvider, multi: true },
     ],
 })
+// Angular discovers providers and declarations through the NgModule metadata.
+// eslint-disable-next-line @typescript-eslint/no-extraneous-class
 export default class TauriModule { }
 
 export * from './api/hostBridge'
