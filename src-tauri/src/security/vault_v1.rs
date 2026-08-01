@@ -74,17 +74,10 @@ pub enum VaultError {
 pub trait VaultCodec: Send + Sync {
     fn version(&self) -> u32;
 
-    fn decrypt(
-        &self,
-        stored: &StoredVault,
-        passphrase: &SecretString,
-    ) -> Result<Vault, VaultError>;
+    fn decrypt(&self, stored: &StoredVault, passphrase: &SecretString)
+        -> Result<Vault, VaultError>;
 
-    fn encrypt(
-        &self,
-        vault: &Vault,
-        passphrase: &SecretString,
-    ) -> Result<StoredVault, VaultError>;
+    fn encrypt(&self, vault: &Vault, passphrase: &SecretString) -> Result<StoredVault, VaultError>;
 }
 
 pub struct VaultCodecs {
@@ -173,11 +166,7 @@ impl VaultCodec for VaultV1 {
         wire.try_into()
     }
 
-    fn encrypt(
-        &self,
-        vault: &Vault,
-        passphrase: &SecretString,
-    ) -> Result<StoredVault, VaultError> {
+    fn encrypt(&self, vault: &Vault, passphrase: &SecretString) -> Result<StoredVault, VaultError> {
         let mut salt = [0_u8; KEY_SALT_LENGTH];
         let mut iv = [0_u8; IV_LENGTH];
         OsRng
@@ -298,9 +287,7 @@ mod tests {
     use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
     use secrecy::{ExposeSecret, SecretString};
 
-    use super::{
-        encrypt_with_material, StoredVault, VaultCodec, VaultCodecs, VaultError, VaultV1,
-    };
+    use super::{encrypt_with_material, StoredVault, VaultCodec, VaultCodecs, VaultError, VaultV1};
 
     const PASSPHRASE: &str = "correct horse";
 
@@ -327,8 +314,8 @@ mod tests {
         let vault = VaultV1.decrypt(&fixture(), &passphrase).unwrap();
         let salt = [0, 1, 2, 3, 4, 5, 6, 7];
         let iv = [
-            0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b,
-            0x1c, 0x1d, 0x1e, 0x1f,
+            0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d,
+            0x1e, 0x1f,
         ];
         let stored = encrypt_with_material(&vault, &passphrase, &salt, &iv).unwrap();
         assert_eq!(stored, fixture());
