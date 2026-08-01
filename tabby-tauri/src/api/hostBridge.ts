@@ -23,10 +23,18 @@ export interface AppIdentity {
     portableRoot: string | null
 }
 
+export interface CliAliasStatus {
+    supported: boolean
+    enabled: boolean
+    aliasPath: string | null
+    conflict: string | null
+    message: string | null
+}
+
 export interface LegacyCliArguments {
     _: string[]
     directory?: string
-    command: string[]
+    command?: string[]
     profileName?: string
     text?: string
     escape: boolean
@@ -78,6 +86,14 @@ export interface HostRequestMap {
     'identity.get': {
         request: Record<string, never>
         response: AppIdentity
+    }
+    'identity.aliasStatus': {
+        request: Record<string, never>
+        response: CliAliasStatus
+    }
+    'identity.setAlias': {
+        request: { enabled: boolean }
+        response: CliAliasStatus
     }
 }
 
