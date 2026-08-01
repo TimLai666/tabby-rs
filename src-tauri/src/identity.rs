@@ -1,4 +1,7 @@
-use std::{env, fs, path::{Path, PathBuf}};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+};
 
 use tauri::Manager;
 
@@ -42,8 +45,9 @@ impl AppPaths {
             Some(root) => root.join("data"),
             None => app
                 .path()
-                .app_data_dir()
-                .map_err(|error| AppError::Io(error.to_string()))?,
+                .data_dir()
+                .map_err(|error| AppError::Io(error.to_string()))?
+                .join(DATA_DIR_NAME),
         };
 
         Ok(Self {
@@ -111,7 +115,7 @@ impl AppPaths {
         };
 
         let owned = is_managed_alias(&alias_path, &self.executable);
-        if alias_path.exists() && !owned {
+        if path_entry_exists(&alias_path) && !owned {
             return CliAliasStatus {
                 supported: true,
                 enabled: false,
@@ -164,7 +168,7 @@ impl AppPaths {
             if !status.enabled {
                 create_managed_alias(&alias_path, &self.executable)?;
             }
-        } else if alias_path.exists() {
+        } else if path_entry_exists(&alias_path) {
             if !is_managed_alias(&alias_path, &self.executable) {
                 return Err(AppError::InvalidArgument(
                     "refusing to remove an alias not managed by Tabby RS".into(),
@@ -179,7 +183,8 @@ impl AppPaths {
     fn alias_path_in_current_path_directory(&self) -> Option<PathBuf> {
         let executable_dir = self.executable.parent()?;
         let path = env::var_os("PATH")?;
-        let matching_dir = env::split_paths(&path).find(|directory| same_directory(directory, executable_dir))?;
+        let matching_dir = env::split_paths(&path)
+            .find(|directory| same_directory(directory, executable_dir))?;
 
         #[cfg(windows)]
         return Some(matching_dir.join("tabby.cmd"));
@@ -216,6 +221,10 @@ pub struct CliAliasStatus {
     pub message: Option<String>,
 }
 
+fn path_entry_exists(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok()
+}
+
 fn same_directory(left: &Path, right: &Path) -> bool {
     let left = fs::canonicalize(left).unwrap_or_else(|_| left.to_path_buf());
     let right = fs::canonicalize(right).unwrap_or_else(|_| right.to_path_buf());
@@ -233,7 +242,7 @@ fn find_path_alias_conflict(owned_alias: Option<&Path>) -> Option<PathBuf> {
     let path = env::var_os("PATH")?;
     for directory in env::split_paths(&path) {
         for candidate in alias_candidates(&directory) {
-            if !candidate.exists() {
+            if !path_entry_exists(&candidate) {
                 continue;
             }
             if owned_alias.is_some_and(|owned| same_path(&candidate, owned)) {
@@ -289,7 +298,10 @@ fn is_managed_alias(alias: &Path, executable: &Path) -> bool {
     let target = if target.is_absolute() {
         target
     } else {
-        alias.parent().unwrap_or_else(|| Path::new(".")).join(target)
+        alias
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(target)
     };
     same_path(&target, executable)
 }
