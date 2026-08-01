@@ -24,6 +24,11 @@ fn decode_base64(input: &str) -> Result<Vec<u8>, String> {
         if bits >= 8 {
             bits -= 8;
             output.push(((buffer >> bits) & 0xff) as u8);
+            buffer = if bits == 0 {
+                0
+            } else {
+                buffer & ((1_u32 << bits) - 1)
+            };
         }
     }
 
