@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
     sync::Arc,
@@ -7,7 +7,6 @@ use std::{
 };
 
 use secrecy::{ExposeSecret, SecretString};
-use serde_json::Value as JsonValue;
 use serde_yaml::{Mapping, Value as YamlValue};
 use sha2::{Digest, Sha256};
 
@@ -91,7 +90,6 @@ pub struct SecretImportReport {
 
 #[derive(Debug, Clone)]
 struct PlannedKeychainItem {
-    item: SecretImportItem,
     address: CredentialAddress,
 }
 
@@ -189,21 +187,18 @@ pub fn execute_secret_import(
             continue;
         };
         match credentials.get(CredentialNamespace::OriginalTabby, &item.address) {
-            Ok(Some(value)) => {
-                let result = credentials.put(
-                    CredentialNamespace::TabbyRs,
-                    &item.address,
-                    value.expose_secret(),
-                );
-                match result {
-                    Ok(()) => imported.push(id),
-                    Err(_) => failed.push(SecretImportFailure {
-                        id,
-                        public_error: "Could not write this credential to the Tabby RS keychain namespace."
-                            .into(),
-                    }),
-                }
-            }
+            Ok(Some(value)) => match credentials.put(
+                CredentialNamespace::TabbyRs,
+                &item.address,
+                value.expose_secret(),
+            ) {
+                Ok(()) => imported.push(id),
+                Err(_) => failed.push(SecretImportFailure {
+                    id,
+                    public_error: "Could not write this credential to the Tabby RS keychain namespace."
+                        .into(),
+                }),
+            },
             Ok(None) => requires_reentry.push(id),
             Err(_) => failed.push(SecretImportFailure {
                 id,
@@ -226,16 +221,19 @@ fn build_plan(
     source: &SecretImportSource,
 ) -> Result<InternalPlan, AppError> {
     let source_dir = validate_source(paths, &source.source_data_dir)?;
-    let config_path = source_dir.join("config.yaml");
-    let config_bytes = read_required_regular_file(&config_path)?;
+    build_plan_from_source(source_dir)
+}
+
+fn build_plan_from_source(source_dir: PathBuf) -> Result<InternalPlan, AppError> {
+    let config_bytes = read_required_regular_file(&source_dir.join("config.yaml"))?;
     if config_bytes.len() > MAX_SOURCE_CONFIG_BYTES {
         return Err(AppError::InvalidData(
             "source config.yaml is too large".into(),
         ));
     }
     let root: YamlValue = serde_yaml::from_slice(&config_bytes)?;
-
     let source_text = source_dir.to_string_lossy().into_owned();
+
     let mut items = Vec::new();
     let source_vault = extract_vault(&root);
     if source_vault.is_some() {
@@ -248,9 +246,8 @@ fn build_plan(
         });
     }
 
-    let profiles = extract_ssh_profiles(&root);
     let mut keychain_items = BTreeMap::new();
-    for (index, profile) in profiles.into_iter().enumerate() {
+    for (index, profile) in extract_ssh_profiles(&root).into_iter().enumerate() {
         if !profile.user.is_empty() {
             let service = match profile.port {
                 Some(port) => format!("ssh@{}:{port}", profile.host),
@@ -261,21 +258,14 @@ fn build_plan(
                 account: profile.user.clone(),
             };
             let id = stable_item_id("keychain", &source_text, &address.service, &address.account);
-            let item = SecretImportItem {
+            items.push(SecretImportItem {
                 id: id.clone(),
                 source: SecretImportItemSource::Keychain,
                 kind: "sshPassword".into(),
                 label: format!("SSH password {}", index + 1),
                 requires_passphrase: false,
-            };
-            keychain_items.insert(
-                id,
-                PlannedKeychainItem {
-                    item: item.clone(),
-                    address,
-                },
-            );
-            items.push(item);
+            });
+            keychain_items.insert(id, PlannedKeychainItem { address });
         }
 
         for (key_index, private_key) in profile.private_keys.into_iter().enumerate() {
@@ -287,21 +277,14 @@ fn build_plan(
                 account: "user".into(),
             };
             let id = stable_item_id("keychain", &source_text, &address.service, &address.account);
-            let item = SecretImportItem {
+            items.push(SecretImportItem {
                 id: id.clone(),
                 source: SecretImportItemSource::Keychain,
                 kind: "privateKeyPassphrase".into(),
                 label: format!("Private-key passphrase {}.{}", index + 1, key_index + 1),
                 requires_passphrase: false,
-            };
-            keychain_items.insert(
-                id,
-                PlannedKeychainItem {
-                    item: item.clone(),
-                    address,
-                },
-            );
-            items.push(item);
+            });
+            keychain_items.insert(id, PlannedKeychainItem { address });
         }
     }
 
@@ -320,8 +303,7 @@ fn build_plan(
 fn validate_source(paths: &StoragePaths, source: &str) -> Result<PathBuf, AppError> {
     let canonical = fs::canonicalize(source)
         .map_err(|_| AppError::InvalidArgument("secret import source is unavailable".into()))?;
-    let plans = detect_import_plans(paths)?;
-    let allowed = plans
+    let allowed = detect_import_plans(paths)?
         .iter()
         .any(|plan| Path::new(&plan.source_data_dir) == canonical.as_path());
     if !allowed {
@@ -334,8 +316,7 @@ fn validate_source(paths: &StoragePaths, source: &str) -> Result<PathBuf, AppErr
 
 fn extract_vault(root: &YamlValue) -> Option<StoredVault> {
     let mapping = root.as_mapping()?;
-    let value = mapping_get(mapping, "vault")?;
-    serde_yaml::from_value(value.clone()).ok()
+    serde_yaml::from_value(mapping_get(mapping, "vault")?.clone()).ok()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -361,8 +342,9 @@ fn profile_from_mapping(mapping: &Mapping) -> Option<SshProfileCandidate> {
         .and_then(YamlValue::as_mapping)
         .unwrap_or(mapping);
     let host = mapping_string(candidate, "host")?;
-    let user = mapping_string(candidate, "user").unwrap_or_default();
-    let port = mapping_u16(candidate, "port");
+    if host.is_empty() {
+        return None;
+    }
     let private_keys = mapping_get(candidate, "privateKeys")
         .and_then(YamlValue::as_sequence)
         .map(|items| {
@@ -373,14 +355,10 @@ fn profile_from_mapping(mapping: &Mapping) -> Option<SshProfileCandidate> {
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-
-    if host.is_empty() {
-        return None;
-    }
     Some(SshProfileCandidate {
         host,
-        port,
-        user,
+        port: mapping_u16(candidate, "port"),
+        user: mapping_string(candidate, "user").unwrap_or_default(),
         private_keys,
     })
 }
@@ -403,7 +381,7 @@ fn visit_yaml(value: &YamlValue, visitor: &mut impl FnMut(&Mapping)) {
 }
 
 fn mapping_get<'a>(mapping: &'a Mapping, key: &str) -> Option<&'a YamlValue> {
-    mapping.get(YamlValue::String(key.into()))
+    mapping.get(&YamlValue::String(key.into()))
 }
 
 fn mapping_string(mapping: &Mapping, key: &str) -> Option<String> {
@@ -442,7 +420,7 @@ fn import_vault(
     let passphrase = SecretString::new(passphrase);
     let vault = VaultCodecs::default().decrypt(&stored, &passphrase)?;
     let snapshot = VaultSnapshot {
-        config: yaml_json_value(vault.config),
+        config: vault.config,
         secrets: vault
             .secrets
             .into_iter()
@@ -460,13 +438,11 @@ fn import_vault(
     )?)
 }
 
-fn yaml_json_value(value: JsonValue) -> JsonValue {
-    value
-}
-
 fn public_import_error(error: &AppError) -> String {
     match error {
-        AppError::PermissionDenied(_) => "The Vault could not be unlocked with the supplied authorization.".into(),
+        AppError::PermissionDenied(_) => {
+            "The Vault could not be unlocked with the supplied authorization.".into()
+        }
         AppError::InvalidData(_) => "The original Vault is invalid or unsupported.".into(),
         _ => "The Vault could not be imported.".into(),
     }
@@ -478,68 +454,12 @@ const fn default_remember_seconds() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use std::fs;
 
-    use secrecy::SecretString;
+    use serde_yaml::Value as YamlValue;
+    use tempfile::tempdir;
 
-    use super::{
-        execute_secret_import, extract_ssh_profiles, stable_item_id, CredentialAddress,
-        CredentialNamespace, CredentialStore, SecretImportSelection, SecretImportSource,
-    };
-    use crate::{
-        security::{CredentialError, SecretState},
-        storage::{
-            migration::detect_import_plans_from_candidates_for_tests,
-            paths::StoragePaths,
-        },
-    };
-
-    #[derive(Default)]
-    struct MemoryStore {
-        values: Mutex<HashMap<(CredentialNamespace, String, String), String>>,
-    }
-
-    impl CredentialStore for MemoryStore {
-        fn get(
-            &self,
-            namespace: CredentialNamespace,
-            address: &CredentialAddress,
-        ) -> Result<Option<SecretString>, CredentialError> {
-            Ok(self
-                .values
-                .lock()
-                .unwrap()
-                .get(&(namespace, address.service.clone(), address.account.clone()))
-                .cloned()
-                .map(SecretString::new))
-        }
-
-        fn put(
-            &self,
-            namespace: CredentialNamespace,
-            address: &CredentialAddress,
-            value: &str,
-        ) -> Result<(), CredentialError> {
-            self.values.lock().unwrap().insert(
-                (namespace, address.service.clone(), address.account.clone()),
-                value.into(),
-            );
-            Ok(())
-        }
-
-        fn delete(
-            &self,
-            namespace: CredentialNamespace,
-            address: &CredentialAddress,
-        ) -> Result<bool, CredentialError> {
-            Ok(self
-                .values
-                .lock()
-                .unwrap()
-                .remove(&(namespace, address.service.clone(), address.account.clone()))
-                .is_some())
-        }
-    }
+    use super::{build_plan_from_source, extract_ssh_profiles, stable_item_id};
 
     #[test]
     fn extracts_keychain_candidates_without_secret_values() {
@@ -554,9 +474,29 @@ mod tests {
     }
 
     #[test]
+    fn plan_contains_only_metadata_and_opaque_ids() {
+        let temp = tempdir().unwrap();
+        let source = temp.path().join("source");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(
+            source.join("config.yaml"),
+            "profiles:\n  - type: ssh\n    options:\n      host: example.test\n      user: alice\n",
+        )
+        .unwrap();
+        let plan = build_plan_from_source(source).unwrap().public;
+        assert_eq!(plan.items.len(), 1);
+        let serialized = serde_json::to_string(&plan).unwrap();
+        assert!(!serialized.contains("example.test"));
+        assert!(!serialized.contains("alice"));
+    }
+
+    #[test]
     fn item_ids_are_stable_and_do_not_embed_addresses() {
         let id = stable_item_id("keychain", "/source", "ssh@example.test", "alice");
-        assert_eq!(id, stable_item_id("keychain", "/source", "ssh@example.test", "alice"));
+        assert_eq!(
+            id,
+            stable_item_id("keychain", "/source", "ssh@example.test", "alice")
+        );
         assert!(!id.contains("example.test"));
         assert!(!id.contains("alice"));
     }
