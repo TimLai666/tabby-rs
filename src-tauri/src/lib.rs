@@ -6,6 +6,8 @@ mod security;
 mod state;
 mod storage;
 
+use std::sync::Arc;
+
 use commands::{
     app::{app_bootstrap, app_quit, app_runtime_info},
     backup::{backup_create, backup_list, backup_restore},
@@ -14,6 +16,7 @@ use commands::{
     keychain::{keychain_delete, keychain_get, keychain_put},
     launch::app_initial_launch,
     migration::{migration_detect, migration_execute},
+    secrets::{secret_import_execute, secret_import_plan},
     vault::{
         vault_get_file, vault_get_secret, vault_lock, vault_put_file, vault_put_secret,
         vault_remove_secret, vault_replace, vault_set_config, vault_set_enabled, vault_snapshot,
@@ -95,7 +98,7 @@ pub fn run() {
                 save_state(storage_paths.state_file(), &persisted_state)?;
             }
             app.manage(AppState::new(paths, initial_launch));
-            app.manage(SecretState::default());
+            app.manage(Arc::new(SecretState::default()));
             app.manage(CredentialState::default());
 
             #[cfg(any(target_os = "linux", all(debug_assertions, windows)))]
@@ -135,6 +138,8 @@ pub fn run() {
             keychain_delete,
             migration_detect,
             migration_execute,
+            secret_import_plan,
+            secret_import_execute,
             vault_status,
             vault_unlock,
             vault_replace,
