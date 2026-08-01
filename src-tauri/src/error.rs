@@ -48,8 +48,8 @@ mod tests {
 
     #[test]
     fn exposes_revision_conflicts_without_internal_paths() {
-        let value = serde_json::to_value(AppError::Conflict("config revision changed".into()))
-            .unwrap();
+        let value =
+            serde_json::to_value(AppError::Conflict("config revision changed".into())).unwrap();
         assert_eq!(value["code"], "conflict");
         assert_eq!(value["details"], "config revision changed");
     }
