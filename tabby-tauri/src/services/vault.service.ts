@@ -22,6 +22,14 @@ interface UnlockInput {
     rememberForSeconds: number
 }
 
+function fingerprint (stored: StoredVault): string {
+    return `${stored.version}:${stored.keySalt}:${stored.iv}:${stored.contents}`
+}
+
+function sameSecrets (left: VaultSecret[], right: VaultSecret[]): boolean {
+    return JSON.stringify(left) === JSON.stringify(right)
+}
+
 @Injectable({ providedIn: 'root' })
 export class TauriVaultService {
     get ready$ (): Observable<boolean> { return this.ready }
@@ -327,12 +335,4 @@ export class TauriVaultService {
     private async waitUntilReady (): Promise<void> {
         await lastValueFrom(this.ready$)
     }
-}
-
-function fingerprint (stored: StoredVault): string {
-    return `${stored.version}:${stored.keySalt}:${stored.iv}:${stored.contents}`
-}
-
-function sameSecrets (left: VaultSecret[], right: VaultSecret[]): boolean {
-    return JSON.stringify(left) === JSON.stringify(right)
 }
