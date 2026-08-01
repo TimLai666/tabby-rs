@@ -213,6 +213,15 @@ export class TauriVaultService {
         return !!this.store
     }
 
+    acceptImportedMutation (
+        mutation: VaultMutationResult,
+        rememberForSeconds: number,
+    ): void {
+        this.store = mutation.stored
+        this.storeFingerprint = fingerprint(mutation.stored)
+        this.markOpen(rememberForSeconds)
+    }
+
     private async ensureUnlocked (): Promise<void> {
         await this.waitUntilReady()
         if (!this.store) {
