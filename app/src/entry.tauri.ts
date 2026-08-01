@@ -6,6 +6,7 @@ import './global.scss'
 import './toastr.scss'
 
 import CoreModule, { bootstrap as CoreBootstrap } from '../../tabby-core/src'
+import SettingsModule from '../../tabby-settings/src'
 import TauriModule, {
     TAURI_RUNTIME_INFO,
     TauriHostBridge,
@@ -46,10 +47,13 @@ async function main (): Promise<void> {
     coreModule.ngModule.pluginName = 'core'
     coreModule.bootstrap = CoreBootstrap
 
+    const settingsModule = SettingsModule as any
+    settingsModule.pluginName = 'settings'
+
     const tauriModule = TauriModule as any
     tauriModule.pluginName = 'tauri'
 
-    await bootstrapTabby(bootstrapData, [coreModule, tauriModule], {
+    await bootstrapTabby(bootstrapData, [coreModule, settingsModule, tauriModule], {
         debug: false,
         extraProviders: [
             { provide: TAURI_RUNTIME_INFO, useValue: runtimeInfo },
