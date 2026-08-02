@@ -30,7 +30,11 @@
     "icon": [
       "icons/icon.png",
       "icons/icon.ico"
-    ]
+    ],
+    "resources": {
+      "../extras/UAC.exe": "extras/UAC.exe",
+      "../extras/clink/*": "extras/clink/"
+    }
   },
   "plugins": {
     "deep-link": {
