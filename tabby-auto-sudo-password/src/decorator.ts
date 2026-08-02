@@ -3,61 +3,19 @@ import { Injectable } from '@angular/core'
 import { TerminalDecorator, BaseTerminalTabComponent, XTermFrontend, SessionMiddleware } from 'tabby-terminal'
 import { SSHProfile, SSHTabComponent, PasswordStorageService } from 'tabby-ssh'
 
-const SUDO_PROMPT_MARKER = '[sudo'
-// Multi-language sudo prompt patterns
-// Each pattern captures the username in a capture group (empty for sudo-rs)
-const SUDO_PROMPT_PATTERNS: RegExp[] = [
-    // Traditional sudo patterns (with username)
-    // English: [sudo] password for username:
-    /^\[sudo\] password for ([^:]+):\s*$/im,
-    // German: [sudo] Passwort für username:
-    /^\[sudo\] Passwort für ([^:]+):\s*$/im,
-    // French: [sudo] Mot de passe de username :
-    /^\[sudo\] Mot de passe de ([^:]+)\s+:\s*$/im,
-    // Spanish: [sudo] contraseña para username:
-    /^\[sudo\] [Cc]ontraseña para ([^:]+):\s*$/im,
-    // Portuguese: [sudo] senha para username:
-    /^\[sudo\] [Ss]enha para ([^:]+):\s*$/im,
-    // Italian: [sudo] password di username:
-    /^\[sudo\] [Pp]assword di ([^:]+):\s*$/im,
-    // Simplified Chinese: [sudo] username 的密码：
-    /^\[sudo\] ([^\s]+) 的密码[：:]\s*$/im,
-    // Traditional Chinese: [sudo] username 的密碼：
-    /^\[sudo\] ([^\s]+) 的密碼[：:]\s*$/im,
-    // Japanese: [sudo] username のパスワード:
-    /^\[sudo\] ([^\s]+) のパスワード[：:]\s*$/im,
-    // Korean: [sudo] username 암호:
-    /^\[sudo\] ([^\s]+) 암호[：:]\s*$/im,
-    // Russian: [sudo] пароль для username:
-    /^\[sudo\] пароль для ([^:]+):\s*$/im,
-    // Polish: [sudo] hasło użytkownika username:
-    /^\[sudo\] hasło użytkownika ([^:]+):\s*$/im,
-    // Turkish: [sudo] username için parola:
-    /^\[sudo\] ([^\s]+) için parola:\s*$/im,
-    // Czech: [sudo] heslo pro username:
-    /^\[sudo\] [Hh]eslo pro ([^:]+):\s*$/im,
-    // Swedish: [sudo] lösenord för username:
-    /^\[sudo\] lösenord för ([^:]+):\s*$/im,
-    // Danish: [sudo] adgangskode for username:
-    /^\[sudo\] adgangskode for ([^:]+):\s*$/im,
-    // Indonesian: [sudo] kata sandi untuk username:
-    /^\[sudo\] kata sandi untuk ([^:]+):\s*$/im,
-    // Ukrainian: [sudo] пароль до username:
-    /^\[sudo\] пароль до ([^:]+):\s*$/im,
-    // Croatian: [sudo] lozinka za username:
-    /^\[sudo\] lozinka za ([^:]+):\s*$/im,
+import { SudoPromptDetector } from './promptDetector'
 
-    // sudo-rs pattern (no username displayed, use empty capture group)
-    // Matches: [sudo: authenticate] <password word>:
-    /^\[sudo: authenticate\] .+?[：:]\s*$/im,
-]
+const PENDING_PASSWORD_TTL_MS = 30_000
 
 export class AutoSudoPasswordMiddleware extends SessionMiddleware {
-    private pendingPasswordToPaste: string | null = null
+    private pendingPasswordToPaste: string|null = null
+    private pendingPasswordExpiresAt = 0
+    private pendingTimer: ReturnType<typeof setTimeout>|null = null
     private pasteHint = `${colors.black.bgBlackBright(' Tabby ')} ${colors.gray('Press Enter to paste saved password')}`
     private pasteHintLength = colors.stripColor(this.pasteHint).length
-    // Cache the last matched pattern index for performance optimization
-    private lastMatchedPatternIndex = 0
+    private detector = new SudoPromptDetector()
+    private decoder = new TextDecoder('utf-8', { fatal: false })
+    private lookupGeneration = 0
 
     constructor (
         private profile: SSHProfile,
@@ -65,64 +23,84 @@ export class AutoSudoPasswordMiddleware extends SessionMiddleware {
     ) { super() }
 
     feedFromSession (data: Buffer): void {
-        const text = data.toString('utf-8')
-        if (!text.toLowerCase().includes(SUDO_PROMPT_MARKER)) {
-            this.outputToTerminal.next(data)
-            return
-        }
-        // Try patterns starting from the last successful match for better performance
-        const patternCount = SUDO_PROMPT_PATTERNS.length
-        for (let i = 0; i < patternCount; i++) {
-            const idx = (this.lastMatchedPatternIndex + i) % patternCount
-            const pattern = SUDO_PROMPT_PATTERNS[idx]
-            const match = pattern.exec(text)
-            if (match) {
-                this.lastMatchedPatternIndex = idx // Remember this pattern for next time
-                // For sudo-rs patterns, match[1] is undefined, use current SSH user
-                const username = match[1] || this.profile.options.user
-                this.handlePrompt(username)
-                break
-            }
+        const match = this.detector.feed(this.decoder.decode(data, { stream: true }))
+        if (match) {
+            const username = match.username ?? this.profile.options.user
+            void this.handlePrompt(username)
         }
         this.outputToTerminal.next(data)
     }
 
     feedFromTerminal (data: Buffer): void {
         if (this.pendingPasswordToPaste) {
-            const backspaces = Buffer.alloc(this.pasteHintLength, 8) // backspace
-            const spaces = Buffer.alloc(this.pasteHintLength, 32) // space
-            const clear = Buffer.concat([backspaces, spaces, backspaces])
-            this.outputToTerminal.next(clear)
-            if (data.length === 1 && data[0] === 13) { // Enter key
-                this.outputToSession.next(Buffer.from(this.pendingPasswordToPaste + '\n'))
-                this.pendingPasswordToPaste = null
+            const password = Date.now() <= this.pendingPasswordExpiresAt
+                ? this.pendingPasswordToPaste
+                : null
+            this.clearHint()
+            this.cancelPendingPassword()
+
+            if (password && data.length === 1 && data[0] === 13) {
+                this.outputToSession.next(Buffer.from(password + '\n'))
                 return
-            } else {
-                this.pendingPasswordToPaste = null
             }
         }
         this.outputToSession.next(data)
     }
 
     async handlePrompt (username: string): Promise<void> {
-        console.log(`Detected sudo prompt for user: ${username}`)
-        const pw = await this.ps.loadPassword(this.profile, username)
-        if (pw) {
-            this.outputToTerminal.next(Buffer.from(this.pasteHint))
-            this.pendingPasswordToPaste = pw
+        const generation = ++this.lookupGeneration
+        let password: string|null = null
+        try {
+            password = await this.loadPassword(username)
+        } catch {
+            return
         }
+        if (generation !== this.lookupGeneration || !password) {
+            return
+        }
+
+        this.cancelPendingPassword(false)
+        this.pendingPasswordToPaste = password
+        this.pendingPasswordExpiresAt = Date.now() + PENDING_PASSWORD_TTL_MS
+        this.outputToTerminal.next(Buffer.from(this.pasteHint))
+        this.pendingTimer = setTimeout(() => {
+            if (generation === this.lookupGeneration && this.pendingPasswordToPaste) {
+                this.clearHint()
+                this.cancelPendingPassword()
+            }
+        }, PENDING_PASSWORD_TTL_MS)
     }
 
-    async loadPassword (username: string): Promise<string| null> {
+    async loadPassword (username: string): Promise<string|null> {
         if (this.profile.options.user !== username) {
             return null
         }
         return this.ps.loadPassword(this.profile, username)
     }
+
+    private clearHint (): void {
+        const backspaces = Buffer.alloc(this.pasteHintLength, 8)
+        const spaces = Buffer.alloc(this.pasteHintLength, 32)
+        this.outputToTerminal.next(Buffer.concat([backspaces, spaces, backspaces]))
+    }
+
+    private cancelPendingPassword (invalidateLookup = true): void {
+        if (invalidateLookup) {
+            this.lookupGeneration++
+        }
+        if (this.pendingTimer) {
+            clearTimeout(this.pendingTimer)
+            this.pendingTimer = null
+        }
+        this.pendingPasswordToPaste = null
+        this.pendingPasswordExpiresAt = 0
+    }
 }
 
 @Injectable()
 export class AutoSudoPasswordDecorator extends TerminalDecorator {
+    private decoratedSessions = new WeakSet<object>()
+
     constructor (
         private ps: PasswordStorageService,
     ) {
@@ -130,9 +108,10 @@ export class AutoSudoPasswordDecorator extends TerminalDecorator {
     }
 
     private attachToSession (tab: SSHTabComponent) {
-        if (!tab.session) {
+        if (!tab.session || this.decoratedSessions.has(tab.session)) {
             return
         }
+        this.decoratedSessions.add(tab.session)
         tab.session.middleware.unshift(new AutoSudoPasswordMiddleware(tab.profile, this.ps))
     }
 
