@@ -27,6 +27,7 @@ pub struct PtySession {
     killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
     flow: Arc<FlowControl>,
     sequence: AtomicU64,
+    dropped_bytes: AtomicU64,
     attached: AtomicBool,
     exited: AtomicBool,
     reader_done: AtomicBool,
@@ -55,6 +56,7 @@ impl PtySession {
             killer: Mutex::new(killer),
             flow: Arc::new(FlowControl::new(MAX_UNACKED_BYTES)),
             sequence: AtomicU64::new(0),
+            dropped_bytes: AtomicU64::new(0),
             attached: AtomicBool::new(false),
             exited: AtomicBool::new(false),
             reader_done: AtomicBool::new(false),
@@ -83,13 +85,31 @@ impl PtySession {
 
     pub fn attach(&self, app: &AppHandle) {
         self.attached.store(true, Ordering::Release);
-        self.flow.attach();
+        let dropped = self
+            .dropped_bytes
+            .swap(0, Ordering::AcqRel)
+            .saturating_add(self.flow.attach() as u64);
+        if dropped > 0 {
+            let _ = app.emit(
+                "pty.error",
+                PtyErrorEvent {
+                    id: self.id.clone(),
+                    code: "outputDropped".into(),
+                    details: format!(
+                        "{dropped} byte(s) of unacknowledged PTY output were discarded while the renderer was detached"
+                    ),
+                },
+            );
+        }
         self.maybe_emit_exit(app);
     }
 
     pub fn detach(&self) {
         self.attached.store(false, Ordering::Release);
-        self.flow.detach();
+        let dropped = self.flow.detach() as u64;
+        if dropped > 0 {
+            self.dropped_bytes.fetch_add(dropped, Ordering::AcqRel);
+        }
         self.complete_if_delivered();
     }
 
