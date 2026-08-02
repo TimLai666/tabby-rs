@@ -28,6 +28,11 @@ pub fn pty_exists(manager: State<'_, Arc<PtyManager>>, request: PtyIdRequest) ->
 }
 
 #[tauri::command]
+pub fn pty_is_alive(manager: State<'_, Arc<PtyManager>>, request: PtyIdRequest) -> bool {
+    manager.is_alive(&request.id)
+}
+
+#[tauri::command]
 pub fn pty_attach(
     app: AppHandle,
     manager: State<'_, Arc<PtyManager>>,
