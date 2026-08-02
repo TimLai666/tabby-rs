@@ -43,6 +43,13 @@ function iconFor (icon?: string): string|undefined {
     }
 }
 
+function normalizeCompatibilityIDs (shell: DetectedShell): DetectedShell {
+    if (shell.providerId === 'windows-stock' && shell.id === 'clink') {
+        return { ...shell, id: 'cmd-clink' }
+    }
+    return shell
+}
+
 @Injectable()
 export class TauriDetectedShellProvider extends ShellProvider {
     constructor (
@@ -63,11 +70,11 @@ export class TauriDetectedShellProvider extends ShellProvider {
             console.warn('[shell detection]', warning)
         }
 
-        const shells = [...result.shells]
-        if (windows.clinkPath && !shells.some(shell => shell.id === 'clink')) {
+        const shells = result.shells.map(normalizeCompatibilityIDs)
+        if (windows.clinkPath && !shells.some(shell => shell.id === 'cmd-clink')) {
             const cmdIndex = shells.findIndex(shell => shell.id === 'cmd')
             const clink: DetectedShell = {
-                id: 'clink',
+                id: 'cmd-clink',
                 providerId: 'windows-stock',
                 name: 'CMD (clink)',
                 command: 'cmd.exe',
