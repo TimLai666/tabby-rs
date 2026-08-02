@@ -27,19 +27,20 @@ impl FlowControl {
         }
     }
 
-    pub fn attach(&self) {
+    pub fn attach(&self) -> usize {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        let dropped = std::mem::take(&mut state.unacked);
         state.attached = true;
-        state.unacked = 0;
         self.wake.notify_all();
+        dropped
     }
 
-    pub fn detach(&self) -> bool {
+    pub fn detach(&self) -> usize {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        let dropped = std::mem::take(&mut state.unacked);
         state.attached = false;
-        state.unacked = 0;
         self.wake.notify_all();
-        true
+        dropped
     }
 
     pub fn reserve(&self, bytes: usize) -> bool {
@@ -113,7 +114,7 @@ mod tests {
 
         thread::sleep(Duration::from_millis(20));
         assert_eq!(flow.unacked(), 0);
-        flow.attach();
+        assert_eq!(flow.attach(), 0);
         thread::sleep(Duration::from_millis(20));
         assert_eq!(flow.unacked(), 8);
         assert!(flow.ack(8));
@@ -124,9 +125,9 @@ mod tests {
     #[test]
     fn renderer_disconnect_pauses_new_output_until_reattach() {
         let flow = Arc::new(FlowControl::new(10));
-        flow.attach();
+        assert_eq!(flow.attach(), 0);
         assert!(flow.reserve(10));
-        assert!(flow.detach());
+        assert_eq!(flow.detach(), 10);
         assert_eq!(flow.unacked(), 0);
 
         let (sent, received) = mpsc::channel();
@@ -135,15 +136,24 @@ mod tests {
             thread::spawn(move || sent.send(flow.reserve(1)).unwrap())
         };
         assert!(received.recv_timeout(Duration::from_millis(20)).is_err());
-        flow.attach();
+        assert_eq!(flow.attach(), 0);
         assert!(received.recv_timeout(Duration::from_secs(1)).unwrap());
         worker.join().unwrap();
     }
 
     #[test]
+    fn replacing_an_attachment_reports_discarded_output() {
+        let flow = FlowControl::new(10);
+        assert_eq!(flow.attach(), 0);
+        assert!(flow.reserve(7));
+        assert_eq!(flow.attach(), 7);
+        assert_eq!(flow.unacked(), 0);
+    }
+
+    #[test]
     fn one_byte_and_exact_window_chunks_are_supported() {
         let flow = FlowControl::new(10);
-        flow.attach();
+        assert_eq!(flow.attach(), 0);
         assert!(flow.reserve(1));
         assert!(flow.ack(1));
         assert!(flow.reserve(10));
@@ -160,7 +170,7 @@ mod tests {
         const ONE_GIB: usize = 1024 * 1024 * 1024;
 
         let flow = FlowControl::new(WINDOW);
-        flow.attach();
+        assert_eq!(flow.attach(), 0);
         let mut processed = 0usize;
         while processed < ONE_GIB {
             assert!(flow.reserve(CHUNK));
