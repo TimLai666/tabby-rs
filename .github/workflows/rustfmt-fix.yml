@@ -1,0 +1,34 @@
+name: Rustfmt fix
+
+on:
+  push:
+    branches:
+      - feature/8-pty-sessions-backpressure
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: feature/8-pty-sessions-backpressure
+
+      - name: Format Rust sources
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml
+
+      - name: Commit formatting
+        shell: bash
+        run: |
+          if git diff --quiet -- src-tauri; then
+            echo "Rust sources are already formatted."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src-tauri
+          git commit -m "style: format Rust PTY implementation"
+          git push origin HEAD:feature/8-pty-sessions-backpressure
