@@ -33,8 +33,7 @@ pub fn status(app: &AppHandle) -> WindowsIntegrationStatus {
     {
         let roots = resource_roots(app);
         let clink_path = find_clink(&roots).and_then(path_text);
-        let uac_helper_path = find_regular_resource(&roots, Path::new(UAC_HELPER_NAME))
-            .and_then(path_text);
+        let uac_helper_path = find_uac_helper(&roots).and_then(path_text);
         let mut warnings = Vec::new();
         if clink_path.is_none() {
             warnings.push("Bundled Clink helper was not found; stock CMD remains available.".into());
@@ -109,12 +108,14 @@ fn canonical_regular_directories(candidates: Vec<PathBuf>) -> Vec<PathBuf> {
 }
 
 fn find_regular_resource(roots: &[PathBuf], relative: &Path) -> Option<PathBuf> {
-    if relative.is_absolute() || relative.components().any(|component| {
-        matches!(
-            component,
-            std::path::Component::ParentDir | std::path::Component::Prefix(_)
-        )
-    }) {
+    if relative.is_absolute()
+        || relative.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::ParentDir | std::path::Component::Prefix(_)
+            )
+        })
+    {
         return None;
     }
 
@@ -135,7 +136,7 @@ fn path_text(path: PathBuf) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
+    use std::{fs, path::Path};
 
     use super::{find_regular_resource, UAC_HELPER_NAME};
 
