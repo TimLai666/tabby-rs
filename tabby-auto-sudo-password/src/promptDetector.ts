@@ -61,9 +61,8 @@ export class SudoPromptDetector {
 
             this.lastMatchEnd = absoluteEnd
             this.lastMatchedPatternIndex = index
-            return {
-                username: match[1]?.trim() || null,
-            }
+            const username = match.length > 1 ? match[1].trim() || null : null
+            return { username }
         }
 
         return null
