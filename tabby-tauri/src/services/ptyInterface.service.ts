@@ -129,6 +129,10 @@ export class TauriPTYProxy extends PTYProxy {
         return Promise.resolve(this.response.pid)
     }
 
+    override isAlive (): Promise<boolean> {
+        return this.bridge.invoke('pty.isAlive', { id: this.response.id })
+    }
+
     override getTruePID (): Promise<number> {
         return this.truePID
     }
