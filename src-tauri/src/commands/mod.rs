@@ -9,3 +9,4 @@ pub mod pty;
 pub mod secrets;
 pub mod shell;
 pub mod vault;
+pub mod windows;
