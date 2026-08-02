@@ -99,7 +99,7 @@ export class AutoSudoPasswordMiddleware extends SessionMiddleware {
 
 @Injectable()
 export class AutoSudoPasswordDecorator extends TerminalDecorator {
-    private decoratedSessions = new WeakSet<object>()
+    private decoratedSessions = new WeakSet()
 
     constructor (
         private ps: PasswordStorageService,
