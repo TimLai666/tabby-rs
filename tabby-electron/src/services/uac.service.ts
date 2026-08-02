@@ -5,6 +5,9 @@ import { WIN_BUILD_CONPTY_SUPPORTED, isWindowsBuild } from 'tabby-core'
 import { SessionOptions, UACService } from 'tabby-local'
 import { ElectronService } from './electron.service'
 
+const UAC_PROTOCOL_MARKER = Buffer.from('tabby-rs-uac-', 'utf16le')
+const MAX_HELPER_BYTES = 16 * 1024 * 1024
+
 /** @hidden */
 @Injectable()
 export class ElectronUACService extends UACService {
@@ -16,12 +19,12 @@ export class ElectronUACService extends UACService {
         super()
         this.helperPath = this.resolveHelperPath()
         this.isAvailable = isWindowsBuild(WIN_BUILD_CONPTY_SUPPORTED)
-            && fs.existsSync(this.helperPath)
+            && this.isHardenedHelper(this.helperPath)
     }
 
     patchSessionOptionsForUAC (sessionOptions: SessionOptions): SessionOptions {
         if (!this.isAvailable) {
-            throw new Error('Administrator sessions are unavailable because the UAC helper is missing')
+            throw new Error('Administrator sessions are unavailable because the hardened UAC helper is missing')
         }
 
         return {
@@ -34,6 +37,18 @@ export class ElectronUACService extends UACService {
                 sessionOptions.command,
                 ...sessionOptions.args,
             ],
+        }
+    }
+
+    private isHardenedHelper (helperPath: string): boolean {
+        try {
+            const metadata = fs.lstatSync(helperPath)
+            if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size > MAX_HELPER_BYTES) {
+                return false
+            }
+            return fs.readFileSync(helperPath).includes(UAC_PROTOCOL_MARKER)
+        } catch {
+            return false
         }
     }
 
