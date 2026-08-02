@@ -165,7 +165,7 @@ export class Session extends BaseSession {
     }
 
     kill (signal?: string): void {
-        this.pty?.kill(signal)
+        void this.pty?.kill(signal).catch(exc => console.info('Could not terminate PTY:', exc))
     }
 
     async getChildProcesses (): Promise<ChildProcess[]> {
@@ -173,22 +173,33 @@ export class Session extends BaseSession {
     }
 
     async gracefullyKillProcess (): Promise<void> {
+        const pty = this.pty
+        if (!pty) {
+            return
+        }
         if (this.hostApp.platform === Platform.Windows) {
-            this.kill()
-        } else {
-            await new Promise<void>((resolve) => {
-                this.kill('SIGTERM')
-                setTimeout(async () => {
-                    try {
-                        process.kill(await this.pty!.getPID(), 0)
-                        // still alive
-                        this.kill('SIGKILL')
-                        resolve()
-                    } catch {
-                        resolve()
-                    }
-                }, 500)
-            })
+            try {
+                await pty.kill()
+            } catch (exc) {
+                console.info('Could not terminate PTY:', exc)
+            }
+            return
+        }
+
+        try {
+            await pty.kill('SIGTERM')
+        } catch (exc) {
+            console.info('Could not send SIGTERM to PTY:', exc)
+            return
+        }
+
+        await new Promise(resolve => setTimeout(resolve, 500))
+        try {
+            if (await pty.isAlive()) {
+                await pty.kill('SIGKILL')
+            }
+        } catch (exc) {
+            console.info('Could not force-terminate PTY:', exc)
         }
     }
 
