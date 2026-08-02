@@ -69,6 +69,10 @@ export class ElectronPTYProxy extends PTYProxy {
         return ipcRenderer.sendSync('pty:get-pid', this.id)
     }
 
+    override async isAlive (): Promise<boolean> {
+        return !!ipcRenderer.sendSync('pty:exists', this.id)
+    }
+
     subscribe (event: string, handler: (..._: any[]) => void): void {
         const key = `pty:${this.id}:${event}`
         const newHandler = (_event, ...args) => handler(...args)

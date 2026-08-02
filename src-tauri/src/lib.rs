@@ -20,7 +20,7 @@ use commands::{
     migration::{migration_detect, migration_execute},
     pty::{
         pty_ack, pty_attach, pty_detach, pty_exists, pty_get_children, pty_get_cwd, pty_get_pid,
-        pty_get_true_pid, pty_kill, pty_resize, pty_spawn, pty_write,
+        pty_get_true_pid, pty_is_alive, pty_kill, pty_resize, pty_spawn, pty_write,
     },
     secrets::{secret_import_execute, secret_import_plan},
     shell::{shell_detect, shell_prepare_spawn},
@@ -149,6 +149,7 @@ pub fn run() {
             migration_execute,
             pty_spawn,
             pty_exists,
+            pty_is_alive,
             pty_attach,
             pty_detach,
             pty_write,
