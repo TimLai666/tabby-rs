@@ -13,6 +13,35 @@ import {
     PreparedSpawnRequest,
 } from '../api/shell'
 
+function iconFor (icon?: string): string|undefined {
+    switch (icon) {
+        case 'terminal': return 'fas fa-terminal'
+        case 'alpine': return require('../../../tabby-electron/src/icons/alpine.svg')
+        case 'alma': return require('../../../tabby-electron/src/icons/alma.svg')
+        case 'clink': return require('../../../tabby-electron/src/icons/clink.svg')
+        case 'cmd': return require('../../../tabby-electron/src/icons/cmd.svg')
+        case 'cmder': return require('../../../tabby-electron/src/icons/cmder.svg')
+        case 'cmder-powershell': return require('../../../tabby-electron/src/icons/cmder-powershell.svg')
+        case 'cygwin': return require('../../../tabby-electron/src/icons/cygwin.svg')
+        case 'debian': return require('../../../tabby-electron/src/icons/debian.svg')
+        case 'docker': return require('../../../tabby-electron/src/icons/docker.svg')
+        case 'git-bash': return require('../../../tabby-electron/src/icons/git-bash.svg')
+        case 'kali': return require('../../../tabby-electron/src/icons/kali.svg')
+        case 'linux': return require('../../../tabby-electron/src/icons/linux.svg')
+        case 'msys2': return require('../../../tabby-electron/src/icons/msys2.svg')
+        case 'open-euler': return require('../../../tabby-electron/src/icons/open-euler.svg')
+        case 'oracle-linux': return require('../../../tabby-electron/src/icons/oracle-linux.svg')
+        case 'powershell': return require('../../../tabby-electron/src/icons/powershell.svg')
+        case 'powershell-core': return require('../../../tabby-electron/src/icons/powershell-core.svg')
+        case 'suse': return require('../../../tabby-electron/src/icons/suse.svg')
+        case 'ubuntu': return require('../../../tabby-electron/src/icons/ubuntu.svg')
+        case 'vs2017': return require('../../../tabby-electron/src/icons/vs2017.svg')
+        case 'vs2019': return require('../../../tabby-electron/src/icons/vs2019.svg')
+        case 'vs2022': return require('../../../tabby-electron/src/icons/vs2022.svg')
+        default: return undefined
+    }
+}
+
 @Injectable()
 export class TauriDetectedShellProvider extends ShellProvider {
     constructor (
@@ -65,34 +94,5 @@ export class TauriSpawnRequestService {
             shellType: options.shellType,
             loginShell: options.args.includes('-l') || options.args.includes('--login'),
         })
-    }
-}
-
-function iconFor (icon?: string): string|undefined {
-    switch (icon) {
-        case 'terminal': return 'fas fa-terminal'
-        case 'alpine': return require('../../../tabby-electron/src/icons/alpine.svg')
-        case 'alma': return require('../../../tabby-electron/src/icons/alma.svg')
-        case 'clink': return require('../../../tabby-electron/src/icons/clink.svg')
-        case 'cmd': return require('../../../tabby-electron/src/icons/cmd.svg')
-        case 'cmder': return require('../../../tabby-electron/src/icons/cmder.svg')
-        case 'cmder-powershell': return require('../../../tabby-electron/src/icons/cmder-powershell.svg')
-        case 'cygwin': return require('../../../tabby-electron/src/icons/cygwin.svg')
-        case 'debian': return require('../../../tabby-electron/src/icons/debian.svg')
-        case 'docker': return require('../../../tabby-electron/src/icons/docker.svg')
-        case 'git-bash': return require('../../../tabby-electron/src/icons/git-bash.svg')
-        case 'kali': return require('../../../tabby-electron/src/icons/kali.svg')
-        case 'linux': return require('../../../tabby-electron/src/icons/linux.svg')
-        case 'msys2': return require('../../../tabby-electron/src/icons/msys2.svg')
-        case 'open-euler': return require('../../../tabby-electron/src/icons/open-euler.svg')
-        case 'oracle-linux': return require('../../../tabby-electron/src/icons/oracle-linux.svg')
-        case 'powershell': return require('../../../tabby-electron/src/icons/powershell.svg')
-        case 'powershell-core': return require('../../../tabby-electron/src/icons/powershell-core.svg')
-        case 'suse': return require('../../../tabby-electron/src/icons/suse.svg')
-        case 'ubuntu': return require('../../../tabby-electron/src/icons/ubuntu.svg')
-        case 'vs2017': return require('../../../tabby-electron/src/icons/vs2017.svg')
-        case 'vs2019': return require('../../../tabby-electron/src/icons/vs2019.svg')
-        case 'vs2022': return require('../../../tabby-electron/src/icons/vs2022.svg')
-        default: return undefined
     }
 }
