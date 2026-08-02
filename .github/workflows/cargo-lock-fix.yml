@@ -23,7 +23,7 @@ jobs:
       - name: Commit Cargo.lock
         shell: bash
         run: |
-          if git diff --quiet -- src-tauri/Cargo.lock; then
+          if [[ -z "$(git status --porcelain -- src-tauri/Cargo.lock)" ]]; then
             echo "Cargo.lock is already current."
             exit 0
           fi
