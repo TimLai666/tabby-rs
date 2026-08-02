@@ -61,7 +61,7 @@ pub struct PtyAckRequest {
     pub bytes: usize,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PtyOutputEvent {
     pub id: String,
@@ -69,7 +69,7 @@ pub struct PtyOutputEvent {
     pub data: Vec<u8>,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PtyExitEvent {
     pub id: String,
@@ -77,7 +77,7 @@ pub struct PtyExitEvent {
     pub signal: Option<String>,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PtyErrorEvent {
     pub id: String,
@@ -122,5 +122,38 @@ impl TryFrom<PtySpawnRequest> for SpawnSpec {
             rows: request.rows,
             shell_type: prepared.shell_type,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PtyOutputEvent, MAX_CHUNK_BYTES};
+
+    #[test]
+    fn json_transport_preserves_binary_nul_invalid_utf8_and_large_chunks() {
+        let mut data = Vec::with_capacity(MAX_CHUNK_BYTES);
+        data.extend_from_slice(&[0, 0xff, 0xfe, 1]);
+        data.resize(MAX_CHUNK_BYTES, 0x80);
+        let event = PtyOutputEvent {
+            id: "fixture".into(),
+            sequence: 7,
+            data,
+        };
+
+        let encoded = serde_json::to_vec(&event).unwrap();
+        let decoded: PtyOutputEvent = serde_json::from_slice(&encoded).unwrap();
+        assert_eq!(decoded, event);
+    }
+
+    #[test]
+    fn json_transport_preserves_one_byte_chunks() {
+        let event = PtyOutputEvent {
+            id: "fixture".into(),
+            sequence: 0,
+            data: vec![0],
+        };
+        let encoded = serde_json::to_vec(&event).unwrap();
+        let decoded: PtyOutputEvent = serde_json::from_slice(&encoded).unwrap();
+        assert_eq!(decoded, event);
     }
 }

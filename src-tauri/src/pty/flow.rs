@@ -81,7 +81,11 @@ impl FlowControl {
 
 #[cfg(test)]
 mod tests {
-    use std::{sync::Arc, thread, time::Duration};
+    use std::{
+        sync::{mpsc, Arc},
+        thread,
+        time::Duration,
+    };
 
     use super::FlowControl;
 
@@ -104,6 +108,37 @@ mod tests {
         flow.ack(8);
         worker.join().unwrap();
         assert_eq!(flow.unacked(), 3);
+    }
+
+    #[test]
+    fn renderer_disconnect_pauses_new_output_until_reattach() {
+        let flow = Arc::new(FlowControl::new(10));
+        flow.attach();
+        assert!(flow.reserve(10));
+        flow.detach();
+        assert_eq!(flow.unacked(), 0);
+
+        let (sent, received) = mpsc::channel();
+        let worker = {
+            let flow = Arc::clone(&flow);
+            thread::spawn(move || sent.send(flow.reserve(1)).unwrap())
+        };
+        assert!(received.recv_timeout(Duration::from_millis(20)).is_err());
+        flow.attach();
+        assert!(received.recv_timeout(Duration::from_secs(1)).unwrap());
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn one_byte_and_exact_window_chunks_are_supported() {
+        let flow = FlowControl::new(10);
+        flow.attach();
+        assert!(flow.reserve(1));
+        flow.ack(1);
+        assert!(flow.reserve(10));
+        assert_eq!(flow.unacked(), 10);
+        flow.ack(usize::MAX);
+        assert_eq!(flow.unacked(), 0);
     }
 
     #[test]

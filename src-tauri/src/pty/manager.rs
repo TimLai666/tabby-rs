@@ -15,9 +15,11 @@ use super::{
     session::PtySession,
 };
 
+type SessionMap = Arc<RwLock<HashMap<String, Arc<PtySession>>>>;
+
 pub struct PtyManager {
     backend: Arc<dyn PtyBackend>,
-    sessions: RwLock<HashMap<String, Arc<PtySession>>>,
+    sessions: SessionMap,
     processes: ProcessInspector,
 }
 
@@ -31,7 +33,7 @@ impl PtyManager {
     pub fn new(backend: Arc<dyn PtyBackend>) -> Self {
         Self {
             backend,
-            sessions: RwLock::new(HashMap::new()),
+            sessions: Arc::new(RwLock::new(HashMap::new())),
             processes: ProcessInspector::new(),
         }
     }
@@ -48,12 +50,24 @@ impl PtyManager {
             id: id.clone(),
             pid: spawned.pid,
         };
+        let started_at = self.processes.start_time(spawned.pid);
+        let sessions = Arc::downgrade(&self.sessions);
+        let on_completed = Arc::new(move |completed_id: &str| {
+            if let Some(sessions) = sessions.upgrade() {
+                sessions
+                    .write()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .remove(completed_id);
+            }
+        });
         let session = Arc::new(PtySession::new(
             id.clone(),
             spawned.pid,
+            started_at,
             spawned.master,
             spawned.writer,
             spawned.killer,
+            on_completed,
         ));
 
         self.sessions
@@ -66,7 +80,7 @@ impl PtyManager {
 
     pub fn exists(&self, id: &str) -> bool {
         self.session(id)
-            .map(|session| session.is_alive())
+            .map(|session| session.can_restore())
             .unwrap_or(false)
     }
 
@@ -104,8 +118,10 @@ impl PtyManager {
     }
 
     pub fn true_pid(&self, id: &str) -> Result<u32, AppError> {
-        let root = self.live_session(id)?.pid();
-        Ok(self.processes.true_pid(root))
+        let session = self.live_session(id)?;
+        self.processes
+            .true_pid(session.pid(), session.started_at())
+            .ok_or_else(|| AppError::NotFound("PTY process identity no longer matches".into()))
     }
 
     pub fn children(&self, id: &str) -> Result<Vec<ChildProcess>, AppError> {

@@ -16,36 +16,50 @@ use super::{
     model::{PtyErrorEvent, PtyExitEvent, PtyOutputEvent, MAX_CHUNK_BYTES, MAX_UNACKED_BYTES},
 };
 
+type CompletionHandler = Arc<dyn Fn(&str) + Send + Sync>;
+
 pub struct PtySession {
     id: String,
     pid: u32,
+    started_at: Option<u64>,
     master: Mutex<Box<dyn MasterPty + Send>>,
     writer: Mutex<Box<dyn Write + Send>>,
     killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
     flow: Arc<FlowControl>,
     sequence: AtomicU64,
+    attached: AtomicBool,
     exited: AtomicBool,
+    reader_done: AtomicBool,
+    exit_emitted: AtomicBool,
     exit_event: Mutex<Option<PtyExitEvent>>,
+    on_completed: CompletionHandler,
 }
 
 impl PtySession {
     pub fn new(
         id: String,
         pid: u32,
+        started_at: Option<u64>,
         master: Box<dyn MasterPty + Send>,
         writer: Box<dyn Write + Send>,
         killer: Box<dyn ChildKiller + Send + Sync>,
+        on_completed: CompletionHandler,
     ) -> Self {
         Self {
             id,
             pid,
+            started_at,
             master: Mutex::new(master),
             writer: Mutex::new(writer),
             killer: Mutex::new(killer),
             flow: Arc::new(FlowControl::new(MAX_UNACKED_BYTES)),
             sequence: AtomicU64::new(0),
+            attached: AtomicBool::new(false),
             exited: AtomicBool::new(false),
+            reader_done: AtomicBool::new(false),
+            exit_emitted: AtomicBool::new(false),
             exit_event: Mutex::new(None),
+            on_completed,
         }
     }
 
@@ -53,23 +67,26 @@ impl PtySession {
         self.pid
     }
 
+    pub fn started_at(&self) -> Option<u64> {
+        self.started_at
+    }
+
     pub fn is_alive(&self) -> bool {
         !self.exited.load(Ordering::Acquire)
     }
 
+    pub fn can_restore(&self) -> bool {
+        !self.exit_emitted.load(Ordering::Acquire)
+    }
+
     pub fn attach(&self, app: &AppHandle) {
+        self.attached.store(true, Ordering::Release);
         self.flow.attach();
-        let exit_event = self
-            .exit_event
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .clone();
-        if let Some(exit_event) = exit_event {
-            let _ = app.emit("pty.exit", exit_event);
-        }
+        self.maybe_emit_exit(app);
     }
 
     pub fn detach(&self) {
+        self.attached.store(false, Ordering::Release);
         self.flow.detach();
     }
 
@@ -193,6 +210,8 @@ impl PtySession {
                     }
                 }
             }
+            session.reader_done.store(true, Ordering::Release);
+            session.maybe_emit_exit(&app);
         });
     }
 
@@ -229,9 +248,50 @@ impl PtySession {
             *session
                 .exit_event
                 .lock()
-                .unwrap_or_else(|error| error.into_inner()) = Some(event.clone());
-            session.flow.close();
-            let _ = app.emit("pty.exit", event);
+                .unwrap_or_else(|error| error.into_inner()) = Some(event);
+            session.maybe_emit_exit(&app);
         });
+    }
+
+    fn maybe_emit_exit(&self, app: &AppHandle) {
+        if !self.attached.load(Ordering::Acquire)
+            || !self.reader_done.load(Ordering::Acquire)
+            || self.exit_emitted.load(Ordering::Acquire)
+        {
+            return;
+        }
+
+        let event = self
+            .exit_event
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone();
+        let Some(event) = event else {
+            return;
+        };
+
+        if self
+            .exit_emitted
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return;
+        }
+
+        if let Err(error) = app.emit("pty.exit", event) {
+            self.exit_emitted.store(false, Ordering::Release);
+            let _ = app.emit(
+                "pty.error",
+                PtyErrorEvent {
+                    id: self.id.clone(),
+                    code: "exitEmissionFailed".into(),
+                    details: error.to_string(),
+                },
+            );
+            return;
+        }
+
+        self.flow.close();
+        (self.on_completed)(&self.id);
     }
 }
