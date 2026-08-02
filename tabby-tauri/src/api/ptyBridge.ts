@@ -18,6 +18,10 @@ declare module './hostBridge' {
             request: { id: string }
             response: boolean
         }
+        'pty.isAlive': {
+            request: { id: string }
+            response: boolean
+        }
         'pty.attach': {
             request: { id: string }
             response: null
