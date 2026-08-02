@@ -7,6 +7,7 @@ mod security;
 mod shell;
 mod state;
 mod storage;
+mod windows_integration;
 
 use std::sync::Arc;
 
@@ -29,6 +30,7 @@ use commands::{
         vault_remove_secret, vault_replace, vault_set_config, vault_set_enabled, vault_snapshot,
         vault_status, vault_summary, vault_unlock, vault_update_secret,
     },
+    windows::windows_integration_status,
 };
 use launch::{parse_launch_context, LaunchContext};
 use pty::PtyManager;
@@ -178,6 +180,7 @@ pub fn run() {
             vault_set_config,
             vault_put_file,
             vault_get_file,
+            windows_integration_status,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Tabby RS");
