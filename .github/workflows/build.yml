@@ -70,6 +70,9 @@ jobs:
       - name: Lint
         run: yarn lint --format unix
 
+      - name: Test sudo prompt detector
+        run: node scripts/ci/test-auto-sudo.mjs
+
       - name: Build Electron baseline
         run: yarn build
 
@@ -117,6 +120,20 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
+
+      - name: Build hardened UAC helper
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: |
+          msbuild tabby-uac/UAC.sln /m \
+            /p:Configuration=Release \
+            /p:Platform=x64 \
+            /p:PlatformToolset=v143 \
+            /p:WindowsTargetPlatformVersion=10.0 \
+            /p:OutDir="$env:GITHUB_WORKSPACE\extras\"
+          if (-not (Test-Path "$env:GITHUB_WORKSPACE\extras\UAC.exe")) {
+            throw "Hardened UAC helper was not produced"
+          }
 
       - name: Install Yarn
         run: npm install --global yarn@${{ env.YARN_VERSION }}
