@@ -65,7 +65,7 @@ pub struct PrepareSpawnRequest {
     pub login_shell: bool,
 }
 
-#[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PreparedSpawnRequest {
     pub executable: String,

@@ -2,6 +2,7 @@ mod commands;
 mod error;
 mod identity;
 mod launch;
+mod pty;
 mod security;
 mod shell;
 mod state;
@@ -17,6 +18,10 @@ use commands::{
     keychain::{keychain_delete, keychain_get, keychain_put},
     launch::app_initial_launch,
     migration::{migration_detect, migration_execute},
+    pty::{
+        pty_ack, pty_attach, pty_detach, pty_exists, pty_get_children, pty_get_cwd, pty_get_pid,
+        pty_get_true_pid, pty_kill, pty_resize, pty_spawn, pty_write,
+    },
     secrets::{secret_import_execute, secret_import_plan},
     shell::{shell_detect, shell_prepare_spawn},
     vault::{
@@ -26,6 +31,7 @@ use commands::{
     },
 };
 use launch::{parse_launch_context, LaunchContext};
+use pty::PtyManager;
 use security::{CredentialState, SecretState};
 use state::AppState;
 use storage::{
@@ -101,6 +107,7 @@ pub fn run() {
             }
             app.manage(AppState::new(paths, initial_launch));
             app.manage(Arc::new(SecretState::default()));
+            app.manage(Arc::new(PtyManager::default()));
             app.manage(CredentialState::default());
 
             #[cfg(any(target_os = "linux", all(debug_assertions, windows)))]
@@ -140,6 +147,18 @@ pub fn run() {
             keychain_delete,
             migration_detect,
             migration_execute,
+            pty_spawn,
+            pty_exists,
+            pty_attach,
+            pty_detach,
+            pty_write,
+            pty_resize,
+            pty_kill,
+            pty_ack,
+            pty_get_pid,
+            pty_get_true_pid,
+            pty_get_children,
+            pty_get_cwd,
             secret_import_plan,
             secret_import_execute,
             shell_detect,
