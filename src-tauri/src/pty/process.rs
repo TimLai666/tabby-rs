@@ -106,8 +106,9 @@ pub fn follow_single_child_chain(
     start_time_by_pid: &HashMap<u32, u64>,
     max_depth: usize,
 ) -> Option<u32> {
+    let observed_root_start_time = start_time_by_pid.get(&root).copied()?;
     if let Some(expected_start_time) = expected_start_time {
-        if start_time_by_pid.get(&root).copied() != Some(expected_start_time) {
+        if observed_root_start_time != expected_start_time {
             return None;
         }
     }
@@ -177,9 +178,13 @@ mod tests {
     }
 
     #[test]
-    fn rejects_reused_root_pid_and_older_children() {
+    fn rejects_missing_or_reused_root_pid_and_older_children() {
         let tree = HashMap::from([(2, 1), (3, 2)]);
         let start_times = HashMap::from([(1, 20), (2, 19), (3, 21)]);
+        assert_eq!(
+            follow_single_child_chain(9, None, &tree, &start_times, 64),
+            None,
+        );
         assert_eq!(
             follow_single_child_chain(1, Some(10), &tree, &start_times, 64),
             None,

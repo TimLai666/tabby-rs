@@ -53,11 +53,16 @@ export class TauriPTYInterface extends PTYInterface {
     }
 
     override async restore (id: string): Promise<PTYProxy|null> {
-        if (!await this.bridge.invoke('pty.exists', { id })) {
+        try {
+            if (!await this.bridge.invoke('pty.exists', { id })) {
+                return null
+            }
+            const pid = await this.bridge.invoke('pty.getPid', { id })
+            return await TauriPTYProxy.create({ id, pid }, this.bridge)
+        } catch (error) {
+            console.info('PTY session ended during restore:', error)
             return null
         }
-        const pid = await this.bridge.invoke('pty.getPid', { id })
-        return TauriPTYProxy.create({ id, pid }, this.bridge)
     }
 
     private toSessionOptions (

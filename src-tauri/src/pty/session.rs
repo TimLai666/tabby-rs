@@ -31,6 +31,7 @@ pub struct PtySession {
     exited: AtomicBool,
     reader_done: AtomicBool,
     exit_emitted: AtomicBool,
+    completed: AtomicBool,
     exit_event: Mutex<Option<PtyExitEvent>>,
     on_completed: CompletionHandler,
 }
@@ -58,6 +59,7 @@ impl PtySession {
             exited: AtomicBool::new(false),
             reader_done: AtomicBool::new(false),
             exit_emitted: AtomicBool::new(false),
+            completed: AtomicBool::new(false),
             exit_event: Mutex::new(None),
             on_completed,
         }
@@ -88,10 +90,12 @@ impl PtySession {
     pub fn detach(&self) {
         self.attached.store(false, Ordering::Release);
         self.flow.detach();
+        self.complete_if_delivered();
     }
 
     pub fn ack(&self, bytes: usize) {
         self.flow.ack(bytes);
+        self.complete_if_delivered();
     }
 
     pub fn write(&self, data: &[u8]) -> Result<(), PtyError> {
@@ -288,6 +292,22 @@ impl PtySession {
         }
 
         self.flow.close();
-        (self.on_completed)(&self.id);
+        self.complete_if_delivered();
+    }
+
+    fn complete_if_delivered(&self) {
+        if self.attached.load(Ordering::Acquire)
+            || !self.exit_emitted.load(Ordering::Acquire)
+            || !self.flow.is_drained()
+        {
+            return;
+        }
+        if self
+            .completed
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
+            (self.on_completed)(&self.id);
+        }
     }
 }

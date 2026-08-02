@@ -34,11 +34,12 @@ impl FlowControl {
         self.wake.notify_all();
     }
 
-    pub fn detach(&self) {
+    pub fn detach(&self) -> bool {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         state.attached = false;
         state.unacked = 0;
         self.wake.notify_all();
+        true
     }
 
     pub fn reserve(&self, bytes: usize) -> bool {
@@ -58,16 +59,26 @@ impl FlowControl {
         true
     }
 
-    pub fn ack(&self, bytes: usize) {
+    pub fn ack(&self, bytes: usize) -> bool {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         state.unacked = state.unacked.saturating_sub(bytes);
+        let drained = state.unacked == 0;
         self.wake.notify_all();
+        drained
     }
 
     pub fn close(&self) {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         state.closed = true;
         self.wake.notify_all();
+    }
+
+    pub fn is_drained(&self) -> bool {
+        self.state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .unacked
+            == 0
     }
 
     #[cfg(test)]
@@ -105,7 +116,7 @@ mod tests {
         flow.attach();
         thread::sleep(Duration::from_millis(20));
         assert_eq!(flow.unacked(), 8);
-        flow.ack(8);
+        assert!(flow.ack(8));
         worker.join().unwrap();
         assert_eq!(flow.unacked(), 3);
     }
@@ -115,7 +126,7 @@ mod tests {
         let flow = Arc::new(FlowControl::new(10));
         flow.attach();
         assert!(flow.reserve(10));
-        flow.detach();
+        assert!(flow.detach());
         assert_eq!(flow.unacked(), 0);
 
         let (sent, received) = mpsc::channel();
@@ -134,11 +145,12 @@ mod tests {
         let flow = FlowControl::new(10);
         flow.attach();
         assert!(flow.reserve(1));
-        flow.ack(1);
+        assert!(flow.ack(1));
         assert!(flow.reserve(10));
         assert_eq!(flow.unacked(), 10);
-        flow.ack(usize::MAX);
+        assert!(flow.ack(usize::MAX));
         assert_eq!(flow.unacked(), 0);
+        assert!(flow.is_drained());
     }
 
     #[test]
@@ -153,7 +165,7 @@ mod tests {
         while processed < ONE_GIB {
             assert!(flow.reserve(CHUNK));
             assert!(flow.unacked() <= WINDOW);
-            flow.ack(CHUNK);
+            assert!(flow.ack(CHUNK));
             processed = processed.saturating_add(CHUNK);
         }
     }
