@@ -15,6 +15,8 @@ const webNodeModules = path.resolve(__dirname, '../web/node_modules')
 const processBrowser = path.resolve(__dirname, 'src/shims/process.cjs')
 const mixpanelShim = path.resolve(__dirname, 'src/shims/mixpanel.cjs')
 const fsShim = path.resolve(__dirname, 'src/shims/fs.cjs')
+const mzFsShim = path.resolve(__dirname, 'src/shims/mz-fs.ts')
+const windowsRegistryShim = path.resolve(__dirname, 'src/shims/windows-native-registry.cjs')
 
 const linkerPlugin = createEs2015LinkerPlugin({
     linkerJitMode: true,
@@ -54,6 +56,7 @@ export default () => ({
             'fs$': fsShim,
             'fs/promises$': fsShim,
             'mixpanel': mixpanelShim,
+            'mz/fs$': mzFsShim,
             'process/browser': processBrowser,
             'process': processBrowser,
             'tabby-core': path.resolve(__dirname, '../tabby-core/src/index.ts'),
@@ -61,6 +64,7 @@ export default () => ({
             'tabby-settings': path.resolve(__dirname, '../tabby-settings/src/index.ts'),
             'tabby-tauri': path.resolve(__dirname, '../tabby-tauri/src/index.ts'),
             'tabby-terminal': path.resolve(__dirname, '../tabby-terminal/src/index.ts'),
+            'windows-native-registry$': windowsRegistryShim,
         },
         modules: [
             'node_modules',
