@@ -82,7 +82,7 @@ export class TauriPTYInterface extends PTYInterface {
 
 export class TauriPTYProxy extends PTYProxy {
     private handlers = new Map<string, Set<EventHandler>>()
-    private unlisteners: Array<() => void> = []
+    private unlisteners: (() => void)[] = []
     private queuedOutput: Uint8Array[] = []
     private pendingExit: PtyExitEvent|null = null
     private expectedSequence: number|null = null
@@ -93,6 +93,7 @@ export class TauriPTYProxy extends PTYProxy {
         rows: number
         waiters: ResizeWaiter[]
     }|null = null
+
     private detached = false
 
     private constructor (
