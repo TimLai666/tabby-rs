@@ -215,11 +215,7 @@ impl PtySession {
         });
     }
 
-    fn start_waiter(
-        self: &Arc<Self>,
-        mut child: Box<dyn Child + Send + Sync>,
-        app: AppHandle,
-    ) {
+    fn start_waiter(self: &Arc<Self>, mut child: Box<dyn Child + Send + Sync>, app: AppHandle) {
         let session = Arc::clone(self);
         thread::spawn(move || {
             let event = match child.wait() {
