@@ -84,6 +84,12 @@ impl PtyManager {
             .unwrap_or(false)
     }
 
+    pub fn is_alive(&self, id: &str) -> bool {
+        self.session(id)
+            .map(|session| session.is_alive())
+            .unwrap_or(false)
+    }
+
     pub fn attach(&self, app: &AppHandle, id: &str) -> Result<(), AppError> {
         self.session_or_error(id)?.attach(app);
         Ok(())
