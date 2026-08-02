@@ -2,6 +2,10 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "baseUrl": "..",
+    "lib": [
+      "dom",
+      "es2021"
+    ],
     "module": "esnext",
     "moduleResolution": "node",
     "noUnusedLocals": false,
@@ -10,11 +14,20 @@
       "@ngx-translate/core": [
         "app/node_modules/@ngx-translate/core"
       ],
+      "mz/fs": [
+        "app/src/shims/mz-fs.ts"
+      ],
       "tabby-core": [
         "tabby-core/src/index.ts"
       ],
+      "tabby-local": [
+        "tabby-local/src/index.ts"
+      ],
       "tabby-tauri": [
         "tabby-tauri/src/index.ts"
+      ],
+      "tabby-terminal": [
+        "tabby-terminal/src/index.ts"
       ]
     }
   },

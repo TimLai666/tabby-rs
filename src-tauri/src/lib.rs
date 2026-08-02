@@ -3,6 +3,7 @@ mod error;
 mod identity;
 mod launch;
 mod security;
+mod shell;
 mod state;
 mod storage;
 
@@ -17,6 +18,7 @@ use commands::{
     launch::app_initial_launch,
     migration::{migration_detect, migration_execute},
     secrets::{secret_import_execute, secret_import_plan},
+    shell::{shell_detect, shell_prepare_spawn},
     vault::{
         vault_get_file, vault_get_secret, vault_lock, vault_put_file, vault_put_secret,
         vault_remove_secret, vault_replace, vault_set_config, vault_set_enabled, vault_snapshot,
@@ -140,6 +142,8 @@ pub fn run() {
             migration_execute,
             secret_import_plan,
             secret_import_execute,
+            shell_detect,
+            shell_prepare_spawn,
             vault_status,
             vault_unlock,
             vault_replace,
