@@ -1,6 +1,5 @@
 mod environment;
 mod model;
-#[cfg(not(windows))]
 mod unix;
 #[cfg(windows)]
 mod windows;
