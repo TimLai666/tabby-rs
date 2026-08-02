@@ -46,7 +46,9 @@ function username (value) {
 
 {
     const value = detector()
-    assert.equal(username(value.feed('[sudo: authenticate] Password:')), null)
+    const match = value.feed('[sudo: authenticate] Password:')
+    assert.notEqual(match, null)
+    assert.equal(username(match), null)
 }
 
 {
