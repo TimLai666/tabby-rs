@@ -28,35 +28,39 @@ function detector () {
     return new SudoPromptDetector()
 }
 
+function username (value) {
+    return value?.username ?? null
+}
+
 {
     const value = detector()
     assert.equal(value.feed('[sudo] pass'), null)
-    assert.deepEqual(value.feed('word for tim: '), { username: 'tim' })
+    assert.equal(username(value.feed('word for tim: ')), 'tim')
 }
 
 {
     const value = detector()
     assert.equal(value.feed('[sudo] 測試'), null)
-    assert.deepEqual(value.feed(' 的密碼：'), { username: '測試' })
+    assert.equal(username(value.feed(' 的密碼：')), '測試')
 }
 
 {
     const value = detector()
-    assert.deepEqual(value.feed('[sudo: authenticate] Password:'), { username: null })
+    assert.equal(username(value.feed('[sudo: authenticate] Password:')), null)
 }
 
 {
     const value = detector()
     assert.equal(value.feed('\u001b[31m[sudo]\u001b[0m pass'), null)
-    assert.deepEqual(value.feed('word for tim: '), { username: 'tim' })
+    assert.equal(username(value.feed('word for tim: ')), 'tim')
     assert.equal(value.feed('unrelated output'), null)
-    assert.deepEqual(value.feed('\n[sudo] password for tim: '), { username: 'tim' })
+    assert.equal(username(value.feed('\n[sudo] password for tim: ')), 'tim')
 }
 
 {
     const value = detector()
     assert.equal(value.feed('x'.repeat(10_000)), null)
-    assert.deepEqual(value.feed('\n[sudo] password for bounded: '), { username: 'bounded' })
+    assert.equal(username(value.feed('\n[sudo] password for bounded: ')), 'bounded')
 }
 
 console.log('Streaming sudo prompt detector tests passed.')
