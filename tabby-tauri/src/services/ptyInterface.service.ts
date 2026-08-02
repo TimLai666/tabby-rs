@@ -85,7 +85,7 @@ export class TauriPTYProxy extends PTYProxy {
     private unlisteners: Array<() => void> = []
     private queuedOutput: Uint8Array[] = []
     private pendingExit: PtyExitEvent|null = null
-    private expectedSequence = 0
+    private expectedSequence: number|null = null
     private truePID: Promise<number>
     private resizeTimer: ReturnType<typeof setTimeout>|null = null
     private pendingResize: {
@@ -218,7 +218,7 @@ export class TauriPTYProxy extends PTYProxy {
         if (payload.id !== this.response.id) {
             return
         }
-        if (payload.sequence !== this.expectedSequence) {
+        if (this.expectedSequence !== null && payload.sequence !== this.expectedSequence) {
             this.onError({
                 id: payload.id,
                 code: 'sequenceGap',

@@ -25,6 +25,7 @@ pub struct PtySession {
     flow: Arc<FlowControl>,
     sequence: AtomicU64,
     exited: AtomicBool,
+    exit_event: Mutex<Option<PtyExitEvent>>,
 }
 
 impl PtySession {
@@ -44,11 +45,8 @@ impl PtySession {
             flow: Arc::new(FlowControl::new(MAX_UNACKED_BYTES)),
             sequence: AtomicU64::new(0),
             exited: AtomicBool::new(false),
+            exit_event: Mutex::new(None),
         }
-    }
-
-    pub fn id(&self) -> &str {
-        &self.id
     }
 
     pub fn pid(&self) -> u32 {
@@ -59,8 +57,16 @@ impl PtySession {
         !self.exited.load(Ordering::Acquire)
     }
 
-    pub fn attach(&self) {
+    pub fn attach(&self, app: &AppHandle) {
         self.flow.attach();
+        let exit_event = self
+            .exit_event
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone();
+        if let Some(exit_event) = exit_event {
+            let _ = app.emit("pty.exit", exit_event);
+        }
     }
 
     pub fn detach(&self) {
@@ -220,6 +226,10 @@ impl PtySession {
                 }
             };
             session.exited.store(true, Ordering::Release);
+            *session
+                .exit_event
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()) = Some(event.clone());
             session.flow.close();
             let _ = app.emit("pty.exit", event);
         });

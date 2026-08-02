@@ -70,8 +70,8 @@ impl PtyManager {
             .unwrap_or(false)
     }
 
-    pub fn attach(&self, id: &str) -> Result<(), AppError> {
-        self.live_session(id)?.attach();
+    pub fn attach(&self, app: &AppHandle, id: &str) -> Result<(), AppError> {
+        self.session_or_error(id)?.attach(app);
         Ok(())
     }
 

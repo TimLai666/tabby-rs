@@ -29,10 +29,11 @@ pub fn pty_exists(manager: State<'_, Arc<PtyManager>>, request: PtyIdRequest) ->
 
 #[tauri::command]
 pub fn pty_attach(
+    app: AppHandle,
     manager: State<'_, Arc<PtyManager>>,
     request: PtyIdRequest,
 ) -> Result<(), AppError> {
-    manager.attach(&request.id)
+    manager.attach(&app, &request.id)
 }
 
 #[tauri::command]
