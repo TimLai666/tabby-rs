@@ -1,5 +1,8 @@
 use std::{collections::BTreeMap, env, path::Path};
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 use crate::error::AppError;
 
 use super::model::{PrepareSpawnRequest, PreparedSpawnRequest};
@@ -41,18 +44,64 @@ pub fn merge_environment(
     profile: BTreeMap<String, String>,
     runtime: BTreeMap<String, String>,
 ) -> Result<BTreeMap<String, String>, AppError> {
-    if profile.len().saturating_add(runtime.len()) > MAX_ENVIRONMENT_ENTRIES {
+    let mut merged = BTreeMap::new();
+    for (key, value) in env::vars_os() {
+        let key = key.into_string().map_err(|_| {
+            AppError::InvalidData("system environment contains a non-Unicode key".into())
+        })?;
+        let value = value.into_string().map_err(|_| {
+            AppError::InvalidData("system environment contains a non-Unicode value".into())
+        })?;
+        validate_environment_entry(&key, &value)?;
+        insert_environment(&mut merged, key, value);
+    }
+
+    for (key, value) in profile.into_iter().chain(runtime) {
+        validate_environment_entry(&key, &value)?;
+        insert_environment(&mut merged, key, value);
+    }
+    if merged.len() > MAX_ENVIRONMENT_ENTRIES {
         return Err(AppError::InvalidArgument(
             "shell environment contains too many entries".into(),
         ));
     }
-
-    let mut merged = env::vars().collect::<BTreeMap<_, _>>();
-    for (key, value) in profile.into_iter().chain(runtime) {
-        validate_environment_entry(&key, &value)?;
-        merged.insert(key, value);
-    }
     Ok(merged)
+}
+
+fn insert_environment(
+    environment: &mut BTreeMap<String, String>,
+    key: String,
+    value: String,
+) {
+    #[cfg(windows)]
+    if let Some(existing) = environment
+        .keys()
+        .find(|candidate| candidate.eq_ignore_ascii_case(&key))
+        .cloned()
+    {
+        environment.insert(existing, value);
+        return;
+    }
+
+    environment.insert(key, value);
+}
+
+fn environment_value<'a>(
+    environment: &'a BTreeMap<String, String>,
+    name: &str,
+) -> Option<&'a str> {
+    #[cfg(windows)]
+    {
+        environment
+            .iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case(name))
+            .map(|(_, value)| value.as_str())
+    }
+
+    #[cfg(not(windows))]
+    {
+        environment.get(name).map(String::as_str)
+    }
 }
 
 fn validate_environment_entry(key: &str, value: &str) -> Result<(), AppError> {
@@ -95,11 +144,7 @@ fn resolve_executable(
             .ok_or_else(|| AppError::InvalidArgument("shell executable was not found".into()));
     }
 
-    let path_value = environment
-        .get("PATH")
-        .or_else(|| environment.get("Path"))
-        .map(String::as_str)
-        .unwrap_or_default();
+    let path_value = environment_value(environment, "PATH").unwrap_or_default();
 
     #[cfg(windows)]
     let extensions = executable_extensions(command, environment);
@@ -125,6 +170,10 @@ fn executable_string(path: &Path) -> Option<String> {
     if !metadata.is_file() {
         return None;
     }
+    #[cfg(unix)]
+    if metadata.permissions().mode() & 0o111 == 0 {
+        return None;
+    }
     path.to_str().map(str::to_owned)
 }
 
@@ -136,9 +185,7 @@ fn executable_extensions(
     if Path::new(command).extension().is_some() {
         return vec![String::new()];
     }
-    environment
-        .get("PATHEXT")
-        .or_else(|| environment.get("PathExt"))
+    environment_value(environment, "PATHEXT")
         .map(|value| {
             value
                 .split(';')
@@ -154,7 +201,10 @@ fn executable_extensions(
 mod tests {
     use std::collections::BTreeMap;
 
-    use super::{merge_environment, validate_cwd};
+    #[cfg(unix)]
+    use std::{fs, os::unix::fs::PermissionsExt};
+
+    use super::{executable_string, insert_environment, merge_environment, validate_cwd};
 
     #[test]
     fn runtime_environment_wins_over_profile_environment() {
@@ -166,6 +216,15 @@ mod tests {
         assert_eq!(merged["TABBY_RS_ENV_TEST"], "runtime");
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn windows_environment_keys_are_case_insensitive() {
+        let mut environment = BTreeMap::from([("Path".into(), "base".into())]);
+        insert_environment(&mut environment, "PATH".into(), "override".into());
+        assert_eq!(environment.len(), 1);
+        assert_eq!(environment["Path"], "override");
+    }
+
     #[test]
     fn missing_working_directory_falls_back_without_panicking() {
         let (cwd, fallback) = validate_cwd(Some(
@@ -174,5 +233,17 @@ mod tests {
         .unwrap();
         assert!(cwd.is_none());
         assert!(fallback);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_executables_require_an_execute_bit() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("not-executable");
+        fs::write(&path, "fixture").unwrap();
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o600);
+        fs::set_permissions(&path, permissions).unwrap();
+        assert!(executable_string(&path).is_none());
     }
 }
