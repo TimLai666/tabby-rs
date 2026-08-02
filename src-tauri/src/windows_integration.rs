@@ -7,6 +7,8 @@ use tauri::{AppHandle, Manager};
 
 const EXTRAS_DIRECTORY: &str = "extras";
 const UAC_HELPER_NAME: &str = "UAC.exe";
+const UAC_PROTOCOL_MARKER: &str = "tabby-rs-uac-";
+const MAX_HELPER_BYTES: u64 = 16 * 1024 * 1024;
 
 #[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -39,7 +41,9 @@ pub fn status(app: &AppHandle) -> WindowsIntegrationStatus {
             warnings.push("Bundled Clink helper was not found; stock CMD remains available.".into());
         }
         if uac_helper_path.is_none() {
-            warnings.push("Bundled UAC helper was not found; administrator sessions are disabled.".into());
+            warnings.push(
+                "A hardened UAC helper was not found; administrator sessions are disabled.".into(),
+            );
         }
         WindowsIntegrationStatus {
             available: true,
@@ -89,7 +93,25 @@ pub fn find_clink(roots: &[PathBuf]) -> Option<PathBuf> {
 }
 
 pub fn find_uac_helper(roots: &[PathBuf]) -> Option<PathBuf> {
-    find_regular_resource(roots, Path::new(UAC_HELPER_NAME))
+    let helper = find_regular_resource(roots, Path::new(UAC_HELPER_NAME))?;
+    has_uac_protocol_marker(&helper).then_some(helper)
+}
+
+fn has_uac_protocol_marker(path: &Path) -> bool {
+    let Ok(metadata) = path.metadata() else {
+        return false;
+    };
+    if metadata.len() == 0 || metadata.len() > MAX_HELPER_BYTES {
+        return false;
+    }
+    let Ok(bytes) = std::fs::read(path) else {
+        return false;
+    };
+    let marker = UAC_PROTOCOL_MARKER
+        .encode_utf16()
+        .flat_map(u16::to_le_bytes)
+        .collect::<Vec<_>>();
+    bytes.windows(marker.len()).any(|window| window == marker)
 }
 
 fn canonical_regular_directories(candidates: Vec<PathBuf>) -> Vec<PathBuf> {
@@ -138,7 +160,9 @@ fn path_text(path: PathBuf) -> Option<String> {
 mod tests {
     use std::{fs, path::Path};
 
-    use super::{find_regular_resource, UAC_HELPER_NAME};
+    use super::{
+        find_regular_resource, find_uac_helper, UAC_HELPER_NAME, UAC_PROTOCOL_MARKER,
+    };
 
     #[test]
     fn resource_lookup_rejects_parent_traversal() {
@@ -157,6 +181,26 @@ mod tests {
             find_regular_resource(&[canonical_root], Path::new(UAC_HELPER_NAME)),
             helper.canonicalize().ok()
         );
+    }
+
+    #[test]
+    fn uac_lookup_rejects_a_legacy_helper_without_protocol_marker() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::write(temp.path().join(UAC_HELPER_NAME), b"legacy helper").unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        assert!(find_uac_helper(&[root]).is_none());
+    }
+
+    #[test]
+    fn uac_lookup_accepts_only_the_hardened_protocol_marker() {
+        let temp = tempfile::tempdir().unwrap();
+        let marker = UAC_PROTOCOL_MARKER
+            .encode_utf16()
+            .flat_map(u16::to_le_bytes)
+            .collect::<Vec<_>>();
+        fs::write(temp.path().join(UAC_HELPER_NAME), marker).unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        assert!(find_uac_helper(&[root]).is_some());
     }
 
     #[cfg(unix)]
