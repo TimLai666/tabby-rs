@@ -67,6 +67,7 @@ export abstract class UACService {
 export abstract class PTYProxy {
     abstract getID (): string
     abstract getPID (): Promise<number>
+    async isAlive (): Promise<boolean> { return true }
     abstract resize (columns: number, rows: number): Promise<void>
     abstract write (data: Buffer): Promise<void>
     abstract kill (signal?: string): Promise<void>
