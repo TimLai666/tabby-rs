@@ -22,10 +22,7 @@ pub fn prepare_spawn(request: PrepareSpawnRequest) -> Result<PreparedSpawnReques
         validate_text("shell argument", argument, true)?;
     }
 
-    let environment = merge_environment(
-        request.profile_environment,
-        request.runtime_environment,
-    )?;
+    let environment = merge_environment(request.profile_environment, request.runtime_environment)?;
     let executable = resolve_executable(&request.command, &environment)?;
     let (cwd, cwd_fallback) = validate_cwd(request.cwd)?;
 
@@ -68,11 +65,7 @@ pub fn merge_environment(
     Ok(merged)
 }
 
-fn insert_environment(
-    environment: &mut BTreeMap<String, String>,
-    key: String,
-    value: String,
-) {
+fn insert_environment(environment: &mut BTreeMap<String, String>, key: String, value: String) {
     #[cfg(windows)]
     if let Some(existing) = environment
         .keys()
@@ -86,10 +79,7 @@ fn insert_environment(
     environment.insert(key, value);
 }
 
-fn environment_value<'a>(
-    environment: &'a BTreeMap<String, String>,
-    name: &str,
-) -> Option<&'a str> {
+fn environment_value<'a>(environment: &'a BTreeMap<String, String>, name: &str) -> Option<&'a str> {
     #[cfg(windows)]
     {
         environment
@@ -178,10 +168,7 @@ fn executable_string(path: &Path) -> Option<String> {
 }
 
 #[cfg(windows)]
-fn executable_extensions(
-    command: &str,
-    environment: &BTreeMap<String, String>,
-) -> Vec<String> {
+fn executable_extensions(command: &str, environment: &BTreeMap<String, String>) -> Vec<String> {
     if Path::new(command).extension().is_some() {
         return vec![String::new()];
     }
@@ -227,10 +214,8 @@ mod tests {
 
     #[test]
     fn missing_working_directory_falls_back_without_panicking() {
-        let (cwd, fallback) = validate_cwd(Some(
-            "/definitely/not/a/real/tabby-rs-directory".into(),
-        ))
-        .unwrap();
+        let (cwd, fallback) =
+            validate_cwd(Some("/definitely/not/a/real/tabby-rs-directory".into())).unwrap();
         assert!(cwd.is_none());
         assert!(fallback);
     }

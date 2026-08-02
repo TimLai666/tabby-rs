@@ -7,9 +7,7 @@ use crate::{
 };
 
 #[tauri::command]
-pub async fn shell_detect(
-    request: DetectShellsRequest,
-) -> Result<ShellDetectionResult, AppError> {
+pub async fn shell_detect(request: DetectShellsRequest) -> Result<ShellDetectionResult, AppError> {
     tauri::async_runtime::spawn_blocking(move || Ok(detect_shells(request)))
         .await
         .map_err(|_| AppError::Io("shell detection task failed".into()))?

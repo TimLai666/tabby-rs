@@ -76,9 +76,12 @@ fn login_shell_from_passwd(username: &str) -> Option<String> {
 }
 
 fn posix_shells(warnings: &mut Vec<String>) -> Vec<DetectedShell> {
-    let shell_list = [PathBuf::from("/etc/shells"), PathBuf::from("/usr/share/defaults/etc/shells")]
-        .into_iter()
-        .find(|path| path.is_file());
+    let shell_list = [
+        PathBuf::from("/etc/shells"),
+        PathBuf::from("/usr/share/defaults/etc/shells"),
+    ]
+    .into_iter()
+    .find(|path| path.is_file());
     let Some(shell_list) = shell_list else {
         warnings.push("No POSIX shell list was found.".into());
         return Vec::new();
@@ -103,12 +106,8 @@ fn posix_shells(warnings: &mut Vec<String>) -> Vec<DetectedShell> {
                 .and_then(|name| name.to_str())
                 .unwrap_or(command)
                 .to_owned();
-            let mut shell = DetectedShell::new(
-                "posix",
-                slugify_compat(command),
-                name,
-                command.to_owned(),
-            );
+            let mut shell =
+                DetectedShell::new("posix", slugify_compat(command), name, command.to_owned());
             shell.args = vec!["-l".into()];
             shell.shell_type = Some(ShellType::Unix);
             shell.icon = Some("terminal".into());

@@ -53,10 +53,7 @@ pub fn detect(identification: Option<&str>, warnings: &mut Vec<String>) -> Vec<D
     result
 }
 
-fn stock_shells(
-    identification: Option<&str>,
-    warnings: &mut Vec<String>,
-) -> Vec<DetectedShell> {
+fn stock_shells(identification: Option<&str>, warnings: &mut Vec<String>) -> Vec<DetectedShell> {
     let mut result = Vec::new();
     if let Some(clink_path) = path_text(&clink_path()) {
         let mut clink = DetectedShell::new("windows-stock", "clink", "CMD (clink)", "cmd.exe");
@@ -104,7 +101,11 @@ fn powershell_core_shells(identification: Option<&str>) -> Vec<DetectedShell> {
         )
     })
     .map(PathBuf::from)
-    .or_else(|| standard_pwsh_paths().into_iter().find(|path| path.is_file()))
+    .or_else(|| {
+        standard_pwsh_paths()
+            .into_iter()
+            .find(|path| path.is_file())
+    })
     .and_then(|path| existing_file_text(&path));
 
     let Some(path) = path else {
@@ -140,12 +141,8 @@ fn cmder_shells() -> Vec<DetectedShell> {
     cmd.icon = Some("cmder".into());
     cmd.shell_type = Some(ShellType::Cmd);
 
-    let mut powershell = DetectedShell::new(
-        "cmder",
-        "cmderps",
-        "Cmder PowerShell",
-        "powershell.exe",
-    );
+    let mut powershell =
+        DetectedShell::new("cmder", "cmderps", "Cmder PowerShell", "powershell.exe");
     powershell.args = vec![
         "-ExecutionPolicy".into(),
         "Bypass".into(),
@@ -160,16 +157,12 @@ fn cmder_shells() -> Vec<DetectedShell> {
     vec![cmd, powershell]
 }
 
-fn cygwin_shells(
-    id: &str,
-    name: &str,
-    key: &str,
-    view: RegistryView,
-) -> Vec<DetectedShell> {
+fn cygwin_shells(id: &str, name: &str, key: &str, view: RegistryView) -> Vec<DetectedShell> {
     let Some(root) = registry_value("HKLM", key, Some("rootdir"), view) else {
         return Vec::new();
     };
-    let Some(command) = existing_file_text(&PathBuf::from(root).join("bin").join("bash.exe")) else {
+    let Some(command) = existing_file_text(&PathBuf::from(root).join("bin").join("bash.exe"))
+    else {
         return Vec::new();
     };
     let mut shell = DetectedShell::new("cygwin", id, name, command);
@@ -195,9 +188,9 @@ fn git_bash_shells(identification: Option<&str>) -> Vec<DetectedShell> {
             RegistryView::Native,
         )
     });
-    let Some(command) = root.and_then(|root| {
-        existing_file_text(&PathBuf::from(root).join("bin").join("bash.exe"))
-    }) else {
+    let Some(command) =
+        root.and_then(|root| existing_file_text(&PathBuf::from(root).join("bin").join("bash.exe")))
+    else {
         return Vec::new();
     };
     let mut shell = DetectedShell::new("git-bash", "git-bash", "Git Bash", command);
@@ -275,20 +268,10 @@ fn wsl_shells(warnings: &mut Vec<String>) -> Vec<DetectedShell> {
         ) else {
             continue;
         };
-        let base_path = registry_value(
-            "HKCU",
-            &child,
-            Some("BasePath"),
-            RegistryView::Native,
-        );
-        let flags = registry_value(
-            "HKCU",
-            &child,
-            Some("Flags"),
-            RegistryView::Native,
-        )
-        .and_then(|value| parse_registry_dword(&value))
-        .unwrap_or_default();
+        let base_path = registry_value("HKCU", &child, Some("BasePath"), RegistryView::Native);
+        let flags = registry_value("HKCU", &child, Some("Flags"), RegistryView::Native)
+            .and_then(|value| parse_registry_dword(&value))
+            .unwrap_or_default();
         distributions.push((subkey, name, base_path, flags));
     }
     distributions.sort_by(|left, right| left.1.to_lowercase().cmp(&right.1.to_lowercase()));
