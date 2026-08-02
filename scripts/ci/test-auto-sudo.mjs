@@ -47,8 +47,8 @@ function detector () {
 
 {
     const value = detector()
-    assert.equal(value.feed('\u001b[31m[sudo]\u001b[0m password for tim: '), null)
-    assert.deepEqual(value.feed('\n[sudo] password for tim: '), { username: 'tim' })
+    assert.equal(value.feed('\u001b[31m[sudo]\u001b[0m pass'), null)
+    assert.deepEqual(value.feed('word for tim: '), { username: 'tim' })
     assert.equal(value.feed('unrelated output'), null)
     assert.deepEqual(value.feed('\n[sudo] password for tim: '), { username: 'tim' })
 }
