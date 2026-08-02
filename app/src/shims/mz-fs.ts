@@ -1,5 +1,5 @@
 interface FileStatLike {
-    isDirectory (): boolean
+    isDirectory: () => boolean
 }
 
 function unavailable (): Error {
