@@ -70,8 +70,11 @@ export class TauriDetectedShellProvider extends ShellProvider {
             console.warn('[shell detection]', warning)
         }
 
-        const shells = result.shells.map(normalizeCompatibilityIDs)
-        if (windows.clinkPath && !shells.some(shell => shell.id === 'cmd-clink')) {
+        const clinkEnabled = this.config.store?.terminal?.enableClink !== false
+        const shells = result.shells
+            .map(normalizeCompatibilityIDs)
+            .filter(shell => clinkEnabled || shell.id !== 'cmd-clink')
+        if (clinkEnabled && windows.clinkPath && !shells.some(shell => shell.id === 'cmd-clink')) {
             const cmdIndex = shells.findIndex(shell => shell.id === 'cmd')
             const clink: DetectedShell = {
                 id: 'cmd-clink',
