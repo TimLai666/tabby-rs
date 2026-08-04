@@ -12,6 +12,7 @@ import {
     PtyExitEvent,
     PtyOutputEvent,
     PtySpawnResponse,
+    SudoPromptEvent,
 } from '../api/pty'
 import { TauriSpawnRequestService } from './shellProvider.service'
 
@@ -20,6 +21,8 @@ interface LegacySpawnOptions {
     env?: Record<string, string>
     cols?: number
     rows?: number
+    autoSudoPassword?: boolean
+    sudoSecretRef?: string|null
 }
 
 type EventHandler = (...args: any[]) => void
@@ -44,10 +47,15 @@ export class TauriPTYInterface extends PTYInterface {
         options: LegacySpawnOptions = {},
     ): Promise<PTYProxy> {
         const prepared = await this.spawnRequests.prepare(this.toSessionOptions(command, args, options))
+        const sudoEnabled = options.autoSudoPassword === true && !!options.sudoSecretRef
         const response = await this.bridge.invoke('pty.spawn', {
             prepared,
             columns: options.cols ?? 80,
             rows: options.rows ?? 30,
+            sudo: sudoEnabled ? {
+                enabled: true,
+                secretRef: options.sudoSecretRef ?? null,
+            } : null,
         })
         return TauriPTYProxy.create(response, this.bridge)
     }
@@ -81,6 +89,8 @@ export class TauriPTYInterface extends PTYInterface {
             shellType: null,
             pauseAfterExit: false,
             runAsAdministrator: false,
+            autoSudoPassword: options.autoSudoPassword ?? false,
+            sudoSecretRef: options.sudoSecretRef ?? null,
         }
     }
 }
@@ -221,6 +231,7 @@ export class TauriPTYProxy extends PTYProxy {
             await this.bridge.listen('pty.output', payload => this.onOutput(payload)),
             await this.bridge.listen('pty.exit', payload => this.onExit(payload)),
             await this.bridge.listen('pty.error', payload => this.onError(payload)),
+            await this.bridge.listen('sudo.prompt', payload => this.onSudoPrompt(payload)),
         )
     }
 
@@ -267,6 +278,14 @@ export class TauriPTYProxy extends PTYProxy {
         for (const handler of this.handlers.get('error') ?? []) {
             handler(payload)
         }
+    }
+
+    private onSudoPrompt (payload: SudoPromptEvent): void {
+        if (payload.sessionId !== this.response.id) {
+            return
+        }
+        void this.bridge.invoke('sudo.respond', { promptId: payload.promptId })
+            .catch(error => console.warn('Automatic sudo response was not sent:', error))
     }
 
     private emitExitTo (
