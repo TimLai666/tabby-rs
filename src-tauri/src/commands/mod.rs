@@ -8,5 +8,6 @@ pub mod migration;
 pub mod pty;
 pub mod secrets;
 pub mod shell;
+pub mod sudo;
 pub mod vault;
 pub mod windows;
