@@ -7,6 +7,7 @@ mod security;
 mod shell;
 mod state;
 mod storage;
+mod sudo;
 mod windows_integration;
 
 use std::sync::Arc;
@@ -25,6 +26,7 @@ use commands::{
     },
     secrets::{secret_import_execute, secret_import_plan},
     shell::{shell_detect, shell_prepare_spawn},
+    sudo::sudo_respond,
     vault::{
         vault_get_file, vault_get_secret, vault_lock, vault_put_file, vault_put_secret,
         vault_remove_secret, vault_replace, vault_set_config, vault_set_enabled, vault_snapshot,
@@ -166,6 +168,7 @@ pub fn run() {
             secret_import_execute,
             shell_detect,
             shell_prepare_spawn,
+            sudo_respond,
             vault_status,
             vault_unlock,
             vault_replace,
