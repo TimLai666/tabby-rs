@@ -46,6 +46,8 @@ export interface SessionOptions {
     shellType: ShellType | null
     pauseAfterExit: boolean
     runAsAdministrator: boolean
+    autoSudoPassword: boolean
+    sudoSecretRef: string | null
 }
 
 export interface LocalProfile extends BaseTerminalProfile {
@@ -62,6 +64,10 @@ export abstract class UACService {
     isAvailable = false
 
     abstract patchSessionOptionsForUAC (sessionOptions: SessionOptions): SessionOptions
+
+    prepareSessionOptionsForUAC (sessionOptions: SessionOptions): Promise<SessionOptions> {
+        return Promise.resolve(this.patchSessionOptionsForUAC(sessionOptions))
+    }
 }
 
 export abstract class PTYProxy {
