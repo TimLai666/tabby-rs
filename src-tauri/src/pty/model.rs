@@ -1,6 +1,9 @@
 use std::collections::BTreeMap;
 
-use crate::shell::{PreparedSpawnRequest, ShellType};
+use crate::{
+    shell::{PreparedSpawnRequest, ShellType},
+    sudo::SudoConfig,
+};
 
 pub const MAX_CHUNK_BYTES: usize = 100 * 1024;
 pub const MAX_UNACKED_BYTES: usize = MAX_CHUNK_BYTES * 5;
@@ -13,6 +16,8 @@ pub struct PtySpawnRequest {
     pub columns: u16,
     #[serde(default = "default_rows")]
     pub rows: u16,
+    #[serde(default)]
+    pub sudo: Option<SudoConfig>,
 }
 
 fn default_columns() -> u16 {
@@ -101,6 +106,7 @@ pub struct SpawnSpec {
     pub columns: u16,
     pub rows: u16,
     pub shell_type: Option<ShellType>,
+    pub sudo: Option<SudoConfig>,
 }
 
 impl TryFrom<PtySpawnRequest> for SpawnSpec {
@@ -121,6 +127,7 @@ impl TryFrom<PtySpawnRequest> for SpawnSpec {
             columns: request.columns,
             rows: request.rows,
             shell_type: prepared.shell_type,
+            sudo: request.sudo,
         })
     }
 }
