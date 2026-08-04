@@ -4,7 +4,6 @@ use std::{
 };
 
 use rand::{rngs::OsRng, RngCore};
-use secrecy::SecretString;
 use tauri::AppHandle;
 
 use crate::error::AppError;
@@ -122,12 +121,7 @@ impl PtyManager {
         Ok(())
     }
 
-    pub fn respond_sudo(
-        &self,
-        prompt_id: &str,
-        secret_ref: &str,
-        secret: &SecretString,
-    ) -> Result<(), AppError> {
+    pub fn claim_sudo(&self, prompt_id: &str) -> Result<(Arc<PtySession>, String), AppError> {
         let sessions = self
             .sessions
             .read()
@@ -136,9 +130,9 @@ impl PtyManager {
             .cloned()
             .collect::<Vec<_>>();
         for session in sessions {
-            match session.respond_sudo(prompt_id, secret_ref, secret) {
-                Ok(true) => return Ok(()),
-                Ok(false) => continue,
+            match session.claim_sudo(prompt_id) {
+                Ok(Some(secret_ref)) => return Ok((session, secret_ref)),
+                Ok(None) => continue,
                 Err(error) => return Err(AppError::from(error)),
             }
         }
