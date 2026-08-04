@@ -138,32 +138,20 @@ impl PtySession {
         Ok(())
     }
 
-    pub fn respond_sudo(
-        &self,
-        prompt_id: &str,
-        secret_ref: &str,
-        secret: &SecretString,
-    ) -> Result<bool, PtyError> {
-        let configured_ref = self
-            .sudo
+    pub fn claim_sudo(&self, prompt_id: &str) -> Result<Option<String>, PtyError> {
+        self.sudo
             .lock()
             .unwrap_or_else(|error| error.into_inner())
             .claim(prompt_id)
-            .map_err(|error| PtyError::Io(error.to_string()))?;
-        let Some(configured_ref) = configured_ref else {
-            return Ok(false);
-        };
-        if configured_ref != secret_ref {
-            return Err(PtyError::Io(
-                "sudo secret reference does not match the pending prompt".into(),
-            ));
-        }
+            .map_err(|error| PtyError::Io(error.to_string()))
+    }
 
+    pub fn write_sudo_secret(&self, secret: &SecretString) -> Result<(), PtyError> {
         let mut bytes = secret.expose_secret().as_bytes().to_vec();
         bytes.push(b'\n');
         let result = self.write(&bytes);
         bytes.zeroize();
-        result.map(|_| true)
+        result
     }
 
     pub fn resize(&self, columns: u16, rows: u16) -> Result<(), PtyError> {
