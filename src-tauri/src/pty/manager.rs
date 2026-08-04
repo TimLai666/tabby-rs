@@ -4,6 +4,7 @@ use std::{
 };
 
 use rand::{rngs::OsRng, RngCore};
+use secrecy::SecretString;
 use tauri::AppHandle;
 
 use crate::error::AppError;
@@ -44,6 +45,7 @@ impl PtyManager {
         request: PtySpawnRequest,
     ) -> Result<PtySpawnResponse, AppError> {
         let spec = SpawnSpec::try_from(request)?;
+        let sudo = spec.sudo.clone();
         let spawned = self.backend.spawn(&spec).map_err(AppError::from)?;
         let id = new_session_id();
         let response = PtySpawnResponse {
@@ -67,6 +69,7 @@ impl PtyManager {
             spawned.master,
             spawned.writer,
             spawned.killer,
+            sudo,
             on_completed,
         ));
 
@@ -117,6 +120,31 @@ impl PtyManager {
     pub fn ack(&self, id: &str, bytes: usize) -> Result<(), AppError> {
         self.session_or_error(id)?.ack(bytes);
         Ok(())
+    }
+
+    pub fn respond_sudo(
+        &self,
+        prompt_id: &str,
+        secret_ref: &str,
+        secret: &SecretString,
+    ) -> Result<(), AppError> {
+        let sessions = self
+            .sessions
+            .read()
+            .unwrap_or_else(|error| error.into_inner())
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        for session in sessions {
+            match session.respond_sudo(prompt_id, secret_ref, secret) {
+                Ok(true) => return Ok(()),
+                Ok(false) => continue,
+                Err(error) => return Err(AppError::from(error)),
+            }
+        }
+        Err(AppError::NotFound(
+            "sudo prompt is unknown, expired, or already handled".into(),
+        ))
     }
 
     pub fn pid(&self, id: &str) -> Result<u32, AppError> {
