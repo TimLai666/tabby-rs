@@ -141,16 +141,22 @@ impl PtySession {
     pub fn respond_sudo(
         &self,
         prompt_id: &str,
+        secret_ref: &str,
         secret: &SecretString,
     ) -> Result<bool, PtyError> {
-        let secret_ref = self
+        let configured_ref = self
             .sudo
             .lock()
             .unwrap_or_else(|error| error.into_inner())
             .claim(prompt_id)
             .map_err(|error| PtyError::Io(error.to_string()))?;
-        if secret_ref.is_none() {
+        let Some(configured_ref) = configured_ref else {
             return Ok(false);
+        };
+        if configured_ref != secret_ref {
+            return Err(PtyError::Io(
+                "sudo secret reference does not match the pending prompt".into(),
+            ));
         }
 
         let mut bytes = secret.expose_secret().as_bytes().to_vec();
