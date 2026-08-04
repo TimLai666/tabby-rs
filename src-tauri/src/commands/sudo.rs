@@ -15,7 +15,6 @@ use crate::{
 #[serde(rename_all = "camelCase")]
 pub struct SudoRespondRequest {
     pub prompt_id: String,
-    pub secret_ref: String,
 }
 
 #[tauri::command]
@@ -24,7 +23,8 @@ pub fn sudo_respond(
     manager: State<'_, Arc<PtyManager>>,
     secrets: State<'_, Arc<SecretState>>,
 ) -> Result<(), AppError> {
-    let profile_id = profile_id_from_secret_ref(&request.secret_ref)
+    let (session, secret_ref) = manager.claim_sudo(&request.prompt_id)?;
+    let profile_id = profile_id_from_secret_ref(&secret_ref)
         .map_err(|error| AppError::InvalidArgument(error.to_string()))?;
     let mut key = Map::new();
     key.insert("profileId".into(), Value::String(profile_id.to_owned()));
@@ -35,5 +35,5 @@ pub fn sudo_respond(
         })?
         .ok_or_else(|| AppError::NotFound("saved sudo password is unavailable".into()))?;
     let secret = SecretString::new(secret);
-    manager.respond_sudo(&request.prompt_id, &request.secret_ref, &secret)
+    session.write_sudo_secret(&secret).map_err(AppError::from)
 }
