@@ -6,7 +6,7 @@ import { BaseSession } from 'tabby-terminal'
 import { SessionOptions, ChildProcess, PTYInterface, PTYProxy } from './api'
 import { getEnvironment, substituteEnv } from './environment'
 
-const windowsDirectoryRegex = /([a-zA-Z]:[^\:\[\]\?\"\<\>\|\u001b]+)/mi
+const windowsDirectoryRegex = /([a-zA-Z]:[^\:\[\]\?\"\<\>\|\x1b]+)/mi
 
 function mergeEnv (...envs) {
     const result = {}
