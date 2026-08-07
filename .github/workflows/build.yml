@@ -70,6 +70,9 @@ jobs:
       - name: Lint
         run: yarn lint --format unix
 
+      - name: Verify xterm renderer boundary
+        run: node scripts/ci/assert-xterm-boundary.mjs
+
       - name: Test terminal renderer write ordering
         run: node scripts/ci/test-terminal-renderer.mjs
 
