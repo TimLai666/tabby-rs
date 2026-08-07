@@ -38,7 +38,8 @@ pub fn status(app: &AppHandle) -> WindowsIntegrationStatus {
         let uac_helper_path = find_uac_helper(&roots).and_then(path_text);
         let mut warnings = Vec::new();
         if clink_path.is_none() {
-            warnings.push("Bundled Clink helper was not found; stock CMD remains available.".into());
+            warnings
+                .push("Bundled Clink helper was not found; stock CMD remains available.".into());
         }
         if uac_helper_path.is_none() {
             warnings.push(
@@ -160,15 +161,14 @@ fn path_text(path: PathBuf) -> Option<String> {
 mod tests {
     use std::{fs, path::Path};
 
-    use super::{
-        find_regular_resource, find_uac_helper, UAC_HELPER_NAME, UAC_PROTOCOL_MARKER,
-    };
+    use super::{find_regular_resource, find_uac_helper, UAC_HELPER_NAME, UAC_PROTOCOL_MARKER};
 
     #[test]
     fn resource_lookup_rejects_parent_traversal() {
         let temp = tempfile::tempdir().unwrap();
-        assert!(find_regular_resource(&[temp.path().to_path_buf()], Path::new("../UAC.exe"))
-            .is_none());
+        assert!(
+            find_regular_resource(&[temp.path().to_path_buf()], Path::new("../UAC.exe")).is_none()
+        );
     }
 
     #[test]
