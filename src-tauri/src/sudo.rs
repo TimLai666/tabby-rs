@@ -52,7 +52,10 @@ pub struct SudoPromptBroker {
 
 impl SudoPromptBroker {
     pub fn new(config: Option<SudoConfig>) -> Self {
-        let enabled = config.as_ref().map(|config| config.enabled).unwrap_or(false);
+        let enabled = config
+            .as_ref()
+            .map(|config| config.enabled)
+            .unwrap_or(false);
         let secret_ref = config
             .and_then(|config| config.secret_ref)
             .filter(|reference| valid_secret_ref(reference));
@@ -130,10 +133,7 @@ pub fn profile_id_from_secret_ref(reference: &str) -> Result<&str, SudoPromptErr
     let profile_id = reference
         .strip_prefix(SECRET_REF_PREFIX)
         .ok_or(SudoPromptError::InvalidSecretReference)?;
-    if profile_id.is_empty()
-        || profile_id.len() > 512
-        || profile_id.chars().any(char::is_control)
-    {
+    if profile_id.is_empty() || profile_id.len() > 512 || profile_id.chars().any(char::is_control) {
         return Err(SudoPromptError::InvalidSecretReference);
     }
     Ok(profile_id)
