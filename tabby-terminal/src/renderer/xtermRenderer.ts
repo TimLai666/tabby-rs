@@ -105,7 +105,7 @@ export class XtermRenderer extends TerminalRenderer {
         this.core.scrollToBottom = () => null
     }
 
-    get element (): HTMLElement | null {
+    get element (): HTMLElement | null | undefined {
         return this.terminal.element
     }
 
