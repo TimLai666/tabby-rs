@@ -1,6 +1,11 @@
 import type { Observable } from 'rxjs'
 import type { BaseTerminalProfile, ResizeEvent } from '../api/interfaces'
-import type { SearchOptions, SearchState } from '../frontends/frontend'
+import type {
+    SearchOptions,
+    SearchState,
+    TerminalLinkHandler,
+    TerminalLinkProvider,
+} from '../frontends/frontend'
 
 export interface TerminalRendererFontOptions {
     family: string
@@ -102,6 +107,8 @@ export abstract class TerminalRenderer {
     abstract findPrevious (query: string, options?: SearchOptions): SearchState
     abstract cancelSearch (): void
     abstract setOptions (patch: Partial<TerminalRendererOptions>, profile?: BaseTerminalProfile): void
+    abstract setLinkHandler (handler: TerminalLinkHandler | null): void
+    abstract registerLinkProvider (provider: TerminalLinkProvider): () => void
     abstract scrollToTop (): void
     abstract scrollLines (amount: number): void
     abstract scrollPages (pages: number): void
