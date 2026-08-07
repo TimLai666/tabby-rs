@@ -48,11 +48,12 @@ export interface TerminalRendererOptions {
 
 export interface TerminalRendererEvents {
     data: string
-    binary: string
+    binary: Uint8Array
     resize: ResizeEvent
     selectionChanged: string
     titleChanged: string
     bell: undefined
+    scroll: number
     alternateScreenChanged: boolean
 }
 
@@ -73,11 +74,12 @@ export interface TerminalRendererViewportState {
 
 export interface TerminalRendererEventStreams {
     data$: Observable<string>
-    binary$: Observable<string>
+    binary$: Observable<Uint8Array>
     resize$: Observable<ResizeEvent>
     selectionChanged$: Observable<string>
     titleChanged$: Observable<string>
     bell$: Observable<void>
+    scroll$: Observable<number>
     alternateScreenChanged$: Observable<boolean>
 }
 
@@ -94,7 +96,8 @@ export abstract class TerminalRenderer {
     abstract readonly rows: number
 
     abstract open (container: HTMLElement): void
-    abstract write (data: string): Promise<void>
+    abstract write (data: string | Uint8Array): Promise<void>
+    abstract resize (columns: number, rows: number): void
     abstract fit (viewport: TerminalRendererViewportState): void
     abstract focus (): void
     abstract clear (): void
