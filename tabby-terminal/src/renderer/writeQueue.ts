@@ -1,4 +1,5 @@
-export type RendererWriter = (data: string, done: () => void) => void
+export type RendererWriteData = string | Uint8Array
+export type RendererWriter = (data: RendererWriteData, done: () => void) => void
 
 /**
  * Serializes renderer writes and resolves only from the renderer completion
@@ -10,7 +11,7 @@ export class RendererWriteQueue {
 
     constructor (private writer: RendererWriter) { }
 
-    write (data: string): Promise<void> {
+    write (data: RendererWriteData): Promise<void> {
         if (this.disposed) {
             return Promise.reject(new Error('Terminal renderer is disposed'))
         }
