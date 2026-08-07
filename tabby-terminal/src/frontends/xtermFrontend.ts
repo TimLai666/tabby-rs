@@ -13,7 +13,13 @@ import {
     ThemesService,
 } from 'tabby-core'
 
-import { Frontend, SearchOptions, SearchState } from './frontend'
+import {
+    Frontend,
+    SearchOptions,
+    SearchState,
+    TerminalLinkHandler,
+    TerminalLinkProvider,
+} from './frontend'
 import { BaseTerminalProfile } from '../api/interfaces'
 import { getXtermBackgroundColor } from '../helpers'
 import { generatePalette } from '../generatePalette'
@@ -404,6 +410,14 @@ export class XTermFrontend extends Frontend {
 
     cancelSearch (): void {
         this.renderer.cancelSearch()
+    }
+
+    setLinkHandler (handler: TerminalLinkHandler | null): void {
+        this.renderer.setLinkHandler(handler)
+    }
+
+    registerLinkProvider (provider: TerminalLinkProvider): () => void {
+        return this.renderer.registerLinkProvider(provider)
     }
 
     saveState (): any {
