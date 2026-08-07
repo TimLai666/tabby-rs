@@ -52,6 +52,7 @@ export class XtermRenderer extends TerminalRenderer {
     private searchLoaded = false
     private writeQueue: RendererWriteQueue
     private originalKeyUp?: (event: KeyboardEvent) => void
+    private platform: TerminalRendererOptions['platform'] = 'web'
 
     private data = new Subject<string>()
     private binary = new Subject<string>()
@@ -208,6 +209,7 @@ export class XtermRenderer extends TerminalRenderer {
 
     setOptions (patch: Partial<TerminalRendererOptions>, _profile?: BaseTerminalProfile): void {
         if (patch.platform) {
+            this.platform = patch.platform
             this.core.browser.isWindows = patch.platform === 'windows'
             this.core.browser.isLinux = patch.platform === 'linux'
             this.core.browser.isMac = patch.platform === 'macos'
@@ -220,7 +222,7 @@ export class XtermRenderer extends TerminalRenderer {
             this.terminal.options.lineHeight = font.lineHeight
             this.terminal.options.fontWeight = font.weight as any
             this.terminal.options.fontWeightBold = font.weightBold as any
-            if (this.opened && font.ligatures && !this.ligaturesAddon && patch.platform !== 'web') {
+            if (this.opened && font.ligatures && !this.ligaturesAddon && this.platform !== 'web') {
                 this.ligaturesAddon = new LigaturesAddon()
                 this.terminal.loadAddon(this.ligaturesAddon)
             }
