@@ -52,7 +52,7 @@ export interface TerminalRendererEvents {
     resize: ResizeEvent
     selectionChanged: string
     titleChanged: string
-    bell: void
+    bell: undefined
     alternateScreenChanged: boolean
 }
 
