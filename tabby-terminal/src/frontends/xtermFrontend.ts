@@ -55,7 +55,7 @@ export class XTermFrontend extends Frontend {
     private preventNextOnSelectionChangeEvent = false
     private pinnedToBottom = true
     private resizeObserver?: ResizeObserver
-    private hostListenerCleanups: Array<() => void> = []
+    private hostListenerCleanups: (() => void)[] = []
 
     private configService: ConfigService
     private hotkeysService: HotkeysService
@@ -496,7 +496,7 @@ export class XTermFrontend extends Frontend {
             [Platform.macOS]: 'macos' as const,
             [Platform.Linux]: 'linux' as const,
             [Platform.Web]: 'web' as const,
-        }[this.hostApp.platform] ?? 'web'
+        }[this.hostApp.platform]
     }
 
     private addHostListener (
