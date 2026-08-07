@@ -61,7 +61,7 @@ export interface TerminalRendererConstructionOptions {
     sixel: boolean
     windowsPty?: {
         backend: 'conpty' | 'winpty'
-        buildNumber: number
+        buildNumber?: number
     }
 }
 
@@ -89,7 +89,7 @@ export interface TerminalRendererEventStreams {
  */
 export abstract class TerminalRenderer {
     abstract readonly events: TerminalRendererEventStreams
-    abstract readonly element: HTMLElement | null
+    abstract readonly element: HTMLElement | null | undefined
     abstract readonly columns: number
     abstract readonly rows: number
 
