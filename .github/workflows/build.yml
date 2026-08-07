@@ -70,6 +70,9 @@ jobs:
       - name: Lint
         run: yarn lint --format unix
 
+      - name: Test terminal renderer write ordering
+        run: node scripts/ci/test-terminal-renderer.mjs
+
       - name: Test sudo prompt detector
         run: node scripts/ci/test-auto-sudo.mjs
 
