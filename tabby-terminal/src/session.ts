@@ -63,7 +63,7 @@ export abstract class BaseSession {
     protected reportedCWD?: string
     private initialDataBuffer = Buffer.from('')
     private initialDataBufferReleased = false
-    private initialDataConsumptions: Array<() => void> = []
+    private initialDataConsumptions: (() => void)[] = []
     private activeOutputBarrier?: OutputConsumptionBarrier
 
     get output$ (): Observable<string> { return this.output }
