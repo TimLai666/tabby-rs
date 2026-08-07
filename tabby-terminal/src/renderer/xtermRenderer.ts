@@ -25,7 +25,7 @@ import {
     TerminalRendererTheme,
     TerminalRendererViewportState,
 } from './terminalRenderer'
-import { RendererWriteQueue } from './writeQueue'
+import { RendererWriteData, RendererWriteQueue } from './writeQueue'
 import '../frontends/xterm.css'
 
 const COLOR_NAMES = [
@@ -55,11 +55,12 @@ export class XtermRenderer extends TerminalRenderer {
     private platform: TerminalRendererOptions['platform'] = 'web'
 
     private data = new Subject<string>()
-    private binary = new Subject<string>()
+    private binary = new Subject<Uint8Array>()
     private resize = new Subject<ResizeEvent>()
     private selectionChanged = new Subject<string>()
     private titleChanged = new Subject<string>()
     private bell = new Subject<void>()
+    private scroll = new Subject<number>()
     private alternateScreenChanged = new Subject<boolean>()
 
     readonly events: TerminalRendererEventStreams = {
@@ -69,6 +70,7 @@ export class XtermRenderer extends TerminalRenderer {
         selectionChanged$: this.selectionChanged,
         titleChanged$: this.titleChanged,
         bell$: this.bell,
+        scroll$: this.scroll,
         alternateScreenChanged$: this.alternateScreenChanged,
     }
 
@@ -83,9 +85,10 @@ export class XtermRenderer extends TerminalRenderer {
         this.core = this.terminal['_core']
         this.writeQueue = new RendererWriteQueue((data, done) => this.terminal.write(data, done))
 
-        this.terminal.onBinary(data => this.binary.next(data))
+        this.terminal.onBinary(data => this.binary.next(this.binaryStringToBytes(data)))
         this.terminal.onData(data => this.data.next(data))
         this.terminal.onResize(({ cols, rows }) => this.resize.next({ columns: cols, rows }))
+        this.terminal.onScroll(position => this.scroll.next(position))
         this.terminal.onTitleChange(title => this.titleChanged.next(title))
         this.terminal.onSelectionChange(() => this.selectionChanged.next(this.getSelection()))
         this.terminal.onBell(() => this.bell.next())
@@ -139,8 +142,14 @@ export class XtermRenderer extends TerminalRenderer {
         }
     }
 
-    write (data: string): Promise<void> {
+    write (data: RendererWriteData): Promise<void> {
         return this.writeQueue.write(data)
+    }
+
+    resize (columns: number, rows: number): void {
+        if (columns > 0 && rows > 0 && (columns !== this.terminal.cols || rows !== this.terminal.rows)) {
+            this.terminal.resize(columns, rows)
+        }
     }
 
     fit (viewport: TerminalRendererViewportState): void {
@@ -386,6 +395,7 @@ export class XtermRenderer extends TerminalRenderer {
         this.selectionChanged.complete()
         this.titleChanged.complete()
         this.bell.complete()
+        this.scroll.complete()
         this.alternateScreenChanged.complete()
     }
 
@@ -487,5 +497,13 @@ export class XtermRenderer extends TerminalRenderer {
         const viewport = this.getViewportState()
         this.fit(viewport)
         renderService?.handleResize(this.terminal.cols, this.terminal.rows)
+    }
+
+    private binaryStringToBytes (data: string): Uint8Array {
+        const bytes = new Uint8Array(data.length)
+        for (let index = 0; index < data.length; index++) {
+            bytes[index] = data.charCodeAt(index) & 0xff
+        }
+        return bytes
     }
 }
