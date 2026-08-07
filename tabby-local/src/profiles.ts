@@ -25,6 +25,8 @@ export class LocalProfilesService extends ProfileProvider<LocalProfile> {
             shellType: null,
             pauseAfterExit: false,
             runAsAdministrator: false,
+            autoSudoPassword: false,
+            sudoSecretRef: null,
         },
     }
 

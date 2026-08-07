@@ -8,7 +8,11 @@ use std::{
 };
 
 use portable_pty::{Child, ChildKiller, MasterPty, PtySize};
+use secrecy::{ExposeSecret, SecretString};
 use tauri::{AppHandle, Emitter};
+use zeroize::Zeroize;
+
+use crate::sudo::{SudoConfig, SudoPromptBroker};
 
 use super::{
     backend::PtyError,
@@ -26,6 +30,7 @@ pub struct PtySession {
     writer: Mutex<Box<dyn Write + Send>>,
     killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
     flow: Arc<FlowControl>,
+    sudo: Mutex<SudoPromptBroker>,
     sequence: AtomicU64,
     dropped_bytes: AtomicU64,
     attached: AtomicBool,
@@ -45,6 +50,7 @@ impl PtySession {
         master: Box<dyn MasterPty + Send>,
         writer: Box<dyn Write + Send>,
         killer: Box<dyn ChildKiller + Send + Sync>,
+        sudo: Option<SudoConfig>,
         on_completed: CompletionHandler,
     ) -> Self {
         Self {
@@ -55,6 +61,7 @@ impl PtySession {
             writer: Mutex::new(writer),
             killer: Mutex::new(killer),
             flow: Arc::new(FlowControl::new(MAX_UNACKED_BYTES)),
+            sudo: Mutex::new(SudoPromptBroker::new(sudo)),
             sequence: AtomicU64::new(0),
             dropped_bytes: AtomicU64::new(0),
             attached: AtomicBool::new(false),
@@ -131,6 +138,22 @@ impl PtySession {
         Ok(())
     }
 
+    pub fn claim_sudo(&self, prompt_id: &str) -> Result<Option<String>, PtyError> {
+        self.sudo
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .claim(prompt_id)
+            .map_err(|error| PtyError::Io(error.to_string()))
+    }
+
+    pub fn write_sudo_secret(&self, secret: &SecretString) -> Result<(), PtyError> {
+        let mut bytes = secret.expose_secret().as_bytes().to_vec();
+        bytes.push(b'\n');
+        let result = self.write(&bytes);
+        bytes.zeroize();
+        result
+    }
+
     pub fn resize(&self, columns: u16, rows: u16) -> Result<(), PtyError> {
         if columns == 0 || rows == 0 {
             return Err(PtyError::Io(
@@ -199,6 +222,11 @@ impl PtySession {
                         if !session.flow.reserve(length) {
                             break;
                         }
+                        let sudo_prompt = session
+                            .sudo
+                            .lock()
+                            .unwrap_or_else(|error| error.into_inner())
+                            .inspect(&session.id, &buffer[..length]);
                         let sequence = session.sequence.fetch_add(1, Ordering::AcqRel);
                         let payload = PtyOutputEvent {
                             id: session.id.clone(),
@@ -216,6 +244,18 @@ impl PtySession {
                                 },
                             );
                             break;
+                        }
+                        if let Some(prompt) = sudo_prompt {
+                            if let Err(error) = app.emit("sudo.prompt", prompt) {
+                                let _ = app.emit(
+                                    "pty.error",
+                                    PtyErrorEvent {
+                                        id: session.id.clone(),
+                                        code: "sudoPromptEmissionFailed".into(),
+                                        details: error.to_string(),
+                                    },
+                                );
+                            }
                         }
                     }
                     Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,

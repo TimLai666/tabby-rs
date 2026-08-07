@@ -12,6 +12,7 @@ import {
     DetectedShell,
     PreparedSpawnRequest,
 } from '../api/shell'
+import '../api/windowsIntegration'
 
 function iconFor (icon?: string): string|undefined {
     switch (icon) {
@@ -42,6 +43,13 @@ function iconFor (icon?: string): string|undefined {
     }
 }
 
+function normalizeCompatibilityIDs (shell: DetectedShell): DetectedShell {
+    if (shell.providerId === 'windows-stock' && shell.id === 'clink') {
+        return { ...shell, id: 'cmd-clink' }
+    }
+    return shell
+}
+
 @Injectable()
 export class TauriDetectedShellProvider extends ShellProvider {
     constructor (
@@ -52,13 +60,38 @@ export class TauriDetectedShellProvider extends ShellProvider {
     }
 
     async provide (): Promise<Shell[]> {
-        const result = await this.bridge.invoke('shell.detect', {
-            identification: this.config.store?.terminal?.identification ?? null,
-        })
-        for (const warning of result.warnings) {
+        const [result, windows] = await Promise.all([
+            this.bridge.invoke('shell.detect', {
+                identification: this.config.store?.terminal?.identification ?? null,
+            }),
+            this.bridge.invoke('windows.integrationStatus', {}),
+        ])
+        for (const warning of [...result.warnings, ...windows.warnings]) {
             console.warn('[shell detection]', warning)
         }
-        return result.shells.map(shell => this.toShell(shell))
+
+        const clinkEnabled = this.config.store?.terminal?.enableClink !== false
+        const shells = result.shells
+            .map(normalizeCompatibilityIDs)
+            .filter(shell => clinkEnabled || shell.id !== 'cmd-clink')
+        if (clinkEnabled && windows.clinkPath && !shells.some(shell => shell.id === 'cmd-clink')) {
+            const cmdIndex = shells.findIndex(shell => shell.id === 'cmd')
+            const clink: DetectedShell = {
+                id: 'cmd-clink',
+                providerId: 'windows-stock',
+                name: 'CMD (clink)',
+                command: 'cmd.exe',
+                args: ['/k', windows.clinkPath, 'inject'],
+                env: { WT_SESSION: '0' },
+                icon: 'clink',
+                shellType: 'cmd',
+                hidden: false,
+                metadata: { source: 'tauriResource' },
+            }
+            shells.splice(cmdIndex < 0 ? 0 : cmdIndex, 0, clink)
+        }
+
+        return shells.map(shell => this.toShell(shell))
     }
 
     private toShell (shell: DetectedShell): Shell {

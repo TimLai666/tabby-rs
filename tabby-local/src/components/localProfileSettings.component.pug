@@ -11,6 +11,42 @@ ul.nav-tabs(ngbNav, #nav='ngbNav')
                     [(ngModel)]='profile.options.runAsAdministrator',
                 )
 
+            .form-line
+                .header
+                    .title(translate) Automatic sudo password
+                    .description(translate) Respond once to a verified sudo prompt using a password stored in Vault
+                toggle(
+                    [(ngModel)]='profile.options.autoSudoPassword',
+                    [disabled]='!vault.isEnabled() || !sudoPasswordSaved'
+                )
+
+            .alert.alert-info(*ngIf='!vault.isEnabled()', translate)
+                | Enable Vault before saving an automatic sudo password
+
+            .mb-3(*ngIf='vault.isEnabled()')
+                label(translate) Sudo password
+                .input-group
+                    input.form-control(
+                        type='password',
+                        autocomplete='new-password',
+                        [(ngModel)]='sudoPasswordDraft',
+                        placeholder='Password is stored only in Vault'
+                    )
+                    button.btn.btn-primary(
+                        type='button',
+                        [disabled]='!sudoPasswordDraft',
+                        (click)='saveSudoPassword()'
+                    )
+                        span(translate) Save
+                    button.btn.btn-outline-danger(
+                        *ngIf='sudoPasswordSaved',
+                        type='button',
+                        (click)='removeSudoPassword()'
+                    )
+                        span(translate) Remove
+                .form-text(*ngIf='sudoPasswordSaved', translate)
+                    | A sudo password is saved for this profile
+
             .mb-3
                 label(translate) Working directory
 

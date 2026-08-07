@@ -5,6 +5,7 @@ import {
     PtyOutputEvent,
     PtySpawnRequest,
     PtySpawnResponse,
+    SudoPromptEvent,
 } from './pty'
 import './hostBridge'
 
@@ -62,11 +63,16 @@ declare module './hostBridge' {
             request: { id: string }
             response: string|null
         }
+        'sudo.respond': {
+            request: { promptId: string }
+            response: null
+        }
     }
 
     interface HostEventMap {
         'pty.output': PtyOutputEvent
         'pty.exit': PtyExitEvent
         'pty.error': PtyErrorEvent
+        'sudo.prompt': SudoPromptEvent
     }
 }

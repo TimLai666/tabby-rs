@@ -6,6 +6,7 @@ export class TerminalConfigProvider extends ConfigProvider {
         terminal: {
             autoOpen: true,
             useConPTY: true,
+            enableClink: true,
             environment: {},
             setComSpec: false,
             windowsRefreshEnvironment: true,
