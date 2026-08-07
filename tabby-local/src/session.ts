@@ -6,7 +6,7 @@ import { BaseSession } from 'tabby-terminal'
 import { SessionOptions, ChildProcess, PTYInterface, PTYProxy } from './api'
 import { getEnvironment, substituteEnv } from './environment'
 
-const windowsDirectoryRegex = /([a-zA-Z]:[^\:\[\]\?\"\<\>\|]+)/mi
+const windowsDirectoryRegex = /([a-zA-Z]:[^\:\[\]\?\"\<\>\|\u001b]+)/mi
 
 function mergeEnv (...envs) {
     const result = {}
@@ -119,9 +119,9 @@ export class Session extends BaseSession {
         this.open = true
 
         this.pty.subscribe('data', (array: Uint8Array) => {
-            this.pty!.ackData(array.length)
             const data = Buffer.from(array)
-            this.emitOutput(data)
+            const acknowledgedPTY = this.pty
+            this.emitOutput(data, () => acknowledgedPTY?.ackData(array.length))
             if (this.hostApp.platform === Platform.Windows) {
                 this.guessWindowsCWD(data.toString())
             }
