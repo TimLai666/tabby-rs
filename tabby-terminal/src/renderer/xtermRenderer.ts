@@ -8,9 +8,15 @@ import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { SerializeAddon } from '@xterm/addon-serialize'
 import { ImageAddon } from '@xterm/addon-image'
 import { CanvasAddon } from '@xterm/addon-canvas'
+import { WebLinksAddon } from '@xterm/addon-web-links'
 
 import type { BaseTerminalProfile, ResizeEvent } from '../api/interfaces'
-import type { SearchOptions, SearchState } from '../frontends/frontend'
+import type {
+    SearchOptions,
+    SearchState,
+    TerminalLinkHandler,
+    TerminalLinkProvider,
+} from '../frontends/frontend'
 import {
     TerminalRenderer,
     TerminalRendererConstructionOptions,
@@ -38,6 +44,7 @@ export class XtermRenderer extends TerminalRenderer {
     private ligaturesAddon?: LigaturesAddon
     private webGLAddon?: WebglAddon
     private canvasAddon?: CanvasAddon
+    private linkAddons = new Set<WebLinksAddon>()
     private searchState: SearchState = { resultCount: 0 }
     private opened = false
     private pendingRendererRecovery = false
@@ -93,8 +100,6 @@ export class XtermRenderer extends TerminalRenderer {
             this.terminal.loadAddon(new ImageAddon())
         }
 
-        // Preserve Tabby's pinned-scroll behavior without exposing xterm core
-        // internals to Frontend or terminal tab code.
         this.core._scrollToBottom = this.core.scrollToBottom.bind(this.core)
         this.core.scrollToBottom = () => null
     }
@@ -250,6 +255,30 @@ export class XtermRenderer extends TerminalRenderer {
         }
     }
 
+    setLinkHandler (handler: TerminalLinkHandler | null): void {
+        this.terminal.options.linkHandler = handler ? {
+            activate: (event, uri) => {
+                void handler.activate(event, uri)
+            },
+        } : undefined
+    }
+
+    registerLinkProvider (provider: TerminalLinkProvider): () => void {
+        const addon = new WebLinksAddon(
+            (event, uri) => {
+                void provider.activate(event, uri)
+            },
+            { urlRegex: provider.regex },
+        )
+        this.terminal.loadAddon(addon)
+        this.linkAddons.add(addon)
+        return () => {
+            if (this.linkAddons.delete(addon)) {
+                addon.dispose()
+            }
+        }
+    }
+
     scrollToTop (): void {
         this.terminal.scrollToTop()
     }
@@ -338,6 +367,10 @@ export class XtermRenderer extends TerminalRenderer {
 
     dispose (): void {
         this.writeQueue.dispose()
+        for (const addon of this.linkAddons) {
+            addon.dispose()
+        }
+        this.linkAddons.clear()
         this.webGLAddon?.dispose()
         this.canvasAddon?.dispose()
         this.ligaturesAddon?.dispose()
@@ -438,7 +471,6 @@ export class XtermRenderer extends TerminalRenderer {
             this.terminal.loadAddon(addon)
             this.canvasAddon = addon
         } catch {
-            // xterm retains its DOM renderer when Canvas is unavailable.
             this.canvasAddon = undefined
         }
     }
