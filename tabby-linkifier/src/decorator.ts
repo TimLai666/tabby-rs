@@ -1,7 +1,7 @@
+import { Subscription } from 'rxjs'
 import { Inject, Injectable } from '@angular/core'
 import { ConfigService, PlatformService } from 'tabby-core'
-import { TerminalDecorator, BaseTerminalTabComponent, XTermFrontend } from 'tabby-terminal'
-import { WebLinksAddon } from '@xterm/addon-web-links'
+import { TerminalDecorator, BaseTerminalTabComponent } from 'tabby-terminal'
 import { LinkHandler } from './api'
 
 @Injectable()
@@ -15,19 +15,19 @@ export class LinkHighlighterDecorator extends TerminalDecorator {
     }
 
     attach (tab: BaseTerminalTabComponent<any>): void {
-        if (!(tab.frontend instanceof XTermFrontend)) {
-            // not xterm
+        const frontend = tab.frontend
+        if (!frontend) {
             return
         }
 
-        tab.frontend.xterm.options.linkHandler = {
+        frontend.setLinkHandler({
             activate: (event, uri) => {
                 if (!this.willHandleEvent(event)) {
                     return
                 }
                 this.platform.openExternal(uri)
             },
-        }
+        })
 
         const openLink = async uri => {
             for (const handler of this.handlers) {
@@ -52,19 +52,22 @@ export class LinkHighlighterDecorator extends TerminalDecorator {
             return
         }
 
-        const addon = new WebLinksAddon(
-            async (event, uri) => {
+        const unregister = frontend.registerLinkProvider({
+            regex,
+            activate: async (event, uri) => {
                 if (!this.willHandleEvent(event)) {
                     return
                 }
-                openLink(uri)
+                await openLink(uri)
             },
-            {
-                urlRegex: regex,
-            },
-        )
+        })
 
-        tab.frontend.xterm.loadAddon(addon)
+        this.subscribeUntilDetached(tab, new Subscription(() => {
+            unregister()
+            if (tab.frontend === frontend) {
+                frontend.setLinkHandler(null)
+            }
+        }))
     }
 
     private willHandleEvent (event: MouseEvent) {
