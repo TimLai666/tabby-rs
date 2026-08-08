@@ -81,7 +81,7 @@ export class XTermFrontend extends Frontend {
         })
 
         this.renderer.events.binary$.pipe(takeUntil(this.destroyed$)).subscribe(data => {
-            this.input.next(Buffer.from(data, 'binary'))
+            this.input.next(Buffer.from(data))
         })
         this.renderer.events.data$.pipe(takeUntil(this.destroyed$)).subscribe(data => {
             this.input.next(Buffer.from(data, 'utf-8'))
