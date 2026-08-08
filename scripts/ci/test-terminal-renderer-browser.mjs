@@ -11,6 +11,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const webNodeModules = path.join(root, 'web', 'node_modules')
 const processBrowser = path.join(root, 'app', 'src', 'shims', 'process.cjs')
 const outputDir = await mkdtemp(path.join(os.tmpdir(), 'tabby-renderer-parity-'))
+const resultPrefix = 'TABBY_RENDERER_RESULT:'
 
 try {
     await bundleFixture(outputDir)
@@ -35,6 +36,7 @@ html, body { margin: 0; padding: 0; background: #202024; }
     await writeFile(mainPath, `const { app, BrowserWindow } = require('electron')
 const path = require('node:path')
 
+const RESULT_PREFIX = ${JSON.stringify(resultPrefix)}
 app.commandLine.appendSwitch('disable-gpu-sandbox')
 app.commandLine.appendSwitch('disable-software-rasterizer', 'false')
 
@@ -50,15 +52,52 @@ app.whenReady().then(async () => {
     },
   })
 
+  window.webContents.on('console-message', (_event, level, message) => {
+    console.error('[renderer:' + level + '] ' + message)
+  })
+  window.webContents.on('render-process-gone', (_event, details) => {
+    console.error('Renderer process exited: ' + JSON.stringify(details))
+  })
+
   try {
     await window.loadFile(path.join(__dirname, 'index.html'))
-    const result = await window.webContents.executeJavaScript('window.__TABBY_RENDERER_TEST__')
-    console.log(JSON.stringify(result))
+    const result = await window.webContents.executeJavaScript(`
+      new Promise(resolve => {
+        let attempts = 0
+        const poll = () => {
+          const test = window.__TABBY_RENDERER_TEST__
+          if (test) {
+            Promise.resolve(test).then(resolve, error => resolve({
+              ok: false,
+              checks: [],
+              error: error instanceof Error ? error.stack || error.message : String(error),
+            }))
+            return
+          }
+          if (++attempts >= 200) {
+            resolve({
+              ok: false,
+              checks: [],
+              error: 'Renderer parity fixture did not initialize within 5 seconds',
+            })
+            return
+          }
+          setTimeout(poll, 25)
+        }
+        poll()
+      })
+    `)
+    console.log(RESULT_PREFIX + JSON.stringify(result))
     if (!result || !result.ok) {
       process.exitCode = 1
     }
   } catch (error) {
     console.error(error)
+    console.log(RESULT_PREFIX + JSON.stringify({
+      ok: false,
+      checks: [],
+      error: error instanceof Error ? error.stack || error.message : String(error),
+    }))
     process.exitCode = 1
   } finally {
     window.destroy()
@@ -81,14 +120,10 @@ app.on('window-all-closed', () => {})
     })
     process.stdout.write(result.stdout)
     process.stderr.write(result.stderr)
-    if (result.code !== 0) {
-        throw new Error(`Terminal renderer browser fixture failed with exit code ${result.code}`)
-    }
 
-    const lines = result.stdout.trim().split(/\r?\n/)
-    const payload = JSON.parse(lines.at(-1) ?? '{}')
-    if (!payload.ok) {
-        throw new Error(payload.error ?? 'Terminal renderer parity fixture failed')
+    const payload = extractPayload(result.stdout)
+    if (result.code !== 0 || !payload.ok) {
+        throw new Error(payload.error ?? `Terminal renderer browser fixture failed with exit code ${result.code}`)
     }
     console.log(`Terminal renderer browser parity passed: ${payload.checks.join(', ')}`)
 } finally {
@@ -166,6 +201,22 @@ async function bundleFixture (outputPath) {
             resolve()
         })
     })
+}
+
+function extractPayload (stdout) {
+    const ansi = /\x1b\[[0-9;]*m/g
+    for (const line of stdout.split(/\r?\n/).reverse()) {
+        const clean = line.replace(ansi, '')
+        const index = clean.indexOf(resultPrefix)
+        if (index !== -1) {
+            return JSON.parse(clean.slice(index + resultPrefix.length))
+        }
+    }
+    return {
+        ok: false,
+        checks: [],
+        error: 'Terminal renderer fixture did not emit a structured result',
+    }
 }
 
 function electronBinary () {
