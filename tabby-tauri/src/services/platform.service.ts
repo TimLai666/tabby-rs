@@ -20,24 +20,25 @@ export class TauriPlatformService extends PlatformService {
     private clipboardText = ''
     private configRevision: string | null = null
     private configPath: string | null = null
+    private theme: PlatformTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
 
     constructor (
         private bridge: HostBridge,
         @Inject(TAURI_RUNTIME_INFO) private runtimeInfo: RuntimeInfo,
     ) {
         super()
+        void this.initializeDesktopEvents()
     }
 
     readClipboard (): string {
+        void this.refreshClipboard()
         return this.clipboardText
     }
 
     setClipboard (content: ClipboardContent): void {
         this.clipboardText = content.text
-        const clipboard = Reflect.get(navigator, 'clipboard') as Clipboard | undefined
-        if (clipboard) {
-            void clipboard.writeText(content.text).catch(() => null)
-        }
+        void this.bridge.invoke('clipboard.writeText', { text: content.text })
+            .catch(error => console.warn('Could not write native clipboard', error))
     }
 
     async loadConfig (): Promise<string> {
@@ -86,11 +87,17 @@ export class TauriPlatformService extends PlatformService {
     }
 
     async openExternal (url: string): Promise<void> {
-        const parsed = new URL(url)
-        if (!['http:', 'https:', 'mailto:'].includes(parsed.protocol)) {
-            throw new Error(`Unsupported URL scheme: ${parsed.protocol}`)
-        }
-        window.open(parsed.toString(), '_blank', 'noopener,noreferrer')
+        await this.bridge.invoke('desktop.openExternal', { url })
+    }
+
+    showItemInFolder (path: string): void {
+        void this.bridge.invoke('desktop.revealPath', { path })
+            .catch(error => console.warn('Could not reveal path', error))
+    }
+
+    openPath (path: string): void {
+        void this.bridge.invoke('desktop.openPath', { path })
+            .catch(error => console.warn('Could not open path', error))
     }
 
     async listFonts (): Promise<string[]> {
@@ -108,7 +115,7 @@ export class TauriPlatformService extends PlatformService {
     }
 
     popupContextMenu (_menu: MenuItemOptions[], _event?: MouseEvent): void {
-        console.warn('Native context menus are not implemented by the Tauri foundation yet')
+        console.warn('Native context menus are not implemented by the Tauri desktop integration yet')
     }
 
     async showMessageBox (options: MessageBoxOptions): Promise<MessageBoxResult> {
@@ -126,7 +133,12 @@ export class TauriPlatformService extends PlatformService {
     }
 
     async pickDirectory (): Promise<string|null> {
-        return null
+        const [path] = await this.bridge.invoke('dialog.open', {
+            multiple: false,
+            directory: true,
+            title: null,
+        })
+        return path ?? null
     }
 
     quit (): void {
@@ -134,6 +146,30 @@ export class TauriPlatformService extends PlatformService {
     }
 
     getTheme (): PlatformTheme {
-        return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+        return this.theme
+    }
+
+    private async initializeDesktopEvents (): Promise<void> {
+        await Promise.all([
+            this.bridge.listen('desktop.displayMetricsChanged', () => this.displayMetricsChanged.next()),
+            this.bridge.listen('desktop.themeChanged', theme => {
+                const next = theme === 'system'
+                    ? window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+                    : theme
+                if (next !== this.theme) {
+                    this.theme = next
+                    this.themeChanged.next(next)
+                }
+            }),
+        ])
+        await this.refreshClipboard()
+    }
+
+    private async refreshClipboard (): Promise<void> {
+        try {
+            this.clipboardText = await this.bridge.invoke('clipboard.readText', {})
+        } catch {
+            // Clipboard reads can fail while another application owns the clipboard.
+        }
     }
 }
