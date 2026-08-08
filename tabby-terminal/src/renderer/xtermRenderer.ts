@@ -56,7 +56,7 @@ export class XtermRenderer extends TerminalRenderer {
 
     private data = new Subject<string>()
     private binary = new Subject<Uint8Array>()
-    private resize = new Subject<ResizeEvent>()
+    private resizeEvents = new Subject<ResizeEvent>()
     private selectionChanged = new Subject<string>()
     private titleChanged = new Subject<string>()
     private bell = new Subject<void>()
@@ -66,7 +66,7 @@ export class XtermRenderer extends TerminalRenderer {
     readonly events: TerminalRendererEventStreams = {
         data$: this.data,
         binary$: this.binary,
-        resize$: this.resize,
+        resize$: this.resizeEvents,
         selectionChanged$: this.selectionChanged,
         titleChanged$: this.titleChanged,
         bell$: this.bell,
@@ -87,7 +87,7 @@ export class XtermRenderer extends TerminalRenderer {
 
         this.terminal.onBinary(data => this.binary.next(this.binaryStringToBytes(data)))
         this.terminal.onData(data => this.data.next(data))
-        this.terminal.onResize(({ cols, rows }) => this.resize.next({ columns: cols, rows }))
+        this.terminal.onResize(({ cols, rows }) => this.resizeEvents.next({ columns: cols, rows }))
         this.terminal.onScroll(position => this.scroll.next(position))
         this.terminal.onTitleChange(title => this.titleChanged.next(title))
         this.terminal.onSelectionChange(() => this.selectionChanged.next(this.getSelection()))
@@ -391,7 +391,7 @@ export class XtermRenderer extends TerminalRenderer {
         this.terminal.dispose()
         this.data.complete()
         this.binary.complete()
-        this.resize.complete()
+        this.resizeEvents.complete()
         this.selectionChanged.complete()
         this.titleChanged.complete()
         this.bell.complete()
