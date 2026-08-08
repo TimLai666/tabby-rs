@@ -1,5 +1,12 @@
 import { Observable, Subject } from 'rxjs'
 
+export interface HostWindowBounds {
+    x: number
+    y: number
+    width: number
+    height: number
+}
+
 export abstract class HostWindowService {
 
     /**
@@ -27,6 +34,11 @@ export abstract class HostWindowService {
     abstract isMaximized (): boolean
     abstract toggleMaximize (): void
     abstract close (): void
+
+    setBounds (_bounds: HostWindowBounds): void { }
+    setAlwaysOnTop (_enabled: boolean): void { }
+    setOpacity (_opacity: number): void { }
+    setProgressBar (_progress: number): void { }
 
     // eslint-disable-next-line @typescript-eslint/no-empty-function
     openDevTools (): void { }
