@@ -144,6 +144,10 @@ async function bundleFixture (outputPath) {
             filename: 'fixture.js',
         },
         resolve: {
+            alias: {
+                'process/browser': processBrowser,
+                process: processBrowser,
+            },
             extensions: ['.ts', '.js', '.cjs'],
             modules: [
                 path.join(root, 'node_modules'),
@@ -187,6 +191,20 @@ async function bundleFixture (outputPath) {
                 },
             ],
         },
+        plugins: [
+            new webpack.DefinePlugin({
+                global: 'globalThis',
+                'process.type': JSON.stringify('renderer'),
+                'process.platform': JSON.stringify('browser'),
+                'process.arch': JSON.stringify('unknown'),
+                'process.env.TABBY_DEV': JSON.stringify(false),
+                'process.env.TABBY_FORCE_ANGULAR_PROD': JSON.stringify(false),
+            }),
+            new webpack.ProvidePlugin({
+                Buffer: [path.join(webNodeModules, 'buffer/index.js'), 'Buffer'],
+                process: processBrowser,
+            }),
+        ],
         performance: { hints: false },
     }
 
