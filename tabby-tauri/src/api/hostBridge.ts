@@ -171,6 +171,100 @@ export interface LaunchContext {
     parseError: string | null
 }
 
+export interface WindowBounds {
+    x: number
+    y: number
+    width: number
+    height: number
+}
+
+export interface WindowCapabilities {
+    absolutePositioning: boolean
+    docking: boolean
+    globalHotkey: boolean
+    opacity: boolean
+    vibrancy: boolean
+    progress: boolean
+    clipboard: boolean
+    dialogs: boolean
+    notifications: boolean
+}
+
+export interface WindowStateSnapshot {
+    visible: boolean
+    alwaysOnTop: boolean
+    fullscreen: boolean
+    maximized: boolean
+    minimized: boolean
+    focused: boolean
+    bounds: WindowBounds
+    scaleFactor: number
+    capabilities: WindowCapabilities
+}
+
+export interface VibrancyOptions {
+    enabled: boolean
+    effect?: string | null
+}
+
+export interface WindowStatePatch {
+    visible?: boolean
+    alwaysOnTop?: boolean
+    fullscreen?: boolean
+    maximized?: boolean
+    bounds?: WindowBounds
+    opacity?: number
+    progress?: number | null
+    vibrancy?: VibrancyOptions
+    colorScheme?: 'system' | 'light' | 'dark'
+    title?: string
+}
+
+export interface ScreenInfo {
+    id: number
+    name: string
+    primary: boolean
+    scaleFactor: number
+    bounds: WindowBounds
+    workArea: WindowBounds
+}
+
+export interface DockingOptions {
+    side: 'off' | 'left' | 'right' | 'top' | 'bottom'
+    screenId?: number | null
+    fill: number
+    space: number
+    alwaysOnTop: boolean
+    minWidth: number
+    minHeight: number
+}
+
+export interface GlobalHotkeyRegistration {
+    id: string
+    accelerators: string[]
+}
+
+export interface GlobalHotkeyEvent {
+    id: string
+    accelerator: string
+}
+
+export interface OpenDialogOptions {
+    multiple: boolean
+    directory: boolean
+    title?: string | null
+}
+
+export interface SaveDialogOptions {
+    title?: string | null
+    fileName?: string | null
+}
+
+export interface DesktopNotification {
+    title: string
+    body?: string | null
+}
+
 export interface HostRequestMap {
     'app.bootstrap': {
         request: Record<string, never>
@@ -311,11 +405,102 @@ export interface HostRequestMap {
         request: { id: string }
         response: number[]
     }
+    'window.getState': {
+        request: Record<string, never>
+        response: WindowStateSnapshot
+    }
+    'window.applyState': {
+        request: WindowStatePatch
+        response: null
+    }
+    'window.reload': {
+        request: Record<string, never>
+        response: null
+    }
+    'window.minimize': {
+        request: Record<string, never>
+        response: null
+    }
+    'window.toggleMaximize': {
+        request: Record<string, never>
+        response: null
+    }
+    'window.close': {
+        request: Record<string, never>
+        response: null
+    }
+    'window.bringToFront': {
+        request: Record<string, never>
+        response: null
+    }
+    'window.openDevtools': {
+        request: Record<string, never>
+        response: null
+    }
+    'window.listScreens': {
+        request: Record<string, never>
+        response: ScreenInfo[]
+    }
+    'window.setDocking': {
+        request: DockingOptions
+        response: WindowStateSnapshot
+    }
+    'window.toggleQuake': {
+        request: Record<string, never>
+        response: boolean
+    }
+    'hotkey.replace': {
+        request: GlobalHotkeyRegistration
+        response: string[]
+    }
+    'clipboard.readText': {
+        request: Record<string, never>
+        response: string
+    }
+    'clipboard.writeText': {
+        request: { text: string }
+        response: null
+    }
+    'dialog.open': {
+        request: OpenDialogOptions
+        response: string[]
+    }
+    'dialog.save': {
+        request: SaveDialogOptions
+        response: string | null
+    }
+    'notification.show': {
+        request: DesktopNotification
+        response: null
+    }
+    'desktop.openExternal': {
+        request: { url: string }
+        response: null
+    }
+    'desktop.revealPath': {
+        request: { path: string }
+        response: null
+    }
+    'desktop.openPath': {
+        request: { path: string }
+        response: null
+    }
+    'desktop.readFile': {
+        request: { path: string }
+        response: number[]
+    }
 }
 
 export interface HostEventMap {
     'app.start': BootstrapData
     'app.launch': LaunchContext
+    'desktop.hotkey': GlobalHotkeyEvent
+    'desktop.windowFocused': boolean
+    'desktop.windowMoved': { x: number; y: number }
+    'desktop.windowResized': { width: number; height: number }
+    'desktop.windowCloseRequested': null
+    'desktop.themeChanged': 'system' | 'light' | 'dark'
+    'desktop.displayMetricsChanged': number
 }
 
 export abstract class HostBridge {
