@@ -12,6 +12,32 @@ const webNodeModules = path.join(root, 'web', 'node_modules')
 const processBrowser = path.join(root, 'app', 'src', 'shims', 'process.cjs')
 const outputDir = await mkdtemp(path.join(os.tmpdir(), 'tabby-renderer-parity-'))
 const resultPrefix = 'TABBY_RENDERER_RESULT:'
+const pollScript = `
+new Promise(resolve => {
+    let attempts = 0
+    const poll = () => {
+        const test = window.__TABBY_RENDERER_TEST__
+        if (test) {
+            Promise.resolve(test).then(resolve, error => resolve({
+                ok: false,
+                checks: [],
+                error: error instanceof Error ? error.stack || error.message : String(error),
+            }))
+            return
+        }
+        if (++attempts >= 200) {
+            resolve({
+                ok: false,
+                checks: [],
+                error: 'Renderer parity fixture did not initialize within 5 seconds',
+            })
+            return
+        }
+        setTimeout(poll, 25)
+    }
+    poll()
+})
+`
 
 try {
     await bundleFixture(outputDir)
@@ -37,6 +63,7 @@ html, body { margin: 0; padding: 0; background: #202024; }
 const path = require('node:path')
 
 const RESULT_PREFIX = ${JSON.stringify(resultPrefix)}
+const POLL_SCRIPT = ${JSON.stringify(pollScript)}
 app.commandLine.appendSwitch('disable-gpu-sandbox')
 app.commandLine.appendSwitch('disable-software-rasterizer', 'false')
 
@@ -61,32 +88,7 @@ app.whenReady().then(async () => {
 
   try {
     await window.loadFile(path.join(__dirname, 'index.html'))
-    const result = await window.webContents.executeJavaScript(`
-      new Promise(resolve => {
-        let attempts = 0
-        const poll = () => {
-          const test = window.__TABBY_RENDERER_TEST__
-          if (test) {
-            Promise.resolve(test).then(resolve, error => resolve({
-              ok: false,
-              checks: [],
-              error: error instanceof Error ? error.stack || error.message : String(error),
-            }))
-            return
-          }
-          if (++attempts >= 200) {
-            resolve({
-              ok: false,
-              checks: [],
-              error: 'Renderer parity fixture did not initialize within 5 seconds',
-            })
-            return
-          }
-          setTimeout(poll, 25)
-        }
-        poll()
-      })
-    `)
+    const result = await window.webContents.executeJavaScript(POLL_SCRIPT)
     console.log(RESULT_PREFIX + JSON.stringify(result))
     if (!result || !result.ok) {
       process.exitCode = 1
