@@ -56,7 +56,8 @@ jobs:
             librsvg2-dev \
             libsecret-1-dev \
             libwebkit2gtk-4.1-dev \
-            patchelf
+            patchelf \
+            xvfb
 
       - name: Install Yarn
         run: npm install --global yarn@${{ env.YARN_VERSION }}
@@ -75,6 +76,9 @@ jobs:
 
       - name: Test terminal renderer write ordering
         run: node scripts/ci/test-terminal-renderer.mjs
+
+      - name: Test terminal renderer browser parity
+        run: node scripts/ci/test-terminal-renderer-browser.mjs
 
       - name: Test sudo prompt detector
         run: node scripts/ci/test-auto-sudo.mjs
