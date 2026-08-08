@@ -8,6 +8,8 @@ import { fileURLToPath } from 'node:url'
 import webpack from 'webpack'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
+const webNodeModules = path.join(root, 'web', 'node_modules')
+const processBrowser = path.join(root, 'app', 'src', 'shims', 'process.cjs')
 const outputDir = await mkdtemp(path.join(os.tmpdir(), 'tabby-renderer-parity-'))
 
 try {
@@ -30,7 +32,7 @@ html, body { margin: 0; padding: 0; background: #202024; }
 </html>`, 'utf8')
 
     const mainPath = path.join(outputDir, 'main.cjs')
-    await writeFile(mainPath, `const { app, BrowserWindow } = require(${JSON.stringify(path.join(root, 'node_modules', 'electron'))})
+    await writeFile(mainPath, `const { app, BrowserWindow } = require('electron')
 const path = require('node:path')
 
 app.commandLine.appendSwitch('disable-gpu-sandbox')
@@ -105,15 +107,21 @@ async function bundleFixture (outputPath) {
             filename: 'fixture.js',
         },
         resolve: {
-            extensions: ['.ts', '.js'],
+            extensions: ['.ts', '.js', '.cjs'],
             modules: [
                 path.join(root, 'node_modules'),
                 path.join(root, 'tabby-terminal/node_modules'),
+                webNodeModules,
             ],
             fallback: {
+                buffer: path.join(webNodeModules, 'buffer/index.js'),
+                events: path.join(webNodeModules, 'events/events.js'),
+                path: path.join(webNodeModules, 'path-browserify/index.js'),
+                process: processBrowser,
+                stream: path.join(webNodeModules, 'stream-browserify/index.js'),
+                util: path.join(webNodeModules, 'util/util.js'),
                 fs: false,
                 os: false,
-                path: false,
             },
         },
         module: {
