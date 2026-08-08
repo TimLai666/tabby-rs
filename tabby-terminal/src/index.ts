@@ -93,6 +93,17 @@ export default class TerminalModule { } // eslint-disable-line @typescript-eslin
 
 export { TerminalDecorator, TerminalContextMenuItemProvider, TerminalColorSchemeProvider }
 export { Frontend, XTermFrontend, XTermWebGLFrontend }
+export { TerminalRenderer } from './renderer/terminalRenderer'
+export type {
+    TerminalRendererConstructionOptions,
+    TerminalRendererCursorOptions,
+    TerminalRendererEvents,
+    TerminalRendererEventStreams,
+    TerminalRendererFontOptions,
+    TerminalRendererOptions,
+    TerminalRendererTheme,
+    TerminalRendererViewportState,
+} from './renderer/terminalRenderer'
 export { BaseTerminalTabComponent } from './api/baseTerminalTab.component'
 export { ConnectableTerminalTabComponent } from './api/connectableTerminalTab.component'
 export * from './api/interfaces'

@@ -799,12 +799,15 @@ export class BaseTerminalTabComponent<P extends BaseTerminalProfile> extends Bas
             throw new Error('Session not set')
         }
 
-        // this.session.output$.bufferTime(10).subscribe((datas) => {
-        this.attachSessionHandler(this.session.output$, data => {
-            if (this.enablePassthrough) {
-                this.output.next(data)
-                this.write(data)
+        this.attachSessionHandler(this.session.renderOutput$, ({ data, consumed }) => {
+            if (!this.enablePassthrough) {
+                consumed()
+                return
             }
+            this.output.next(data)
+            void this.write(data)
+                .then(() => consumed())
+                .catch(error => this.logger.warn('Could not render session output', error))
         })
 
         this.attachSessionHandler(this.session.binaryOutput$, data => {

@@ -14,6 +14,14 @@ export interface SearchState {
     resultCount: number
 }
 
+export interface TerminalLinkHandler {
+    activate: (event: MouseEvent, uri: string) => void | Promise<void>
+}
+
+export interface TerminalLinkProvider extends TerminalLinkHandler {
+    regex: RegExp
+}
+
 /**
  * Extend to add support for a different VT frontend implementation
  */
@@ -93,6 +101,12 @@ export abstract class Frontend {
 
     abstract supportsBracketedPaste (): boolean
     abstract isAlternateScreenActive (): boolean
+
+    /** Renderer-neutral clickable-link hooks. */
+    setLinkHandler (_handler: TerminalLinkHandler | null): void { } // eslint-disable-line
+    registerLinkProvider (_provider: TerminalLinkProvider): () => void { // eslint-disable-line
+        return () => undefined
+    }
 
     /**
      * Reset terminal modes (mouse tracking, bracketed paste, etc.)
