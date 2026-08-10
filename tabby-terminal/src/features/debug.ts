@@ -68,7 +68,7 @@ export class DebugDecorator extends TerminalDecorator {
             return null
         }
         const data = await transfer[0].readAll()
-        transfer[0].close()
+        await transfer[0].closeAsync()
         return data.toString()
     }
 
@@ -76,8 +76,8 @@ export class DebugDecorator extends TerminalDecorator {
         const data = Buffer.from(content)
         const transfer = await this.platform.startDownload(name, 0o644, data.length)
         if (transfer) {
-            transfer.write(data)
-            transfer.close()
+            await transfer.write(data)
+            await transfer.closeAsync()
         }
     }
 

@@ -32,10 +32,14 @@ export class ExportTerminalContextMenu extends TerminalContextMenuItemProvider {
                     if (!result.filePath) {
                         return
                     }
-                    frontend.selectAll()
-                    const content = frontend.getSelection()
-                    frontend.clearSelection()
-                    await fs.promises.writeFile(result.filePath, content)
+                    const file = await fs.promises.open(result.filePath, 'w')
+                    try {
+                        for await (const chunk of frontend.getTextChunks()) {
+                            await file.write(chunk)
+                        }
+                    } finally {
+                        await file.close()
+                    }
                     this.notifications.info(this.translate.instant('Saved to {path}', { path: result.filePath }))
                 },
             },

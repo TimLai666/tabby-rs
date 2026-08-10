@@ -1,5 +1,5 @@
 import { InjectionToken } from '@angular/core'
-import { BootstrapData, StoredVault } from 'tabby-core'
+import { BootstrapData, StoredVault, TransferDescriptor } from 'tabby-core'
 
 export type UpdateChannel = 'stable' | 'nightly'
 
@@ -260,6 +260,15 @@ export interface SaveDialogOptions {
     fileName?: string | null
 }
 
+export interface TransferDirectoryEntry {
+    name: string
+    path: string
+    directory: boolean
+    size: number
+    mode: number
+    children: TransferDirectoryEntry[]
+}
+
 export interface DesktopNotification {
     title: string
     body?: string | null
@@ -489,6 +498,49 @@ export interface HostRequestMap {
         request: { path: string }
         response: number[]
     }
+    'transfer.openUpload': {
+        request: { paths: string[] }
+        response: TransferDescriptor[]
+    }
+    'transfer.openDownload': {
+        request: {
+            name: string
+            mode: number
+            size?: number | null
+            destination: string
+            baseDirectory?: string | null
+            relativePath?: string | null
+        }
+        response: TransferDescriptor
+    }
+    'transfer.read': {
+        request: { id: string; maxBytes: number }
+        response: number[]
+    }
+    'transfer.write': {
+        request: { id: string; data: number[] }
+        response: null
+    }
+    'transfer.close': {
+        request: { id: string }
+        response: null
+    }
+    'transfer.cancel': {
+        request: { id: string }
+        response: null
+    }
+    'transfer.createDirectory': {
+        request: { baseDirectory: string; relativePath: string }
+        response: null
+    }
+    'transfer.listDirectory': {
+        request: { path: string }
+        response: TransferDirectoryEntry
+    }
+    'terminal.export': {
+        request: { destination: string }
+        response: TransferDescriptor
+    }
 }
 
 export interface HostEventMap {
@@ -502,6 +554,7 @@ export interface HostEventMap {
     'desktop.fileDrop': { paths: string[]; x: number; y: number }
     'desktop.themeChanged': 'system' | 'light' | 'dark'
     'desktop.displayMetricsChanged': number
+    'transfer.progress': TransferDescriptor
 }
 
 export abstract class HostBridge {

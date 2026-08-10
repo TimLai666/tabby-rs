@@ -11,9 +11,11 @@ import {
     MessageBoxResult,
     PlatformService,
     PlatformTheme,
+    sanitizeTransferName,
+    sanitizeTransferRelativePath,
 } from 'tabby-core'
 
-import { HostBridge, RuntimeInfo, TAURI_RUNTIME_INFO } from '../api/hostBridge'
+import { HostBridge, RuntimeInfo, TAURI_RUNTIME_INFO, TransferDirectoryEntry } from '../api/hostBridge'
 
 @Injectable()
 export class TauriPlatformService extends PlatformService {
@@ -74,20 +76,86 @@ export class TauriPlatformService extends PlatformService {
         return this.configPath
     }
 
-    async startDownload (_name: string, _mode: number, _size: number): Promise<FileDownload|null> {
-        return null
+    async startDownload (name: string, mode: number, size: number): Promise<FileDownload|null> {
+        const path = await this.bridge.invoke('dialog.save', {
+            fileName: sanitizeTransferName(name),
+            title: null,
+        })
+        if (!path) {
+            return null
+        }
+        const descriptor = await this.bridge.invoke('transfer.openDownload', {
+            name,
+            mode,
+            size,
+            destination: path,
+        })
+        const transfer = new TauriFileDownload(this.bridge, descriptor.id, descriptor.name, size)
+        this.fileTransferStarted.next(transfer)
+        return transfer
     }
 
-    async startDownloadDirectory (_name: string, _estimatedSize?: number): Promise<DirectoryDownload|null> {
-        return null
+    async startDownloadDirectory (name: string, estimatedSize = 0): Promise<DirectoryDownload|null> {
+        const basePath = await this.pickDirectory()
+        if (!basePath) {
+            return null
+        }
+        const transfer = new TauriDirectoryDownload(this.bridge, basePath, name, estimatedSize)
+        this.fileTransferStarted.next(transfer)
+        return transfer
     }
 
-    async startUpload (_options?: FileUploadOptions): Promise<FileUpload[]> {
-        return []
+    async startUpload (options: FileUploadOptions = { multiple: false }): Promise<FileUpload[]> {
+        const paths = await this.bridge.invoke('dialog.open', {
+            multiple: options.multiple,
+            directory: false,
+            title: null,
+        })
+        if (!paths.length) {
+            return []
+        }
+        const descriptors = await this.bridge.invoke('transfer.openUpload', { paths })
+        const transfers = descriptors.map(descriptor => new TauriFileUpload(this.bridge, descriptor.id, descriptor.name, descriptor.size ?? 0))
+        transfers.forEach(transfer => this.fileTransferStarted.next(transfer))
+        return transfers
     }
 
-    async startUploadDirectory (_paths?: string[]): Promise<DirectoryUpload> {
-        return new DirectoryUpload()
+    async startUploadDirectory (paths?: string[]): Promise<DirectoryUpload> {
+        if (!paths?.length) {
+            paths = await this.bridge.invoke('dialog.open', {
+                multiple: false,
+                directory: true,
+                title: null,
+            })
+        }
+        if (!paths.length) {
+            return new DirectoryUpload()
+        }
+
+        const tree = await this.bridge.invoke('transfer.listDirectory', { path: paths[0] })
+        const files: TransferDirectoryEntry[] = []
+        const collect = (entry: TransferDirectoryEntry) => {
+            if (entry.directory) {
+                entry.children.forEach(collect)
+            } else {
+                files.push(entry)
+            }
+        }
+        collect(tree)
+        const descriptors = await this.bridge.invoke('transfer.openUpload', { paths: files.map(file => file.path) })
+        let index = 0
+        const build = (entry: TransferDirectoryEntry): FileUpload|DirectoryUpload => {
+            if (!entry.directory) {
+                const descriptor = descriptors[index++]
+                const transfer = new TauriFileUpload(this.bridge, descriptor.id, descriptor.name, descriptor.size ?? entry.size)
+                this.fileTransferStarted.next(transfer)
+                return transfer
+            }
+            const directory = new DirectoryUpload(entry.name)
+            entry.children.forEach(child => directory.pushChildren(build(child)))
+            return directory
+        }
+        return build(tree) as DirectoryUpload
     }
 
     getOSRelease (): string {
@@ -323,5 +391,125 @@ export class TauriPlatformService extends PlatformService {
         } catch {
             // Clipboard reads can fail while another application owns the clipboard.
         }
+    }
+}
+
+class TauriFileUpload extends FileUpload {
+    constructor (
+        private bridge: HostBridge,
+        id: string,
+        private name: string,
+        private size: number,
+    ) {
+        super(id)
+        this.setTotalSize(size)
+    }
+
+    getName (): string { return this.name }
+    getMode (): number { return 0o644 }
+    getSize (): number { return this.size }
+
+    async read (): Promise<Uint8Array> {
+        const data = await this.bridge.invoke('transfer.read', { id: this.id, maxBytes: 256 * 1024 })
+        const bytes = Uint8Array.from(data)
+        this.setRunning()
+        this.increaseProgress(bytes.length)
+        if (!bytes.length) {
+            this.setCompleted(true)
+        }
+        return bytes
+    }
+
+    close (): void {
+        void this.bridge.invoke('transfer.close', { id: this.id })
+    }
+
+    override async closeAsync (): Promise<void> {
+        await this.bridge.invoke('transfer.close', { id: this.id })
+    }
+
+    override cancel (): void {
+        this.markCancelled()
+        void this.bridge.invoke('transfer.cancel', { id: this.id })
+    }
+}
+
+class TauriFileDownload extends FileDownload {
+    constructor (
+        private bridge: HostBridge,
+        id: string,
+        private name: string,
+        private size: number,
+    ) {
+        super(id)
+        this.setTotalSize(size)
+    }
+
+    getName (): string { return this.name }
+    getSize (): number { return this.size }
+
+    async write (buffer: Uint8Array): Promise<void> {
+        await this.bridge.invoke('transfer.write', { id: this.id, data: Array.from(buffer) })
+        this.setRunning()
+        this.increaseProgress(buffer.length)
+        if (this.getCompletedBytes() >= this.size) {
+            this.setCompleted(true)
+        }
+    }
+
+    close (): void {
+        void this.bridge.invoke('transfer.close', { id: this.id })
+    }
+
+    override async closeAsync (): Promise<void> {
+        await this.bridge.invoke('transfer.close', { id: this.id })
+    }
+
+    override cancel (): void {
+        this.markCancelled()
+        void this.bridge.invoke('transfer.cancel', { id: this.id })
+    }
+}
+
+class TauriDirectoryDownload extends DirectoryDownload {
+    constructor (
+        private bridge: HostBridge,
+        private basePath: string,
+        private name: string,
+        estimatedSize: number,
+    ) {
+        super()
+        this.setTotalSize(estimatedSize)
+    }
+
+    getName (): string { return this.name }
+    getSize (): number { return this.getTotalSize() }
+
+    async createDirectory (relativePath: string): Promise<void> {
+        await this.bridge.invoke('transfer.createDirectory', {
+            baseDirectory: this.basePath,
+            relativePath: `${sanitizeTransferName(this.name)}/${sanitizeTransferRelativePath(relativePath)}`,
+        })
+    }
+
+    async createFile (relativePath: string, mode: number, size: number): Promise<FileDownload> {
+        const safePath = `${sanitizeTransferName(this.name)}/${sanitizeTransferRelativePath(relativePath)}`
+        const descriptor = await this.bridge.invoke('transfer.openDownload', {
+            name: relativePath,
+            mode,
+            size,
+            destination: '',
+            baseDirectory: this.basePath,
+            relativePath: safePath,
+        })
+        return new TauriFileDownload(this.bridge, descriptor.id, descriptor.name, size)
+    }
+
+    close (): void {
+        this.markCancelled()
+    }
+
+    override cancel (): void {
+        this.markCancelled()
     }
 }

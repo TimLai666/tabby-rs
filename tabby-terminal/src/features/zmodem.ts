@@ -250,13 +250,20 @@ class ZModemMiddleware extends SessionMiddleware {
 
             // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
             if (canceled) {
-                transfer.cancel()
+                await transfer.cancelAsync()
                 this.showMessage(colors.bgRed.black(' Canceled ') + ' ' + details.name)
             } else {
-                transfer.close()
+                await transfer.closeAsync()
                 this.showMessage(colors.bgGreen.black(' Received ') + ' ' + details.name)
             }
-        } catch {
+        } catch (error) {
+            try {
+                await transfer.cancelAsync()
+            } catch { }
+            transfer.setFailed({
+                code: 'zmodem',
+                message: error instanceof Error ? error.message : String(error),
+            })
             this.showMessage(colors.bgRed.black(' Error ') + ' ' + details.name)
         }
 
@@ -294,9 +301,9 @@ class ZModemMiddleware extends SessionMiddleware {
 
             // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
             if (canceled) {
-                transfer.cancel()
+                await transfer.cancelAsync()
             } else {
-                transfer.close()
+                await transfer.closeAsync()
             }
 
             await xfer.end()

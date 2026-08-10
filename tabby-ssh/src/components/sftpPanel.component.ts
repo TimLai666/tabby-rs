@@ -271,7 +271,7 @@ export class SFTPPanelComponent {
                 transfer.cancel()
                 throw error
             } finally {
-                transfer.close()
+                await transfer.closeAsync()
             }
         } catch (error) {
             this.notifications.error(`Failed to download folder: ${error.message}`)

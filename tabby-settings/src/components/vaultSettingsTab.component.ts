@@ -160,7 +160,7 @@ export class VaultSettingsTabComponent extends BaseComponent {
 
         if (download) {
             await download.write(content)
-            download.close()
+            await download.closeAsync()
         }
     }
 

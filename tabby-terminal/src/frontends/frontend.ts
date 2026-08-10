@@ -76,6 +76,7 @@ export abstract class Frontend {
     detach (host: HTMLElement): void { } // eslint-disable-line
 
     abstract getSelection (): string
+    abstract getTextChunks (chunkSize?: number): AsyncIterable<Uint8Array>
     abstract copySelection (): void
     abstract selectAll (): void
     abstract clearSelection (): void

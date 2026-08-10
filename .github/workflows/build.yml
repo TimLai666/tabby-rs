@@ -88,6 +88,8 @@ jobs:
         run: node scripts/ci/test-progress-detector.mjs
       - name: Test URI policy
         run: node scripts/ci/test-uri-policy.mjs
+      - name: Test transfer policy
+        run: node scripts/ci/test-transfer-policy.mjs
       - name: Test tab progress aggregation
         run: node scripts/ci/test-tab-progress.mjs
 

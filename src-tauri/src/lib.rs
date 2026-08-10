@@ -10,6 +10,7 @@ mod shell;
 mod state;
 mod storage;
 mod sudo;
+mod transfer;
 mod windows_integration;
 
 use std::sync::Arc;
@@ -36,6 +37,11 @@ use commands::{
     secrets::{secret_import_execute, secret_import_plan},
     shell::{shell_detect, shell_prepare_spawn},
     sudo::sudo_respond,
+    transfer::{
+        terminal_export, transfer_cancel, transfer_close, transfer_create_directory,
+        transfer_list_directory, transfer_open_download, transfer_open_upload, transfer_read,
+        transfer_write,
+    },
     vault::{
         vault_get_file, vault_get_secret, vault_lock, vault_put_file, vault_put_secret,
         vault_remove_secret, vault_replace, vault_set_config, vault_set_enabled, vault_snapshot,
@@ -179,6 +185,9 @@ pub fn run() {
             app.manage(AppState::new(paths, initial_launch));
             app.manage(Arc::new(SecretState::default()));
             app.manage(Arc::new(PtyManager::default()));
+            app.manage(Arc::new(
+                crate::transfer::manager::TransferManager::default(),
+            ));
             app.manage(CredentialState::default());
             register_desktop_window_events(app.handle());
 
@@ -247,6 +256,15 @@ pub fn run() {
             shell_detect,
             shell_prepare_spawn,
             sudo_respond,
+            transfer_open_upload,
+            transfer_open_download,
+            transfer_read,
+            transfer_write,
+            transfer_close,
+            transfer_cancel,
+            transfer_create_directory,
+            transfer_list_directory,
+            terminal_export,
             vault_status,
             vault_unlock,
             vault_replace,

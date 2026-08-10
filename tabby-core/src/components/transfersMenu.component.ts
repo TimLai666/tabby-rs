@@ -30,6 +30,10 @@ export class TransfersMenuComponent {
         return Math.round(100 * transfer.getCompletedBytes() / transfer.getSize())
     }
 
+    isFailed (transfer: FileTransfer): boolean {
+        return transfer.getState() === 'failed'
+    }
+
     showTransfer (transfer: FileTransfer): void {
         const fp = transfer['filePath']
         if (fp) {

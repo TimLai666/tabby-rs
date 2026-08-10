@@ -417,14 +417,21 @@ class ElectronFileUpload extends FileUpload {
     }
 
     close (): void {
+        void this.closeAsync()
+    }
+
+    override async closeAsync (): Promise<void> {
         this.electron.powerSaveBlocker.stop(this.powerSaveBlocker)
-        this.file.close()
+        await this.file.close()
     }
 }
 
 class ElectronFileDownload extends FileDownload {
     private file: fs.FileHandle
+    private temporaryDirectory: string
+    private temporaryPath: string
     private powerSaveBlocker = 0
+    private closed = false
 
     constructor (
         private filePath: string,
@@ -438,7 +445,9 @@ class ElectronFileDownload extends FileDownload {
     }
 
     async open (): Promise<void> {
-        this.file = await fs.open(this.filePath, 'w', this.mode)
+        this.temporaryDirectory = await fs.mkdtemp(path.join(path.dirname(this.filePath), '.tabby-transfer-'))
+        this.temporaryPath = path.join(this.temporaryDirectory, path.basename(this.filePath))
+        this.file = await fs.open(this.temporaryPath, 'wx', this.mode)
     }
 
     getName (): string {
@@ -462,8 +471,37 @@ class ElectronFileDownload extends FileDownload {
     }
 
     close (): void {
+        void this.closeAsync()
+    }
+
+    override async closeAsync (): Promise<void> {
+        if (this.closed) {
+            return
+        }
+        this.closed = true
         this.electron.powerSaveBlocker.stop(this.powerSaveBlocker)
-        this.file.close()
+        await this.file.sync()
+        await this.file.close()
+        try {
+            await fs.rename(this.temporaryPath, this.filePath)
+        } finally {
+            await fs.rm(this.temporaryDirectory, { recursive: true, force: true })
+        }
+    }
+
+    override cancel (): void {
+        this.markCancelled()
+        void this.cancelAsync()
+    }
+
+    override async cancelAsync (): Promise<void> {
+        if (this.closed) {
+            return
+        }
+        this.closed = true
+        this.electron.powerSaveBlocker.stop(this.powerSaveBlocker)
+        await this.file.close()
+        await fs.rm(this.temporaryDirectory, { recursive: true, force: true })
     }
 }
 
