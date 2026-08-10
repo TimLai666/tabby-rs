@@ -1,7 +1,9 @@
 mod commands;
+mod desktop;
 mod error;
 mod identity;
 mod launch;
+mod platform;
 mod pty;
 mod security;
 mod shell;
@@ -16,6 +18,13 @@ use commands::{
     app::{app_bootstrap, app_quit, app_runtime_info},
     backup::{backup_create, backup_list, backup_restore},
     config::{config_read, config_write},
+    desktop::{
+        clipboard_read_text, clipboard_write_text, desktop_open_external, desktop_open_path,
+        desktop_read_file, desktop_reveal_path, dialog_open, dialog_save, hotkey_replace,
+        notification_show, window_apply_state, window_bring_to_front, window_close,
+        window_get_state, window_list_screens, window_minimize, window_open_devtools,
+        window_reload, window_set_docking, window_toggle_maximize, window_toggle_quake,
+    },
     identity::{identity_alias_status, identity_get, identity_set_alias},
     keychain::{keychain_delete, keychain_get, keychain_put},
     launch::app_initial_launch,
@@ -74,16 +83,61 @@ fn present_and_dispatch(app: &tauri::AppHandle, context: LaunchContext) {
     }
 }
 
+fn register_desktop_window_events(app: &tauri::AppHandle) {
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    let handle = app.clone();
+    window.on_window_event(move |event| match event {
+        tauri::WindowEvent::Focused(focused) => {
+            let _ = handle.emit("desktop.windowFocused", *focused);
+        }
+        tauri::WindowEvent::Moved(position) => {
+            let _ = handle.emit(
+                "desktop.windowMoved",
+                serde_json::json!({ "x": position.x, "y": position.y }),
+            );
+        }
+        tauri::WindowEvent::Resized(size) => {
+            let _ = handle.emit(
+                "desktop.windowResized",
+                serde_json::json!({ "width": size.width, "height": size.height }),
+            );
+        }
+        tauri::WindowEvent::CloseRequested { .. } => {
+            let _ = handle.emit("desktop.windowCloseRequested", ());
+        }
+        tauri::WindowEvent::ThemeChanged(theme) => {
+            let value = match theme {
+                tauri::Theme::Dark => "dark",
+                tauri::Theme::Light => "light",
+                _ => "system",
+            };
+            let _ = handle.emit("desktop.themeChanged", value);
+        }
+        tauri::WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+            let _ = handle.emit("desktop.displayMetricsChanged", *scale_factor);
+        }
+        _ => {}
+    });
+}
+
 pub fn run() {
     let initial_launch = initial_launch_context();
-    let mut builder = tauri::Builder::default();
+    let mut builder = tauri::Builder::default()
+        .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_opener::init());
 
     #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
     {
-        builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
-            let context = parse_launch_context(&argv, cwd, true);
-            present_and_dispatch(app, context);
-        }));
+        builder = builder
+            .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+            .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
+                let context = parse_launch_context(&argv, cwd, true);
+                present_and_dispatch(app, context);
+            }));
     }
 
     builder = builder.plugin(tauri_plugin_deep_link::init());
@@ -113,6 +167,7 @@ pub fn run() {
             app.manage(Arc::new(SecretState::default()));
             app.manage(Arc::new(PtyManager::default()));
             app.manage(CredentialState::default());
+            register_desktop_window_events(app.handle());
 
             #[cfg(any(target_os = "linux", all(debug_assertions, windows)))]
             app.deep_link().register_all()?;
@@ -141,8 +196,17 @@ pub fn run() {
             backup_create,
             backup_list,
             backup_restore,
+            clipboard_read_text,
+            clipboard_write_text,
             config_read,
             config_write,
+            desktop_open_external,
+            desktop_open_path,
+            desktop_read_file,
+            desktop_reveal_path,
+            dialog_open,
+            dialog_save,
+            hotkey_replace,
             identity_get,
             identity_alias_status,
             identity_set_alias,
@@ -151,6 +215,7 @@ pub fn run() {
             keychain_delete,
             migration_detect,
             migration_execute,
+            notification_show,
             pty_spawn,
             pty_exists,
             pty_is_alive,
@@ -183,6 +248,17 @@ pub fn run() {
             vault_set_config,
             vault_put_file,
             vault_get_file,
+            window_apply_state,
+            window_bring_to_front,
+            window_close,
+            window_get_state,
+            window_list_screens,
+            window_minimize,
+            window_open_devtools,
+            window_reload,
+            window_set_docking,
+            window_toggle_maximize,
+            window_toggle_quake,
             windows_integration_status,
         ])
         .run(tauri::generate_context!())

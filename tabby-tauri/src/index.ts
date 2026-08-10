@@ -2,8 +2,11 @@ import { CommonModule } from '@angular/common'
 import { APP_INITIALIZER, NgModule } from '@angular/core'
 import {
     ConfigProvider,
+    DockingService,
+    FileProvider,
     HostAppService,
     HostWindowService,
+    HotkeyProvider,
     LogService,
     PlatformService,
     UpdaterService,
@@ -28,6 +31,10 @@ import {
     IdentitySettingsTabProvider,
 } from './components/identitySettingsTab.component'
 import { TauriConfigProvider } from './config'
+import { TauriHotkeyProvider } from './hotkeys'
+import { TauriDesktopIntegrationService } from './services/desktopIntegration.service'
+import { TauriDockingService } from './services/docking.service'
+import { TauriFileProvider } from './services/fileProvider.service'
 import { TauriHostAppService } from './services/hostApp.service'
 import { TauriHostWindowService } from './services/hostWindow.service'
 import { TauriLogService } from './services/log.service'
@@ -54,15 +61,27 @@ function initializeUac (service: TauriUACService): () => Promise<void> {
     }
 }
 
+function initializeDesktop (service: TauriDesktopIntegrationService): () => Promise<void> {
+    return () => service.initialize()
+}
+
 @NgModule({
     imports: [CommonModule],
     declarations: [IdentitySettingsTabComponent],
     providers: [
         TauriHostBridge,
         { provide: HostBridge, useExisting: TauriHostBridge },
-        { provide: PlatformService, useClass: TauriPlatformService },
-        { provide: HostAppService, useClass: TauriHostAppService },
-        { provide: HostWindowService, useClass: TauriHostWindowService },
+        TauriPlatformService,
+        { provide: PlatformService, useExisting: TauriPlatformService },
+        TauriHostAppService,
+        { provide: HostAppService, useExisting: TauriHostAppService },
+        TauriHostWindowService,
+        { provide: HostWindowService, useExisting: TauriHostWindowService },
+        TauriDockingService,
+        { provide: DockingService, useExisting: TauriDockingService },
+        { provide: HotkeyProvider, useClass: TauriHotkeyProvider, multi: true },
+        { provide: FileProvider, useClass: TauriFileProvider, multi: true },
+        TauriDesktopIntegrationService,
         { provide: LogService, useClass: TauriLogService },
         { provide: UpdaterService, useClass: TauriUpdaterService },
         TauriVaultService,
@@ -79,6 +98,12 @@ function initializeUac (service: TauriUACService): () => Promise<void> {
             provide: APP_INITIALIZER,
             useFactory: initializeUac,
             deps: [TauriUACService],
+            multi: true,
+        },
+        {
+            provide: APP_INITIALIZER,
+            useFactory: initializeDesktop,
+            deps: [TauriDesktopIntegrationService],
             multi: true,
         },
         { provide: ConfigProvider, useClass: TauriConfigProvider, multi: true },
