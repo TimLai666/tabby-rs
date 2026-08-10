@@ -283,6 +283,10 @@ export class XTermFrontend extends Frontend {
         return this.renderer.getSelection()
     }
 
+    getTextChunks (chunkSize?: number): AsyncIterable<Uint8Array> {
+        return this.renderer.getTextChunks(chunkSize)
+    }
+
     copySelection (): void {
         const text = this.getSelection()
         if (!text.trim().length) {

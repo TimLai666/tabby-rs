@@ -105,6 +105,7 @@ export abstract class TerminalRenderer {
     abstract selectAll (): void
     abstract clearSelection (): void
     abstract getSelection (): string
+    abstract getTextChunks (chunkSize?: number): AsyncIterable<Uint8Array>
     abstract getSelectionAsHTML (): string
     abstract findNext (query: string, options?: SearchOptions): SearchState
     abstract findPrevious (query: string, options?: SearchOptions): SearchState

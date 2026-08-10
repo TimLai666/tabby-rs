@@ -10,5 +10,6 @@ pub mod pty;
 pub mod secrets;
 pub mod shell;
 pub mod sudo;
+pub mod transfer;
 pub mod vault;
 pub mod windows;

@@ -1,5 +1,6 @@
 import { MenuItemOptions } from './menu'
 import { Subject, Observable } from 'rxjs'
+import { TransferDescriptor, TransferDirection, TransferError, TransferState } from './fileTransfer'
 
 /* eslint-disable @typescript-eslint/no-unused-vars */
 export interface ClipboardContent {
@@ -20,10 +21,45 @@ export interface MessageBoxResult {
     response: number
 }
 
+let fileTransferSequence = 0
+
 export abstract class FileTransfer {
+    readonly id: string
+
+    constructor (id?: string) {
+        this.id = id ?? `transfer-${Date.now()}-${++fileTransferSequence}`
+    }
     abstract getName (): string
     abstract getSize (): number
     abstract close (): void
+
+    getDirection (): TransferDirection {
+        return 'download'
+    }
+
+    getState (): TransferState {
+        return this.state
+    }
+
+    getError (): TransferError|undefined {
+        return this.error
+    }
+
+    getDescriptor (): TransferDescriptor {
+        return {
+            id: this.id,
+            direction: this.getDirection(),
+            name: this.getName(),
+            size: this.getSize(),
+            transferred: this.getCompletedBytes(),
+            state: this.getState(),
+            error: this.getError(),
+        }
+    }
+
+    async closeAsync (): Promise<void> {
+        this.close()
+    }
 
     getSpeed (): number {
         return this.lastChunkSpeed
@@ -50,8 +86,12 @@ export abstract class FileTransfer {
     }
 
     cancel (): void {
-        this.cancelled = true
+        this.markCancelled()
         this.close()
+    }
+
+    async cancelAsync (): Promise<void> {
+        this.cancel()
     }
 
     setStatus (status: string): void {
@@ -64,6 +104,22 @@ export abstract class FileTransfer {
 
     setCompleted (completed: boolean): void {
         this.completed = completed
+        this.state = completed ? 'completed' : 'running'
+    }
+
+    setRunning (): void {
+        this.status = 'running'
+        this.state = 'running'
+    }
+
+    protected markCancelled (): void {
+        this.cancelled = true
+        this.state = 'cancelled'
+    }
+
+    setFailed (error: TransferError): void {
+        this.error = error
+        this.state = 'failed'
     }
 
     protected increaseProgress (bytes: number): void {
@@ -82,6 +138,8 @@ export abstract class FileTransfer {
     private cancelled = false
     private completed = false
     private status = ''
+    private state: TransferState = 'pending'
+    private error: TransferError|undefined
 }
 
 export abstract class FileDownload extends FileTransfer {
@@ -94,6 +152,10 @@ export abstract class DirectoryDownload extends FileTransfer {
 }
 
 export abstract class FileUpload extends FileTransfer {
+    override getDirection (): TransferDirection {
+        return 'upload'
+    }
+
     abstract getMode (): number
 
     abstract read (): Promise<Uint8Array>

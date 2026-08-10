@@ -194,6 +194,23 @@ export class XtermRenderer extends TerminalRenderer {
         return this.terminal.getSelection()
     }
 
+    async *getTextChunks (chunkSize = 64 * 1024): AsyncIterable<Uint8Array> {
+        let pending = ''
+        const buffer = this.terminal.buffer.active
+        for (let index = 0; index < buffer.length; index++) {
+            const line = buffer.getLine(index)
+            pending += `${line?.translateToString(false) ?? ''}${index + 1 < buffer.length ? '\n' : ''}`
+            while (pending.length >= chunkSize) {
+                const chunk = pending.slice(0, chunkSize)
+                pending = pending.slice(chunk.length)
+                yield Buffer.from(chunk)
+            }
+        }
+        if (pending) {
+            yield Buffer.from(pending)
+        }
+    }
+
     getSelectionAsHTML (): string {
         return this.serializeAddon.serializeAsHTML({
             includeGlobalBackground: true,
