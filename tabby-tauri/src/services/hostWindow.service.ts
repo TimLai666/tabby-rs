@@ -1,7 +1,7 @@
 import { Injectable } from '@angular/core'
 import { HostWindowBounds, HostWindowService } from 'tabby-core'
 
-import { HostBridge, WindowStateSnapshot } from '../api/hostBridge'
+import { HostBridge, HostRequestMap, WindowStatePatch, WindowStateSnapshot } from '../api/hostBridge'
 
 @Injectable()
 export class TauriHostWindowService extends HostWindowService {
@@ -133,7 +133,7 @@ export class TauriHostWindowService extends HostWindowService {
         }
     }
 
-    private async apply (patch: Parameters<HostBridge['invoke']>[1] & Record<string, unknown>): Promise<void> {
+    private async apply (patch: WindowStatePatch): Promise<void> {
         try {
             await this.bridge.invoke('window.applyState', patch)
             await this.refreshState()
@@ -143,10 +143,10 @@ export class TauriHostWindowService extends HostWindowService {
         }
     }
 
-    private async invoke<K extends keyof import('../api/hostBridge').HostRequestMap> (
+    private async invoke<K extends keyof HostRequestMap> (
         command: K,
-        request: import('../api/hostBridge').HostRequestMap[K]['request'],
-    ): Promise<import('../api/hostBridge').HostRequestMap[K]['response']> {
+        request: HostRequestMap[K]['request'],
+    ): Promise<HostRequestMap[K]['response']> {
         try {
             return await this.bridge.invoke(command, request)
         } catch (error) {
