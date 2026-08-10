@@ -3,6 +3,7 @@ import { Inject, Injectable } from '@angular/core'
 import { ConfigService, PlatformService } from 'tabby-core'
 import { TerminalDecorator, BaseTerminalTabComponent } from 'tabby-terminal'
 import { LinkHandler } from './api'
+import { decideUri, UriPolicyContext } from './uriPolicy'
 
 @Injectable()
 export class LinkHighlighterDecorator extends TerminalDecorator {
@@ -25,7 +26,7 @@ export class LinkHighlighterDecorator extends TerminalDecorator {
                 if (!this.willHandleEvent(event)) {
                     return
                 }
-                this.platform.openExternal(uri)
+                void this.activateUri(uri, tab)
             },
         })
 
@@ -34,10 +35,12 @@ export class LinkHighlighterDecorator extends TerminalDecorator {
                 if (!handler.fullMatchRegex.test(uri)) {
                     continue
                 }
-                if (!await handler.verify(await handler.convert(uri, tab), tab)) {
+                const converted = await handler.convert(uri, tab)
+                if (!await handler.verify(converted, tab)) {
                     continue
                 }
-                handler.handle(await handler.convert(uri, tab), tab)
+                await this.activateUri(converted, tab, handler)
+                return
             }
         }
 
@@ -68,6 +71,37 @@ export class LinkHighlighterDecorator extends TerminalDecorator {
                 frontend.setLinkHandler(null)
             }
         }))
+    }
+
+    private async activateUri (raw: string, tab: BaseTerminalTabComponent<any>, handler?: LinkHandler): Promise<void> {
+        const context: UriPolicyContext = {
+            source: 'terminal-output',
+            cwd: await tab.session?.getWorkingDirectory() ?? null,
+            allowedSchemes: ['http', 'https', 'mailto'],
+        }
+        const decision = decideUri(raw, context)
+        if (decision.action === 'reject') {
+            console.debug('Rejected terminal URI:', decision.reason)
+            return
+        }
+        if (decision.action === 'confirm') {
+            const result = await this.platform.showMessageBox({
+                type: 'warning',
+                message: 'Open external link?',
+                detail: decision.normalized,
+                buttons: ['Open', 'Cancel'],
+                defaultId: 1,
+                cancelId: 1,
+            })
+            if (result.response !== 0) {
+                return
+            }
+        }
+        if (handler) {
+            handler.handle(decision.normalized, tab)
+        } else {
+            await this.platform.openExternal(decision.normalized)
+        }
     }
 
     private willHandleEvent (event: MouseEvent) {

@@ -15,6 +15,7 @@ import { SearchPanelComponent } from '../components/searchPanel.component'
 import { MultifocusService } from '../services/multifocus.service'
 import { getTerminalBackgroundColor } from '../helpers'
 import { DefaultPastePolicy } from '../pastePolicy'
+import { detectHeuristicProgress } from '../progressDetector'
 
 
 const INACTIVE_TAB_UNLOAD_DELAY = 1000 * 30
@@ -162,6 +163,7 @@ export class BaseTerminalTabComponent<P extends BaseTerminalProfile> extends Bas
     }, 1000)
 
     private frontendWriteLock = Promise.resolve()
+    private explicitProgressState = false
 
     get input$ (): Observable<Buffer> {
         if (!this.frontend) {
@@ -514,16 +516,9 @@ export class BaseTerminalTabComponent<P extends BaseTerminalProfile> extends Bas
             throw new Error('Frontend not ready')
         }
 
-        if (this.config.store.terminal.detectProgress) {
-            const percentageMatch = /(^|[^\d])(\d+(\.\d+)?)%([^\d]|$)/.exec(data)
-            if (!this.alternateScreenActive && percentageMatch) {
-                const percentage = percentageMatch[3] ? parseFloat(percentageMatch[2]) : parseInt(percentageMatch[2])
-                if (percentage > 0 && percentage <= 100) {
-                    this.setProgress(percentage)
-                }
-            } else {
-                this.setProgress(null)
-            }
+        if (this.config.store.terminal.detectProgress && !this.explicitProgressState) {
+            const heuristic = this.alternateScreenActive ? null : detectHeuristicProgress(data)
+            this.setProgressState(heuristic ?? { value: null, state: 'none', source: 'heuristic' })
         }
 
         await this.frontend.write(data)
@@ -764,6 +759,8 @@ export class BaseTerminalTabComponent<P extends BaseTerminalProfile> extends Bas
         } else {
             this.detachSessionHandlers()
             this.session = null
+            this.explicitProgressState = false
+            this.setProgress(null)
         }
         this.sessionChanged.next(session)
     }
@@ -823,6 +820,11 @@ export class BaseTerminalTabComponent<P extends BaseTerminalProfile> extends Bas
         this.attachSessionHandler(this.session.oscProcessor.copyRequested$, content => {
             this.platform.setClipboard({ text: content })
             this.notifications.notice(this.translate.instant('Copied'))
+        })
+
+        this.attachSessionHandler(this.session.oscProcessor.progress$, state => {
+            this.explicitProgressState = state.state !== 'none'
+            this.setProgressState(state)
         })
     }
 

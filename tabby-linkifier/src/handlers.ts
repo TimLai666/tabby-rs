@@ -50,7 +50,7 @@ export class BaseFileHandler extends LinkHandler {
 
     async handle (uri: string): Promise<void> {
         try {
-            this.platform.openExternal('file://' + uri)
+            await this.platform.openExternal(uri.startsWith('file:') ? uri : 'file://' + uri)
         } catch (err) {
             this.toastr.error(err.toString())
         }

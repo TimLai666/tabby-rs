@@ -4,6 +4,8 @@ import { NgbModal } from '@ng-bootstrap/ng-bootstrap'
 import { TranslateService } from '@ngx-translate/core'
 import { Subscription } from 'rxjs'
 import { AppService } from './services/app.service'
+import { NotificationsService } from './services/notifications.service'
+import { redactProcessCommand } from './api/processCompletion'
 import { BaseTabComponent } from './components/baseTab.component'
 import { SplitTabComponent, SplitDirection } from './components/splitTab.component'
 import { TabContextMenuItemProvider } from './api/tabContextMenuProvider'
@@ -176,6 +178,7 @@ export class TaskCompletionContextMenu extends TabContextMenuItemProvider {
     constructor (
         private app: AppService,
         private translate: TranslateService,
+        private notifications: NotificationsService,
     ) {
         super()
     }
@@ -187,9 +190,10 @@ export class TaskCompletionContextMenu extends TabContextMenuItemProvider {
         const extTab: (BaseTabComponent & { __completionNotificationEnabled?: boolean, __outputNotificationSubscription?: Subscription|null }) = tab
 
         if (process) {
+            const safeProcessName = redactProcessCommand(process.name) ?? 'process'
             items.push({
                 enabled: false,
-                label: this.translate.instant('Current process: {name}', process),
+                label: this.translate.instant('Current process: {name}', { name: safeProcessName }),
             })
             items.push({
                 label: this.translate.instant('Notify when done'),
@@ -199,12 +203,10 @@ export class TaskCompletionContextMenu extends TabContextMenuItemProvider {
                     extTab.__completionNotificationEnabled = !extTab.__completionNotificationEnabled
 
                     if (extTab.__completionNotificationEnabled) {
-                        this.app.observeTabCompletion(tab).subscribe(() => {
-                            new Notification(this.translate.instant('Process completed'), {
-                                body: process.name,
-                            }).addEventListener('click', () => {
-                                this.app.selectTab(tab)
-                            })
+                        this.app.observeTabCompletion(tab, process).subscribe(completion => {
+                            if (!completion.wasFocused) {
+                                this.notifications.info(this.translate.instant('Process completed'), safeProcessName)
+                            }
                             extTab.__completionNotificationEnabled = false
                         })
                     } else {

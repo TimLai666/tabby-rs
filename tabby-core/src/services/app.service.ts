@@ -2,7 +2,7 @@ import { Injectable, Inject } from '@angular/core'
 import { NgbModal } from '@ng-bootstrap/ng-bootstrap'
 import { Observable, Subject, AsyncSubject, takeUntil, debounceTime } from 'rxjs'
 
-import { BaseTabComponent } from '../components/baseTab.component'
+import { BaseTabComponent, BaseTabProcess } from '../components/baseTab.component'
 import { SplitTabComponent } from '../components/splitTab.component'
 import { RenameTabModalComponent } from '../components/renameTabModal.component'
 import { SelectorOption } from '../api/selector'
@@ -15,27 +15,46 @@ import { ConfigService } from './config.service'
 import { TabRecoveryService } from './tabRecovery.service'
 import { TabsService, NewTabParameters } from './tabs.service'
 import { SelectorService } from './selector.service'
+import { ProcessCompletion, redactProcessCommand } from '../api/processCompletion'
 
 class CompletionObserver {
-    get done$ (): Observable<void> { return this.done }
+    get done$ (): Observable<ProcessCompletion> { return this.done }
     get destroyed$ (): Observable<void> { return this.destroyed }
-    private done = new AsyncSubject<void>()
+    private done = new AsyncSubject<ProcessCompletion>()
     private destroyed = new AsyncSubject<void>()
     private interval: number
+    private startedAt = Date.now()
+    private stopped = false
 
-    constructor (private tab: BaseTabComponent) {
+    constructor (private tab: BaseTabComponent, private process?: BaseTabProcess) {
         this.interval = setInterval(() => this.tick(), 1000) as any
         this.tab.destroyed$.pipe(takeUntil(this.destroyed$)).subscribe(() => this.stop())
     }
 
     async tick () {
-        if (!await this.tab.getCurrentProcess()) {
-            this.done.next()
-            this.stop()
+        if (this.stopped) {
+            return
         }
+        const process = await this.tab.getCurrentProcess()
+        if (process) {
+            this.process = process
+            return
+        }
+        this.done.next({
+            tabId: this.tab.tabId,
+            title: this.tab.title || 'Terminal',
+            command: redactProcessCommand(this.process?.name),
+            durationMs: Date.now() - this.startedAt,
+            wasFocused: this.tab.hasFocus,
+        })
+        this.stop()
     }
 
     stop () {
+        if (this.stopped) {
+            return
+        }
+        this.stopped = true
         clearInterval(this.interval)
         this.destroyed.next()
         this.destroyed.complete()
@@ -511,9 +530,9 @@ export class AppService {
      * Returns an observable that fires once
      * the tab's internal "process" (see [[BaseTabProcess]]) completes
      */
-    observeTabCompletion (tab: BaseTabComponent): Observable<void> {
+    observeTabCompletion (tab: BaseTabComponent, process?: BaseTabProcess): Observable<ProcessCompletion> {
         if (!this.completionObservers.has(tab)) {
-            const observer = new CompletionObserver(tab)
+            const observer = new CompletionObserver(tab, process)
             observer.destroyed$.subscribe(() => {
                 this.stopObservingTabCompletion(tab)
             })
@@ -523,7 +542,9 @@ export class AppService {
     }
 
     stopObservingTabCompletion (tab: BaseTabComponent): void {
+        const observer = this.completionObservers.get(tab)
         this.completionObservers.delete(tab)
+        observer?.stop()
     }
 
     // Deprecated

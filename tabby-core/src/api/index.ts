@@ -41,3 +41,7 @@ export { LocaleService, TabbyFormatedDatePipe } from '../services/locale.service
 export { TranslateService } from '@ngx-translate/core'
 export * from '../utils'
 export { UTF8Splitter } from '../utfSplitter'
+export { aggregateTabProgress } from './tabProgress'
+export type { TabProgressEntry, TabProgressSource, TabProgressState, TabProgressStateName } from './tabProgress'
+export { redactProcessCommand } from './processCompletion'
+export type { ProcessCompletion } from './processCompletion'

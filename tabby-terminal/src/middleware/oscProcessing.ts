@@ -1,6 +1,7 @@
 import * as os from 'os'
 import { Subject, Observable } from 'rxjs'
 import { SessionMiddleware } from '../api/middleware'
+import { OSCProgressDetector, TerminalProgressState } from '../progressDetector'
 
 const OSCPrefix = Buffer.from('\x1b]')
 const OSCSuffixes = [Buffer.from('\x07'), Buffer.from('\x1b\\')]
@@ -8,12 +9,19 @@ const OSCSuffixes = [Buffer.from('\x07'), Buffer.from('\x1b\\')]
 export class OSCProcessor extends SessionMiddleware {
     get cwdReported$ (): Observable<string> { return this.cwdReported }
     get copyRequested$ (): Observable<string> { return this.copyRequested }
+    get progress$ (): Observable<TerminalProgressState> { return this.progress }
 
     private cwdReported = new Subject<string>()
     private buffer: Buffer | null = null
     private copyRequested = new Subject<string>()
+    private progress = new Subject<TerminalProgressState>()
+    private progressDetector = new OSCProgressDetector()
 
     feedFromSession (data: Buffer): void {
+        const progress = this.progressDetector.consume(data)
+        if (progress) {
+            this.progress.next(progress)
+        }
         // Prepend any buffered data from previous chunks
         if (this.buffer) {
             data = Buffer.concat([this.buffer, data])
@@ -79,6 +87,8 @@ export class OSCProcessor extends SessionMiddleware {
                     const content = Buffer.from(oscParams[1], 'base64')
                     this.copyRequested.next(content.toString())
                 }
+            } else if (oscCode === 9 && oscParams[0] === '4') {
+                // OSC 9;4 progress is consumed by the detector and never reaches xterm.
             } else {
                 processedData.push(data.subarray(prefixIndex, foundSuffix[1] + foundSuffix[0].length))
             }
@@ -96,6 +106,8 @@ export class OSCProcessor extends SessionMiddleware {
     close (): void {
         this.cwdReported.complete()
         this.copyRequested.complete()
+        this.progress.complete()
+        this.progressDetector.reset()
         super.close()
     }
 }
