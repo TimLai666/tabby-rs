@@ -274,6 +274,109 @@ export interface DesktopNotification {
     body?: string | null
 }
 
+export interface SshConnectRequest {
+    profileId: string
+    connectionId?: string|null
+    host: string
+    port: number
+    username?: string | null
+    auth: SshAuthMethodRef[]
+    terminal: SshTerminalRequest
+    keepalive?: SshKeepaliveOptions | null
+    environment: Record<string, string>
+}
+
+export type SshAuthMethodRef =
+    | { type: 'password'; secretRef: string }
+    | { type: 'privateKey'; fileRef: string; passphraseRef?: string | null }
+    | { type: 'agent'; socket?: string | null }
+    | { type: 'keyboardInteractive' }
+
+export interface SshTerminalRequest {
+    term: string
+    columns: number
+    rows: number
+    pixelWidth?: number | null
+    pixelHeight?: number | null
+}
+
+export interface SshKeepaliveOptions {
+    intervalMs: number
+    maxCount: number
+}
+
+export interface SshSessionInfo {
+    id: string
+    profileId: string
+    host: string
+    port: number
+    username: string
+}
+
+export interface SshHostKeyPrompt {
+    requestId: string
+    connectionId: string
+    host: string
+    port: number
+    algorithm: string
+    fingerprintSha256: string
+    status: 'unknown' | 'changed'
+    previousFingerprints: string[]
+}
+
+export interface SshAuthPrompt {
+    requestId: string
+    id: string
+    connectionId: string
+    name: string
+    instructions: string
+    prompts: { text: string; echo: boolean }[]
+}
+
+export interface SshOutputEvent {
+    id: string
+    connectionId: string
+    profileId: string
+    data: number[]
+    extended: boolean
+}
+
+export interface SshExitEvent {
+    id: string
+    connectionId: string
+    profileId: string
+    exitCode: number | null
+    signal: string | null
+}
+
+export interface SshImportProfile {
+    id: string
+    name: string
+    host: string
+    port: number
+    user: string | null
+    privateKeys: string[]
+}
+
+export interface SshImportPreview {
+    source: string
+    revision: string|null
+    profiles: SshImportProfile[]
+    conflicts: {
+        profileId: string
+        profileName: string
+        existingProfileId: string
+    }[]
+}
+
+export interface SshImportReport {
+    imported: SshImportProfile[]
+    skipped: string[]
+    failed: { profileId: string; reason: string }[]
+    revision: string
+    path: string
+}
+
 export interface HostRequestMap {
     'app.bootstrap': {
         request: Record<string, never>
@@ -541,6 +644,52 @@ export interface HostRequestMap {
         request: { destination: string }
         response: TransferDescriptor
     }
+    'ssh.connect': {
+        request: SshConnectRequest
+        response: SshSessionInfo
+    }
+    'ssh.hostKeyDecision': {
+        request: { requestId: string; decision: 'once' | 'save' | 'reject' }
+        response: null
+    }
+    'ssh.importPreview': {
+        request: { path: string; existingProfileIds?: string[] }
+        response: SshImportPreview
+    }
+    'ssh.importApply': {
+        request: {
+            path: string
+            expectedRevision?: string | null
+            selections: { profileId: string; action: 'skip' | 'duplicate' | 'overwrite' }[]
+        }
+        response: SshImportReport
+    }
+    'ssh.listPrivateKeys': {
+        request: Record<string, never>
+        response: string[]
+    }
+    'ssh.authResponse': {
+        request: { requestId: string; responses: string[] }
+        response: null
+    }
+    'ssh.write': {
+        request: { id: string; data: number[] }
+        response: null
+    }
+    'ssh.resize': {
+        request: {
+            id: string
+            columns: number
+            rows: number
+            pixelWidth?: number | null
+            pixelHeight?: number | null
+        }
+        response: null
+    }
+    'ssh.close': {
+        request: { id: string }
+        response: null
+    }
 }
 
 export interface HostEventMap {
@@ -555,6 +704,10 @@ export interface HostEventMap {
     'desktop.themeChanged': 'system' | 'light' | 'dark'
     'desktop.displayMetricsChanged': number
     'transfer.progress': TransferDescriptor
+    'ssh.hostKeyPrompt': SshHostKeyPrompt
+    'ssh.authPrompt': SshAuthPrompt
+    'ssh.output': SshOutputEvent
+    'ssh.exit': SshExitEvent
 }
 
 export abstract class HostBridge {

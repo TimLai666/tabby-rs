@@ -9,6 +9,7 @@ pub mod migration;
 pub mod pty;
 pub mod secrets;
 pub mod shell;
+pub mod ssh;
 pub mod sudo;
 pub mod transfer;
 pub mod vault;

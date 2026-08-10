@@ -7,6 +7,7 @@ mod platform;
 mod pty;
 mod security;
 mod shell;
+mod ssh;
 mod state;
 mod storage;
 mod sudo;
@@ -36,6 +37,10 @@ use commands::{
     },
     secrets::{secret_import_execute, secret_import_plan},
     shell::{shell_detect, shell_prepare_spawn},
+    ssh::{
+        ssh_auth_response, ssh_close, ssh_connect, ssh_host_key_decision, ssh_import_apply,
+        ssh_import_preview, ssh_list_private_keys, ssh_resize, ssh_write,
+    },
     sudo::sudo_respond,
     transfer::{
         terminal_export, transfer_cancel, transfer_close, transfer_create_directory,
@@ -52,6 +57,7 @@ use commands::{
 use launch::{parse_launch_context, LaunchContext};
 use pty::PtyManager;
 use security::{CredentialState, SecretState};
+use ssh::SshManager;
 use state::AppState;
 use storage::{
     paths::StoragePaths,
@@ -175,6 +181,7 @@ pub fn run() {
             }
 
             let paths = identity::AppPaths::detect(app.handle())?;
+            let known_hosts_path = paths.data_dir().join("known_hosts");
             let storage_paths = StoragePaths::from_app_paths(&paths);
             storage_paths.ensure_layout()?;
             let state_file_existed = std::fs::symlink_metadata(storage_paths.state_file()).is_ok();
@@ -185,6 +192,7 @@ pub fn run() {
             app.manage(AppState::new(paths, initial_launch));
             app.manage(Arc::new(SecretState::default()));
             app.manage(Arc::new(PtyManager::default()));
+            app.manage(Arc::new(SshManager::new(known_hosts_path)));
             app.manage(Arc::new(
                 crate::transfer::manager::TransferManager::default(),
             ));
@@ -255,6 +263,15 @@ pub fn run() {
             secret_import_execute,
             shell_detect,
             shell_prepare_spawn,
+            ssh_connect,
+            ssh_host_key_decision,
+            ssh_import_apply,
+            ssh_import_preview,
+            ssh_list_private_keys,
+            ssh_auth_response,
+            ssh_write,
+            ssh_resize,
+            ssh_close,
             sudo_respond,
             transfer_open_upload,
             transfer_open_download,
