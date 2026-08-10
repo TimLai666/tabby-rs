@@ -8,7 +8,8 @@ use crate::{
     ssh::{
         self,
         model::{
-            HostKeyDecisionRequest, SshAuthResponseRequest, SshConnectRequest, SshResizeRequest,
+            HostKeyDecisionRequest, SshAuthResponseRequest, SshConnectRequest,
+            SshForwardingIdRequest, SshForwardingInfo, SshForwardingRequest, SshResizeRequest,
             SshSessionIdRequest, SshSessionInfo, SshWriteRequest,
         },
         SshImportPreview, SshImportReport, SshImportSelection, SshImportSource, SshManager,
@@ -147,4 +148,35 @@ pub async fn ssh_close(
     manager: State<'_, Arc<SshManager>>,
 ) -> Result<(), AppError> {
     manager.close(request).await.map_err(AppError::from)
+}
+
+#[tauri::command]
+pub async fn ssh_forwarding_start(
+    app: AppHandle,
+    request: SshForwardingRequest,
+    manager: State<'_, Arc<SshManager>>,
+) -> Result<SshForwardingInfo, AppError> {
+    manager
+        .start_forwarding(app, request)
+        .await
+        .map_err(AppError::from)
+}
+
+#[tauri::command]
+pub async fn ssh_forwarding_stop(
+    app: AppHandle,
+    request: SshForwardingIdRequest,
+    manager: State<'_, Arc<SshManager>>,
+) -> Result<(), AppError> {
+    manager
+        .stop_forwarding(app, request)
+        .await
+        .map_err(AppError::from)
+}
+
+#[tauri::command]
+pub fn ssh_forwarding_list(
+    manager: State<'_, Arc<SshManager>>,
+) -> Result<Vec<SshForwardingInfo>, AppError> {
+    Ok(manager.list_forwardings())
 }

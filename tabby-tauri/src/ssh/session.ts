@@ -1,7 +1,7 @@
 import { Injector } from '@angular/core'
 import { NgbModal } from '@ng-bootstrap/ng-bootstrap'
 import { Observable, Subject } from 'rxjs'
-import { LogService, VaultService } from 'tabby-core'
+import { LogService, ProfilesService, VaultService } from 'tabby-core'
 import { BaseSession, InputProcessor, UTF8SplitterMiddleware } from 'tabby-terminal'
 
 import { SSHProfile } from '../../../tabby-ssh/src/api/interfaces'
@@ -11,6 +11,7 @@ import {
     SshAuthMethodRef,
     SshConnectRequest,
     SshHostKeyPrompt,
+    SshJumpRequest,
 } from '../api/hostBridge'
 import { TauriSshHostKeyPromptModalComponent } from './hostKeyPromptModal.component'
 
@@ -31,6 +32,7 @@ export class TauriSshSession extends BaseSession {
     private pendingExit = false
     private unlisteners: (() => void)[] = []
     private readonly authPrompt = new Subject<SshAuthPrompt>()
+    private forwardingIds: string[] = []
 
     get authPrompt$ (): Observable<SshAuthPrompt> {
         return this.authPrompt.asObservable()
@@ -95,6 +97,12 @@ export class TauriSshSession extends BaseSession {
         }
         this.id = info.id
         this.open = true
+        try {
+            await this.startForwardings(info.id)
+        } catch (error) {
+            await this.destroy()
+            throw error
+        }
         for (const output of this.pendingOutput.splice(0)) {
             this.emitOutput(Buffer.from(output.data))
         }
@@ -140,6 +148,9 @@ export class TauriSshSession extends BaseSession {
         const id = this.id
         this.id = null
         if (id) {
+            await Promise.all(this.forwardingIds.splice(0).map(forwardingId => this.bridge.invoke('ssh.forwardingStop', {
+                id: forwardingId,
+            }).catch(error => this.logger.debug('SSH forwarding close failed', error))))
             await this.bridge.invoke('ssh.close', { id }).catch(error => {
                 this.logger.debug('SSH close failed after session end', error)
             })
@@ -165,23 +176,7 @@ export class TauriSshSession extends BaseSession {
 
     private async connectRequest (): Promise<SshConnectRequest> {
         const options = this.profile.options
-        const auth: SshAuthMethodRef[] = []
-        if (options.auth === 'password') {
-            // The legacy password field is deliberately ignored. Tauri only sends a
-            // keychain/vault reference across the bridge.
-            auth.push({ type: 'password', secretRef: await this.passwordSecretRef() })
-        } else if (options.auth === 'publicKey') {
-            const privateKeys = options.privateKeys.length
-                ? options.privateKeys
-                : await this.bridge.invoke('ssh.listPrivateKeys', {})
-            for (const fileRef of privateKeys) {
-                auth.push({ type: 'privateKey', fileRef, passphraseRef: null })
-            }
-        } else if (options.auth === 'agent') {
-            auth.push({ type: 'agent', socket: null })
-        } else if (options.auth === 'keyboardInteractive') {
-            auth.push({ type: 'keyboardInteractive' })
-        }
+        const auth = await this.authForOptions(options)
         return {
             profileId: this.profile.id,
             connectionId: this.connectionId,
@@ -201,11 +196,79 @@ export class TauriSshSession extends BaseSession {
                 maxCount: options.keepaliveCountMax,
             } : null,
             environment: {},
+            x11: !!options.x11,
+            x11Display: null,
+            agentForward: !!options.agentForward,
+            jumpChain: await this.jumpChain(options.jumpHost),
         }
     }
 
-    private async passwordSecretRef (): Promise<string> {
-        const options = this.profile.options
+    private async authForOptions (options: SSHProfile['options']): Promise<SshAuthMethodRef[]> {
+        const auth: SshAuthMethodRef[] = []
+        if (options.auth === 'password') {
+            auth.push({ type: 'password', secretRef: await this.passwordSecretRef(options) })
+        } else if (options.auth === 'publicKey') {
+            const privateKeys = options.privateKeys.length
+                ? options.privateKeys
+                : await this.bridge.invoke('ssh.listPrivateKeys', {})
+            for (const fileRef of privateKeys) {
+                auth.push({ type: 'privateKey', fileRef, passphraseRef: null })
+            }
+        } else if (options.auth === 'agent') {
+            auth.push({ type: 'agent', socket: null })
+        } else if (options.auth === 'keyboardInteractive') {
+            auth.push({ type: 'keyboardInteractive' })
+        }
+        return auth
+    }
+
+    private async jumpChain (jumpHost: string|null): Promise<SshJumpRequest[]> {
+        const chain: SshJumpRequest[] = []
+        const seen = new Set<string>()
+        let current = jumpHost
+        const profiles = (await this.injector.get(ProfilesService).getProfiles({ includeBuiltin: false }))
+            .filter(profile => profile.type === 'ssh')
+        while (current) {
+            if (seen.has(current) || current === this.profile.id) {
+                throw new Error('SSH jump host configuration contains a cycle')
+            }
+            seen.add(current)
+            if (chain.length >= 3) {
+                throw new Error('SSH jump host configuration supports at most three hops')
+            }
+            const currentId = current
+            const jump = profiles.find(profile => profile.id === currentId)
+            if (!jump) {
+                throw new Error(`SSH jump host "${currentId}" was not found in the profile list`)
+            }
+            const jumpOptions = jump.options as SSHProfile['options']
+            chain.push({
+                host: jumpOptions.host,
+                port: jumpOptions.port,
+                username: jumpOptions.user || null,
+                auth: await this.authForOptions(jumpOptions),
+            })
+            current = jumpOptions.jumpHost
+        }
+        return chain
+    }
+
+    private async startForwardings (sessionId: string): Promise<void> {
+        for (const forwarding of this.profile.options.forwardedPorts) {
+            const kind = forwarding.type.toLowerCase() as 'local'|'remote'|'dynamic'
+            const info = await this.bridge.invoke('ssh.forwardingStart', {
+                sessionId,
+                kind,
+                bindHost: forwarding.host || '127.0.0.1',
+                bindPort: forwarding.port || 0,
+                targetAddress: forwarding.targetAddress || '',
+                targetPort: forwarding.targetPort || 0,
+            })
+            this.forwardingIds.push(info.id)
+        }
+    }
+
+    private async passwordSecretRef (options = this.profile.options): Promise<string> {
         const account = options.user
         if (!this.vault.isEnabled()) {
             return `keychain://ssh@${options.host}:${options.port ?? 22}/${account}`
