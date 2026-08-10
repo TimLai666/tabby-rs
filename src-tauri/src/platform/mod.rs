@@ -9,7 +9,7 @@ pub fn set_window_opacity(
             "window opacity must be between 0 and 1".into(),
         ));
     }
-    if (opacity >= 0.999) {
+    if opacity >= 0.999 {
         return Ok(());
     }
     Err(AppError::Unsupported(
@@ -34,7 +34,7 @@ pub fn set_window_vibrancy(
 
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     {
-        use tauri::window::{Effect, EffectsBuilder};
+        use tauri::window::EffectsBuilder;
 
         if !options.enabled {
             return window
