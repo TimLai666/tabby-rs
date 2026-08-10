@@ -77,6 +77,12 @@ jobs:
       - name: Test terminal renderer write ordering
         run: node scripts/ci/test-terminal-renderer.mjs
 
+      - name: Test paste policy
+        run: node scripts/ci/test-paste-policy.mjs
+
+      - name: Test terminal path quoting
+        run: node scripts/ci/test-path-quoting.mjs
+
       - name: Test terminal renderer browser parity
         run: node scripts/ci/test-terminal-renderer-browser.mjs
 

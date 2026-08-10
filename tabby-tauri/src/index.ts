@@ -50,6 +50,8 @@ import { TauriHostBridge } from './services/tauriHostBridge.service'
 import { TauriUACService } from './services/uac.service'
 import { TauriUpdaterService } from './services/updater.service'
 import { TauriVaultService } from './services/vault.service'
+import { TauriPathDropDecorator } from './pathDrop'
+import { TerminalDecorator } from 'tabby-terminal'
 
 function initializeUac (service: TauriUACService): () => Promise<void> {
     return async () => {
@@ -80,6 +82,7 @@ function initializeDesktop (service: TauriDesktopIntegrationService): () => Prom
         TauriDockingService,
         { provide: DockingService, useExisting: TauriDockingService },
         { provide: HotkeyProvider, useClass: TauriHotkeyProvider, multi: true },
+        { provide: TerminalDecorator, useClass: TauriPathDropDecorator, multi: true },
         { provide: FileProvider, useClass: TauriFileProvider, multi: true },
         TauriDesktopIntegrationService,
         { provide: LogService, useClass: TauriLogService },
@@ -128,3 +131,4 @@ export { TauriSecretImporter }
 export { TauriSpawnRequestService }
 export { TauriUACService }
 export { TauriVaultService }
+export { TauriPathDropDecorator }

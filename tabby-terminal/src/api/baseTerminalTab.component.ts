@@ -14,6 +14,7 @@ import { TerminalDecorator } from './decorator'
 import { SearchPanelComponent } from '../components/searchPanel.component'
 import { MultifocusService } from '../services/multifocus.service'
 import { getTerminalBackgroundColor } from '../helpers'
+import { DefaultPastePolicy } from '../pastePolicy'
 
 
 const INACTIVE_TAB_UNLOAD_DELAY = 1000 * 30
@@ -470,7 +471,15 @@ export class BaseTerminalTabComponent<P extends BaseTerminalProfile> extends Bas
 
     async buildContextMenu (): Promise<MenuItemOptions[]> {
         let items: MenuItemOptions[] = []
-        for (const section of await Promise.all(this.contextMenuProviders.map(x => x.getItems(this)))) {
+        const sections = await Promise.all(this.contextMenuProviders.map(async provider => {
+            try {
+                return await provider.getItems(this)
+            } catch {
+                this.logger.warn('Terminal context menu provider failed')
+                return []
+            }
+        }))
+        for (const section of sections) {
             items = items.concat(section)
             items.push({ type: 'separator' })
         }
@@ -521,55 +530,42 @@ export class BaseTerminalTabComponent<P extends BaseTerminalProfile> extends Bas
     }
 
     async paste (): Promise<void> {
-        let data = this.platform.readClipboard()
-        if (this.hostApp.platform === Platform.Windows) {
-            data = data.replaceAll('\r\n', '\r')
-        } else {
-            data = data.replaceAll('\n', '\r')
-        }
+        const policy = new DefaultPastePolicy({
+            windows: this.hostApp.platform === Platform.Windows,
+            replaceNewlinesWithSpaces: this.config.store.terminal.replaceNewlinesWithSpacesOnPaste,
+            trimWhitespace: this.config.store.terminal.trimWhitespaceOnPaste,
+        })
+        const inspection = policy.inspect(await this.platform.readClipboardText(), {
+            alternateScreenActive: this.alternateScreenActive,
+            warnOnMultilinePaste: this.config.store.terminal.warnOnMultilinePaste,
+            bracketedPaste: this.config.store.terminal.bracketedPaste && !!this.frontend?.supportsBracketedPaste(),
+        })
 
-        if (this.config.store.terminal.replaceNewlinesWithSpacesOnPaste) {
-            data = data.replace(/[\r\n]+/g, ' ')
-        }
-
-        if (this.config.store.terminal.trimWhitespaceOnPaste && data.indexOf('\n') === data.length - 1) {
-            // Ends with a newline and has no other line breaks
-            data = data.substring(0, data.length - 1)
-        }
-
-        if (!this.alternateScreenActive) {
-            if ((data.includes('\r') || data.includes('\n')) && this.config.store.terminal.warnOnMultilinePaste) {
-                const buttons = [
-                    this.translate.instant('Paste'),
-                    this.translate.instant('Cancel'),
-                ]
-                const result = (await this.platform.showMessageBox(
-                    {
-                        type: 'warning',
-                        detail: data.slice(0, 1000),
-                        message: this.translate.instant('Paste multiple lines?'),
-                        buttons,
-                        defaultId: 0,
-                        cancelId: 1,
-                    },
-                )).response
-                if (result === 1) {
-                    return
-                }
-            } else {
-                if (this.config.store.terminal.trimWhitespaceOnPaste) {
-                    data = data.trimEnd()
-                    if (!data.includes('\r')) {
-                        data = data.trimStart()
-                    }
-                }
+        if (inspection.shouldConfirm) {
+            const buttons = [
+                this.translate.instant('Paste'),
+                this.translate.instant('Cancel'),
+            ]
+            const result = (await this.platform.showMessageBox(
+                {
+                    type: 'warning',
+                    detail: inspection.text.slice(0, 1000),
+                    message: this.translate.instant('Paste multiple lines?'),
+                    buttons,
+                    defaultId: 0,
+                    cancelId: 1,
+                },
+            )).response
+            if (result === 1) {
+                return
             }
         }
 
-        if (this.config.store.terminal.bracketedPaste && this.frontend?.supportsBracketedPaste()) {
-            data = `\x1b[200~${data}\x1b[201~`
-        }
-        this.sendInput(data)
+        this.sendInput(Buffer.from(policy.encode(inspection.text, {
+            alternateScreenActive: this.alternateScreenActive,
+            warnOnMultilinePaste: this.config.store.terminal.warnOnMultilinePaste,
+            bracketedPaste: this.config.store.terminal.bracketedPaste && !!this.frontend?.supportsBracketedPaste(),
+        })))
     }
 
     /**
