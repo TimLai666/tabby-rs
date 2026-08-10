@@ -29,17 +29,19 @@ export class TauriDockingService extends DockingService {
 
     dock (): void {
         const appearance = this.config.store.appearance
-        const side = appearance.dock
+        const side = this.bootstrapData.isMainWindow ? appearance.dock : 'off'
+        const screenId = typeof appearance.dockScreen === 'number' ? appearance.dockScreen : null
+
         void this.bridge.invoke('window.setDocking', {
             side,
-            screenId: appearance.dockScreen ?? null,
+            screenId,
             fill: appearance.dockFill,
             space: appearance.dockSpace,
             alwaysOnTop: side !== 'off' && appearance.dockAlwaysOnTop,
             minWidth: 400,
             minHeight: 300,
         }).catch(error => {
-            if (side !== 'off' && this.bootstrapData.isMainWindow) {
+            if (side !== 'off') {
                 console.info('Window docking is unavailable:', error)
             }
         })
