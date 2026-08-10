@@ -35,9 +35,13 @@ export abstract class HostWindowService {
     abstract toggleMaximize (): void
     abstract close (): void
 
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
     setBounds (_bounds: HostWindowBounds): void { }
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
     setAlwaysOnTop (_enabled: boolean): void { }
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
     setOpacity (_opacity: number): void { }
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
     setProgressBar (_progress: number): void { }
 
     // eslint-disable-next-line @typescript-eslint/no-empty-function
