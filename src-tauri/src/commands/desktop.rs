@@ -1,14 +1,14 @@
 use std::{fs, path::PathBuf};
 
-use tauri::{Emitter, Manager, PhysicalPosition, PhysicalSize};
 use tauri::window::{ProgressBarState, ProgressBarStatus};
+use tauri::{Emitter, Manager, PhysicalPosition, PhysicalSize};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
 
 #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
-use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 use crate::{
     desktop::{
@@ -258,19 +258,30 @@ pub fn hotkey_replace(
 ) -> Result<Vec<String>, AppError> {
     #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
     {
-        let shortcuts = request
+        let normalized = request
             .accelerators
             .iter()
             .map(|shortcut| normalize_accelerator(shortcut))
             .collect::<Result<Vec<_>, _>>()?;
+        let shortcuts = normalized
+            .iter()
+            .map(|shortcut| {
+                shortcut.parse::<Shortcut>().map_err(|error| {
+                    AppError::InvalidArgument(format!(
+                        "invalid global shortcut {shortcut}: {error}"
+                    ))
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
         app.global_shortcut().unregister_all().map_err(io_error)?;
         if shortcuts.is_empty() {
-            return Ok(shortcuts);
+            return Ok(normalized);
         }
 
         let id = request.id.clone();
         app.global_shortcut()
-            .on_shortcuts(shortcuts.clone(), move |app, shortcut, event| {
+            .on_shortcuts(shortcuts, move |app, shortcut, event| {
                 if event.state() != ShortcutState::Pressed {
                     return;
                 }
@@ -297,11 +308,13 @@ pub fn hotkey_replace(
                 );
             })
             .map_err(io_error)?;
-        return Ok(shortcuts);
+        return Ok(normalized);
     }
 
     #[allow(unreachable_code)]
-    Err(AppError::Unsupported("global shortcuts are unavailable".into()))
+    Err(AppError::Unsupported(
+        "global shortcuts are unavailable".into(),
+    ))
 }
 
 #[tauri::command]
@@ -413,7 +426,9 @@ pub fn desktop_open_external(
     let parsed = url::Url::parse(&request.url)
         .map_err(|_| AppError::InvalidArgument("invalid external URL".into()))?;
     if !matches!(parsed.scheme(), "http" | "https" | "mailto") {
-        return Err(AppError::InvalidArgument("unsupported external URL scheme".into()));
+        return Err(AppError::InvalidArgument(
+            "unsupported external URL scheme".into(),
+        ));
     }
     app.opener()
         .open_url(parsed.to_string(), None::<&str>)
