@@ -133,12 +133,12 @@ export class TauriPlatformService extends PlatformService {
     }
 
     async pickDirectory (): Promise<string|null> {
-        const [path] = await this.bridge.invoke('dialog.open', {
+        const paths = await this.bridge.invoke('dialog.open', {
             multiple: false,
             directory: true,
             title: null,
         })
-        return path ?? null
+        return paths.length ? paths[0] : null
     }
 
     quit (): void {
