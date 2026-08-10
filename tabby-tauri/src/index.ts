@@ -1,5 +1,7 @@
 import { CommonModule } from '@angular/common'
 import { APP_INITIALIZER, NgModule } from '@angular/core'
+import { FormsModule } from '@angular/forms'
+import { NgbModule } from '@ng-bootstrap/ng-bootstrap'
 import {
     ConfigProvider,
     DockingService,
@@ -10,6 +12,8 @@ import {
     LogService,
     PlatformService,
     NotificationsService,
+    ProfileProvider,
+    TabRecoveryProvider,
     UpdaterService,
     VaultService,
 } from 'tabby-core'
@@ -55,6 +59,13 @@ import { TauriVaultService } from './services/vault.service'
 import { TauriPathDropDecorator } from './pathDrop'
 import { TauriExportTerminalContextMenu } from './terminalContextMenu'
 import { TerminalContextMenuItemProvider, TerminalDecorator } from 'tabby-terminal'
+import { TauriSshAuthPromptModalComponent } from './ssh/authPromptModal.component'
+import { TauriSshHostKeyPromptModalComponent } from './ssh/hostKeyPromptModal.component'
+import { TauriSshImportModalComponent } from './ssh/importModal.component'
+import { TauriSshProfileSettingsComponent } from './ssh/profileSettings.component'
+import { TauriSshProfilesService } from './ssh/profiles'
+import { TauriSshTabRecoveryProvider } from './ssh/recoveryProvider'
+import { TauriSshTabComponent } from './ssh/tab.component'
 
 function initializeUac (service: TauriUACService): () => Promise<void> {
     return async () => {
@@ -71,8 +82,15 @@ function initializeDesktop (service: TauriDesktopIntegrationService): () => Prom
 }
 
 @NgModule({
-    imports: [CommonModule],
-    declarations: [IdentitySettingsTabComponent],
+    imports: [CommonModule, FormsModule, NgbModule],
+    declarations: [
+        IdentitySettingsTabComponent,
+        TauriSshAuthPromptModalComponent,
+        TauriSshHostKeyPromptModalComponent,
+        TauriSshImportModalComponent,
+        TauriSshProfileSettingsComponent,
+        TauriSshTabComponent,
+    ],
     providers: [
         TauriHostBridge,
         { provide: HostBridge, useExisting: TauriHostBridge },
@@ -98,6 +116,10 @@ function initializeDesktop (service: TauriDesktopIntegrationService): () => Prom
         TauriSecretImporter,
         { provide: SecretImporter, useExisting: TauriSecretImporter },
         { provide: PasswordStorageService, useClass: TauriPasswordStorageService },
+        TauriSshProfilesService,
+        { provide: ProfileProvider, useExisting: TauriSshProfilesService, multi: true },
+        TauriSshTabRecoveryProvider,
+        { provide: TabRecoveryProvider, useExisting: TauriSshTabRecoveryProvider, multi: true },
         { provide: ShellProvider, useClass: TauriDetectedShellProvider, multi: true },
         TauriSpawnRequestService,
         { provide: PTYInterface, useClass: TauriPTYInterface },
@@ -138,3 +160,4 @@ export { TauriSpawnRequestService }
 export { TauriUACService }
 export { TauriVaultService }
 export { TauriPathDropDecorator }
+export { TauriSshProfilesService, TauriSshTabComponent }
