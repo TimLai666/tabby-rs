@@ -205,7 +205,16 @@ export class TaskCompletionContextMenu extends TabContextMenuItemProvider {
                     if (extTab.__completionNotificationEnabled) {
                         this.app.observeTabCompletion(tab, process).subscribe(completion => {
                             if (!completion.wasFocused) {
-                                this.notifications.info(this.translate.instant('Process completed'), safeProcessName)
+                                const title = this.translate.instant('Process completed')
+                                const body = safeProcessName
+                                try {
+                                    const notification = new Notification(title, { body })
+                                    notification.addEventListener('click', () => this.app.selectTab(tab))
+                                } catch {
+                                    // Browser notifications may be unavailable in
+                                    // a locked-down WebView or without permission.
+                                    this.notifications.info(title, body)
+                                }
                             }
                             extTab.__completionNotificationEnabled = false
                         })
