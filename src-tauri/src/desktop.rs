@@ -254,7 +254,10 @@ pub fn clamp_bounds(bounds: WindowBounds, screen: WindowBounds) -> WindowBounds 
 
 pub fn normalize_accelerator(input: &str) -> Result<String, AppError> {
     let first_chord = input.split_whitespace().next().unwrap_or_default().trim();
-    if first_chord.is_empty() || first_chord.len() > 128 || first_chord.chars().any(char::is_control) {
+    if first_chord.is_empty()
+        || first_chord.len() > 128
+        || first_chord.chars().any(char::is_control)
+    {
         return Err(AppError::InvalidArgument("invalid global shortcut".into()));
     }
 

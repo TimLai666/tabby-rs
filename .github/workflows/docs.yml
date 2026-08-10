@@ -16,6 +16,9 @@ jobs:
       with:
         node-version: 22
 
+    - name: Fetch upstream tags
+      run: git fetch --force --tags https://github.com/Eugeny/tabby.git '+refs/tags/*:refs/tags/*'
+
     - name: Build
       run: |
         sudo apt update && sudo apt install libfontconfig1-dev

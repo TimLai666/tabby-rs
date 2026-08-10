@@ -1,9 +1,6 @@
 use crate::{desktop::VibrancyOptions, error::AppError};
 
-pub fn set_window_opacity(
-    _window: &tauri::WebviewWindow,
-    opacity: f64,
-) -> Result<(), AppError> {
+pub fn set_window_opacity(_window: &tauri::WebviewWindow, opacity: f64) -> Result<(), AppError> {
     if !(0.0..=1.0).contains(&opacity) {
         return Err(AppError::InvalidArgument(
             "window opacity must be between 0 and 1".into(),

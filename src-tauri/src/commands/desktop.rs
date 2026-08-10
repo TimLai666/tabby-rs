@@ -126,18 +126,12 @@ pub fn window_apply_state(
 }
 
 #[tauri::command]
-pub fn window_reload(
-    app: tauri::AppHandle,
-    _request: serde_json::Value,
-) -> Result<(), AppError> {
+pub fn window_reload(app: tauri::AppHandle, _request: serde_json::Value) -> Result<(), AppError> {
     main_window(&app)?.reload().map_err(io_error)
 }
 
 #[tauri::command]
-pub fn window_minimize(
-    app: tauri::AppHandle,
-    _request: serde_json::Value,
-) -> Result<(), AppError> {
+pub fn window_minimize(app: tauri::AppHandle, _request: serde_json::Value) -> Result<(), AppError> {
     main_window(&app)?.minimize().map_err(io_error)
 }
 
@@ -155,10 +149,7 @@ pub fn window_toggle_maximize(
 }
 
 #[tauri::command]
-pub fn window_close(
-    app: tauri::AppHandle,
-    _request: serde_json::Value,
-) -> Result<(), AppError> {
+pub fn window_close(app: tauri::AppHandle, _request: serde_json::Value) -> Result<(), AppError> {
     main_window(&app)?.close().map_err(io_error)
 }
 
@@ -442,20 +433,14 @@ pub struct PathRequest {
 }
 
 #[tauri::command]
-pub fn desktop_reveal_path(
-    app: tauri::AppHandle,
-    request: PathRequest,
-) -> Result<(), AppError> {
+pub fn desktop_reveal_path(app: tauri::AppHandle, request: PathRequest) -> Result<(), AppError> {
     app.opener()
         .reveal_item_in_dir(PathBuf::from(request.path))
         .map_err(io_error)
 }
 
 #[tauri::command]
-pub fn desktop_open_path(
-    app: tauri::AppHandle,
-    request: PathRequest,
-) -> Result<(), AppError> {
+pub fn desktop_open_path(app: tauri::AppHandle, request: PathRequest) -> Result<(), AppError> {
     app.opener()
         .open_path(request.path, None::<&str>)
         .map_err(io_error)
