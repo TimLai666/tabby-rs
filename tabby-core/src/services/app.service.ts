@@ -94,15 +94,24 @@ export class AppService {
         }, 30000)
 
         this.recoveryStateChangedHint.pipe(debounceTime(1000)).subscribe(() => {
-            this.tabRecovery.saveTabs(this.tabs)
+            this.tabRecovery.saveTabs(this.tabs, this.activeTab)
         })
 
         config.ready$.toPromise().then(async () => {
             if (this.bootstrapData.isMainWindow) {
                 if (config.store.recoverTabs) {
                     const tabs = await this.tabRecovery.recoverTabs()
+                    let recoveredActive: BaseTabComponent|null = null
                     for (const tab of tabs) {
-                        this.openNewTabRaw(tab)
+                        const opened = this.openNewTabRaw(tab)
+                        if (tab.inputs?.__recoveredActive) {
+                            recoveredActive = opened
+                            delete tab.inputs.__recoveredActive
+                            delete (opened as any).__recoveredActive
+                        }
+                    }
+                    if (recoveredActive) {
+                        this.selectTab(recoveredActive)
                     }
                 }
                 /** Continue to store the tabs even if the setting is currently off */
