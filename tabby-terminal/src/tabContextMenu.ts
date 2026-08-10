@@ -145,7 +145,11 @@ export class LegacyContextMenu extends TabContextMenuItemProvider {
         if (tab instanceof BaseTerminalTabComponent) {
             let items: MenuItemOptions[] = []
             for (const p of this.contextMenuProviders) {
-                items = items.concat(await p.getItems(tab))
+                try {
+                    items = items.concat(await p.getItems(tab))
+                } catch {
+                    // Keep the built-in terminal actions available when a legacy provider fails.
+                }
             }
             return items
         }
@@ -214,4 +218,3 @@ export class SaveAsProfileContextMenu extends TabContextMenuItemProvider {
         return []
     }
 }
-

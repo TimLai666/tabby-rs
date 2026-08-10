@@ -107,6 +107,19 @@ fn register_desktop_window_events(app: &tauri::AppHandle) {
         tauri::WindowEvent::CloseRequested { .. } => {
             let _ = handle.emit("desktop.windowCloseRequested", ());
         }
+        tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, position }) => {
+            let _ = handle.emit(
+                "desktop.fileDrop",
+                serde_json::json!({
+                    "paths": paths
+                        .iter()
+                        .map(|path| path.to_string_lossy().into_owned())
+                        .collect::<Vec<_>>(),
+                    "x": position.x,
+                    "y": position.y,
+                }),
+            );
+        }
         tauri::WindowEvent::ThemeChanged(theme) => {
             let value = match theme {
                 tauri::Theme::Dark => "dark",

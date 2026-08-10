@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@angular/core'
+import { Inject, Injectable, NgZone } from '@angular/core'
 import {
     ClipboardContent,
     DirectoryDownload,
@@ -21,10 +21,13 @@ export class TauriPlatformService extends PlatformService {
     private configRevision: string | null = null
     private configPath: string | null = null
     private theme: PlatformTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+    private contextMenuElement: HTMLElement | null = null
+    private contextMenuCleanup: (() => void) | null = null
 
     constructor (
         private bridge: HostBridge,
         @Inject(TAURI_RUNTIME_INFO) private runtimeInfo: RuntimeInfo,
+        private zone: NgZone,
     ) {
         super()
         void this.initializeDesktopEvents()
@@ -32,6 +35,15 @@ export class TauriPlatformService extends PlatformService {
 
     readClipboard (): string {
         void this.refreshClipboard()
+        return this.clipboardText
+    }
+
+    async readClipboardText (): Promise<string> {
+        try {
+            this.clipboardText = await this.bridge.invoke('clipboard.readText', {})
+        } catch (error) {
+            console.warn('Could not read native clipboard', error)
+        }
         return this.clipboardText
     }
 
@@ -114,8 +126,148 @@ export class TauriPlatformService extends PlatformService {
         }
     }
 
-    popupContextMenu (_menu: MenuItemOptions[], _event?: MouseEvent): void {
-        console.warn('Native context menus are not implemented by the Tauri desktop integration yet')
+    popupContextMenu (menu: MenuItemOptions[], event?: MouseEvent): void {
+        this.closeContextMenu()
+
+        const root = document.createElement('div')
+        root.setAttribute('role', 'menu')
+        Object.assign(root.style, {
+            background: 'var(--bs-body-bg, #202124)',
+            border: '1px solid var(--bs-border-color, #555)',
+            borderRadius: '4px',
+            boxShadow: '0 4px 16px rgba(0, 0, 0, .35)',
+            color: 'var(--bs-body-color, #eee)',
+            fontFamily: 'inherit',
+            fontSize: '13px',
+            minWidth: '180px',
+            padding: '4px 0',
+            position: 'fixed',
+            zIndex: '2147483647',
+        })
+
+        this.renderMenuItems(root, menu)
+        document.body.appendChild(root)
+
+        const x = event?.clientX ?? 0
+        const y = event?.clientY ?? 0
+        root.style.left = `${Math.max(0, Math.min(x, window.innerWidth - root.offsetWidth))}px`
+        root.style.top = `${Math.max(0, Math.min(y, window.innerHeight - root.offsetHeight))}px`
+
+        const closeOnOutsideClick = (clickEvent: MouseEvent) => {
+            if (!root.contains(clickEvent.target as Node)) {
+                this.closeContextMenu()
+            }
+        }
+        const closeOnEscape = (keyEvent: KeyboardEvent) => {
+            if (keyEvent.key === 'Escape') {
+                keyEvent.preventDefault()
+                this.closeContextMenu()
+            }
+        }
+        document.addEventListener('mousedown', closeOnOutsideClick)
+        document.addEventListener('keydown', closeOnEscape)
+        this.contextMenuElement = root
+        this.contextMenuCleanup = () => {
+            document.removeEventListener('mousedown', closeOnOutsideClick)
+            document.removeEventListener('keydown', closeOnEscape)
+        }
+    }
+
+    private renderMenuItems (container: HTMLElement, items: MenuItemOptions[]): void {
+        for (const item of items) {
+            if (item.type === 'separator') {
+                const separator = document.createElement('div')
+                separator.setAttribute('role', 'separator')
+                Object.assign(separator.style, {
+                    borderTop: '1px solid var(--bs-border-color, #555)',
+                    margin: '4px 0',
+                })
+                container.appendChild(separator)
+                continue
+            }
+
+            const row = document.createElement('div')
+            row.setAttribute('role', 'none')
+            Object.assign(row.style, {
+                position: 'relative',
+            })
+
+            const button = document.createElement('button')
+            button.type = 'button'
+            button.setAttribute('role', 'menuitem')
+            button.disabled = item.enabled === false
+            button.textContent = `${item.checked ? '✓ ' : item.type === 'radio' ? '○ ' : ''}${item.label ?? ''}`
+            if (item.sublabel ?? item.commandLabel) {
+                const suffix = document.createElement('span')
+                suffix.textContent = item.sublabel ?? item.commandLabel ?? ''
+                suffix.style.marginLeft = 'auto'
+                suffix.style.opacity = '0.65'
+                button.appendChild(suffix)
+            }
+            if (item.submenu) {
+                button.setAttribute('aria-haspopup', 'menu')
+                const arrow = document.createElement('span')
+                arrow.textContent = '›'
+                arrow.style.marginLeft = 'auto'
+                button.appendChild(arrow)
+            }
+            Object.assign(button.style, {
+                background: 'transparent',
+                border: '0',
+                color: 'inherit',
+                cursor: item.enabled === false ? 'default' : 'pointer',
+                display: 'flex',
+                padding: '6px 12px',
+                textAlign: 'left',
+                width: '100%',
+            })
+            button.addEventListener('mouseenter', () => {
+                if (!button.disabled) {
+                    button.style.background = 'var(--bs-primary, #375a9e)'
+                }
+            })
+            button.addEventListener('mouseleave', () => {
+                button.style.background = 'transparent'
+            })
+            if (!item.submenu) {
+                button.addEventListener('click', () => {
+                    this.closeContextMenu()
+                    this.zone.run(() => item.click?.())
+                })
+            }
+            row.appendChild(button)
+
+            if (item.submenu) {
+                const submenu = document.createElement('div')
+                submenu.setAttribute('role', 'menu')
+                Object.assign(submenu.style, {
+                    background: 'var(--bs-body-bg, #202124)',
+                    border: '1px solid var(--bs-border-color, #555)',
+                    borderRadius: '4px',
+                    boxShadow: '0 4px 16px rgba(0, 0, 0, .35)',
+                    display: 'none',
+                    left: '100%',
+                    minWidth: '180px',
+                    padding: '4px 0',
+                    position: 'absolute',
+                    top: '0',
+                    zIndex: '1',
+                })
+                this.renderMenuItems(submenu, item.submenu)
+                row.addEventListener('mouseenter', () => { submenu.style.display = 'block' })
+                row.addEventListener('mouseleave', () => { submenu.style.display = 'none' })
+                row.appendChild(submenu)
+            }
+
+            container.appendChild(row)
+        }
+    }
+
+    private closeContextMenu (): void {
+        this.contextMenuCleanup?.()
+        this.contextMenuCleanup = null
+        this.contextMenuElement?.remove()
+        this.contextMenuElement = null
     }
 
     async showMessageBox (options: MessageBoxOptions): Promise<MessageBoxResult> {

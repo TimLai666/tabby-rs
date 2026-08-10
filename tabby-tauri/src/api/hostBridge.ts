@@ -499,6 +499,7 @@ export interface HostEventMap {
     'desktop.windowMoved': { x: number; y: number }
     'desktop.windowResized': { width: number; height: number }
     'desktop.windowCloseRequested': null
+    'desktop.fileDrop': { paths: string[]; x: number; y: number }
     'desktop.themeChanged': 'system' | 'light' | 'dark'
     'desktop.displayMetricsChanged': number
 }

@@ -151,6 +151,7 @@ export abstract class PlatformService {
     protected themeChanged = new Subject<PlatformTheme>()
 
     abstract readClipboard (): string
+    async readClipboardText (): Promise<string> { return this.readClipboard() }
     abstract setClipboard (content: ClipboardContent): void
     abstract loadConfig (): Promise<string>
     abstract saveConfig (content: string): Promise<void>

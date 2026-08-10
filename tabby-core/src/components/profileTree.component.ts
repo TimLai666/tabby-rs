@@ -171,7 +171,7 @@ export class ProfileTreeComponent extends BaseComponent {
                 click: () => this.editProfile(profile),
                 enabled: !(profile.isBuiltin ?? profile.isTemplate),
             },
-        ])
+        ], event)
     }
 
     async groupContextMenu (group: PartialProfileGroup<CollapsableProfileGroup>, event: MouseEvent): Promise<void> {
@@ -188,7 +188,7 @@ export class ProfileTreeComponent extends BaseComponent {
                 click: () => this.editProfileGroup(group),
                 enabled: group.editable,
             },
-        ])
+        ], event)
     }
 
     private async tabStateChanged (): Promise<void> {

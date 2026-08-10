@@ -117,3 +117,7 @@ export * from './session'
 export { LoginScriptsSettingsComponent, StreamProcessingSettingsComponent }
 export { MultifocusService } from './services/multifocus.service'
 export { TerminalColorScheme } from 'tabby-core' // was previously defined in this plugin
+export { DefaultPastePolicy, PastePolicy } from './pastePolicy'
+export type { PasteInspection, PasteRisk, TerminalInputState, TerminalPastePolicyOptions } from './pastePolicy'
+export { encodeTerminalPath, quoteTerminalPath } from './pathQuoting'
+export type { TerminalShellType } from './pathQuoting'
