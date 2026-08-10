@@ -38,8 +38,9 @@ use commands::{
     secrets::{secret_import_execute, secret_import_plan},
     shell::{shell_detect, shell_prepare_spawn},
     ssh::{
-        ssh_auth_response, ssh_close, ssh_connect, ssh_host_key_decision, ssh_import_apply,
-        ssh_import_preview, ssh_list_private_keys, ssh_resize, ssh_write,
+        ssh_auth_response, ssh_close, ssh_connect, ssh_forwarding_list, ssh_forwarding_start,
+        ssh_forwarding_stop, ssh_host_key_decision, ssh_import_apply, ssh_import_preview,
+        ssh_list_private_keys, ssh_resize, ssh_write,
     },
     sudo::sudo_respond,
     transfer::{
@@ -272,6 +273,9 @@ pub fn run() {
             ssh_write,
             ssh_resize,
             ssh_close,
+            ssh_forwarding_start,
+            ssh_forwarding_stop,
+            ssh_forwarding_list,
             sudo_respond,
             transfer_open_upload,
             transfer_open_download,

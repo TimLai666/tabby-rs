@@ -284,6 +284,34 @@ export interface SshConnectRequest {
     terminal: SshTerminalRequest
     keepalive?: SshKeepaliveOptions | null
     environment: Record<string, string>
+    x11?: boolean
+    x11Display?: string|null
+    agentForward?: boolean
+    jumpChain?: SshJumpRequest[]
+}
+
+export interface SshJumpRequest {
+    host: string
+    port: number
+    username?: string|null
+    auth: SshAuthMethodRef[]
+}
+
+export type SshForwardingType = 'local'|'remote'|'dynamic'
+
+export interface SshForwardingRequest {
+    sessionId: string
+    kind: SshForwardingType
+    bindHost: string
+    bindPort: number
+    targetAddress: string
+    targetPort: number
+}
+
+export interface SshForwardingInfo extends SshForwardingRequest {
+    id: string
+    status: 'starting'|'active'|'stopping'|'stopped'|'failed'
+    lastError?: string|null
 }
 
 export type SshAuthMethodRef =
@@ -690,6 +718,18 @@ export interface HostRequestMap {
         request: { id: string }
         response: null
     }
+    'ssh.forwardingStart': {
+        request: SshForwardingRequest
+        response: SshForwardingInfo
+    }
+    'ssh.forwardingStop': {
+        request: { id: string }
+        response: null
+    }
+    'ssh.forwardingList': {
+        request: Record<string, never>
+        response: SshForwardingInfo[]
+    }
 }
 
 export interface HostEventMap {
@@ -708,6 +748,7 @@ export interface HostEventMap {
     'ssh.authPrompt': SshAuthPrompt
     'ssh.output': SshOutputEvent
     'ssh.exit': SshExitEvent
+    'ssh.forwardingChanged': SshForwardingInfo
 }
 
 export abstract class HostBridge {

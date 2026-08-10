@@ -1,10 +1,11 @@
 pub mod engine;
+mod forwarding;
 mod import;
 mod known_hosts;
 pub mod model;
 
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     fs,
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -14,6 +15,7 @@ use std::{
 };
 
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
+use rand::RngCore;
 use russh::{
     client::{self, AuthResult, Handler, KeyboardInteractiveAuthResponse, Prompt},
     keys::{agent::client::AgentClient, decode_secret_key, PrivateKeyWithHashAlg},
@@ -22,8 +24,9 @@ use russh::{
 use secrecy::ExposeSecret;
 use tauri::{AppHandle, Emitter};
 use tokio::{
-    io::AsyncWriteExt,
-    sync::{mpsc, oneshot},
+    io::{copy_bidirectional, AsyncWriteExt},
+    net::{TcpListener, TcpStream},
+    sync::{broadcast, mpsc, oneshot},
     time::timeout,
 };
 
@@ -36,8 +39,9 @@ use crate::{
         model::{
             AuthMethodRef, HostKeyDecision, HostKeyDecisionRequest, HostKeyPrompt, HostKeyStatus,
             KeepaliveOptions, SshAuthPrompt, SshAuthPromptItem, SshAuthResponseRequest,
-            SshConnectRequest, SshError, SshExitEvent, SshOutputEvent, SshResizeRequest,
-            SshSessionIdRequest, SshSessionInfo, SshWriteRequest,
+            SshConnectRequest, SshError, SshExitEvent, SshForwardingIdRequest, SshForwardingInfo,
+            SshForwardingRequest, SshForwardingStatus, SshForwardingType, SshJumpRequest,
+            SshOutputEvent, SshResizeRequest, SshSessionIdRequest, SshSessionInfo, SshWriteRequest,
         },
     },
 };
@@ -59,6 +63,8 @@ pub struct SshManager {
     sessions: Arc<Mutex<HashMap<String, SshSession>>>,
     host_key_waiters: Arc<Mutex<HashMap<String, HostKeySender>>>,
     auth_waiters: Arc<Mutex<HashMap<String, AuthSender>>>,
+    forwardings: Arc<Mutex<HashMap<String, ForwardingRuntime>>>,
+    remote_routes: Arc<Mutex<HashMap<(String, String, u32), RemoteForwardRoute>>>,
     next_id: Arc<AtomicU64>,
 }
 
@@ -67,9 +73,39 @@ struct SshSession {
     control: mpsc::Sender<SshControl>,
 }
 
+struct ForwardingRuntime {
+    info: SshForwardingInfo,
+    cancel: broadcast::Sender<()>,
+}
+
+#[derive(Clone)]
+struct RemoteForwardRoute {
+    target_address: String,
+    target_port: u16,
+    cancel: broadcast::Sender<()>,
+}
+
 enum SshControl {
     Write(Vec<u8>, oneshot::Sender<Result<(), SshError>>),
     Resize(SshResizeRequest, oneshot::Sender<Result<(), SshError>>),
+    OpenDirectTcpip {
+        host: String,
+        port: u16,
+        sender: oneshot::Sender<Result<russh::Channel<client::Msg>, SshError>>,
+    },
+    StartRemoteForward {
+        bind_host: String,
+        bind_port: u16,
+        target_address: String,
+        target_port: u16,
+        cancel: broadcast::Sender<()>,
+        sender: oneshot::Sender<Result<u16, SshError>>,
+    },
+    StopRemoteForward {
+        bind_host: String,
+        bind_port: u16,
+        sender: oneshot::Sender<Result<(), SshError>>,
+    },
     Close(oneshot::Sender<Result<(), SshError>>),
 }
 
@@ -80,6 +116,9 @@ struct SshHandler {
     connection_id: String,
     app: AppHandle,
     host_key_error: Arc<Mutex<Option<SshError>>>,
+    remote_routes: Arc<Mutex<HashMap<(String, String, u32), RemoteForwardRoute>>>,
+    agent_socket: Option<String>,
+    x11_display: Option<String>,
 }
 
 impl Handler for SshHandler {
@@ -110,6 +149,122 @@ impl Handler for SshHandler {
             }
         }
     }
+
+    fn server_channel_open_forwarded_tcpip(
+        &mut self,
+        channel: russh::Channel<client::Msg>,
+        connected_address: &str,
+        connected_port: u32,
+        _originator_address: &str,
+        _originator_port: u32,
+        _session: &mut client::Session,
+    ) -> impl std::future::Future<Output = Result<(), Self::Error>> + Send {
+        let route = self
+            .remote_routes
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(&(
+                self.connection_id.clone(),
+                connected_address.into(),
+                connected_port,
+            ))
+            .cloned();
+        let task = async move {
+            let Some(route) = route else {
+                let _ = channel.close().await;
+                return Ok::<(), russh::Error>(());
+            };
+            let mut ssh_stream = channel.into_stream();
+            let target =
+                TcpStream::connect((route.target_address.as_str(), route.target_port)).await;
+            let Ok(mut target) = target else {
+                let _ = ssh_stream.shutdown().await;
+                return Ok::<(), russh::Error>(());
+            };
+            let mut cancel = route.cancel.subscribe();
+            tokio::select! {
+                _ = copy_bidirectional(&mut target, &mut ssh_stream) => {}
+                _ = cancel.recv() => {
+                    let _ = ssh_stream.shutdown().await;
+                    let _ = target.shutdown().await;
+                }
+            }
+            Ok::<(), russh::Error>(())
+        };
+        tokio::spawn(task);
+        async { Ok(()) }
+    }
+
+    fn server_channel_open_agent_forward(
+        &mut self,
+        channel: russh::Channel<client::Msg>,
+        _session: &mut client::Session,
+    ) -> impl std::future::Future<Output = Result<(), Self::Error>> + Send {
+        let socket = self.agent_socket.clone();
+        let task = async move {
+            #[cfg(unix)]
+            {
+                let Some(socket) = socket.or_else(|| std::env::var("SSH_AUTH_SOCK").ok()) else {
+                    let _ = channel.close().await;
+                    return Ok::<(), russh::Error>(());
+                };
+                let Ok(mut agent) = tokio::net::UnixStream::connect(socket).await else {
+                    let _ = channel.close().await;
+                    return Ok::<(), russh::Error>(());
+                };
+                let mut ssh_stream = channel.into_stream();
+                let _ = copy_bidirectional(&mut agent, &mut ssh_stream).await;
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = socket;
+                let _ = channel.close().await;
+            }
+            Ok::<(), russh::Error>(())
+        };
+        tokio::spawn(task);
+        async { Ok(()) }
+    }
+
+    fn server_channel_open_x11(
+        &mut self,
+        channel: russh::Channel<client::Msg>,
+        _originator_address: &str,
+        _originator_port: u32,
+        _session: &mut client::Session,
+    ) -> impl std::future::Future<Output = Result<(), Self::Error>> + Send {
+        let display = self
+            .x11_display
+            .clone()
+            .or_else(|| std::env::var("DISPLAY").ok())
+            .unwrap_or_else(|| ":0".into());
+        let task = async move {
+            #[cfg(unix)]
+            {
+                match connect_x11_display(&display).await {
+                    Ok(X11Target::Unix(mut target)) => {
+                        let mut ssh_stream = channel.into_stream();
+                        let _ = copy_bidirectional(&mut target, &mut ssh_stream).await;
+                    }
+                    Ok(X11Target::Tcp(mut target)) => {
+                        let mut ssh_stream = channel.into_stream();
+                        let _ = copy_bidirectional(&mut target, &mut ssh_stream).await;
+                    }
+                    Err(_) => {
+                        let _ = channel.close().await;
+                    }
+                }
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = display;
+                let _ = channel.close().await;
+            }
+            Ok::<(), russh::Error>(())
+        };
+        tokio::spawn(task);
+        async { Ok(()) }
+    }
 }
 
 impl SshManager {
@@ -119,7 +274,99 @@ impl SshManager {
             sessions: Arc::new(Mutex::new(HashMap::new())),
             host_key_waiters: Arc::new(Mutex::new(HashMap::new())),
             auth_waiters: Arc::new(Mutex::new(HashMap::new())),
+            forwardings: Arc::new(Mutex::new(HashMap::new())),
+            remote_routes: Arc::new(Mutex::new(HashMap::new())),
             next_id: Arc::new(AtomicU64::new(0)),
+        }
+    }
+
+    fn handler(
+        &self,
+        app: &AppHandle,
+        request: &SshConnectRequest,
+        host: String,
+        port: u16,
+        connection_id: &str,
+        host_key_error: Arc<Mutex<Option<SshError>>>,
+    ) -> SshHandler {
+        SshHandler {
+            manager: self.clone(),
+            host,
+            port,
+            connection_id: connection_id.into(),
+            app: app.clone(),
+            host_key_error,
+            remote_routes: Arc::clone(&self.remote_routes),
+            agent_socket: request.auth.iter().find_map(|method| match method {
+                AuthMethodRef::Agent { socket } => socket.clone(),
+                _ => None,
+            }),
+            x11_display: request.x11_display.clone(),
+        }
+    }
+
+    async fn connect_direct(
+        &self,
+        config: Arc<client::Config>,
+        app: &AppHandle,
+        request: &SshConnectRequest,
+        connection_id: &str,
+    ) -> Result<client::Handle<SshHandler>, SshError> {
+        let host_key_error = Arc::new(Mutex::new(None));
+        let handler = self.handler(
+            app,
+            request,
+            request.host.clone(),
+            request.port,
+            connection_id,
+            Arc::clone(&host_key_error),
+        );
+        match timeout(
+            Duration::from_secs(30),
+            client::connect(config, (request.host.clone(), request.port), handler),
+        )
+        .await
+        {
+            Err(_) => Err(SshError::Timeout),
+            Ok(Ok(handle)) => Ok(handle),
+            Ok(Err(_)) => Err(host_key_error
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .take()
+                .unwrap_or(SshError::Connection)),
+        }
+    }
+
+    async fn connect_over_channel(
+        &self,
+        config: Arc<client::Config>,
+        app: &AppHandle,
+        request: &SshConnectRequest,
+        connection_id: &str,
+        channel: russh::Channel<client::Msg>,
+    ) -> Result<client::Handle<SshHandler>, SshError> {
+        let host_key_error = Arc::new(Mutex::new(None));
+        let handler = self.handler(
+            app,
+            request,
+            request.host.clone(),
+            request.port,
+            connection_id,
+            Arc::clone(&host_key_error),
+        );
+        match timeout(
+            Duration::from_secs(30),
+            client::connect_stream(config, channel.into_stream(), handler),
+        )
+        .await
+        {
+            Err(_) => Err(SshError::Timeout),
+            Ok(Ok(handle)) => Ok(handle),
+            Ok(Err(_)) => Err(host_key_error
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .take()
+                .unwrap_or(SshError::Connection)),
         }
     }
 
@@ -155,38 +402,73 @@ impl SshManager {
                 .unwrap_or(3),
             ..Default::default()
         };
-        let host_key_error = Arc::new(Mutex::new(None));
-        let handler = SshHandler {
-            manager: self.clone(),
-            host: request.host.clone(),
-            port: request.port,
-            connection_id: connection_id.clone(),
-            app: app.clone(),
-            host_key_error: Arc::clone(&host_key_error),
-        };
-        let connection = timeout(
-            Duration::from_secs(30),
-            client::connect(
-                Arc::new(config),
-                (request.host.clone(), request.port),
-                handler,
-            ),
-        )
-        .await;
-        let mut handle = match connection {
-            Err(_) => return Err(SshError::Timeout),
-            Ok(Ok(handle)) => handle,
-            Ok(Err(_)) => {
-                if let Some(error) = host_key_error
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner())
-                    .take()
-                {
-                    return Err(error);
-                }
-                return Err(SshError::Connection);
+        let config = Arc::new(config);
+        let mut jump_handles = Vec::new();
+        let mut handle;
+        if request.jump_chain.is_empty() {
+            handle = self
+                .connect_direct(Arc::clone(&config), &app, &request, &connection_id)
+                .await?;
+        } else {
+            let first = jump_request(&request, &request.jump_chain[0], &connection_id, 0);
+            handle = self
+                .connect_direct(Arc::clone(&config), &app, &first, &connection_id)
+                .await?;
+            let first_username = first.username.clone().unwrap_or_else(|| "root".into());
+            if !self
+                .authenticate(
+                    &app,
+                    &mut handle,
+                    &first,
+                    &first_username,
+                    &secrets,
+                    &credentials,
+                )
+                .await?
+            {
+                let _ = handle
+                    .disconnect(
+                        Disconnect::AuthCancelledByUser,
+                        "authentication rejected",
+                        "",
+                    )
+                    .await;
+                return Err(SshError::AuthenticationRejected);
             }
-        };
+            for (index, hop) in request.jump_chain.iter().enumerate().skip(1) {
+                let next = jump_request(&request, hop, &connection_id, index);
+                let channel = handle
+                    .channel_open_direct_tcpip(&next.host, u32::from(next.port), "127.0.0.1", 0)
+                    .await
+                    .map_err(|_| SshError::ChannelOpen)?;
+                jump_handles.push(handle);
+                handle = self
+                    .connect_over_channel(Arc::clone(&config), &app, &next, &connection_id, channel)
+                    .await?;
+                let next_username = next.username.clone().unwrap_or_else(|| "root".into());
+                if !self
+                    .authenticate(
+                        &app,
+                        &mut handle,
+                        &next,
+                        &next_username,
+                        &secrets,
+                        &credentials,
+                    )
+                    .await?
+                {
+                    return Err(SshError::AuthenticationRejected);
+                }
+            }
+            let channel = handle
+                .channel_open_direct_tcpip(&request.host, u32::from(request.port), "127.0.0.1", 0)
+                .await
+                .map_err(|_| SshError::ChannelOpen)?;
+            jump_handles.push(handle);
+            handle = self
+                .connect_over_channel(Arc::clone(&config), &app, &request, &connection_id, channel)
+                .await?;
+        }
 
         if !self
             .authenticate(
@@ -232,6 +514,24 @@ impl SshManager {
                 .await
                 .map_err(|_| SshError::ChannelOpen)?;
         }
+        if request.agent_forward {
+            channel
+                .agent_forward(true)
+                .await
+                .map_err(|_| SshError::ChannelOpen)?;
+        }
+        if request.x11 {
+            let display = request
+                .x11_display
+                .clone()
+                .or_else(|| std::env::var("DISPLAY").ok())
+                .unwrap_or_else(|| ":0".into());
+            let cookie = x11_cookie(&display);
+            channel
+                .request_x11(true, false, "MIT-MAGIC-COOKIE-1", cookie, 0)
+                .await
+                .map_err(|_| SshError::ChannelOpen)?;
+        }
         channel
             .request_shell(true)
             .await
@@ -245,8 +545,11 @@ impl SshManager {
         let task_connection_id = connection_id.clone();
         let task_profile_id = request.profile_id.clone();
         let task_app = app.clone();
+        let task_manager = self.clone();
+        let jump_handles = jump_handles;
         let task_id_for_task = task_id.clone();
         tauri::async_runtime::spawn(async move {
+            let _keep_jump_handles = &jump_handles;
             loop {
                 tokio::select! {
                     message = reader.wait() => {
@@ -263,7 +566,13 @@ impl SshManager {
                     }
                     control_message = controls.recv() => {
                         let Some(control_message) = control_message else { break };
-                        if !handle_control(&mut handle, &writer, control_message).await {
+                        if !handle_control(
+                            &mut handle,
+                            &writer,
+                            &task_connection_id,
+                            &task_manager.remote_routes,
+                            control_message,
+                        ).await {
                             break;
                         }
                     }
@@ -276,13 +585,14 @@ impl SshManager {
             let _ = task_app.emit(
                 "ssh.exit",
                 SshExitEvent {
-                    id: task_id_for_task,
-                    connection_id: task_connection_id,
+                    id: task_id_for_task.clone(),
+                    connection_id: task_connection_id.clone(),
                     profile_id: task_profile_id,
                     exit_code: None,
                     signal: None,
                 },
             );
+            task_manager.stop_forwardings_for_session(&task_id_for_task, &task_connection_id);
         });
 
         self.sessions
@@ -378,6 +688,208 @@ impl SshManager {
             .map_err(|_| SshError::Closed)?;
         receiver.await.map_err(|_| SshError::Closed)??;
         Ok(())
+    }
+
+    pub async fn start_forwarding(
+        &self,
+        app: AppHandle,
+        request: SshForwardingRequest,
+    ) -> Result<SshForwardingInfo, SshError> {
+        validate_forwarding_request(&request)?;
+        let session = self.session(&request.session_id)?;
+        let id = self.new_id("forward");
+        let (cancel, _) = broadcast::channel(4);
+        let mut info = SshForwardingInfo {
+            id: id.clone(),
+            session_id: request.session_id.clone(),
+            kind: request.kind,
+            bind_host: request.bind_host.clone(),
+            bind_port: request.bind_port,
+            target_address: request.target_address.clone(),
+            target_port: request.target_port,
+            status: SshForwardingStatus::Starting,
+            last_error: None,
+        };
+        self.forwardings
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(
+                id.clone(),
+                ForwardingRuntime {
+                    info: info.clone(),
+                    cancel: cancel.clone(),
+                },
+            );
+        emit_forwarding(&app, &info);
+
+        match request.kind {
+            SshForwardingType::Local | SshForwardingType::Dynamic => {
+                let listener = match TcpListener::bind((
+                    request.bind_host.as_str(),
+                    request.bind_port,
+                ))
+                .await
+                {
+                    Ok(listener) => listener,
+                    Err(error) => {
+                        self.fail_forwarding(&app, &id, error.to_string());
+                        return Err(SshError::Connection);
+                    }
+                };
+                info.bind_port = listener
+                    .local_addr()
+                    .map_err(|_| SshError::Connection)?
+                    .port();
+                info.status = SshForwardingStatus::Active;
+                self.update_forwarding(info.clone());
+                emit_forwarding(&app, &info);
+                let manager = self.clone();
+                tokio::spawn(run_local_forward(
+                    manager,
+                    app,
+                    info.clone(),
+                    listener,
+                    session.control,
+                    cancel,
+                ));
+            }
+            SshForwardingType::Remote => {
+                let (sender, receiver) = oneshot::channel();
+                session
+                    .control
+                    .send(SshControl::StartRemoteForward {
+                        bind_host: request.bind_host.clone(),
+                        bind_port: request.bind_port,
+                        target_address: request.target_address.clone(),
+                        target_port: request.target_port,
+                        cancel,
+                        sender,
+                    })
+                    .await
+                    .map_err(|_| SshError::Closed)?;
+                let port = match receiver.await.map_err(|_| SshError::Closed)? {
+                    Ok(port) => port,
+                    Err(error) => {
+                        self.fail_forwarding(&app, &id, error.to_string());
+                        return Err(error);
+                    }
+                };
+                info.bind_port = port;
+                info.status = SshForwardingStatus::Active;
+                self.update_forwarding(info.clone());
+                emit_forwarding(&app, &info);
+            }
+        }
+        Ok(info)
+    }
+
+    pub async fn stop_forwarding(
+        &self,
+        app: AppHandle,
+        request: SshForwardingIdRequest,
+    ) -> Result<(), SshError> {
+        let runtime = self
+            .forwardings
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(&request.id)
+            .ok_or_else(|| SshError::InvalidRequest("forwarding is unknown or closed".into()))?;
+        let mut info = runtime.info;
+        info.status = SshForwardingStatus::Stopping;
+        emit_forwarding(&app, &info);
+        let _ = runtime.cancel.send(());
+        if info.kind == SshForwardingType::Remote {
+            let session = self.session(&info.session_id)?;
+            let (sender, receiver) = oneshot::channel();
+            session
+                .control
+                .send(SshControl::StopRemoteForward {
+                    bind_host: info.bind_host.clone(),
+                    bind_port: info.bind_port,
+                    sender,
+                })
+                .await
+                .map_err(|_| SshError::Closed)?;
+            receiver.await.map_err(|_| SshError::Closed)??;
+        }
+        info.status = SshForwardingStatus::Stopped;
+        emit_forwarding(&app, &info);
+        Ok(())
+    }
+
+    pub fn list_forwardings(&self) -> Vec<SshForwardingInfo> {
+        self.forwardings
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .values()
+            .map(|runtime| runtime.info.clone())
+            .collect()
+    }
+
+    fn update_forwarding(&self, info: SshForwardingInfo) {
+        if let Some(runtime) = self
+            .forwardings
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get_mut(&info.id)
+        {
+            runtime.info = info;
+        }
+    }
+
+    fn fail_forwarding(&self, app: &AppHandle, id: &str, error: String) {
+        if let Some(runtime) = self
+            .forwardings
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get_mut(id)
+        {
+            runtime.info.status = SshForwardingStatus::Failed;
+            runtime.info.last_error = Some(error);
+            emit_forwarding(app, &runtime.info);
+        }
+    }
+
+    fn finish_forwarding(&self, app: &AppHandle, id: &str) {
+        let Some(runtime) = self
+            .forwardings
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(id)
+        else {
+            return;
+        };
+        let mut info = runtime.info;
+        info.status = SshForwardingStatus::Stopped;
+        emit_forwarding(app, &info);
+    }
+
+    fn stop_forwardings_for_session(&self, session_id: &str, connection_id: &str) {
+        let mut forwardings = self
+            .forwardings
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let ids: Vec<_> = forwardings
+            .iter()
+            .filter(|(_, runtime)| runtime.info.session_id == session_id)
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in ids {
+            if let Some(runtime) = forwardings.remove(&id) {
+                let _ = runtime.cancel.send(());
+            }
+        }
+        self.remote_routes
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .retain(|(route_connection_id, _, _), route| {
+                if route_connection_id == connection_id {
+                    let _ = route.cancel.send(());
+                    false
+                } else {
+                    true
+                }
+            });
     }
 
     async fn verify_host_key(
@@ -681,6 +1193,8 @@ impl SshManager {
 async fn handle_control(
     handle: &mut client::Handle<SshHandler>,
     writer: &russh::ChannelWriteHalf<client::Msg>,
+    connection_id: &str,
+    remote_routes: &Arc<Mutex<HashMap<(String, String, u32), RemoteForwardRoute>>>,
     control: SshControl,
 ) -> bool {
     match control {
@@ -708,6 +1222,65 @@ async fn handle_control(
             let _ = sender.send(result);
             keep_running
         }
+        SshControl::OpenDirectTcpip { host, port, sender } => {
+            let result = handle
+                .channel_open_direct_tcpip(host, u32::from(port), "127.0.0.1", 0)
+                .await
+                .map_err(|_| SshError::ChannelOpen);
+            let _ = sender.send(result);
+            true
+        }
+        SshControl::StartRemoteForward {
+            bind_host,
+            bind_port,
+            target_address,
+            target_port,
+            cancel,
+            sender,
+        } => {
+            let result = handle
+                .tcpip_forward(bind_host.clone(), u32::from(bind_port))
+                .await
+                .map_err(|_| SshError::ChannelOpen);
+            if let Ok(port) = result {
+                remote_routes
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .insert(
+                        (connection_id.into(), bind_host, u32::from(port)),
+                        RemoteForwardRoute {
+                            target_address,
+                            target_port,
+                            cancel,
+                        },
+                    );
+                let _ = sender.send(Ok(port as u16));
+            } else {
+                let _ = sender.send(result.map(|port| port as u16));
+            }
+            true
+        }
+        SshControl::StopRemoteForward {
+            bind_host,
+            bind_port,
+            sender,
+        } => {
+            let result = handle
+                .cancel_tcpip_forward(bind_host.clone(), u32::from(bind_port))
+                .await
+                .map_err(|_| SshError::Closed);
+            if result.is_ok() {
+                if let Some(route) = remote_routes
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .remove(&(connection_id.into(), bind_host, u32::from(bind_port)))
+                {
+                    let _ = route.cancel.send(());
+                }
+            }
+            let _ = sender.send(result);
+            true
+        }
         SshControl::Close(sender) => {
             let result = match writer.close().await {
                 Ok(()) => handle
@@ -720,6 +1293,151 @@ async fn handle_control(
             false
         }
     }
+}
+
+async fn run_local_forward(
+    manager: SshManager,
+    app: AppHandle,
+    info: SshForwardingInfo,
+    listener: TcpListener,
+    control: mpsc::Sender<SshControl>,
+    cancel: broadcast::Sender<()>,
+) {
+    let mut cancellation = cancel.subscribe();
+    loop {
+        let accepted = tokio::select! {
+            result = listener.accept() => result,
+            _ = cancellation.recv() => break,
+        };
+        let Ok((mut socket, peer)) = accepted else {
+            break;
+        };
+        let control = control.clone();
+        let cancel = cancel.clone();
+        let kind = info.kind;
+        let target_address = info.target_address.clone();
+        let target_port = info.target_port;
+        tokio::spawn(async move {
+            let (target_address, target_port) = if kind == SshForwardingType::Dynamic {
+                match timeout(
+                    Duration::from_secs(30),
+                    forwarding::socks5_connect(&mut socket),
+                )
+                .await
+                {
+                    Ok(target) => {
+                        let Ok(target) = target else {
+                            let _ = forwarding::send_socks5_failure(&mut socket, 1).await;
+                            return;
+                        };
+                        if forwarding::send_socks5_success(&mut socket).await.is_err() {
+                            return;
+                        }
+                        target
+                    }
+                    Err(_) => {
+                        let _ = forwarding::send_socks5_failure(&mut socket, 1).await;
+                        return;
+                    }
+                }
+            } else {
+                (target_address, target_port)
+            };
+            let (sender, receiver) = oneshot::channel();
+            if control
+                .send(SshControl::OpenDirectTcpip {
+                    host: target_address,
+                    port: target_port,
+                    sender,
+                })
+                .await
+                .is_err()
+            {
+                return;
+            }
+            let Ok(Ok(channel)) = receiver.await else {
+                return;
+            };
+            let mut ssh_stream = channel.into_stream();
+            let mut cancellation = cancel.subscribe();
+            let copy = async {
+                let _ = peer;
+                let _ = tokio::io::copy_bidirectional(&mut socket, &mut ssh_stream).await;
+            };
+            tokio::select! {
+                _ = copy => {}
+                _ = cancellation.recv() => {
+                    let _ = ssh_stream.shutdown().await;
+                    let _ = socket.shutdown().await;
+                }
+            }
+        });
+    }
+    manager.finish_forwarding(&app, &info.id);
+}
+
+#[cfg(unix)]
+enum X11Target {
+    Unix(tokio::net::UnixStream),
+    Tcp(TcpStream),
+}
+
+#[cfg(unix)]
+async fn connect_x11_display(display: &str) -> Result<X11Target, std::io::Error> {
+    let display = display.strip_prefix("unix:").unwrap_or(display);
+    if display.starts_with('/') {
+        return tokio::net::UnixStream::connect(display)
+            .await
+            .map(X11Target::Unix);
+    }
+    let (host, display_number) = if let Some(number) = display.strip_prefix(':') {
+        ("unix", number)
+    } else {
+        display.rsplit_once(':').ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid DISPLAY")
+        })?
+    };
+    let number = display_number
+        .split('.')
+        .next()
+        .and_then(|value| value.parse::<u16>().ok())
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid DISPLAY"))?;
+    if host == "unix" {
+        return tokio::net::UnixStream::connect(format!("/tmp/.X11-unix/X{number}"))
+            .await
+            .map(X11Target::Unix);
+    }
+    TcpStream::connect((host, number.saturating_add(6000)))
+        .await
+        .map(X11Target::Tcp)
+}
+
+fn emit_forwarding(app: &AppHandle, info: &SshForwardingInfo) {
+    let _ = app.emit("ssh.forwardingChanged", info.clone());
+}
+
+fn x11_cookie(display: &str) -> String {
+    #[cfg(unix)]
+    if let Ok(output) = std::process::Command::new("xauth")
+        .args(["nlist", display])
+        .output()
+    {
+        if let Some(cookie) = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter_map(|line| line.split_whitespace().last())
+            .find(|cookie| {
+                cookie.len() == 32
+                    && cookie
+                        .chars()
+                        .all(|character| character.is_ascii_hexdigit())
+            })
+        {
+            return cookie.into();
+        }
+    }
+    let mut random = [0u8; 16];
+    rand::rngs::OsRng.fill_bytes(&mut random);
+    random.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn emit_channel_message(
@@ -786,6 +1504,11 @@ fn prompt_item(prompt: &Prompt) -> SshAuthPromptItem {
 }
 
 fn validate_request(request: &SshConnectRequest) -> Result<(), SshError> {
+    if request.jump_chain.len() > 3 {
+        return Err(SshError::InvalidRequest(
+            "at most three SSH jump hosts are supported".into(),
+        ));
+    }
     if request.connection_id.as_deref().is_some_and(|value| {
         value.is_empty() || value.len() > 256 || value.chars().any(char::is_control)
     }) {
@@ -846,6 +1569,68 @@ fn validate_request(request: &SshConnectRequest) -> Result<(), SshError> {
                 "SSH keepalive options are invalid".into(),
             ));
         }
+    }
+    for hop in &request.jump_chain {
+        if hop.host.is_empty()
+            || hop.host.len() > 255
+            || hop.port == 0
+            || hop
+                .host
+                .chars()
+                .any(|character| character.is_control() || character.is_whitespace())
+        {
+            return Err(SshError::InvalidRequest("SSH jump host is invalid".into()));
+        }
+        if hop.username.as_deref().is_some_and(|value| {
+            value.is_empty() || value.len() > 255 || value.chars().any(char::is_control)
+        }) {
+            return Err(SshError::InvalidRequest(
+                "SSH jump host username is invalid".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn jump_request(
+    root: &SshConnectRequest,
+    hop: &SshJumpRequest,
+    connection_id: &str,
+    index: usize,
+) -> SshConnectRequest {
+    SshConnectRequest {
+        profile_id: format!("{}#jump-{}", root.profile_id, index),
+        connection_id: Some(connection_id.into()),
+        host: hop.host.clone(),
+        port: hop.port,
+        username: hop.username.clone(),
+        auth: hop.auth.clone(),
+        terminal: root.terminal.clone(),
+        keepalive: root.keepalive.clone(),
+        environment: BTreeMap::new(),
+        x11: false,
+        x11_display: None,
+        agent_forward: false,
+        jump_chain: Vec::new(),
+    }
+}
+
+fn validate_forwarding_request(request: &SshForwardingRequest) -> Result<(), SshError> {
+    if request.session_id.is_empty()
+        || request.session_id.len() > 256
+        || request.session_id.chars().any(char::is_control)
+    {
+        return Err(SshError::InvalidRequest(
+            "forwarding session identifier is invalid".into(),
+        ));
+    }
+    forwarding::validate_bind_host(&request.bind_host)?;
+    if request.kind != SshForwardingType::Dynamic {
+        forwarding::validate_endpoint(
+            &request.target_address,
+            request.target_port,
+            "forward target",
+        )?;
     }
     Ok(())
 }
@@ -929,6 +1714,10 @@ mod tests {
             },
             keepalive: None,
             environment: BTreeMap::new(),
+            x11: false,
+            x11_display: None,
+            agent_forward: false,
+            jump_chain: Vec::new(),
         }
     }
 
@@ -939,6 +1728,24 @@ mod tests {
         assert!(validate_request(&value).is_err());
         let mut value = request();
         value.host = "example\n.test".into();
+        assert!(validate_request(&value).is_err());
+    }
+
+    #[test]
+    fn accepts_x11_and_rejects_excessive_jump_chain_before_connecting() {
+        let mut value = request();
+        value.x11 = true;
+        assert!(validate_request(&value).is_ok());
+
+        let mut value = request();
+        value.jump_chain = (0..4)
+            .map(|index| SshJumpRequest {
+                host: format!("jump-{index}.example.test"),
+                port: 22,
+                username: Some("alice".into()),
+                auth: Vec::new(),
+            })
+            .collect();
         assert!(validate_request(&value).is_err());
     }
 

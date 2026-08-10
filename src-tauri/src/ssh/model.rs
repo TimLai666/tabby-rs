@@ -14,6 +14,72 @@ pub struct SshConnectRequest {
     pub keepalive: Option<KeepaliveOptions>,
     #[serde(default)]
     pub environment: BTreeMap<String, String>,
+    #[serde(default)]
+    pub x11: bool,
+    #[serde(default)]
+    pub x11_display: Option<String>,
+    #[serde(default)]
+    pub agent_forward: bool,
+    #[serde(default)]
+    pub jump_chain: Vec<SshJumpRequest>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SshJumpRequest {
+    pub host: String,
+    pub port: u16,
+    pub username: Option<String>,
+    pub auth: Vec<AuthMethodRef>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SshForwardingType {
+    Local,
+    Remote,
+    Dynamic,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SshForwardingRequest {
+    pub session_id: String,
+    pub kind: SshForwardingType,
+    pub bind_host: String,
+    pub bind_port: u16,
+    pub target_address: String,
+    pub target_port: u16,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SshForwardingIdRequest {
+    pub id: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SshForwardingInfo {
+    pub id: String,
+    pub session_id: String,
+    pub kind: SshForwardingType,
+    pub bind_host: String,
+    pub bind_port: u16,
+    pub target_address: String,
+    pub target_port: u16,
+    pub status: SshForwardingStatus,
+    pub last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SshForwardingStatus {
+    Starting,
+    Active,
+    Stopping,
+    Stopped,
+    Failed,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]

@@ -42,6 +42,29 @@ import { TauriSshImportModalComponent } from './importModal.component'
             <button class="btn btn-outline-secondary" type="button" *ngIf="hasSavedPassword" (click)="clearSavedPassword()">Clear saved password</button>
         </div>
         <div class="form-group">
+            <label>Jump host profile ID</label>
+            <input class="form-control" [(ngModel)]="profile.options.jumpHost" autocomplete="off">
+            <small class="form-text text-muted">Leave empty for a direct connection.</small>
+        </div>
+        <div class="form-check mb-2">
+            <input class="form-check-input" type="checkbox" [(ngModel)]="profile.options.agentForward" id="tauri-ssh-agent-forward">
+            <label class="form-check-label" for="tauri-ssh-agent-forward">Forward SSH agent</label>
+        </div>
+        <div class="form-check mb-3">
+            <input class="form-check-input" type="checkbox" [(ngModel)]="profile.options.x11" id="tauri-ssh-x11">
+            <label class="form-check-label" for="tauri-ssh-x11">Forward X11</label>
+        </div>
+        <div class="form-group">
+            <label>Port forwarding (JSON)</label>
+            <textarea class="form-control" rows="5" [(ngModel)]="forwardedPortsText"></textarea>
+            <small class="form-text text-muted">Use type Local, Remote, or Dynamic. Port 0 selects a free local port.</small>
+        </div>
+        <div class="form-group">
+            <label>Login scripts</label>
+            <textarea class="form-control" rows="5" [(ngModel)]="scriptsText"></textarea>
+            <small class="form-text text-muted">JSON array with expect, send, optional, and isRegex fields.</small>
+        </div>
+        <div class="form-group">
             <button class="btn btn-outline-primary" type="button" (click)="importOpenSshConfig()">Import SSH config or profiles</button>
         </div>
     `,
@@ -49,6 +72,8 @@ import { TauriSshImportModalComponent } from './importModal.component'
 export class TauriSshProfileSettingsComponent {
     profile: any
     hasSavedPassword = false
+    forwardedPortsText = '[]'
+    scriptsText = '[]'
 
     constructor (
         private passwordStorage: PasswordStorageService,
@@ -57,6 +82,8 @@ export class TauriSshProfileSettingsComponent {
     ) { }
 
     async ngOnInit (): Promise<void> {
+        this.forwardedPortsText = JSON.stringify(this.profile.options.forwardedPorts ?? [], null, 2)
+        this.scriptsText = JSON.stringify(this.profile.options.scripts ?? [], null, 2)
         if (this.profile.options.user) {
             this.hasSavedPassword = !!await this.passwordStorage.loadPassword(this.profile as SSHProfile).catch(() => null)
         }
@@ -75,6 +102,18 @@ export class TauriSshProfileSettingsComponent {
 
     save (): void {
         this.profile.options.port = Math.max(1, Math.min(65535, Number(this.profile.options.port) || 22))
+        try {
+            const forwardedPorts = JSON.parse(this.forwardedPortsText)
+            if (Array.isArray(forwardedPorts)) {
+                this.profile.options.forwardedPorts = forwardedPorts
+            }
+            const scripts = JSON.parse(this.scriptsText)
+            if (Array.isArray(scripts)) {
+                this.profile.options.scripts = scripts
+            }
+        } catch {
+            window.alert('Port forwarding and login scripts must be valid JSON arrays.')
+        }
     }
 
     async setPassword (): Promise<void> {
