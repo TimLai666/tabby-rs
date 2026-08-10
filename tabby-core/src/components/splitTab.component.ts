@@ -420,6 +420,7 @@ export class SplitTabComponent extends BaseTabComponent implements AfterViewInit
         }
         tab.emitFocused()
         this.focusChanged.next(tab)
+        this.updateProgress()
 
         if (this.maximizedTab !== tab) {
             this.maximizedTab = null
@@ -537,12 +538,14 @@ export class SplitTabComponent extends BaseTabComponent implements AfterViewInit
         const index = parent.children.indexOf(tab)
         parent.ratios.splice(index, 1)
         parent.children.splice(index, 1)
+        this.childProgress.delete(tab.tabId)
 
         tab.removeFromContainer()
         tab.parent = null
         this.viewRefs.delete(tab)
 
         this.layout()
+        this.updateProgress()
 
         this.tabRemoved.next(tab)
         if (this.root.children.length === 0) {
@@ -832,6 +835,14 @@ export class SplitTabComponent extends BaseTabComponent implements AfterViewInit
         this.setTitle([...new Set(titles)].join(' | '))
     }
 
+    private updateProgress (): void {
+        this.setProgressState(aggregateTabProgress(this.getAllTabs().map(child => ({
+            tabId: child.tabId,
+            active: child === this.focusedTab,
+            progress: this.childProgress.get(child.tabId) ?? { value: null, state: 'none', source: 'process' },
+        }))))
+    }
+
     private attachTabView (tab: BaseTabComponent) {
         const ref = tab.insertIntoContainer(this.viewContainer)
         this.viewRefs.set(tab, ref)
@@ -861,11 +872,7 @@ export class SplitTabComponent extends BaseTabComponent implements AfterViewInit
             this.observeUntilChildDetached(tab, tab.progressState$),
             p => {
                 this.childProgress.set(tab.tabId, p)
-                this.setProgressState(aggregateTabProgress(this.getAllTabs().map(child => ({
-                    tabId: child.tabId,
-                    active: child === this.focusedTab,
-                    progress: this.childProgress.get(child.tabId) ?? { value: null, state: 'none', source: 'process' },
-                }))))
+                this.updateProgress()
             },
         )
         if (tab.title) {

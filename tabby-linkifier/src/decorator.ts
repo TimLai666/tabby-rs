@@ -21,15 +21,6 @@ export class LinkHighlighterDecorator extends TerminalDecorator {
             return
         }
 
-        frontend.setLinkHandler({
-            activate: (event, uri) => {
-                if (!this.willHandleEvent(event)) {
-                    return
-                }
-                void this.activateUri(uri, tab)
-            },
-        })
-
         const openLink = async uri => {
             for (const handler of this.handlers) {
                 if (!handler.fullMatchRegex.test(uri)) {
@@ -43,6 +34,15 @@ export class LinkHighlighterDecorator extends TerminalDecorator {
                 return
             }
         }
+
+        frontend.setLinkHandler({
+            activate: (event, uri) => {
+                if (!this.willHandleEvent(event)) {
+                    return
+                }
+                void openLink(uri)
+            },
+        })
 
         let regex = new RegExp('')
         const regexSource = this.handlers.map(x => `(${x.regex.source})`).join('|')
