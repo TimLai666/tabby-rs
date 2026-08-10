@@ -195,7 +195,10 @@ pub fn screen_info(monitors: &[Monitor], primary: Option<&Monitor>) -> Vec<Scree
     screens
 }
 
-pub fn docked_bounds(options: &DockingOptions, screen: WindowBounds) -> Result<WindowBounds, AppError> {
+pub fn docked_bounds(
+    options: &DockingOptions,
+    screen: WindowBounds,
+) -> Result<WindowBounds, AppError> {
     if options.side == "off" {
         return Ok(screen);
     }
@@ -208,14 +211,18 @@ pub fn docked_bounds(options: &DockingOptions, screen: WindowBounds) -> Result<W
     let mut result = WindowBounds::default();
 
     if matches!(options.side.as_str(), "left" | "right") {
-        result.width = options.min_width.max((f64::from(screen.width) * fill).round() as u32);
+        result.width = options
+            .min_width
+            .max((f64::from(screen.width) * fill).round() as u32);
         result.width = result.width.min(screen.width);
         result.height = (f64::from(screen.height) * space).round() as u32;
         result.height = result.height.max(1).min(screen.height);
     } else {
         result.width = (f64::from(screen.width) * space).round() as u32;
         result.width = result.width.max(1).min(screen.width);
-        result.height = options.min_height.max((f64::from(screen.height) * fill).round() as u32);
+        result.height = options
+            .min_height
+            .max((f64::from(screen.height) * fill).round() as u32);
         result.height = result.height.min(screen.height);
     }
 
@@ -267,7 +274,9 @@ pub fn normalize_accelerator(input: &str) -> Result<String, AppError> {
         .collect::<Vec<_>>();
 
     if tokens.len() < 2 {
-        return Err(AppError::InvalidArgument("global shortcut requires a modifier".into()));
+        return Err(AppError::InvalidArgument(
+            "global shortcut requires a modifier".into(),
+        ));
     }
     Ok(tokens.join("+"))
 }
@@ -295,9 +304,18 @@ mod tests {
 
     #[test]
     fn normalizes_legacy_accelerators() {
-        assert_eq!(normalize_accelerator("Meta-Shift-T").unwrap(), "Super+Shift+T");
-        assert_eq!(normalize_accelerator("⌘-⌥-Space").unwrap(), "Super+Alt+Space");
-        assert_eq!(normalize_accelerator("Ctrl-Alt-T Ctrl-X").unwrap(), "Control+Alt+T");
+        assert_eq!(
+            normalize_accelerator("Meta-Shift-T").unwrap(),
+            "Super+Shift+T"
+        );
+        assert_eq!(
+            normalize_accelerator("⌘-⌥-Space").unwrap(),
+            "Super+Alt+Space"
+        );
+        assert_eq!(
+            normalize_accelerator("Ctrl-Alt-T Ctrl-X").unwrap(),
+            "Control+Alt+T"
+        );
     }
 
     #[test]
@@ -307,7 +325,12 @@ mod tests {
 
     #[test]
     fn computes_docking_bounds() {
-        let screen = WindowBounds { x: 100, y: 50, width: 1000, height: 800 };
+        let screen = WindowBounds {
+            x: 100,
+            y: 50,
+            width: 1000,
+            height: 800,
+        };
         let options = DockingOptions {
             side: "right".into(),
             screen_id: None,
@@ -319,16 +342,39 @@ mod tests {
         };
         assert_eq!(
             docked_bounds(&options, screen).unwrap(),
-            WindowBounds { x: 600, y: 150, width: 500, height: 600 }
+            WindowBounds {
+                x: 600,
+                y: 150,
+                width: 500,
+                height: 600
+            }
         );
     }
 
     #[test]
     fn clamps_window_back_onto_visible_area() {
-        let screen = WindowBounds { x: 0, y: 0, width: 1920, height: 1080 };
+        let screen = WindowBounds {
+            x: 0,
+            y: 0,
+            width: 1920,
+            height: 1080,
+        };
         assert_eq!(
-            clamp_bounds(WindowBounds { x: 2500, y: -500, width: 900, height: 700 }, screen),
-            WindowBounds { x: 1020, y: 0, width: 900, height: 700 }
+            clamp_bounds(
+                WindowBounds {
+                    x: 2500,
+                    y: -500,
+                    width: 900,
+                    height: 700
+                },
+                screen
+            ),
+            WindowBounds {
+                x: 1020,
+                y: 0,
+                width: 900,
+                height: 700
+            }
         );
     }
 }
