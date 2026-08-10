@@ -9,6 +9,7 @@ import {
     HotkeyProvider,
     LogService,
     PlatformService,
+    NotificationsService,
     UpdaterService,
     VaultService,
 } from 'tabby-core'
@@ -49,6 +50,7 @@ import {
 import { TauriHostBridge } from './services/tauriHostBridge.service'
 import { TauriUACService } from './services/uac.service'
 import { TauriUpdaterService } from './services/updater.service'
+import { TauriNotificationsService } from './services/notifications.service'
 import { TauriVaultService } from './services/vault.service'
 import { TauriPathDropDecorator } from './pathDrop'
 import { TerminalDecorator } from 'tabby-terminal'
@@ -75,6 +77,8 @@ function initializeDesktop (service: TauriDesktopIntegrationService): () => Prom
         { provide: HostBridge, useExisting: TauriHostBridge },
         TauriPlatformService,
         { provide: PlatformService, useExisting: TauriPlatformService },
+        TauriNotificationsService,
+        { provide: NotificationsService, useExisting: TauriNotificationsService },
         TauriHostAppService,
         { provide: HostAppService, useExisting: TauriHostAppService },
         TauriHostWindowService,

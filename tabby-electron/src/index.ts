@@ -1,9 +1,9 @@
 import { NgModule } from '@angular/core'
-import { PlatformService, LogService, UpdaterService, DockingService, HostAppService, ThemesService, Platform, AppService, ConfigService, WIN_BUILD_FLUENT_BG_SUPPORTED, isWindowsBuild, HostWindowService, HotkeyProvider, ConfigProvider, FileProvider } from 'tabby-core'
+import { PlatformService, LogService, UpdaterService, DockingService, HostAppService, ThemesService, Platform, AppService, ConfigService, WIN_BUILD_FLUENT_BG_SUPPORTED, isWindowsBuild, HostWindowService, HotkeyProvider, ConfigProvider, FileProvider, aggregateTabProgress, TabProgressState } from 'tabby-core'
 import { TerminalColorSchemeProvider, TerminalContextMenuItemProvider, TerminalDecorator } from 'tabby-terminal'
 import { SFTPContextMenuItemProvider, SSHProfileImporter, AutoPrivateKeyLocator, PasswordStorageService } from 'tabby-ssh'
 import { PTYInterface, ShellProvider, UACService } from 'tabby-local'
-import { auditTime } from 'rxjs'
+import { auditTime, Subscription } from 'rxjs'
 
 import { HyperColorSchemes } from './colorSchemes'
 import { ElectronPlatformService } from './services/platform.service'
@@ -123,20 +123,39 @@ export default class ElectronModule {
             }
         })
 
-        let lastProgress: number|null = null
-        app.tabOpened$.subscribe(tab => {
-            tab.progress$.pipe(auditTime(250)).subscribe(progress => {
-                if (lastProgress === progress) {
-                    return
-                }
-                if (progress !== null) {
-                    hostWindow.setProgressBar(progress / 100.0)
-                } else {
-                    hostWindow.setProgressBar(-1)
-                }
-                lastProgress = progress
-            })
+        const progressStates = new Map<string, TabProgressState>()
+        const progressSubscriptions = new Map<string, Subscription>()
+        let lastProgress = ''
+        const refreshProgress = () => {
+            const aggregate = aggregateTabProgress(app.tabs.map(tab => ({
+                tabId: tab.tabId,
+                active: tab === app.activeTab,
+                progress: progressStates.get(tab.tabId) ?? { value: null, state: 'none', source: 'process' },
+            })))
+            const value = aggregate.state === 'normal' && aggregate.value !== null ? aggregate.value / 100 : -1
+            const key = `${aggregate.state}:${value}`
+            if (key === lastProgress) {
+                return
+            }
+            hostWindow.setProgressBar(value)
+            lastProgress = key
+        }
+        const trackProgress = tab => {
+            progressSubscriptions.get(tab.tabId)?.unsubscribe()
+            progressSubscriptions.set(tab.tabId, tab.progressState$.pipe(auditTime(250)).subscribe(progress => {
+                progressStates.set(tab.tabId, progress)
+                refreshProgress()
+            }))
+        }
+        app.tabs.forEach(trackProgress)
+        app.tabOpened$.subscribe(trackProgress)
+        app.tabRemoved$.subscribe(tab => {
+            progressSubscriptions.get(tab.tabId)?.unsubscribe()
+            progressSubscriptions.delete(tab.tabId)
+            progressStates.delete(tab.tabId)
+            refreshProgress()
         })
+        app.activeTabChange$.subscribe(refreshProgress)
 
         config.changed$.subscribe(() => {
             this.updateVibrancy()

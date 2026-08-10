@@ -25,3 +25,5 @@ import { ClickableLinksConfigProvider } from './config'
 export default class LinkifierModule { }
 
 export * from './api'
+export { decideUri } from './uriPolicy'
+export type { UriDecision, UriPolicyContext } from './uriPolicy'

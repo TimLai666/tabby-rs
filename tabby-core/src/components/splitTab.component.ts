@@ -2,6 +2,7 @@ import { Observable, Subject, takeWhile } from 'rxjs'
 import { Component, Injectable, ViewChild, ViewContainerRef, EmbeddedViewRef, AfterViewInit, OnDestroy, Injector } from '@angular/core'
 import { BaseTabComponent, BaseTabProcess, GetRecoveryTokenOptions } from './baseTab.component'
 import { TabRecoveryProvider, RecoveryToken } from '../api/tabRecovery'
+import { aggregateTabProgress, TabProgressState } from '../api/tabProgress'
 import { TabsService, NewTabParameters } from '../services/tabs.service'
 import { HotkeysService } from '../services/hotkeys.service'
 import { TabRecoveryService } from '../services/tabRecovery.service'
@@ -223,6 +224,7 @@ export class SplitTabComponent extends BaseTabComponent implements AfterViewInit
     private focusedTab: BaseTabComponent|null = null
     private maximizedTab: BaseTabComponent|null = null
     private viewRefs: Map<BaseTabComponent, EmbeddedViewRef<any>> = new Map()
+    private childProgress = new Map<string, TabProgressState>()
 
     private tabAdded = new Subject<BaseTabComponent>()
     private tabAdopted = new Subject<BaseTabComponent>()
@@ -856,8 +858,15 @@ export class SplitTabComponent extends BaseTabComponent implements AfterViewInit
             a => a ? this.displayActivity() : this.clearActivity(),
         )
         tab.subscribeUntilDestroyed(
-            this.observeUntilChildDetached(tab, tab.progress$),
-            p => this.setProgress(p),
+            this.observeUntilChildDetached(tab, tab.progressState$),
+            p => {
+                this.childProgress.set(tab.tabId, p)
+                this.setProgressState(aggregateTabProgress(this.getAllTabs().map(child => ({
+                    tabId: child.tabId,
+                    active: child === this.focusedTab,
+                    progress: this.childProgress.get(child.tabId) ?? { value: null, state: 'none', source: 'process' },
+                }))))
+            },
         )
         if (tab.title) {
             this.updateTitle()

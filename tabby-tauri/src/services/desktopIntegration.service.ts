@@ -1,13 +1,13 @@
 import { Injectable } from '@angular/core'
-import { AppService, ConfigService, DockingService } from 'tabby-core'
-import { auditTime } from 'rxjs'
+import { AppService, ConfigService, DockingService, aggregateTabProgress, TabProgressState } from 'tabby-core'
+import { auditTime, Subscription } from 'rxjs'
 
 import { HostBridge, WindowStatePatch } from '../api/hostBridge'
 import { TauriHostWindowService } from './hostWindow.service'
 
 @Injectable()
 export class TauriDesktopIntegrationService {
-    private lastProgress: number | null = null
+    private lastProgress = ''
 
     constructor (
         private app: AppService,
@@ -33,15 +33,38 @@ export class TauriDesktopIntegrationService {
             void this.applyAppearance()
         })
 
-        this.app.tabOpened$.subscribe(tab => {
-            tab.progress$.pipe(auditTime(250)).subscribe(progress => {
-                if (progress === this.lastProgress) {
-                    return
-                }
-                this.hostWindow.setProgressBar(progress === null ? -1 : progress / 100)
-                this.lastProgress = progress
-            })
+        const progressStates = new Map<string, TabProgressState>()
+        const progressSubscriptions = new Map<string, Subscription>()
+        const refreshProgress = () => {
+            const aggregate = aggregateTabProgress(this.app.tabs.map(tab => ({
+                tabId: tab.tabId,
+                active: tab === this.app.activeTab,
+                progress: progressStates.get(tab.tabId) ?? { value: null, state: 'none', source: 'process' },
+            })))
+            const value = aggregate.state === 'normal' && aggregate.value !== null ? aggregate.value / 100 : -1
+            const key = `${aggregate.state}:${value}`
+            if (key === this.lastProgress) {
+                return
+            }
+            this.hostWindow.setProgressBar(value)
+            this.lastProgress = key
+        }
+        const trackProgress = tab => {
+            progressSubscriptions.get(tab.tabId)?.unsubscribe()
+            progressSubscriptions.set(tab.tabId, tab.progressState$.pipe(auditTime(250)).subscribe(progress => {
+                progressStates.set(tab.tabId, progress)
+                refreshProgress()
+            }))
+        }
+        this.app.tabs.forEach(trackProgress)
+        this.app.tabOpened$.subscribe(trackProgress)
+        this.app.tabRemoved$.subscribe(tab => {
+            progressSubscriptions.get(tab.tabId)?.unsubscribe()
+            progressSubscriptions.delete(tab.tabId)
+            progressStates.delete(tab.tabId)
+            refreshProgress()
         })
+        this.app.activeTabChange$.subscribe(refreshProgress)
 
         await this.bridge.listen('desktop.windowFocused', focused => {
             if (focused) {

@@ -1,8 +1,9 @@
-import { Observable, Subject, BehaviorSubject, distinctUntilChanged, filter, debounceTime } from 'rxjs'
+import { Observable, Subject, BehaviorSubject, distinctUntilChanged, debounceTime, map } from 'rxjs'
 import { EmbeddedViewRef, Injector, ViewContainerRef, ViewRef } from '@angular/core'
 import { RecoveryToken } from '../api/tabRecovery'
 import { BaseComponent } from './base.component'
 import { ConfigService } from '../services/config.service'
+import { TabProgressState } from '../api/tabProgress'
 import { v4 as uuidv4 } from 'uuid'
 
 /**
@@ -103,7 +104,7 @@ export abstract class BaseTabComponent extends BaseComponent {
     private focused = new Subject<void>()
     private blurred = new Subject<void>()
     protected visibility = new BehaviorSubject<boolean>(false)
-    protected progress = new BehaviorSubject<number|null>(null)
+    protected progressState = new BehaviorSubject<TabProgressState>({ value: null, state: 'none', source: 'process' })
     protected activity = new BehaviorSubject<boolean>(false)
     private destroyed = new Subject<void>()
 
@@ -114,7 +115,8 @@ export abstract class BaseTabComponent extends BaseComponent {
     /* @hidden */
     get visibility$ (): Observable<boolean> { return this.visibility }
     get titleChange$ (): Observable<string> { return this.titleChange.pipe(distinctUntilChanged()) }
-    get progress$ (): Observable<number|null> { return this.progress.pipe(distinctUntilChanged()) }
+    get progressState$ (): Observable<TabProgressState> { return this.progressState.pipe(distinctUntilChanged((a, b) => a.value === b.value && a.state === b.state && a.source === b.source)) }
+    get progress$ (): Observable<number|null> { return this.progressState$.pipe(map(x => x.state === 'normal' ? x.value : null), distinctUntilChanged()) }
     get activity$ (): Observable<boolean> { return this.activity }
     get destroyed$ (): Observable<void> { return this.destroyed }
     get recoveryStateChangedHint$ (): Observable<void> { return this.recoveryStateChangedHint }
@@ -130,11 +132,12 @@ export abstract class BaseTabComponent extends BaseComponent {
         this.blurred$.subscribe(() => {
             this.hasFocus = false
         })
-        this.subscribeUntilDestroyed(this.progress.pipe(
-            filter(x => x !== null),
+        this.subscribeUntilDestroyed(this.progressState.pipe(
             debounceTime(5000),
-        ), () => {
-            this.setProgress(null)
+        ), state => {
+            if (state.state !== 'none') {
+                this.setProgressState({ value: null, state: 'none', source: state.source })
+            }
         })
     }
 
@@ -145,13 +148,23 @@ export abstract class BaseTabComponent extends BaseComponent {
         }
     }
 
+    setProgressState (state: TabProgressState): void {
+        this.progressState.next({
+            value: state.value === null ? null : Math.max(0, Math.min(100, state.value)),
+            state: state.state,
+            source: state.source,
+        })
+    }
+
     /**
      * Sets visual progressbar on the tab
      *
-     * @param  {type} progress: value between 0 and 1, or `null` to remove
+     * @param  {type} progress: value between 0 and 100, or `null` to remove
      */
     setProgress (progress: number|null): void {
-        this.progress.next(progress)
+        this.setProgressState(progress === null
+            ? { value: null, state: 'none', source: 'process' }
+            : { value: progress, state: 'normal', source: 'process' })
     }
 
     /**
@@ -249,7 +262,7 @@ export abstract class BaseTabComponent extends BaseComponent {
         this.focused.complete()
         this.blurred.complete()
         this.titleChange.complete()
-        this.progress.complete()
+        this.progressState.complete()
         this.activity.complete()
         this.recoveryStateChangedHint.complete()
         if (!skipDestroyedEvent) {
