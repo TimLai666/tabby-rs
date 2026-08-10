@@ -54,6 +54,7 @@ import { TaskCompletionContextMenu, CommonOptionsContextMenu, TabManagementConte
 import { LastCLIHandler, ProfileCLIHandler } from './cli'
 import { SplitLayoutProfilesService } from './profiles'
 import { CoreCommandProvider } from './commands'
+export * from './workspace'
 
 export function TranslateMessageFormatCompilerFactory (): TranslateMessageFormatCompiler {
     return new TranslateMessageFormatCompiler()

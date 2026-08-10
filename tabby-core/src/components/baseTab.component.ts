@@ -3,6 +3,7 @@ import { EmbeddedViewRef, Injector, ViewContainerRef, ViewRef } from '@angular/c
 import { RecoveryToken } from '../api/tabRecovery'
 import { BaseComponent } from './base.component'
 import { ConfigService } from '../services/config.service'
+import { v4 as uuidv4 } from 'uuid'
 
 /**
  * Represents an active "process" inside a tab,
@@ -21,6 +22,7 @@ export interface GetRecoveryTokenOptions {
  */
 // @Component({ template: '' })
 export abstract class BaseTabComponent extends BaseComponent {
+    tabId = uuidv4()
     /**
      * Parent tab (usually a SplitTabComponent)
      */
