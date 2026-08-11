@@ -6,6 +6,7 @@ mod launch;
 mod platform;
 mod pty;
 mod security;
+mod serial;
 mod shell;
 mod ssh;
 mod state;
@@ -37,6 +38,10 @@ use commands::{
         pty_get_true_pid, pty_is_alive, pty_kill, pty_resize, pty_spawn, pty_write,
     },
     secrets::{secret_import_execute, secret_import_plan},
+    serial::{
+        serial_close, serial_get_signals, serial_list, serial_open, serial_set_signals,
+        serial_write,
+    },
     sftp::{
         sftp_cancel_transfer, sftp_close, sftp_close_transfer, sftp_download, sftp_download_open,
         sftp_list, sftp_mkdir, sftp_open, sftp_read, sftp_remove, sftp_rename, sftp_stat,
@@ -65,6 +70,7 @@ use commands::{
 use launch::{parse_launch_context, LaunchContext};
 use pty::PtyManager;
 use security::{CredentialState, SecretState};
+use serial::SerialManager;
 use ssh::SshManager;
 use state::AppState;
 use storage::{
@@ -203,6 +209,8 @@ pub fn run() {
             app.manage(Arc::new(PtyManager::default()));
             app.manage(Arc::new(SshManager::new(known_hosts_path)));
             app.manage(Arc::new(TelnetManager::default()));
+            app.manage(Arc::new(SerialManager::default()));
+            SerialManager::start_port_watcher(app.handle().clone());
             app.manage(Arc::new(
                 crate::transfer::manager::TransferManager::default(),
             ));
@@ -304,6 +312,12 @@ pub fn run() {
             telnet_write,
             telnet_resize,
             telnet_close,
+            serial_list,
+            serial_open,
+            serial_write,
+            serial_set_signals,
+            serial_get_signals,
+            serial_close,
             sudo_respond,
             transfer_open_upload,
             transfer_open_download,

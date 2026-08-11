@@ -392,6 +392,67 @@ export interface TelnetEchoEvent {
     forceEcho: boolean
 }
 
+export interface SerialPortInfo {
+    id: string
+    displayName: string
+    path: string
+    portType: string
+    vendorId?: number|null
+    productId?: number|null
+    serialNumber?: string|null
+    manufacturer?: string|null
+}
+
+export type SerialParity = 'none'|'even'|'odd'|'mark'|'space'
+export type SerialFlowControl = 'none'|'software'|'hardware'
+
+export interface SerialReconnectPolicy {
+    enabled: boolean
+    maxAttempts: number
+    maxDelayMs: number
+}
+
+export interface SerialOpenRequest {
+    profileId: string
+    connectionId: string
+    port: string
+    baudRate: number
+    dataBits: number
+    stopBits: number
+    parity: SerialParity
+    flowControl: SerialFlowControl
+    readTimeoutMs: number
+    reconnect: SerialReconnectPolicy
+}
+
+export interface SerialSessionInfo {
+    id: string
+    profileId: string
+    port: string
+    stableId: string
+}
+
+export interface SerialConnectionStateEvent {
+    id: string
+    connectionId: string
+    profileId: string
+    state: 'connected'|'disconnected'|'reconnecting'|'waiting'|'closed'
+    path?: string|null
+    error?: string|null
+}
+
+export interface SerialOutputEvent {
+    id: string
+    connectionId: string
+    profileId: string
+    data: number[]
+}
+
+export interface SerialSignalState {
+    clearToSend: boolean
+    dataSetReady: boolean
+}
+
 export interface RemoteFileEntry {
     name: string
     fullPath: string
@@ -883,6 +944,30 @@ export interface HostRequestMap {
         request: { id: string }
         response: null
     }
+    'serial.list': {
+        request: Record<string, never>
+        response: SerialPortInfo[]
+    }
+    'serial.open': {
+        request: SerialOpenRequest
+        response: SerialSessionInfo
+    }
+    'serial.write': {
+        request: { id: string; data: number[] }
+        response: null
+    }
+    'serial.setSignals': {
+        request: { id: string; signal: 'requestToSend'|'dataTerminalReady'; value: boolean }
+        response: null
+    }
+    'serial.getSignals': {
+        request: { id: string }
+        response: SerialSignalState
+    }
+    'serial.close': {
+        request: { id: string }
+        response: null
+    }
 }
 
 export interface HostEventMap {
@@ -906,6 +991,9 @@ export interface HostEventMap {
     'telnet.exit': TelnetExitEvent
     'telnet.message': TelnetMessageEvent
     'telnet.echo': TelnetEchoEvent
+    'serial.output': SerialOutputEvent
+    'serial.connectionState': SerialConnectionStateEvent
+    'serial.portsChanged': SerialPortInfo[]
 }
 
 export abstract class HostBridge {

@@ -1,4 +1,3 @@
-import hexdump from 'hexer'
 import bufferReplace from 'buffer-replace'
 import colors from 'ansi-colors'
 import binstring from 'binstring'
@@ -11,11 +10,30 @@ export type InputMode = null | 'local-echo' | 'readline' | 'readline-hex'
 export type OutputMode = null | 'hex'
 export type NewlineMode = null | 'cr' | 'lf' | 'crlf' | 'implicit_cr' | 'implicit_lf'
 
+const MAX_INPUT_LINE_LENGTH = 64 * 1024
+
 export interface StreamProcessingOptions {
     inputMode: InputMode
     inputNewlines: NewlineMode
     outputMode: OutputMode
     outputNewlines: NewlineMode
+    maxInputLineLength?: number
+    preserveOutputHexdumpOffset?: boolean
+}
+
+export function renderHexdump (data: Buffer, offset = 0): string {
+    const columns = 16
+    const lines: string[] = []
+    for (let row = 0; row < data.length; row += columns) {
+        const chunk = data.subarray(row, row + columns)
+        const bytes = Array.from(chunk, byte => byte.toString(16).padStart(2, '0')).join(' ')
+        const paddedBytes = bytes.padEnd(columns * 3 - 1, ' ')
+        const human = Array.from(chunk, byte => byte >= 0x20 && byte < 0x7f ? String.fromCharCode(byte) : '.')
+            .join('')
+            .padEnd(columns, '╳')
+        lines.push(`${(offset + row).toString(16).padStart(8, '0')} : ${paddedBytes}${colors.gray(' ｜ ')}${human}`)
+    }
+    return lines.join('\n')
 }
 
 export class TerminalStreamProcessor extends SessionMiddleware {
@@ -25,6 +43,9 @@ export class TerminalStreamProcessor extends SessionMiddleware {
     private inputReadlineInStream: Readable & Writable
     private inputReadlineOutStream: Readable & Writable
     private started = false
+    private inputLineLength = 0
+    private droppingOverlongInput = false
+    private outputHexdumpOffset = 0
 
     constructor (private options: StreamProcessingOptions) {
         super()
@@ -68,20 +89,42 @@ export class TerminalStreamProcessor extends SessionMiddleware {
         if (this.options.outputMode === 'hex') {
             this.outputToTerminal.next(Buffer.concat([
                 Buffer.from('\r\n'),
-                Buffer.from(hexdump(data, {
-                    group: 1,
-                    gutter: 4,
-                    divide: colors.gray(' ｜ '),
-                    emptyHuman: colors.gray('╳'),
-                }).replaceAll('\n', '\r\n')),
+                Buffer.from(renderHexdump(
+                    data,
+                    this.options.preserveOutputHexdumpOffset ? this.outputHexdumpOffset : 0,
+                ).replaceAll('\n', '\r\n')),
                 Buffer.from('\r\n\n'),
             ]))
+            if (this.options.preserveOutputHexdumpOffset) {
+                this.outputHexdumpOffset += data.length
+            }
         } else {
             this.outputToTerminal.next(data)
         }
     }
 
     feedFromTerminal (data: Buffer): void {
+        if (this.options.inputMode?.startsWith('readline')) {
+            if (this.droppingOverlongInput) {
+                if (data.includes(0x0a) || data.includes(0x0d)) {
+                    this.droppingOverlongInput = false
+                    this.inputLineLength = 0
+                }
+                return
+            }
+            this.inputLineLength += data.length
+            const maxInputLineLength = this.options.maxInputLineLength
+                ? Math.min(this.options.maxInputLineLength, MAX_INPUT_LINE_LENGTH)
+                : null
+            if (maxInputLineLength && this.inputLineLength > maxInputLineLength) {
+                this.droppingOverlongInput = true
+                this.outputToTerminal.next(Buffer.from('\r\n[Input rejected: line is too long]\r\n'))
+                return
+            }
+            if (data.includes(0x0a) || data.includes(0x0d)) {
+                this.inputLineLength = 0
+            }
+        }
         if (this.options.inputMode === 'local-echo' || this.forceEcho) {
             this.outputToTerminal.next(this.replaceNewlines(data, 'crlf'))
         }
@@ -105,13 +148,18 @@ export class TerminalStreamProcessor extends SessionMiddleware {
 
     private onTerminalInput (data: Buffer) {
         if (this.options.inputMode === 'readline-hex') {
-            const tokens = data.toString().split(/\s/g)
-            data = Buffer.concat(tokens.filter(t => !!t).map(t => {
-                if (t.startsWith('0x')) {
-                    t = t.substring(2)
+            const tokens = data.toString().trim().split(/\s+/g).filter(t => !!t)
+            const bytes: Buffer[] = []
+            for (const [index, originalToken] of tokens.entries()) {
+                const token = originalToken.startsWith('0x') ? originalToken.substring(2) : originalToken
+                if (token.length !== 2 || !/^[0-9a-f]+$/i.test(token)) {
+                    this.outputToTerminal.next(Buffer.from(`\r\n[Invalid hex token at index ${index}: ${originalToken}]\r\n`))
+                    this.resetInputPrompt()
+                    return
                 }
-                return binstring(t, { 'in': 'hex' })
-            }))
+                bytes.push(binstring(token, { 'in': 'hex' }))
+            }
+            data = Buffer.concat(bytes)
         }
 
         data = this.replaceNewlines(data, this.options.inputNewlines)
