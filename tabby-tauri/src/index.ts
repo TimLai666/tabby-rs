@@ -74,6 +74,12 @@ import { TauriTelnetProfileSettingsComponent } from './telnet/profileSettings.co
 import { TauriTelnetProfilesService } from './telnet/profiles'
 import { TauriTelnetTabRecoveryProvider } from './telnet/recoveryProvider'
 import { TauriTelnetTabComponent } from './telnet/tab.component'
+import { TauriSerialConfigProvider } from './serial/config'
+import { TauriSerialHotkeyProvider } from './serial/hotkeys'
+import { TauriSerialProfileSettingsComponent } from './serial/profileSettings.component'
+import { TauriSerialProfilesService } from './serial/profiles'
+import { TauriSerialTabRecoveryProvider } from './serial/recoveryProvider'
+import { TauriSerialTabComponent } from './serial/tab.component'
 
 function initializeUac (service: TauriUACService): () => Promise<void> {
     return async () => {
@@ -101,6 +107,8 @@ function initializeDesktop (service: TauriDesktopIntegrationService): () => Prom
         TauriSftpPanelComponent,
         TauriTelnetProfileSettingsComponent,
         TauriTelnetTabComponent,
+        TauriSerialProfileSettingsComponent,
+        TauriSerialTabComponent,
     ],
     providers: [
         TauriHostBridge,
@@ -156,6 +164,12 @@ function initializeDesktop (service: TauriDesktopIntegrationService): () => Prom
         },
         { provide: ConfigProvider, useClass: TauriConfigProvider, multi: true },
         { provide: ConfigProvider, useClass: TauriTelnetConfigProvider, multi: true },
+        TauriSerialProfilesService,
+        { provide: ProfileProvider, useExisting: TauriSerialProfilesService, multi: true },
+        TauriSerialTabRecoveryProvider,
+        { provide: TabRecoveryProvider, useExisting: TauriSerialTabRecoveryProvider, multi: true },
+        { provide: HotkeyProvider, useClass: TauriSerialHotkeyProvider, multi: true },
+        { provide: ConfigProvider, useClass: TauriSerialConfigProvider, multi: true },
         { provide: SettingsTabProvider, useClass: IdentitySettingsTabProvider, multi: true },
     ],
 })

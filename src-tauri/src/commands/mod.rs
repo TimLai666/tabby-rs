@@ -8,6 +8,7 @@ pub mod launch;
 pub mod migration;
 pub mod pty;
 pub mod secrets;
+pub mod serial;
 pub mod sftp;
 pub mod shell;
 pub mod ssh;

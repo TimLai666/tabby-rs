@@ -1,0 +1,71 @@
+ul.nav-tabs(ngbNav, #nav='ngbNav')
+    li(ngbNavItem)
+        a(ngbNavLink, translate) General
+        ng-template(ngbNavContent)
+            .mb-3
+                label(translate) Device
+                select.form-control([(ngModel)]='profile.options.port')
+                    option([ngValue]='null') (translate) Select a device
+                    option(*ngFor='let port of ports', [ngValue]='port.path') {{port.path}} {{port.displayName}}
+            .mb-3
+                label(translate) Custom device path
+                input.form-control(type='text', [(ngModel)]='profile.options.port')
+            .mb-3
+                label(translate) Baud rate
+                input.form-control(type='number', [(ngModel)]='profile.options.baudRate')
+            stream-processing-settings([options]='profile.options')
+    li(ngbNavItem)
+        a(ngbNavLink, translate) Advanced
+        ng-template(ngbNavContent)
+            .form-line
+                .header
+                    .title(translate) Data bits
+                select.form-control([(ngModel)]='profile.options.dataBits')
+                    option([ngValue]='5') 5
+                    option([ngValue]='6') 6
+                    option([ngValue]='7') 7
+                    option([ngValue]='8') 8
+            .form-line
+                .header
+                    .title(translate) Stop bits
+                select.form-control([(ngModel)]='profile.options.stopBits')
+                    option([ngValue]='1') 1
+                    option([ngValue]='1.5') 1.5
+                    option([ngValue]='2') 2
+            .form-line
+                .header
+                    .title(translate) Parity
+                select.form-control([(ngModel)]='profile.options.parity')
+                    option(value='none', translate) None
+                    option(value='even') Even
+                    option(value='odd') Odd
+                    option(value='mark') Mark
+                    option(value='space') Space
+            .form-line
+                .header
+                    .title(translate) Flow control
+                select.form-control([(ngModel)]='profile.options.flowControl')
+                    option(value='none', translate) None
+                    option(value='software') Software
+                    option(value='hardware') Hardware
+            .form-line
+                .header
+                    .title(translate) Read timeout (ms)
+                input.form-control(type='number', [(ngModel)]='profile.options.readTimeoutMs')
+            .form-line
+                .header
+                    .title(translate) Auto reconnect
+                toggle([(ngModel)]='profile.options.reconnect.enabled')
+            .form-line(*ngIf='profile.options.reconnect.enabled')
+                .header
+                    .title(translate) Maximum attempts
+                input.form-control(type='number', [(ngModel)]='profile.options.reconnect.maxAttempts')
+            .form-line(*ngIf='profile.options.reconnect.enabled')
+                .header
+                    .title(translate) Maximum delay (ms)
+                input.form-control(type='number', [(ngModel)]='profile.options.reconnect.maxDelayMs')
+    li(ngbNavItem)
+        a(ngbNavLink, translate) Input
+        ng-template(ngbNavContent)
+            input-processing-settings([options]='profile.options.input')
+div([ngbNavOutlet]='nav')
