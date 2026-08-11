@@ -557,10 +557,21 @@ fn wildcard_match(pattern: &str, value: &str) -> bool {
 }
 
 fn resolve_identity_path(value: &str, base: &Path) -> String {
-    if let Some(rest) = value.strip_prefix("~/") {
-        if let Ok(home) = std::env::var("HOME") {
-            return Path::new(&home).join(rest).to_string_lossy().into_owned();
-        }
+    resolve_identity_path_with_home(value, base, home_directory().as_deref())
+}
+
+fn home_directory() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+}
+
+fn resolve_identity_path_with_home(value: &str, base: &Path, home: Option<&Path>) -> String {
+    let rest = value
+        .strip_prefix("~/")
+        .or_else(|| value.strip_prefix("~\\"));
+    if let (Some(rest), Some(home)) = (rest, home) {
+        return home.join(rest).to_string_lossy().into_owned();
     }
     let path = Path::new(value);
     if path.is_absolute() {
@@ -571,10 +582,11 @@ fn resolve_identity_path(value: &str, base: &Path) -> String {
 }
 
 fn validate_source_path(path: &str) -> Result<PathBuf, AppError> {
-    let expanded = if let Some(rest) = path.strip_prefix("~/") {
-        std::env::var("HOME")
-            .map(|home| PathBuf::from(home).join(rest))
-            .unwrap_or_else(|_| PathBuf::from(path))
+    let rest = path.strip_prefix("~/").or_else(|| path.strip_prefix("~\\"));
+    let expanded = if let Some(rest) = rest {
+        home_directory()
+            .map(|home| home.join(rest))
+            .unwrap_or_else(|| PathBuf::from(path))
     } else {
         PathBuf::from(path)
     };
@@ -604,14 +616,26 @@ fn stable_static_profile_id(name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
+    use std::{fs, path::Path};
 
     use tempfile::tempdir;
 
     use super::{
-        apply, parse_config, preview, stable_static_profile_id, SshImportAction,
-        SshImportSelection, SshImportSelectionItem, SshImportSource,
+        apply, parse_config, preview, resolve_identity_path_with_home, stable_static_profile_id,
+        SshImportAction, SshImportSelection, SshImportSelectionItem, SshImportSource,
     };
+
+    #[test]
+    fn expands_tilde_identity_paths_from_explicit_home_directory() {
+        assert_eq!(
+            resolve_identity_path_with_home(
+                "~/.ssh/id_ed25519",
+                Path::new("/tmp"),
+                Some(Path::new("/home/alice")),
+            ),
+            "/home/alice/.ssh/id_ed25519",
+        );
+    }
 
     #[test]
     fn parses_supported_fields_and_include_without_commands() {
@@ -635,7 +659,7 @@ mod tests {
             .unwrap();
         assert_eq!(app.port, 2200);
         assert_eq!(app.private_keys.len(), 1);
-        assert!(app.private_keys[0].ends_with("/.ssh/id_ed25519"));
+        assert!(Path::new(&app.private_keys[0]).ends_with(Path::new(".ssh").join("id_ed25519")));
         let preview = preview(&SshImportSource {
             path: config.to_string_lossy().into_owned(),
             existing_profile_ids: vec![app.id.clone()],
