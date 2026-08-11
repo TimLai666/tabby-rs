@@ -148,7 +148,8 @@
                         .w-100.d-flex.flex-column
                             h3(translate) Config file
                             textarea.form-control.h-100(
-                                [(ngModel)]='configFile'
+                                [(ngModel)]='configFile',
+                                (ngModelChange)='validateConfigFile()'
                             )
                         .w-100.d-flex.flex-column(*ngIf='showConfigDefaults')
                             h3(translate) Defaults
@@ -157,12 +158,13 @@
                                 readonly
                             )
                     .mt-3.d-flex
-                        button.btn.btn-primary((click)='saveConfigFile()', *ngIf='isConfigFileValid()')
+                        button.btn.btn-primary((click)='saveConfigFile()', *ngIf='configFileValid')
                             i.fas.fa-check.me-2
                             span(translate) Save and apply
-                        button.btn.btn-primary(disabled, *ngIf='!isConfigFileValid()')
+                        button.btn.btn-primary(disabled, *ngIf='!configFileValid')
                             i.fas.fa-exclamation-triangle.me-2
                             span(translate) Invalid syntax
+                        small.text-danger.ms-3(*ngIf='configFileError') {{configFileError}}
                         button.btn.btn-secondary.ms-auto(
                             (click)='showConfigDefaults = !showConfigDefaults',
                             translate

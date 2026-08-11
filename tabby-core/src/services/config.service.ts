@@ -252,10 +252,20 @@ export class ConfigService {
      * Writes config YAML as string
      */
     async writeRaw (data: string): Promise<void> {
-        this._store = yaml.load(data)
-        await this.save()
-        await this.load()
-        this.emitChange()
+        const parsed = yaml.load(data)
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            throw new Error('Config must contain a YAML mapping at the document root')
+        }
+        const previous = this._store
+        this._store = parsed
+        try {
+            await this.save()
+            await this.load()
+            this.emitChange()
+        } catch (error) {
+            this._store = previous
+            throw error
+        }
     }
 
     requestRestart (): void {
