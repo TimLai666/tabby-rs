@@ -4,6 +4,33 @@
         i.fas.fa-folder
         span(translate) Plugins folder
 
+.alert.alert-warning(*ngIf='!canManagePlugins() && nodeStatus && !nodeStatus.supported')
+    strong(translate) Node.js and npm are required for plugin management.
+    div {{nodeStatus.reason}}
+
+.alert.alert-success(*ngIf='!canManagePlugins() && nodeStatus?.supported')
+    strong Node.js {{nodeStatus.nodeVersion}} / npm {{nodeStatus.npmVersion}}
+    small.d-block.text-muted {{nodeStatus.nodePath}} · {{nodeStatus.npmPath}}
+
+.alert.alert-info(*ngIf='!canManagePlugins() && nodeStatus?.supported')
+    span(translate) Node.js and npm were detected, but plugin installation is unavailable in this host.
+
+.input-group.mb-3(*ngIf='!canManagePlugins()')
+    span.input-group-text(translate) Node.js path
+    input.form-control(
+        type='text',
+        [(ngModel)]='customNodePath',
+        placeholder='Auto-detect from PATH'
+    )
+    button.btn.btn-secondary(
+        type='button',
+        (click)='refreshNodeStatus()',
+        [disabled]='nodeStatusLoading'
+    )
+        i.fas.fa-fw.fa-sync(*ngIf='!nodeStatusLoading')
+        i.fas.fa-fw.fa-circle-notch.fa-spin(*ngIf='nodeStatusLoading')
+        span.ms-2(translate) Refresh
+
 .alert.alert-danger(*ngIf='errorMessage')
     strong(
         translate='Error in {plugin}:',
@@ -37,7 +64,7 @@ ul.nav-tabs.mb-2(ngbNav, #nav='ngbNav')
                             .d-flex.flex-column.flex-md-row.gap-3.align-items-start
                                 button.btn.btn-primary.btn-block.justify-content-center(
                                     (click)='installPlugin(plugin)',
-                                    [disabled]='busy.has(plugin.name)'
+                                    [disabled]='busy.has(plugin.name) || !canManagePlugins()'
                                 )
                                     i.fas.fa-fw.fa-cloud-download(*ngIf='busy.get(plugin.name) != BusyState.Installing')
                                     i.fas.fa-fw.fa-circle-notch.fa-spin(*ngIf='busy.get(plugin.name) == BusyState.Installing')
@@ -81,7 +108,7 @@ ul.nav-tabs.mb-2(ngbNav, #nav='ngbNav')
                             button.btn.btn-primary.ms-2(
                                 *ngIf='knownUpgrades[plugin.name]',
                                 (click)='upgradePlugin(plugin)',
-                                [disabled]='busy.has(plugin.name)'
+                                [disabled]='busy.has(plugin.name) || !canManagePlugins()'
                             )
                                 i.fas.fa-fw.fa-arrow-up(*ngIf='busy.get(plugin.name) != BusyState.Installing')
                                 i.fas.fa-fw.fa-circle-notch.fa-spin(*ngIf='busy.get(plugin.name) == BusyState.Installing')
@@ -108,7 +135,7 @@ ul.nav-tabs.mb-2(ngbNav, #nav='ngbNav')
                                 button.btn.btn-danger.btn-block.justify-content-center(
                                     (click)='uninstallPlugin(plugin)',
                                     *ngIf='!plugin.isBuiltin',
-                                    [disabled]='busy.has(plugin.name)'
+                                    [disabled]='busy.has(plugin.name) || !canManagePlugins()'
                                 )
                                     i.fas.fa-fw.fa-trash(*ngIf='busy.get(plugin.name) != BusyState.Uninstalling')
                                     i.fas.fa-fw.fa-circle-notch.fa-spin(*ngIf='busy.get(plugin.name) == BusyState.Uninstalling')

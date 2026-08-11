@@ -37,6 +37,7 @@ export function resolveInsideBase (basePath: string, relativePath: string): stri
 
 @Injectable({ providedIn: 'root' })
 export class ElectronPlatformService extends PlatformService {
+    supportsPluginManagement = true
     supportsWindowControls = true
     private safeExternalSchemes = new Set(['http', 'https', 'ftp', 'mailto'])
     private configPath: string

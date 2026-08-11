@@ -9,6 +9,7 @@ import {
     MenuItemOptions,
     MessageBoxOptions,
     MessageBoxResult,
+    NodeToolchainStatus,
     PlatformService,
     PlatformTheme,
     sanitizeTransferName,
@@ -19,6 +20,7 @@ import { HostBridge, RuntimeInfo, TAURI_RUNTIME_INFO, TransferDirectoryEntry } f
 
 @Injectable()
 export class TauriPlatformService extends PlatformService {
+    supportsPluginManagement = false
     private clipboardText = ''
     private configRevision: string | null = null
     private configPath: string | null = null
@@ -188,6 +190,10 @@ export class TauriPlatformService extends PlatformService {
             console.warn('Could not enumerate installed fonts', error)
             return []
         }
+    }
+
+    async getNodeToolchainStatus (customNodePath?: string): Promise<NodeToolchainStatus> {
+        return this.bridge.invoke('plugins.nodeStatus', { customNodePath: customNodePath ?? null })
     }
 
     setErrorHandler (handler: (_: any) => void): void {
