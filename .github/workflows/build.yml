@@ -168,6 +168,11 @@ jobs:
             throw "Hardened UAC helper was not produced"
           }
 
+      - name: Install Windows build dependencies
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: choco install nasm --no-progress --yes
+
       - name: Install Yarn
         run: npm install --global yarn@${{ env.YARN_VERSION }}
 
