@@ -55,6 +55,7 @@ jobs:
             libfontconfig1-dev \
             librsvg2-dev \
             libsecret-1-dev \
+            libudev-dev \
             libwebkit2gtk-4.1-dev \
             patchelf \
             xvfb
