@@ -616,7 +616,10 @@ fn stable_static_profile_id(name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::Path};
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+    };
 
     use tempfile::tempdir;
 
@@ -627,13 +630,17 @@ mod tests {
 
     #[test]
     fn expands_tilde_identity_paths_from_explicit_home_directory() {
+        let home = if cfg!(windows) {
+            PathBuf::from(r"C:\Users\alice")
+        } else {
+            PathBuf::from("/home/alice")
+        };
+        let resolved =
+            resolve_identity_path_with_home("~/.ssh/id_ed25519", Path::new("/tmp"), Some(&home));
+
         assert_eq!(
-            resolve_identity_path_with_home(
-                "~/.ssh/id_ed25519",
-                Path::new("/tmp"),
-                Some(Path::new("/home/alice")),
-            ),
-            "/home/alice/.ssh/id_ed25519",
+            PathBuf::from(resolved),
+            home.join(".ssh").join("id_ed25519")
         );
     }
 
