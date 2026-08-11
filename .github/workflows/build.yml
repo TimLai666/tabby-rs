@@ -105,6 +105,9 @@ jobs:
       - name: Verify Electron build outputs
         run: node scripts/ci/assert-build-output.mjs
 
+      - name: Verify tabby-web bundle boundary
+        run: yarn audit:web
+
       - name: Build Tauri renderer
         run: yarn build:tauri:frontend
 
