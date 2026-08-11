@@ -1,4 +1,6 @@
 export { BaseComponent, SubscriptionContainer } from '../components/base.component'
+export { UnsupportedCapabilityError } from './capabilities'
+export type { CapabilityName } from './capabilities'
 export { BaseTabComponent, BaseTabProcess, GetRecoveryTokenOptions } from '../components/baseTab.component'
 export { TabHeaderComponent } from '../components/tabHeader.component'
 export { SplitTabComponent, SplitContainer, SplitDirection, SplitOrientation } from '../components/splitTab.component'
