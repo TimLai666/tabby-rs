@@ -1,5 +1,5 @@
 import { InjectionToken } from '@angular/core'
-import { BootstrapData, StoredVault, TransferDescriptor } from 'tabby-core'
+import { BootstrapData, NodeToolchainStatus, StoredVault, TransferDescriptor } from 'tabby-core'
 
 export type UpdateChannel = 'stable' | 'nightly'
 
@@ -618,6 +618,10 @@ export interface HostRequestMap {
             plugins: string[]
         }
         response: ImportReport
+    }
+    'plugins.nodeStatus': {
+        request: { customNodePath?: string | null }
+        response: NodeToolchainStatus
     }
     'vault.status': {
         request: Record<string, never>

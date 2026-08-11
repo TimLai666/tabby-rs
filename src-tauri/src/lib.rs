@@ -5,6 +5,7 @@ mod font;
 mod identity;
 mod launch;
 mod platform;
+mod plugins;
 mod pty;
 mod security;
 mod serial;
@@ -35,6 +36,7 @@ use commands::{
     keychain::{keychain_delete, keychain_get, keychain_put},
     launch::app_initial_launch,
     migration::{migration_detect, migration_execute},
+    plugins::plugins_node_status,
     pty::{
         pty_ack, pty_attach, pty_detach, pty_exists, pty_get_children, pty_get_cwd, pty_get_pid,
         pty_get_true_pid, pty_is_alive, pty_kill, pty_resize, pty_spawn, pty_write,
@@ -267,6 +269,7 @@ pub fn run() {
             keychain_delete,
             migration_detect,
             migration_execute,
+            plugins_node_status,
             notification_show,
             pty_spawn,
             pty_exists,

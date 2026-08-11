@@ -4,7 +4,7 @@ import { BehaviorSubject, Observable, debounceTime, distinctUntilChanged, first,
 import semverGt from 'semver/functions/gt'
 
 import { Component, HostBinding, Input } from '@angular/core'
-import { ConfigService, PlatformService, PluginInfo } from 'tabby-core'
+import { ConfigService, NodeToolchainStatus, PlatformService, PluginInfo } from 'tabby-core'
 import { PluginManagerService } from '../services/pluginManager.service'
 
 enum BusyState { Installing = 'Installing', Uninstalling = 'Uninstalling' }
@@ -34,6 +34,9 @@ export class PluginsSettingsTabComponent {
     installedPlugins$: PluginInfo[] = []
     installedFilter = ''
     availableFilter = ''
+    nodeStatus: NodeToolchainStatus | null = null
+    customNodePath = ''
+    nodeStatusLoading = false
 
     constructor (
         private config: ConfigService,
@@ -43,6 +46,9 @@ export class PluginsSettingsTabComponent {
     }
 
     ngOnInit () {
+        if (!this.canManagePlugins()) {
+            void this.refreshNodeStatus()
+        }
         this.availablePlugins$ = this.availablePluginsQuery$
             .asObservable()
             .pipe(
@@ -77,6 +83,28 @@ export class PluginsSettingsTabComponent {
             })
     }
 
+    async refreshNodeStatus (): Promise<void> {
+        this.nodeStatusLoading = true
+        try {
+            this.nodeStatus = await this.platform.getNodeToolchainStatus(this.customNodePath.trim() || undefined)
+        } catch (error) {
+            this.nodeStatus = {
+                nodePath: null,
+                nodeVersion: null,
+                npmPath: null,
+                npmVersion: null,
+                supported: false,
+                reason: String(error),
+            }
+        } finally {
+            this.nodeStatusLoading = false
+        }
+    }
+
+    canManagePlugins (): boolean {
+        return this.platform.supportsPluginManagement
+    }
+
     openPluginsFolder (): void {
         this.platform.openPath(this.pluginManager.userPluginsPath)
     }
@@ -94,6 +122,9 @@ export class PluginsSettingsTabComponent {
     }
 
     async installPlugin (plugin: PluginInfo): Promise<void> {
+        if (!this.canManagePlugins()) {
+            return
+        }
         this.busy.set(plugin.name, BusyState.Installing)
         try {
             await this.pluginManager.installPlugin(plugin)
@@ -109,6 +140,9 @@ export class PluginsSettingsTabComponent {
     }
 
     async uninstallPlugin (plugin: PluginInfo): Promise<void> {
+        if (!this.canManagePlugins()) {
+            return
+        }
         this.busy.set(plugin.name, BusyState.Uninstalling)
         try {
             await this.pluginManager.uninstallPlugin(plugin)

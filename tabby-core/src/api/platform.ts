@@ -8,6 +8,15 @@ export interface ClipboardContent {
     html?: string
 }
 
+export interface NodeToolchainStatus {
+    nodePath: string | null
+    nodeVersion: string | null
+    npmPath: string | null
+    npmVersion: string | null
+    supported: boolean
+    reason: string | null
+}
+
 export interface MessageBoxOptions {
     type: 'warning'|'error'
     message: string
@@ -203,6 +212,7 @@ export type PlatformTheme = 'light'|'dark'
 
 export abstract class PlatformService {
     supportsWindowControls = false
+    supportsPluginManagement = true
 
     get fileTransferStarted$ (): Observable<FileTransfer> { return this.fileTransferStarted }
     get displayMetricsChanged$ (): Observable<void> { return this.displayMetricsChanged }
@@ -289,6 +299,17 @@ export abstract class PlatformService {
 
     async uninstallPlugin (name: string): Promise<void> {
         throw new Error('Not implemented')
+    }
+
+    async getNodeToolchainStatus (_customNodePath?: string): Promise<NodeToolchainStatus> {
+        return {
+            nodePath: null,
+            nodeVersion: null,
+            npmPath: null,
+            npmVersion: null,
+            supported: false,
+            reason: 'Node.js detection is unavailable on this host',
+        }
     }
 
     getWinSCPPath (): string|null {

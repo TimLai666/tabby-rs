@@ -78,6 +78,11 @@ pub fn app_bootstrap(
             built_in_plugin("core", "tabby-core", "Tabby core UI"),
             built_in_plugin("settings", "tabby-settings", "Tabby settings UI"),
             built_in_plugin("tauri", "tabby-tauri", "Tabby RS Tauri host providers"),
+            built_in_plugin(
+                "plugin-manager",
+                "tabby-plugin-manager",
+                "Tabby plugin manager",
+            ),
         ],
         user_plugins_path: state.paths().plugins_dir().to_string_lossy().into_owned(),
     })

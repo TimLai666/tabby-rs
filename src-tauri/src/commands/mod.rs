@@ -7,6 +7,7 @@ pub mod identity;
 pub mod keychain;
 pub mod launch;
 pub mod migration;
+pub mod plugins;
 pub mod pty;
 pub mod secrets;
 pub mod serial;
