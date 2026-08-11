@@ -3,12 +3,13 @@ use std::sync::{
     Mutex, MutexGuard,
 };
 
-use crate::{identity::AppPaths, launch::LaunchContext};
+use crate::{identity::AppPaths, launch::LaunchContext, plugins::npm::OperationManager};
 
 pub struct AppState {
     next_window_id: AtomicU64,
     initial_launch: Mutex<Option<LaunchContext>>,
     storage_lock: Mutex<()>,
+    plugin_operations: OperationManager,
     paths: AppPaths,
 }
 
@@ -18,6 +19,7 @@ impl AppState {
             next_window_id: AtomicU64::new(0),
             initial_launch: Mutex::new(Some(initial_launch)),
             storage_lock: Mutex::new(()),
+            plugin_operations: OperationManager::default(),
             paths,
         }
     }
@@ -41,5 +43,9 @@ impl AppState {
 
     pub fn paths(&self) -> &AppPaths {
         &self.paths
+    }
+
+    pub fn plugin_operations(&self) -> &OperationManager {
+        &self.plugin_operations
     }
 }

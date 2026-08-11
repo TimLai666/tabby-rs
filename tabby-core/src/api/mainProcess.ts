@@ -12,6 +12,7 @@ export interface PluginInfo {
     path?: string
     info?: any
     searchScore?: number
+    isOfficial?: boolean
 }
 
 export interface BootstrapData {

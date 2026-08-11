@@ -1,5 +1,5 @@
 import { InjectionToken } from '@angular/core'
-import { BootstrapData, NodeToolchainStatus, StoredVault, TransferDescriptor } from 'tabby-core'
+import { BootstrapData, NodeToolchainStatus, PluginInfo, StoredVault, TransferDescriptor } from 'tabby-core'
 
 export type UpdateChannel = 'stable' | 'nightly'
 
@@ -23,6 +23,14 @@ export interface AppIdentity {
     logsDir: string
     portable: boolean
     portableRoot: string | null
+}
+
+export interface PluginOperation {
+    id: string
+    packageName: string
+    action: 'install' | 'uninstall'
+    status: 'running' | 'succeeded' | 'failed' | 'cancelled'
+    message: string | null
 }
 
 export interface CliAliasStatus {
@@ -623,6 +631,30 @@ export interface HostRequestMap {
         request: { customNodePath?: string | null }
         response: NodeToolchainStatus
     }
+    'plugins.install': {
+        request: { operationId: string; packageName: string; version: string; customNodePath?: string | null }
+        response: PluginOperation
+    }
+    'plugins.uninstall': {
+        request: { operationId: string; packageName: string; customNodePath?: string | null }
+        response: PluginOperation
+    }
+    'plugins.update': {
+        request: { operationId: string; packageName: string; version: string; customNodePath?: string | null }
+        response: PluginOperation
+    }
+    'plugins.remove': {
+        request: { operationId: string; packageName: string; customNodePath?: string | null }
+        response: PluginOperation
+    }
+    'plugins.listInstalled': {
+        request: Record<string, never>
+        response: PluginInfo[]
+    }
+    'plugins.cancelOperation': {
+        request: { id: string }
+        response: null
+    }
     'vault.status': {
         request: Record<string, never>
         response: VaultStatus
@@ -1013,6 +1045,7 @@ export interface HostEventMap {
     'serial.output': SerialOutputEvent
     'serial.connectionState': SerialConnectionStateEvent
     'serial.portsChanged': SerialPortInfo[]
+    'plugins.operation': PluginOperation
 }
 
 export abstract class HostBridge {

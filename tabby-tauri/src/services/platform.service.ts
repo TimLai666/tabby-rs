@@ -10,13 +10,20 @@ import {
     MessageBoxOptions,
     MessageBoxResult,
     NodeToolchainStatus,
+    PluginInfo,
     PlatformService,
     PlatformTheme,
     sanitizeTransferName,
     sanitizeTransferRelativePath,
 } from 'tabby-core'
 
-import { HostBridge, RuntimeInfo, TAURI_RUNTIME_INFO, TransferDirectoryEntry } from '../api/hostBridge'
+import {
+    HostBridge,
+    PluginOperation,
+    RuntimeInfo,
+    TAURI_RUNTIME_INFO,
+    TransferDirectoryEntry,
+} from '../api/hostBridge'
 
 @Injectable()
 export class TauriPlatformService extends PlatformService {
@@ -24,6 +31,7 @@ export class TauriPlatformService extends PlatformService {
     private clipboardText = ''
     private configRevision: string | null = null
     private configPath: string | null = null
+    private customNodePath: string | null = null
     private theme: PlatformTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
     private contextMenuElement: HTMLElement | null = null
     private contextMenuCleanup: (() => void) | null = null
@@ -193,7 +201,72 @@ export class TauriPlatformService extends PlatformService {
     }
 
     async getNodeToolchainStatus (customNodePath?: string): Promise<NodeToolchainStatus> {
-        return this.bridge.invoke('plugins.nodeStatus', { customNodePath: customNodePath ?? null })
+        const trimmedNodePath = customNodePath?.trim()
+        this.customNodePath = trimmedNodePath ? trimmedNodePath : null
+        const status = await this.bridge.invoke('plugins.nodeStatus', { customNodePath: this.customNodePath })
+        this.supportsPluginManagement = status.supported
+        return status
+    }
+
+    async installPlugin (name: string, version: string): Promise<void> {
+        const operationId = crypto.randomUUID()
+        const watcher = await this.watchPluginOperation(operationId)
+        try {
+            await this.bridge.invoke('plugins.install', {
+                operationId,
+                packageName: name,
+                version,
+                customNodePath: this.customNodePath,
+            })
+            this.requireSuccessfulPluginOperation(await watcher.result)
+        } finally {
+            watcher.dispose()
+        }
+    }
+
+    async uninstallPlugin (name: string): Promise<void> {
+        const operationId = crypto.randomUUID()
+        const watcher = await this.watchPluginOperation(operationId)
+        try {
+            await this.bridge.invoke('plugins.uninstall', {
+                operationId,
+                packageName: name,
+                customNodePath: this.customNodePath,
+            })
+            this.requireSuccessfulPluginOperation(await watcher.result)
+        } finally {
+            watcher.dispose()
+        }
+    }
+
+    async listInstalledPlugins (): Promise<PluginInfo[]> {
+        return this.bridge.invoke('plugins.listInstalled', {})
+    }
+
+    async cancelPluginOperation (id: string): Promise<void> {
+        await this.bridge.invoke('plugins.cancelOperation', { id })
+    }
+
+    private async watchPluginOperation (id: string): Promise<{
+        result: Promise<PluginOperation>
+        dispose: () => void
+    }> {
+        let resolveResult: (operation: PluginOperation) => void = () => undefined
+        const result = new Promise<PluginOperation>(resolve => {
+            resolveResult = resolve
+        })
+        const dispose = await this.bridge.listen('plugins.operation', operation => {
+            if (operation.id === id && operation.status !== 'running') {
+                resolveResult(operation)
+            }
+        })
+        return { result, dispose }
+    }
+
+    private requireSuccessfulPluginOperation (operation: PluginOperation): void {
+        if (operation.status !== 'succeeded') {
+            throw new Error(operation.message ?? `Plugin operation ${operation.status}`)
+        }
     }
 
     setErrorHandler (handler: (_: any) => void): void {
