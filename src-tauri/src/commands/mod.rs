@@ -12,6 +12,7 @@ pub mod sftp;
 pub mod shell;
 pub mod ssh;
 pub mod sudo;
+pub mod telnet;
 pub mod transfer;
 pub mod vault;
 pub mod windows;

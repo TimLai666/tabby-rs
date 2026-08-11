@@ -341,6 +341,57 @@ export interface SshSessionInfo {
     username: string
 }
 
+export interface TelnetConnectRequest {
+    profileId: string
+    connectionId?: string|null
+    host: string
+    port: number
+    terminalType: string
+    connectTimeoutMs: number
+    localEcho: boolean
+    keepalive?: TelnetKeepaliveOptions|null
+}
+
+export interface TelnetKeepaliveOptions {
+    intervalMs: number
+    maxCount: number
+}
+
+export interface TelnetSessionInfo {
+    id: string
+    profileId: string
+    host: string
+    port: number
+}
+
+export interface TelnetOutputEvent {
+    id: string
+    connectionId: string
+    profileId: string
+    data: number[]
+}
+
+export interface TelnetExitEvent {
+    id: string
+    connectionId: string
+    profileId: string
+    reason: string
+}
+
+export interface TelnetMessageEvent {
+    id: string
+    connectionId: string
+    profileId: string
+    message: string
+}
+
+export interface TelnetEchoEvent {
+    id: string
+    connectionId: string
+    profileId: string
+    forceEcho: boolean
+}
+
 export interface RemoteFileEntry {
     name: string
     fullPath: string
@@ -816,6 +867,22 @@ export interface HostRequestMap {
         request: { id: string }
         response: null
     }
+    'telnet.connect': {
+        request: TelnetConnectRequest
+        response: TelnetSessionInfo
+    }
+    'telnet.write': {
+        request: { id: string; data: number[] }
+        response: null
+    }
+    'telnet.resize': {
+        request: { id: string; columns: number; rows: number }
+        response: null
+    }
+    'telnet.close': {
+        request: { id: string }
+        response: null
+    }
 }
 
 export interface HostEventMap {
@@ -835,6 +902,10 @@ export interface HostEventMap {
     'ssh.output': SshOutputEvent
     'ssh.exit': SshExitEvent
     'ssh.forwardingChanged': SshForwardingInfo
+    'telnet.output': TelnetOutputEvent
+    'telnet.exit': TelnetExitEvent
+    'telnet.message': TelnetMessageEvent
+    'telnet.echo': TelnetEchoEvent
 }
 
 export abstract class HostBridge {

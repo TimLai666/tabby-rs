@@ -1,0 +1,25 @@
+ul.nav-tabs(ngbNav, #nav='ngbNav')
+    li(ngbNavItem)
+        a(ngbNavLink, translate) General
+        ng-template(ngbNavContent)
+            .mb-3
+                label(translate) Host
+                input.form-control(type='text', [(ngModel)]='profile.options.host')
+            .mb-3
+                label(translate) Port
+                input.form-control(type='number', [(ngModel)]='profile.options.port')
+            .mb-3
+                label(translate) Terminal type
+                input.form-control(type='text', [(ngModel)]='profile.options.terminalType')
+            .mb-3
+                label(translate) Encoding
+                input.form-control(type='text', [(ngModel)]='profile.options.encoding')
+            .mb-3
+                label(translate) Connect timeout (ms)
+                input.form-control(type='number', [(ngModel)]='profile.options.connectTimeoutMs')
+            stream-processing-settings([options]='profile.options')
+    li(ngbNavItem)
+        a(ngbNavLink, translate) Input
+        ng-template(ngbNavContent)
+            input-processing-settings([options]='profile.options.input')
+div([ngbNavOutlet]='nav')
