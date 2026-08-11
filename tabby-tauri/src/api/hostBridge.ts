@@ -341,6 +341,32 @@ export interface SshSessionInfo {
     username: string
 }
 
+export interface RemoteFileEntry {
+    name: string
+    fullPath: string
+    isDirectory: boolean
+    isSymlink: boolean
+    mode: number
+    size: number
+    modified: number | null
+    isOperable: boolean
+    unoperableReason: string | null
+}
+
+export interface SftpSessionInfo {
+    id: string
+    sshSessionId: string
+}
+
+export interface SftpTransferDescriptor {
+    id: string
+    direction: 'upload'|'download'
+    name: string
+    size: number | null
+    transferred: number
+    state: string
+}
+
 export interface SshHostKeyPrompt {
     requestId: string
     connectionId: string
@@ -729,6 +755,66 @@ export interface HostRequestMap {
     'ssh.forwardingList': {
         request: Record<string, never>
         response: SshForwardingInfo[]
+    }
+    'sftp.open': {
+        request: { id: string }
+        response: SftpSessionInfo
+    }
+    'sftp.list': {
+        request: { id: string; path: string }
+        response: RemoteFileEntry[]
+    }
+    'sftp.stat': {
+        request: { id: string; path: string; follow?: boolean }
+        response: RemoteFileEntry
+    }
+    'sftp.mkdir': {
+        request: { id: string; path: string }
+        response: null
+    }
+    'sftp.rename': {
+        request: { id: string; from: string; to: string }
+        response: null
+    }
+    'sftp.remove': {
+        request: { id: string; path: string; recursive?: boolean }
+        response: null
+    }
+    'sftp.uploadOpen': {
+        request: { id: string; path: string; size?: number | null; overwritePolicy?: 'skip'|'overwrite'|'rename' }
+        response: SftpTransferDescriptor
+    }
+    'sftp.upload': {
+        request: { id: string; path: string; size?: number | null; overwritePolicy?: 'skip'|'overwrite'|'rename' }
+        response: SftpTransferDescriptor
+    }
+    'sftp.downloadOpen': {
+        request: { id: string; path: string }
+        response: SftpTransferDescriptor
+    }
+    'sftp.download': {
+        request: { id: string; path: string }
+        response: SftpTransferDescriptor
+    }
+    'sftp.read': {
+        request: { id: string; transferId: string; maxBytes: number }
+        response: number[]
+    }
+    'sftp.write': {
+        request: { id: string; transferId: string; data: number[] }
+        response: SftpTransferDescriptor
+    }
+    'sftp.closeTransfer': {
+        request: { id: string; transferId: string }
+        response: SftpTransferDescriptor
+    }
+    'sftp.cancelTransfer': {
+        request: { id: string; transferId: string }
+        response: SftpTransferDescriptor
+    }
+    'sftp.close': {
+        request: { id: string }
+        response: null
     }
 }
 

@@ -10,12 +10,14 @@ import { TauriSshSession } from './session'
 
 @Component({
     selector: 'tauri-ssh-tab',
-    template: BaseTerminalTabComponent.template,
+    template: `${BaseTerminalTabComponent.template}<tauri-sftp-panel *ngIf="sftpPanelVisible" [session]="session" [(path)]="sftpPath" (close)="sftpPanelVisible = false"></tauri-sftp-panel>`,
     styles: BaseTerminalTabComponent.styles,
     animations: BaseTerminalTabComponent.animations,
 })
 export class TauriSshTabComponent extends ConnectableTerminalTabComponent<SSHProfile> {
     declare session: TauriSshSession|null
+    sftpPanelVisible = false
+    sftpPath = '/'
 
     constructor (
         injector: Injector,
@@ -44,6 +46,12 @@ export class TauriSshTabComponent extends ConnectableTerminalTabComponent<SSHPro
             this.write(`\r\nSSH connection failed: ${String(error)}\r\n`)
             await session.destroy()
         }
+    }
+
+    async openSFTP (): Promise<void> {
+        if (!this.session?.open) { return }
+        this.sftpPath = await this.session.getWorkingDirectory() ?? this.sftpPath
+        this.sftpPanelVisible = true
     }
 
     async getRecoveryToken (options?: GetRecoveryTokenOptions): Promise<RecoveryToken> {

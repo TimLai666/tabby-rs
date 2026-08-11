@@ -14,6 +14,7 @@ import {
     SshJumpRequest,
 } from '../api/hostBridge'
 import { TauriSshHostKeyPromptModalComponent } from './hostKeyPromptModal.component'
+import { TauriSftpSession } from './sftp'
 
 function base64Json (value: unknown): string {
     const bytes = new TextEncoder().encode(JSON.stringify(value))
@@ -33,6 +34,7 @@ export class TauriSshSession extends BaseSession {
     private unlisteners: (() => void)[] = []
     private readonly authPrompt = new Subject<SshAuthPrompt>()
     private forwardingIds: string[] = []
+    private sftp: TauriSftpSession|null = null
 
     get authPrompt$ (): Observable<SshAuthPrompt> {
         return this.authPrompt.asObservable()
@@ -148,6 +150,8 @@ export class TauriSshSession extends BaseSession {
         const id = this.id
         this.id = null
         if (id) {
+            await this.sftp?.close().catch(error => this.logger.debug('SFTP close failed after session end', error))
+            this.sftp = null
             await Promise.all(this.forwardingIds.splice(0).map(forwardingId => this.bridge.invoke('ssh.forwardingStop', {
                 id: forwardingId,
             }).catch(error => this.logger.debug('SSH forwarding close failed', error))))
@@ -172,6 +176,16 @@ export class TauriSshSession extends BaseSession {
 
     async getWorkingDirectory (): Promise<string|null> {
         return this.reportedCWD ?? null
+    }
+
+    async openSFTP (): Promise<TauriSftpSession> {
+        if (!this.id || !this.open) {
+            throw new Error('SSH session is not open')
+        }
+        if (!this.sftp) {
+            this.sftp = await TauriSftpSession.open(this.bridge, this.id)
+        }
+        return this.sftp
     }
 
     private async connectRequest (): Promise<SshConnectRequest> {

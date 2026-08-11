@@ -66,6 +66,8 @@ import { TauriSshProfileSettingsComponent } from './ssh/profileSettings.componen
 import { TauriSshProfilesService } from './ssh/profiles'
 import { TauriSshTabRecoveryProvider } from './ssh/recoveryProvider'
 import { TauriSshTabComponent } from './ssh/tab.component'
+import { TauriSftpPanelComponent } from './ssh/sftpPanel.component'
+import { TauriSftpContextMenu } from './sftpContextMenu'
 
 function initializeUac (service: TauriUACService): () => Promise<void> {
     return async () => {
@@ -90,6 +92,7 @@ function initializeDesktop (service: TauriDesktopIntegrationService): () => Prom
         TauriSshImportModalComponent,
         TauriSshProfileSettingsComponent,
         TauriSshTabComponent,
+        TauriSftpPanelComponent,
     ],
     providers: [
         TauriHostBridge,
@@ -107,6 +110,7 @@ function initializeDesktop (service: TauriDesktopIntegrationService): () => Prom
         { provide: HotkeyProvider, useClass: TauriHotkeyProvider, multi: true },
         { provide: TerminalDecorator, useClass: TauriPathDropDecorator, multi: true },
         { provide: TerminalContextMenuItemProvider, useClass: TauriExportTerminalContextMenu, multi: true },
+        { provide: TerminalContextMenuItemProvider, useClass: TauriSftpContextMenu, multi: true },
         { provide: FileProvider, useClass: TauriFileProvider, multi: true },
         TauriDesktopIntegrationService,
         { provide: LogService, useClass: TauriLogService },
