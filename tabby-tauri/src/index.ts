@@ -68,6 +68,12 @@ import { TauriSshTabRecoveryProvider } from './ssh/recoveryProvider'
 import { TauriSshTabComponent } from './ssh/tab.component'
 import { TauriSftpPanelComponent } from './ssh/sftpPanel.component'
 import { TauriSftpContextMenu } from './sftpContextMenu'
+import { TauriTelnetConfigProvider } from './telnet/config'
+import { TauriTelnetHotkeyProvider } from './telnet/hotkeys'
+import { TauriTelnetProfileSettingsComponent } from './telnet/profileSettings.component'
+import { TauriTelnetProfilesService } from './telnet/profiles'
+import { TauriTelnetTabRecoveryProvider } from './telnet/recoveryProvider'
+import { TauriTelnetTabComponent } from './telnet/tab.component'
 
 function initializeUac (service: TauriUACService): () => Promise<void> {
     return async () => {
@@ -93,6 +99,8 @@ function initializeDesktop (service: TauriDesktopIntegrationService): () => Prom
         TauriSshProfileSettingsComponent,
         TauriSshTabComponent,
         TauriSftpPanelComponent,
+        TauriTelnetProfileSettingsComponent,
+        TauriTelnetTabComponent,
     ],
     providers: [
         TauriHostBridge,
@@ -124,6 +132,11 @@ function initializeDesktop (service: TauriDesktopIntegrationService): () => Prom
         { provide: ProfileProvider, useExisting: TauriSshProfilesService, multi: true },
         TauriSshTabRecoveryProvider,
         { provide: TabRecoveryProvider, useExisting: TauriSshTabRecoveryProvider, multi: true },
+        TauriTelnetProfilesService,
+        { provide: ProfileProvider, useExisting: TauriTelnetProfilesService, multi: true },
+        TauriTelnetTabRecoveryProvider,
+        { provide: TabRecoveryProvider, useExisting: TauriTelnetTabRecoveryProvider, multi: true },
+        { provide: HotkeyProvider, useClass: TauriTelnetHotkeyProvider, multi: true },
         { provide: ShellProvider, useClass: TauriDetectedShellProvider, multi: true },
         TauriSpawnRequestService,
         { provide: PTYInterface, useClass: TauriPTYInterface },
@@ -142,6 +155,7 @@ function initializeDesktop (service: TauriDesktopIntegrationService): () => Prom
             multi: true,
         },
         { provide: ConfigProvider, useClass: TauriConfigProvider, multi: true },
+        { provide: ConfigProvider, useClass: TauriTelnetConfigProvider, multi: true },
         { provide: SettingsTabProvider, useClass: IdentitySettingsTabProvider, multi: true },
     ],
 })
@@ -165,3 +179,4 @@ export { TauriUACService }
 export { TauriVaultService }
 export { TauriPathDropDecorator }
 export { TauriSshProfilesService, TauriSshTabComponent }
+export { TauriTelnetProfilesService, TauriTelnetTabComponent }

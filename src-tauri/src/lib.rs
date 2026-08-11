@@ -11,6 +11,7 @@ mod ssh;
 mod state;
 mod storage;
 mod sudo;
+mod telnet;
 mod transfer;
 mod windows_integration;
 
@@ -48,6 +49,7 @@ use commands::{
         ssh_list_private_keys, ssh_resize, ssh_write,
     },
     sudo::sudo_respond,
+    telnet::{telnet_close, telnet_connect, telnet_resize, telnet_write},
     transfer::{
         terminal_export, transfer_cancel, transfer_close, transfer_create_directory,
         transfer_list_directory, transfer_open_download, transfer_open_upload, transfer_read,
@@ -70,6 +72,7 @@ use storage::{
     state_file::{load_state, save_state},
 };
 use tauri::{Emitter, Manager};
+use telnet::TelnetManager;
 
 fn initial_launch_context() -> LaunchContext {
     let cwd = std::env::current_dir()
@@ -199,6 +202,7 @@ pub fn run() {
             app.manage(Arc::new(SecretState::default()));
             app.manage(Arc::new(PtyManager::default()));
             app.manage(Arc::new(SshManager::new(known_hosts_path)));
+            app.manage(Arc::new(TelnetManager::default()));
             app.manage(Arc::new(
                 crate::transfer::manager::TransferManager::default(),
             ));
@@ -296,6 +300,10 @@ pub fn run() {
             ssh_forwarding_start,
             ssh_forwarding_stop,
             ssh_forwarding_list,
+            telnet_connect,
+            telnet_write,
+            telnet_resize,
+            telnet_close,
             sudo_respond,
             transfer_open_upload,
             transfer_open_download,
