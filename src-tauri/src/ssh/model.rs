@@ -261,6 +261,8 @@ pub enum SshError {
     Timeout,
     #[error("SSH internal operation failed")]
     Internal,
+    #[error("SFTP operation failed: {0}")]
+    Sftp(String),
 }
 
 impl SshError {
@@ -276,6 +278,7 @@ impl SshError {
             Self::Closed => "closed",
             Self::Timeout => "timeout",
             Self::Internal => "internal",
+            Self::Sftp(_) => "sftp",
         }
     }
 }

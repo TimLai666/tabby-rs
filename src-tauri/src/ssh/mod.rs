@@ -3,6 +3,7 @@ mod forwarding;
 mod import;
 mod known_hosts;
 pub mod model;
+pub mod sftp;
 
 use std::{
     collections::{BTreeMap, HashMap},
@@ -43,6 +44,7 @@ use crate::{
             SshForwardingRequest, SshForwardingStatus, SshForwardingType, SshJumpRequest,
             SshOutputEvent, SshResizeRequest, SshSessionIdRequest, SshSessionInfo, SshWriteRequest,
         },
+        sftp::{RemoteFileEntry, SftpOverwritePolicy, SftpTransferDescriptor},
     },
 };
 
@@ -92,6 +94,63 @@ enum SshControl {
         host: String,
         port: u16,
         sender: oneshot::Sender<Result<russh::Channel<client::Msg>, SshError>>,
+    },
+    OpenSftp {
+        sender: oneshot::Sender<Result<(), SshError>>,
+    },
+    CloseSftp {
+        sender: oneshot::Sender<Result<(), SshError>>,
+    },
+    SftpList {
+        path: String,
+        sender: oneshot::Sender<Result<Vec<RemoteFileEntry>, SshError>>,
+    },
+    SftpStat {
+        path: String,
+        follow: bool,
+        sender: oneshot::Sender<Result<RemoteFileEntry, SshError>>,
+    },
+    SftpMkdir {
+        path: String,
+        sender: oneshot::Sender<Result<(), SshError>>,
+    },
+    SftpRename {
+        from: String,
+        to: String,
+        sender: oneshot::Sender<Result<(), SshError>>,
+    },
+    SftpRemove {
+        path: String,
+        recursive: bool,
+        sender: oneshot::Sender<Result<(), SshError>>,
+    },
+    SftpOpenUpload {
+        path: String,
+        size: Option<u64>,
+        policy: SftpOverwritePolicy,
+        sender: oneshot::Sender<Result<SftpTransferDescriptor, SshError>>,
+    },
+    SftpOpenDownload {
+        path: String,
+        sender: oneshot::Sender<Result<SftpTransferDescriptor, SshError>>,
+    },
+    SftpRead {
+        id: String,
+        max_bytes: usize,
+        sender: oneshot::Sender<Result<(Vec<u8>, SftpTransferDescriptor), SshError>>,
+    },
+    SftpWrite {
+        id: String,
+        data: Vec<u8>,
+        sender: oneshot::Sender<Result<SftpTransferDescriptor, SshError>>,
+    },
+    SftpCloseTransfer {
+        id: String,
+        sender: oneshot::Sender<Result<SftpTransferDescriptor, SshError>>,
+    },
+    SftpCancelTransfer {
+        id: String,
+        sender: oneshot::Sender<Result<SftpTransferDescriptor, SshError>>,
     },
     StartRemoteForward {
         bind_host: String,
@@ -550,6 +609,7 @@ impl SshManager {
         let task_id_for_task = task_id.clone();
         tauri::async_runtime::spawn(async move {
             let _keep_jump_handles = &jump_handles;
+            let mut sftp = None;
             loop {
                 tokio::select! {
                     message = reader.wait() => {
@@ -569,6 +629,7 @@ impl SshManager {
                         if !handle_control(
                             &mut handle,
                             &writer,
+                            &mut sftp,
                             &task_connection_id,
                             &task_manager.remote_routes,
                             control_message,
@@ -577,6 +638,9 @@ impl SshManager {
                         }
                     }
                 }
+            }
+            if let Some(manager) = sftp {
+                manager.shutdown().await;
             }
             sessions
                 .lock()
@@ -676,6 +740,224 @@ impl SshManager {
             .map_err(|_| SshError::Closed)?;
         receiver.await.map_err(|_| SshError::Closed)??;
         Ok(())
+    }
+
+    pub async fn sftp_open(
+        &self,
+        request: SshSessionIdRequest,
+    ) -> Result<sftp::SftpSessionInfo, SshError> {
+        let session = self.session(&request.id)?;
+        let (sender, receiver) = oneshot::channel();
+        session
+            .control
+            .send(SshControl::OpenSftp { sender })
+            .await
+            .map_err(|_| SshError::Closed)?;
+        receiver.await.map_err(|_| SshError::Closed)??;
+        Ok(sftp::SftpSessionInfo {
+            id: request.id.clone(),
+            ssh_session_id: request.id,
+        })
+    }
+
+    pub async fn sftp_close(&self, request: SshSessionIdRequest) -> Result<(), SshError> {
+        let session = self.session(&request.id)?;
+        let (sender, receiver) = oneshot::channel();
+        session
+            .control
+            .send(SshControl::CloseSftp { sender })
+            .await
+            .map_err(|_| SshError::Closed)?;
+        receiver.await.map_err(|_| SshError::Closed)??;
+        Ok(())
+    }
+
+    pub async fn sftp_list(
+        &self,
+        request: sftp::SftpPathRequest,
+    ) -> Result<Vec<RemoteFileEntry>, SshError> {
+        let session = self.session(&request.id)?;
+        let (sender, receiver) = oneshot::channel();
+        session
+            .control
+            .send(SshControl::SftpList {
+                path: request.path,
+                sender,
+            })
+            .await
+            .map_err(|_| SshError::Closed)?;
+        Ok(receiver.await.map_err(|_| SshError::Closed)??)
+    }
+
+    pub async fn sftp_stat(
+        &self,
+        request: sftp::SftpStatRequest,
+    ) -> Result<RemoteFileEntry, SshError> {
+        let session = self.session(&request.id)?;
+        let (sender, receiver) = oneshot::channel();
+        session
+            .control
+            .send(SshControl::SftpStat {
+                path: request.path,
+                follow: request.follow,
+                sender,
+            })
+            .await
+            .map_err(|_| SshError::Closed)?;
+        Ok(receiver.await.map_err(|_| SshError::Closed)??)
+    }
+
+    pub async fn sftp_mkdir(&self, request: sftp::SftpPathRequest) -> Result<(), SshError> {
+        let session = self.session(&request.id)?;
+        let (sender, receiver) = oneshot::channel();
+        session
+            .control
+            .send(SshControl::SftpMkdir {
+                path: request.path,
+                sender,
+            })
+            .await
+            .map_err(|_| SshError::Closed)?;
+        receiver.await.map_err(|_| SshError::Closed)??;
+        Ok(())
+    }
+
+    pub async fn sftp_rename(&self, request: sftp::SftpRenameRequest) -> Result<(), SshError> {
+        let session = self.session(&request.id)?;
+        let (sender, receiver) = oneshot::channel();
+        session
+            .control
+            .send(SshControl::SftpRename {
+                from: request.from,
+                to: request.to,
+                sender,
+            })
+            .await
+            .map_err(|_| SshError::Closed)?;
+        receiver.await.map_err(|_| SshError::Closed)??;
+        Ok(())
+    }
+
+    pub async fn sftp_remove(&self, request: sftp::SftpRemoveRequest) -> Result<(), SshError> {
+        let session = self.session(&request.id)?;
+        let (sender, receiver) = oneshot::channel();
+        session
+            .control
+            .send(SshControl::SftpRemove {
+                path: request.path,
+                recursive: request.recursive,
+                sender,
+            })
+            .await
+            .map_err(|_| SshError::Closed)?;
+        receiver.await.map_err(|_| SshError::Closed)??;
+        Ok(())
+    }
+
+    pub async fn sftp_open_upload(
+        &self,
+        request: sftp::SftpUploadOpenRequest,
+    ) -> Result<SftpTransferDescriptor, SshError> {
+        let session = self.session(&request.id)?;
+        let (sender, receiver) = oneshot::channel();
+        session
+            .control
+            .send(SshControl::SftpOpenUpload {
+                path: request.path,
+                size: request.size,
+                policy: request.overwrite_policy,
+                sender,
+            })
+            .await
+            .map_err(|_| SshError::Closed)?;
+        Ok(receiver.await.map_err(|_| SshError::Closed)??)
+    }
+
+    pub async fn sftp_open_download(
+        &self,
+        request: sftp::SftpDownloadOpenRequest,
+    ) -> Result<SftpTransferDescriptor, SshError> {
+        let session = self.session(&request.id)?;
+        let (sender, receiver) = oneshot::channel();
+        session
+            .control
+            .send(SshControl::SftpOpenDownload {
+                path: request.path,
+                sender,
+            })
+            .await
+            .map_err(|_| SshError::Closed)?;
+        Ok(receiver.await.map_err(|_| SshError::Closed)??)
+    }
+
+    pub async fn sftp_read(
+        &self,
+        request: sftp::SftpReadRequest,
+    ) -> Result<(Vec<u8>, SftpTransferDescriptor), SshError> {
+        let session = self.session(&request.id)?;
+        let (sender, receiver) = oneshot::channel();
+        session
+            .control
+            .send(SshControl::SftpRead {
+                id: request.transfer_id,
+                max_bytes: request.max_bytes,
+                sender,
+            })
+            .await
+            .map_err(|_| SshError::Closed)?;
+        Ok(receiver.await.map_err(|_| SshError::Closed)??)
+    }
+
+    pub async fn sftp_write(
+        &self,
+        request: sftp::SftpWriteRequest,
+    ) -> Result<SftpTransferDescriptor, SshError> {
+        let session = self.session(&request.id)?;
+        let (sender, receiver) = oneshot::channel();
+        session
+            .control
+            .send(SshControl::SftpWrite {
+                id: request.transfer_id,
+                data: request.data,
+                sender,
+            })
+            .await
+            .map_err(|_| SshError::Closed)?;
+        Ok(receiver.await.map_err(|_| SshError::Closed)??)
+    }
+
+    pub async fn sftp_close_transfer(
+        &self,
+        request: sftp::SftpTransferIdRequest,
+    ) -> Result<SftpTransferDescriptor, SshError> {
+        let session = self.session(&request.id)?;
+        let (sender, receiver) = oneshot::channel();
+        session
+            .control
+            .send(SshControl::SftpCloseTransfer {
+                id: request.transfer_id,
+                sender,
+            })
+            .await
+            .map_err(|_| SshError::Closed)?;
+        Ok(receiver.await.map_err(|_| SshError::Closed)??)
+    }
+
+    pub async fn sftp_cancel_transfer(
+        &self,
+        request: sftp::SftpTransferIdRequest,
+    ) -> Result<SftpTransferDescriptor, SshError> {
+        let session = self.session(&request.id)?;
+        let (sender, receiver) = oneshot::channel();
+        session
+            .control
+            .send(SshControl::SftpCancelTransfer {
+                id: request.transfer_id,
+                sender,
+            })
+            .await
+            .map_err(|_| SshError::Closed)?;
+        Ok(receiver.await.map_err(|_| SshError::Closed)??)
     }
 
     pub async fn close(&self, request: SshSessionIdRequest) -> Result<(), SshError> {
@@ -1193,6 +1475,7 @@ impl SshManager {
 async fn handle_control(
     handle: &mut client::Handle<SshHandler>,
     writer: &russh::ChannelWriteHalf<client::Msg>,
+    sftp: &mut Option<sftp::SftpManager>,
     connection_id: &str,
     remote_routes: &Arc<Mutex<HashMap<(String, String, u32), RemoteForwardRoute>>>,
     control: SshControl,
@@ -1227,6 +1510,145 @@ async fn handle_control(
                 .channel_open_direct_tcpip(host, u32::from(port), "127.0.0.1", 0)
                 .await
                 .map_err(|_| SshError::ChannelOpen);
+            let _ = sender.send(result);
+            true
+        }
+        SshControl::OpenSftp { sender } => {
+            let result = async {
+                if sftp.is_some() {
+                    return Ok(());
+                }
+                let channel = handle
+                    .channel_open_session()
+                    .await
+                    .map_err(|_| SshError::ChannelOpen)?;
+                channel
+                    .request_subsystem(true, "sftp")
+                    .await
+                    .map_err(|_| SshError::ChannelOpen)?;
+                let session = russh_sftp::client::SftpSession::new(channel.into_stream())
+                    .await
+                    .map_err(|error| SshError::Sftp(error.to_string()))?;
+                *sftp = Some(sftp::SftpManager::new(session));
+                Ok(())
+            }
+            .await;
+            let _ = sender.send(result);
+            true
+        }
+        SshControl::CloseSftp { sender } => {
+            let result = async {
+                if let Some(manager) = sftp.take() {
+                    manager.shutdown().await;
+                }
+                Ok(())
+            }
+            .await;
+            let _ = sender.send(result);
+            true
+        }
+        SshControl::SftpList { path, sender } => {
+            let result = match sftp.as_ref() {
+                Some(manager) => manager.list(&path).await,
+                None => Err(SshError::InvalidRequest("SFTP is not open".into())),
+            };
+            let _ = sender.send(result);
+            true
+        }
+        SshControl::SftpStat {
+            path,
+            follow,
+            sender,
+        } => {
+            let result = match sftp.as_ref() {
+                Some(manager) => manager.stat(&path, follow).await,
+                None => Err(SshError::InvalidRequest("SFTP is not open".into())),
+            };
+            let _ = sender.send(result);
+            true
+        }
+        SshControl::SftpMkdir { path, sender } => {
+            let result = match sftp.as_ref() {
+                Some(manager) => manager.mkdir(&path).await,
+                None => Err(SshError::InvalidRequest("SFTP is not open".into())),
+            };
+            let _ = sender.send(result);
+            true
+        }
+        SshControl::SftpRename { from, to, sender } => {
+            let result = match sftp.as_ref() {
+                Some(manager) => manager.rename(&from, &to).await,
+                None => Err(SshError::InvalidRequest("SFTP is not open".into())),
+            };
+            let _ = sender.send(result);
+            true
+        }
+        SshControl::SftpRemove {
+            path,
+            recursive,
+            sender,
+        } => {
+            let result = match sftp.as_ref() {
+                Some(manager) => manager.remove(&path, recursive).await,
+                None => Err(SshError::InvalidRequest("SFTP is not open".into())),
+            };
+            let _ = sender.send(result);
+            true
+        }
+        SshControl::SftpOpenUpload {
+            path,
+            size,
+            policy,
+            sender,
+        } => {
+            let result = match sftp.as_mut() {
+                Some(manager) => manager.open_upload(&path, size, policy).await,
+                None => Err(SshError::InvalidRequest("SFTP is not open".into())),
+            };
+            let _ = sender.send(result);
+            true
+        }
+        SshControl::SftpOpenDownload { path, sender } => {
+            let result = match sftp.as_mut() {
+                Some(manager) => manager.open_download(&path).await,
+                None => Err(SshError::InvalidRequest("SFTP is not open".into())),
+            };
+            let _ = sender.send(result);
+            true
+        }
+        SshControl::SftpRead {
+            id,
+            max_bytes,
+            sender,
+        } => {
+            let result = match sftp.as_mut() {
+                Some(manager) => manager.read(&id, max_bytes).await,
+                None => Err(SshError::InvalidRequest("SFTP is not open".into())),
+            };
+            let _ = sender.send(result);
+            true
+        }
+        SshControl::SftpWrite { id, data, sender } => {
+            let result = match sftp.as_mut() {
+                Some(manager) => manager.write(&id, &data).await,
+                None => Err(SshError::InvalidRequest("SFTP is not open".into())),
+            };
+            let _ = sender.send(result);
+            true
+        }
+        SshControl::SftpCloseTransfer { id, sender } => {
+            let result = match sftp.as_mut() {
+                Some(manager) => manager.close(&id).await,
+                None => Err(SshError::InvalidRequest("SFTP is not open".into())),
+            };
+            let _ = sender.send(result);
+            true
+        }
+        SshControl::SftpCancelTransfer { id, sender } => {
+            let result = match sftp.as_mut() {
+                Some(manager) => manager.cancel(&id).await,
+                None => Err(SshError::InvalidRequest("SFTP is not open".into())),
+            };
             let _ = sender.send(result);
             true
         }
@@ -1282,6 +1704,9 @@ async fn handle_control(
             true
         }
         SshControl::Close(sender) => {
+            if let Some(manager) = sftp.take() {
+                manager.shutdown().await;
+            }
             let result = match writer.close().await {
                 Ok(()) => handle
                     .disconnect(Disconnect::ByApplication, "closed by user", "")
@@ -1688,6 +2113,7 @@ impl From<SshError> for crate::error::AppError {
                 Self::Io(error.to_string())
             }
             SshError::Internal => Self::Io("SSH operation failed".into()),
+            SshError::Sftp(message) => Self::Io(message),
         }
     }
 }
