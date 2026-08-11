@@ -453,6 +453,13 @@ export interface SerialSignalState {
     dataSetReady: boolean
 }
 
+export interface InstalledFont {
+    family: string
+    fullName?: string|null
+    monospace: boolean|null
+    styles: string[]
+}
+
 export interface RemoteFileEntry {
     name: string
     fullPath: string
@@ -967,6 +974,14 @@ export interface HostRequestMap {
     'serial.close': {
         request: { id: string }
         response: null
+    }
+    'font.list': {
+        request: Record<string, never>
+        response: InstalledFont[]
+    }
+    'font.refresh': {
+        request: Record<string, never>
+        response: InstalledFont[]
     }
 }
 

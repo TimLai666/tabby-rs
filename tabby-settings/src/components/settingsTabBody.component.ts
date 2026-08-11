@@ -4,7 +4,7 @@ import { SettingsTabProvider } from '../api'
 /** @hidden */
 @Component({
     selector: 'settings-tab-body',
-    template: '<ng-template #placeholder></ng-template>',
+    template: '<ng-template #placeholder></ng-template><div class="alert alert-danger" *ngIf="errorMessage">Unable to load this settings page: {{errorMessage}}</div>',
     styles: [`
         :host {
             display: block;
@@ -17,17 +17,22 @@ export class SettingsTabBodyComponent {
     @Input() provider: SettingsTabProvider
     @ViewChild('placeholder', { read: ViewContainerRef }) placeholder: ViewContainerRef
     component: ComponentRef<unknown>
+    errorMessage: string|null = null
 
     constructor (private componentFactoryResolver: ComponentFactoryResolver) { }
 
     ngAfterViewInit (): void {
         // run after the change detection finishes
         setImmediate(() => {
-            this.component = this.placeholder.createComponent(
-                this.componentFactoryResolver.resolveComponentFactory(
-                    this.provider.getComponentType(),
-                ),
-            )
+            try {
+                this.component = this.placeholder.createComponent(
+                    this.componentFactoryResolver.resolveComponentFactory(
+                        this.provider.getComponentType(),
+                    ),
+                )
+            } catch (error) {
+                this.errorMessage = error instanceof Error ? error.message : String(error)
+            }
         })
     }
 }

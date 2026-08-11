@@ -33,6 +33,8 @@ export class SettingsTabComponent extends BaseTabComponent {
     Platform = Platform
     configDefaults: any
     configFile: string
+    configFileValid = true
+    configFileError: string|null = null
     isShellIntegrationInstalled = false
     checkingForUpdate = false
     updateAvailable = false
@@ -63,6 +65,7 @@ export class SettingsTabComponent extends BaseTabComponent {
 
         const onConfigChange = () => {
             this.configFile = config.readRaw()
+            this.validateConfigFile()
             this.padWindowControls = hostApp.platform === Platform.macOS
                 && config.store.appearance.tabsLocation !== 'top'
         }
@@ -100,9 +103,15 @@ export class SettingsTabComponent extends BaseTabComponent {
         }
     }
 
-    saveConfigFile () {
-        if (this.isConfigFileValid()) {
-            this.config.writeRaw(this.configFile)
+    async saveConfigFile () {
+        this.validateConfigFile()
+        if (this.configFileValid) {
+            try {
+                await this.config.writeRaw(this.configFile)
+            } catch (error) {
+                this.configFileValid = false
+                this.configFileError = error instanceof Error ? error.message : String(error)
+            }
         }
     }
 
@@ -110,12 +119,17 @@ export class SettingsTabComponent extends BaseTabComponent {
         this.platform.showItemInFolder(this.platform.getConfigPath()!)
     }
 
-    isConfigFileValid () {
+    validateConfigFile () {
         try {
-            yaml.load(this.configFile)
-            return true
-        } catch {
-            return false
+            const parsed = yaml.load(this.configFile)
+            if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+                throw new Error('Config must contain a YAML mapping at the document root')
+            }
+            this.configFileValid = true
+            this.configFileError = null
+        } catch (error) {
+            this.configFileValid = false
+            this.configFileError = error instanceof Error ? error.message : String(error)
         }
     }
 

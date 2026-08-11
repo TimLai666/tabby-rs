@@ -1,6 +1,7 @@
 mod commands;
 mod desktop;
 mod error;
+mod font;
 mod identity;
 mod launch;
 mod platform;
@@ -29,6 +30,7 @@ use commands::{
         window_get_state, window_list_screens, window_minimize, window_open_devtools,
         window_reload, window_set_docking, window_toggle_maximize, window_toggle_quake,
     },
+    font::{font_list, font_refresh},
     identity::{identity_alias_status, identity_get, identity_set_alias},
     keychain::{keychain_delete, keychain_get, keychain_put},
     launch::app_initial_launch,
@@ -250,6 +252,8 @@ pub fn run() {
             config_write,
             desktop_open_external,
             desktop_open_path,
+            font_list,
+            font_refresh,
             desktop_read_file,
             desktop_reveal_path,
             dialog_open,

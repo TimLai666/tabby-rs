@@ -181,7 +181,13 @@ export class TauriPlatformService extends PlatformService {
     }
 
     async listFonts (): Promise<string[]> {
-        return []
+        try {
+            const fonts = await this.bridge.invoke('font.list', {})
+            return fonts.map(font => font.family)
+        } catch (error) {
+            console.warn('Could not enumerate installed fonts', error)
+            return []
+        }
     }
 
     setErrorHandler (handler: (_: any) => void): void {
