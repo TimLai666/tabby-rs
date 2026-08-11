@@ -251,10 +251,25 @@ fn sanitize_version_output(output: &[u8]) -> Option<String> {
         return None;
     }
     let version = String::from_utf8(output.to_vec()).ok()?.trim().to_owned();
-    if version.is_empty() || version.lines().count() != 1 {
+    if version.is_empty() || version.lines().count() != 1 || !is_version_like(&version) {
         return None;
     }
     Some(version)
+}
+
+fn is_version_like(version: &str) -> bool {
+    let version = version.strip_prefix('v').unwrap_or(version);
+    let core = version
+        .split(|character| character == '-' || character == '+')
+        .next();
+    let Some(core) = core else {
+        return false;
+    };
+    let components = core.split('.').collect::<Vec<_>>();
+    components.len() == 3
+        && components
+            .iter()
+            .all(|component| !component.is_empty() && component.chars().all(|c| c.is_ascii_digit()))
 }
 
 fn node_command_names() -> Vec<&'static str> {
@@ -318,7 +333,24 @@ fn first_executable(directory: &Path, names: &[&str]) -> Option<PathBuf> {
 }
 
 fn is_executable_file(path: &Path) -> bool {
-    path.is_file()
+    if !path.is_file() {
+        return false;
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        return path
+            .metadata()
+            .map(|metadata| metadata.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false);
+    }
+
+    #[cfg(not(unix))]
+    {
+        true
+    }
 }
 
 #[cfg(test)]
@@ -367,7 +399,23 @@ mod tests {
             Some("v22.1.0".into())
         );
         assert_eq!(sanitize_version_output(b"v22.1.0\nextra"), None);
+        assert_eq!(sanitize_version_output(b"ok"), None);
         assert_eq!(sanitize_version_output(&vec![b'x'; 4097]), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn skips_non_executable_path_entries() {
+        use std::{fs, os::unix::fs::PermissionsExt};
+
+        let directory = tempfile::tempdir().unwrap();
+        let candidate = directory.path().join("node");
+        fs::write(&candidate, "not executable").unwrap();
+        let mut permissions = fs::metadata(&candidate).unwrap().permissions();
+        permissions.set_mode(0o644);
+        fs::set_permissions(&candidate, permissions).unwrap();
+
+        assert!(super::first_executable(directory.path(), &["node"]).is_none());
     }
 
     #[test]

@@ -9,7 +9,7 @@ import { PluginManagerService } from '../services/pluginManager.service'
 
 enum BusyState { Installing = 'Installing', Uninstalling = 'Uninstalling' }
 
-const FORCE_ENABLE = ['tabby-core', 'tabby-settings', 'tabby-electron', 'tabby-web', 'tabby-plugin-manager']
+const FORCE_ENABLE = ['tabby-core', 'tabby-settings', 'tabby-electron', 'tabby-web', 'tabby-plugin-manager', 'tabby-tauri']
 
 _('Search plugins')
 
