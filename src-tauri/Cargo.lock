@@ -5337,6 +5337,7 @@ dependencies = [
  "thiserror 2.0.19",
  "tokio",
  "url",
+ "windows-sys 0.59.0",
  "zeroize",
 ]
 
