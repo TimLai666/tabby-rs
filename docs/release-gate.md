@@ -2,11 +2,12 @@
 
 `parity/features.yaml` and `parity/platform-matrix.yaml` are acceptance contracts, not status claims. Every entry needs evidence before it can change from `pending` to `passed` or a documented `accepted-difference`.
 
-The gate also requires a passed bundle audit and a generated license report. Run:
+The gate also requires a passed bundle audit, installer smoke report, and generated license report. Run:
 
 ```text
 node scripts/create-license-report.mjs
-node scripts/check-release-gate.mjs --benchmarks-dir path/to/benchmarks --bundle-audit path/to/bundle-audit.json --license-report license-report.json --source-revision "$GITHUB_SHA" --platform linux --arch x86_64 --target x86_64-unknown-linux-gnu
+node scripts/smoke-tauri-release.mjs --staging release-staging --platform linux --output release-staging/installer-smoke.json
+node scripts/check-release-gate.mjs --benchmarks-dir path/to/benchmarks --bundle-audit path/to/bundle-audit.json --license-report license-report.json --installer-smoke release-staging/installer-smoke.json --source-revision "$GITHUB_SHA" --platform linux --arch x86_64 --target x86_64-unknown-linux-gnu
 ```
 
 The command always writes a machine-readable report. It exits non-zero when any feature, platform, bundle, license, benchmark, or provenance evidence is missing or failed. It checks that benchmark reports, bundle metadata, and the license report refer to the same source revision and matrix target, and that all benchmark reports refer to the same fixture and artifact hash. It does not invent benchmark numbers or convert an unrun manual check into a pass.

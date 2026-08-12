@@ -127,6 +127,7 @@
     "test:tauri:update-manifest": "node scripts/test-tauri-update-manifest.mjs",
     "test:tauri:bundle": "node scripts/test-tauri-bundle-audit.mjs && node scripts/check-tauri-bundle.mjs",
     "generate:third-party-notices": "node scripts/generate-third-party-notices.mjs",
+    "test:license-report": "node scripts/test-license-report.mjs",
     "watch": "cross-env TABBY_DEV=1 webpack --progress --color --watch",
     "start": "cross-env TABBY_DEV=1 electron app -d --inspect",
     "start:electron": "npm run start",
