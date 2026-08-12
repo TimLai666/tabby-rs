@@ -102,6 +102,7 @@
     "build:tauri:frontend": "webpack --config app/webpack.config.tauri.mjs --progress --color",
     "audit:web": "node scripts/ci/assert-web-output.mjs",
     "test:web-output-audit": "node scripts/test-web-output-audit.mjs",
+    "test:web-host-app": "node scripts/test-web-host-app-contract.mjs",
     "test:release-documentation": "node scripts/test-release-documentation.mjs",
     "test:tabby-rs-branding": "node scripts/test-tabby-rs-branding.mjs",
     "test:parity-report": "node scripts/test-parity-report.mjs",
