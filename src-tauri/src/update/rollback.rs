@@ -160,7 +160,8 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{
-        recover_pending_update, recover_pending_update_from_disk, write_pending_update_journal,
+        clear_pending_update_journal, recover_pending_update, recover_pending_update_from_disk,
+        write_pending_update_journal,
     };
     use crate::storage::{
         atomic_file::atomic_write,
@@ -395,5 +396,30 @@ mod tests {
         let recovered = recover_pending_update_from_disk(&paths, "1.0.231-tabbyrs.2").unwrap();
         assert!(recovered.pending_update.is_none());
         assert!(!paths.pending_update_file().exists());
+    }
+
+    #[test]
+    fn malformed_journal_is_preserved_for_diagnosis() {
+        let temp = tempdir().unwrap();
+        let paths = StoragePaths::from_data_dir(temp.path().join("data"));
+        paths.ensure_layout().unwrap();
+        atomic_write(paths.pending_update_file(), b"{broken").unwrap();
+
+        assert!(recover_pending_update_from_disk(&paths, "1.0.231-tabbyrs.2").is_err());
+        assert!(paths.pending_update_file().exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn refuses_to_remove_a_journal_symlink() {
+        let temp = tempdir().unwrap();
+        let paths = StoragePaths::from_data_dir(temp.path().join("data"));
+        paths.ensure_layout().unwrap();
+        let outside = temp.path().join("outside");
+        std::fs::write(&outside, b"keep").unwrap();
+        std::os::unix::fs::symlink(&outside, paths.pending_update_file()).unwrap();
+
+        assert!(clear_pending_update_journal(&paths).is_err());
+        assert_eq!(std::fs::read(&outside).unwrap(), b"keep");
     }
 }
