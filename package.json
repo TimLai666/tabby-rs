@@ -107,6 +107,7 @@
     "build:typings": "node scripts/build-typings.mjs",
     "test:tauri": "npm run build:tauri:frontend && cargo test --manifest-path src-tauri/Cargo.toml",
     "test:plugin-runtime": "node scripts/test-plugin-runtime.mjs",
+    "test:tauri:bundle": "node scripts/check-tauri-bundle.mjs",
     "watch": "cross-env TABBY_DEV=1 webpack --progress --color --watch",
     "start": "cross-env TABBY_DEV=1 electron app -d --inspect",
     "start:electron": "npm run start",

@@ -7,6 +7,7 @@ import ts from 'typescript'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const sourcePath = path.join(root, 'app/src/plugin-runtime/runtime.ts')
+const fixturesRoot = path.join(root, 'test/fixtures/plugin-runtime')
 const source = fs.readFileSync(sourcePath, 'utf8')
 const compiled = ts.transpileModule(source, {
     compilerOptions: {
@@ -31,7 +32,10 @@ const {
 
 const registry = new PluginModuleRegistry()
 const core = { marker: 'singleton' }
+const angular = { marker: 'angular-singleton' }
 registry.register('tabby-core', core)
+registry.register('terminus-core', core)
+registry.register('@angular/core', angular)
 assert.equal(registry.require('tabby-core'), core)
 assert.throws(() => registry.register('tabby-core', {}), DuplicatePluginModuleError)
 assert.throws(() => registry.require('electron'), NodeRuntimeRequiredError)
@@ -48,31 +52,65 @@ const evaluated = evaluateCommonJs(
 )
 assert.equal(evaluated.default.forRoot().marker, 'singleton')
 
+function fixtureDescriptor (directory) {
+    const fixturePath = path.join(fixturesRoot, directory)
+    const manifest = JSON.parse(fs.readFileSync(path.join(fixturePath, 'package.json'), 'utf8'))
+    const packageName = manifest.name
+    return {
+        name: packageName.replace(/^(?:tabby|terminus)-/, ''),
+        packageName,
+        version: manifest.version,
+        path: fixturePath,
+        entry: path.join(fixturePath, manifest.main),
+        isBuiltin: false,
+        isLegacy: packageName.startsWith('terminus-'),
+        manifest,
+    }
+}
+
+const fixtureDirectories = [
+    'tabby-fixture-electron',
+    'tabby-fixture-for-root',
+    'tabby-fixture-missing-module',
+    'tabby-fixture-native',
+    'tabby-fixture-pure',
+    'terminus-fixture-legacy',
+]
+const fixtureDescriptors = fixtureDirectories.map(fixtureDescriptor)
+const fixtureByPackageName = new Map(fixtureDescriptors.map(plugin => [plugin.packageName, plugin]))
 const result = await loadPluginModules({
     async discover () {
-        return [
-            {
-                name: 'good', packageName: 'tabby-good', version: '1.0.0', path: '/plugins/tabby-good', entry: '/plugins/tabby-good/dist/index.js', isBuiltin: false, isLegacy: false, manifest: {},
-            },
-            {
-                name: 'node-dependent', packageName: 'tabby-node-dependent', version: '1.0.0', path: '/plugins/tabby-node-dependent', entry: '/plugins/tabby-node-dependent/dist/index.js', isBuiltin: false, isLegacy: false, manifest: {},
-            },
-        ]
+        return fixtureDescriptors
     },
     async readEntry (packageName) {
+        const plugin = fixtureByPackageName.get(packageName)
+        assert.ok(plugin, `unknown fixture package: ${packageName}`)
         return {
             packageName,
-            entry: `/plugins/${packageName}/dist/index.js`,
-            code: packageName === 'tabby-good'
-                ? "module.exports = { default: { forRoot: () => ({}) } }"
-                : "require('electron'); module.exports = { default: {} }",
+            entry: plugin.entry,
+            code: fs.readFileSync(plugin.entry, 'utf8'),
         }
     },
 }, registry)
-assert.equal(result.modules.length, 1)
-assert.equal(result.modules[0].pluginName, 'good')
-assert.equal(result.failures.length, 1)
-assert.equal(result.failures[0].code, 'node-runtime-required')
+assert.equal(result.modules.length, 3)
+assert.deepEqual(result.modules.map(module => module.pluginName), [
+    'fixture-for-root',
+    'fixture-pure',
+    'fixture-legacy',
+])
+const pureModule = result.modules.find(module => module.pluginName === 'fixture-pure')
+assert.equal(pureModule.core, core)
+assert.equal(pureModule.angular, angular)
+const forRootModule = result.modules.find(module => module.pluginName === 'fixture-for-root')
+assert.equal(forRootModule.fixture, 'for-root')
+const legacyModule = result.modules.find(module => module.pluginName === 'fixture-legacy')
+assert.equal(legacyModule.fixture, 'legacy')
+assert.equal(legacyModule.core, core)
+assert.deepEqual(result.failures.map(failure => [failure.plugin.name, failure.code]).sort(), [
+    ['fixture-missing-module', 'missing-module'],
+    ['fixture-electron', 'node-runtime-required'],
+    ['fixture-native', 'node-runtime-required'],
+].sort())
 
 const discoveryFailure = await loadPluginModules({
     async discover () {
