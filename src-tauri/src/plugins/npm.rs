@@ -434,11 +434,12 @@ async fn run_npm(
         .map_err(|error| AppError::Io(format!("could not start npm: {error}")))?;
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
+    let secret_values = sensitive_environment_values();
     let process = async {
         timeout(NPM_OPERATION_TIMEOUT, async {
             tokio::join!(
-                read_limited(stdout, "stdout", progress.clone()),
-                read_limited(stderr, "stderr", progress),
+                read_limited(stdout, "stdout", progress.clone(), &secret_values),
+                read_limited(stderr, "stderr", progress, &secret_values),
                 child.wait()
             )
         })
@@ -489,6 +490,7 @@ async fn read_limited<R>(
     reader: Option<R>,
     stream: &str,
     progress: Arc<dyn Fn(String) + Send + Sync>,
+    secret_values: &[String],
 ) -> std::io::Result<Vec<u8>>
 where
     R: AsyncRead + Unpin,
@@ -497,6 +499,7 @@ where
         return Ok(Vec::new());
     };
     let mut output = Vec::new();
+    let mut pending_progress = Vec::new();
     let mut buffer = [0u8; 8192];
     loop {
         let count = reader.read(&mut buffer).await?;
@@ -506,20 +509,59 @@ where
         if output.len() < MAX_NPM_OUTPUT {
             let keep = (MAX_NPM_OUTPUT - output.len()).min(count);
             output.extend_from_slice(&buffer[..keep]);
-            let message = redact_output(&buffer[..keep]);
-            if !message.is_empty() {
-                progress(format!("{stream}: {message}"));
+            pending_progress.extend_from_slice(&buffer[..keep]);
+            while let Some(index) = pending_progress.iter().position(|byte| *byte == b'\n') {
+                let line = pending_progress.drain(..=index).collect::<Vec<_>>();
+                let message = redact_output(&line, secret_values);
+                if !message.is_empty() {
+                    progress(format!("{stream}: {message}"));
+                }
             }
+            if pending_progress.len() > MAX_MESSAGE_CHARS * 4 {
+                pending_progress.clear();
+                progress(format!("{stream}: [output truncated]"));
+            }
+        }
+    }
+    if !pending_progress.is_empty() {
+        let message = redact_output(&pending_progress, secret_values);
+        if !message.is_empty() {
+            progress(format!("{stream}: {message}"));
         }
     }
     Ok(output)
 }
 
-fn redact_output(bytes: &[u8]) -> String {
-    const MAX_MESSAGE_CHARS: usize = 4096;
+const MAX_MESSAGE_CHARS: usize = 4096;
 
-    let text = String::from_utf8_lossy(bytes);
-    let mut redacted = text
+fn sensitive_environment_values() -> Vec<String> {
+    env::vars()
+        .filter_map(|(key, value)| {
+            let key = key.to_ascii_lowercase();
+            let sensitive = [
+                "token",
+                "secret",
+                "password",
+                "passwd",
+                "authorization",
+                "credential",
+                "private_key",
+                "access_key",
+                "api_key",
+            ]
+            .iter()
+            .any(|part| key.contains(part));
+            sensitive.then_some(value).filter(|value| !value.is_empty())
+        })
+        .collect()
+}
+
+fn redact_output(bytes: &[u8], secret_values: &[String]) -> String {
+    let mut redacted = String::from_utf8_lossy(bytes).into_owned();
+    for secret in secret_values.iter().filter(|value| !value.is_empty()) {
+        redacted = redacted.replace(secret, "[redacted]");
+    }
+    redacted = redacted
         .lines()
         .map(|line| {
             let lower = line.to_ascii_lowercase();
@@ -547,10 +589,14 @@ fn redact_output(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::sync::{Arc, Mutex};
+
+    use tokio::io::AsyncWriteExt;
 
     use super::{
-        ensure_plugin_manifest, package_path, prepare_plugin_root, redact_output, tool_search_path,
-        validate_operation_id, validate_package_name, validate_package_spec, OperationManager,
+        ensure_plugin_manifest, package_path, prepare_plugin_root, read_limited, redact_output,
+        tool_search_path, validate_operation_id, validate_package_name, validate_package_spec,
+        OperationManager,
     };
 
     #[test]
@@ -678,9 +724,40 @@ mod tests {
     fn redacts_sensitive_and_control_output_with_a_bound() {
         let output = redact_output(
             b"token=secret\nhello\x1b[2K\nvery long output that should remain bounded",
+            &["secret".into()],
         );
         assert!(output.contains("[redacted]"));
         assert!(!output.contains('\x1b'));
         assert!(output.len() <= 4097);
+    }
+
+    #[test]
+    fn redacts_exact_secret_values_without_sensitive_labels() {
+        let output = redact_output(b"registry output: s3cr3t", &["s3cr3t".into()]);
+        assert!(!output.contains("s3cr3t"));
+        assert!(output.contains("[redacted]"));
+    }
+
+    #[tokio::test]
+    async fn redacts_secret_split_across_read_chunks() {
+        let (mut writer, reader) = tokio::io::duplex(16 * 1024);
+        let mut input = vec![b'x'; 8190];
+        input.extend_from_slice(b"s3cr3t\n");
+        writer.write_all(&input).await.unwrap();
+        drop(writer);
+
+        let messages = Arc::new(Mutex::new(Vec::new()));
+        let captured = Arc::clone(&messages);
+        read_limited(
+            Some(reader),
+            "stdout",
+            Arc::new(move |message| captured.lock().unwrap().push(message)),
+            &["s3cr3t".into()],
+        )
+        .await
+        .unwrap();
+
+        let messages = messages.lock().unwrap().join("\n");
+        assert!(!messages.contains("s3cr3t"));
     }
 }
