@@ -95,6 +95,7 @@ impl Redactor {
         redacted |= redact_url_credentials(&mut text);
         redacted |= redact_auth_headers(&mut text);
         redacted |= redact_emails(&mut text);
+        redacted |= redact_usernames_in_ip_authorities(&mut text, &self.context.usernames);
         redacted |= redact_ipv6s(&mut text);
         redacted |= redact_ips(&mut text);
         for (username, placeholder) in replacement_order(&self.username_placeholders) {
@@ -319,6 +320,52 @@ fn redact_emails(text: &mut String) -> bool {
     changed
 }
 
+fn redact_usernames_in_ip_authorities(text: &mut String, known_usernames: &[String]) -> bool {
+    let mut changed = false;
+    let mut output = String::with_capacity(text.len());
+    for token in text.split_inclusive(char::is_whitespace) {
+        let Some(at) = token.find('@') else {
+            output.push_str(token);
+            continue;
+        };
+        let address = token[at + 1..]
+            .trim_matches(|character: char| ",.;()[]{}<> \t\r\n".contains(character));
+        if !is_ipv4(address) && address.parse::<std::net::Ipv6Addr>().is_err() {
+            output.push_str(token);
+            continue;
+        }
+        let user_start = token[..at]
+            .char_indices()
+            .rev()
+            .find_map(|(index, character)| {
+                character
+                    .is_ascii_whitespace()
+                    .then_some(index + character.len_utf8())
+                    .or_else(|| ":=,/;([{<".contains(character).then_some(index + 1))
+            })
+            .unwrap_or(0);
+        if user_start == at {
+            output.push_str(token);
+            continue;
+        }
+        if known_usernames
+            .iter()
+            .any(|username| username == &token[user_start..at])
+        {
+            output.push_str(token);
+            continue;
+        }
+        output.push_str(&token[..user_start]);
+        output.push_str("<USER>");
+        output.push_str(&token[at..]);
+        changed = true;
+    }
+    if changed {
+        *text = output;
+    }
+    changed
+}
+
 fn redact_ips(text: &mut String) -> bool {
     let mut changed = false;
     let mut output = String::with_capacity(text.len());
@@ -428,6 +475,18 @@ mod tests {
         assert!(!output.text.contains("/home/alice"));
         assert!(output.text.contains("<USER:1>"));
         assert!(output.text.contains("<IP>"));
+    }
+
+    #[test]
+    fn redacts_unknown_ssh_usernames_before_ip_addresses() {
+        let output = Redactor::new(RedactionContext {
+            known_secrets: vec!["abc123".into()],
+            ..Default::default()
+        })
+        .redact_text("ssh alice@192.0.2.10 token=abc123");
+        assert!(!output.text.contains("alice"));
+        assert!(!output.text.contains("192.0.2.10"));
+        assert!(output.text.contains("<USER>@<IP>"));
     }
 
     #[test]
