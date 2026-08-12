@@ -234,10 +234,12 @@ export async function loadPluginModules (
         }
         try {
             const evaluatedModule = evaluateCommonJs(source.code, source.entry, registry)
-            if (!isObject(evaluatedModule)) {
+            if (!isObject(evaluatedModule) && typeof evaluatedModule !== 'function') {
                 throw new Error('Plugin has no valid default export')
             }
-            const packageModule = evaluatedModule as {
+            const packageModule = (typeof evaluatedModule === 'function'
+                ? { default: evaluatedModule }
+                : evaluatedModule) as {
                 default?: unknown
                 bootstrap?: unknown
             }

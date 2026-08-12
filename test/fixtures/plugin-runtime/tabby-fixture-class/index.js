@@ -1,3 +1,3 @@
 class FixtureModule {}
 
-module.exports = { default: FixtureModule }
+module.exports = FixtureModule
