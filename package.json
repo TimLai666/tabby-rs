@@ -103,6 +103,7 @@
     "audit:web": "node scripts/ci/assert-web-output.mjs",
     "test:web-output-audit": "node scripts/test-web-output-audit.mjs",
     "test:release-documentation": "node scripts/test-release-documentation.mjs",
+    "test:parity-report": "node scripts/test-parity-report.mjs",
     "build:tauri": "npm run build:tauri:frontend && cargo build --manifest-path src-tauri/Cargo.toml",
     "build:typings": "node scripts/build-typings.mjs",
     "test:tauri": "npm run build:tauri:frontend && cargo test --manifest-path src-tauri/Cargo.toml",

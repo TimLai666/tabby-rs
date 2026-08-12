@@ -115,6 +115,9 @@ jobs:
       - name: Test release documentation contract
         run: yarn test:release-documentation
 
+      - name: Test parity report contract
+        run: yarn test:parity-report
+
       - name: Test runtime capability providers
         run: yarn test:runtime-capabilities
 
