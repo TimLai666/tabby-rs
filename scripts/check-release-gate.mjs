@@ -31,6 +31,12 @@ function readYaml (relativePath) {
 
 const featuresDocument = readYaml('parity/features.yaml')
 const platformDocument = readYaml('parity/platform-matrix.yaml')
+if (!Array.isArray(featuresDocument?.features) || featuresDocument.features.length === 0) {
+    failures.push('parity/features.yaml has no features')
+}
+if (!Array.isArray(platformDocument?.platforms) || platformDocument.platforms.length === 0) {
+    failures.push('parity/platform-matrix.yaml has no platforms')
+}
 const featureStatuses = new Set(['passed', 'accepted-difference'])
 for (const feature of featuresDocument?.features || []) {
     if (!featureStatuses.has(feature.status)) {
