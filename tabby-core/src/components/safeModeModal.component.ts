@@ -1,9 +1,10 @@
 import { Component, Input } from '@angular/core'
 import { NgbActiveModal } from '@ng-bootstrap/ng-bootstrap'
 import { ConfigService } from '../services/config.service'
+import { PlatformService } from '../api/platform'
 
 interface PluginLoadFailure {
-    plugin?: { name?: string }
+    plugin?: { name?: string, packageName?: string }
     phase?: string
     code?: string
     message?: string
@@ -19,6 +20,7 @@ export class SafeModeModalComponent {
     constructor (
         public modalInstance: NgbActiveModal,
         private config: ConfigService,
+        private platform: PlatformService,
     ) {
         this.error = window['safeModeReason']
     }
@@ -45,6 +47,34 @@ export class SafeModeModalComponent {
         void this.config.save().then(() => this.retry()).catch(error => {
             console.error('Could not disable plugin from safe mode:', error)
         })
+    }
+
+    async removePlugin (name: string): Promise<void> {
+        const packageName = this.packageNameFor(name)
+        if (!packageName) {
+            console.error('Could not remove plugin from safe mode: package name is unavailable')
+            return
+        }
+        try {
+            await this.platform.uninstallPlugin(packageName)
+            const blacklist = this.config.store.pluginBlacklist ?? []
+            this.config.store.pluginBlacklist = blacklist.filter(value => value !== name && value !== packageName)
+            await this.config.save()
+            this.retry()
+        } catch (error) {
+            console.error('Could not remove plugin from safe mode:', error)
+        }
+    }
+
+    private packageNameFor (name: string): string|null {
+        const failure = this.failures.find(candidate => candidate.plugin?.name === name || candidate.plugin?.packageName === name)
+        if (failure?.plugin?.packageName) {
+            return failure.plugin.packageName
+        }
+        if (name.startsWith('tabby-') || name.startsWith('terminus-')) {
+            return name
+        }
+        return null
     }
 
     retry (): void {

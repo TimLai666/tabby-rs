@@ -11,11 +11,17 @@
             li(*ngFor='let failure of failures') {{failure.plugin?.name || 'unknown'}}: {{failure.code || failure.phase}} - {{failure.message}}
 
     div(*ngIf='suspectedPlugins.length')
-        p(translate) Disable a suspected plugin and retry:
+        p(translate) Disable or remove a suspected plugin and retry:
         button.btn.btn-outline-danger.me-2.mb-2(
             *ngFor='let plugin of suspectedPlugins',
             (click)='disablePlugin(plugin)'
         ) {{plugin}}
+        button.btn.btn-outline-danger.me-2.mb-2(
+            *ngFor='let plugin of suspectedPlugins',
+            (click)='removePlugin(plugin)'
+        )
+            span(translate) Remove
+            |  {{plugin}}
 
 .modal-footer
     button.btn.btn-primary((click)='retry()', translate) Retry

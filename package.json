@@ -116,6 +116,7 @@
     "test:plugin-search": "node scripts/test-plugin-search-contract.mjs",
     "test:plugin-npm-lifecycle": "node scripts/test-plugin-npm-lifecycle.mjs",
     "test:plugin-node-status": "node scripts/test-plugin-node-status-contract.mjs",
+    "test:safe-mode-plugin-actions": "node scripts/test-safe-mode-plugin-actions.mjs",
     "test:official-plugin-runtime": "node scripts/test-official-plugin-runtime.mjs",
     "create:license-report": "node scripts/create-license-report.mjs",
     "test:release-gate": "node scripts/check-release-gate.mjs",
