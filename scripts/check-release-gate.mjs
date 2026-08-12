@@ -36,6 +36,19 @@ function readYaml (relativePath) {
     }
 }
 
+function readJson (filePath, label) {
+    if (!fs.existsSync(filePath)) {
+        failures.push(`missing ${label}: ${filePath}`)
+        return null
+    }
+    try {
+        return JSON.parse(fs.readFileSync(filePath, 'utf8'))
+    } catch (error) {
+        failures.push(`invalid ${label} ${filePath}: ${error.message}`)
+        return null
+    }
+}
+
 const featuresDocument = readYaml('parity/features.yaml')
 const platformDocument = readYaml('parity/platform-matrix.yaml')
 if (!Array.isArray(featuresDocument?.features) || featuresDocument.features.length === 0) {
@@ -79,18 +92,15 @@ for (const benchmark of benchmarkFiles) {
     }
 }
 
-if (!fs.existsSync(bundleAuditPath)) {
-    failures.push(`missing bundle audit: ${bundleAuditPath}`)
-} else {
-    const bundleAudit = JSON.parse(fs.readFileSync(bundleAuditPath, 'utf8'))
+const bundleAudit = readJson(bundleAuditPath, 'bundle audit')
+if (bundleAudit) {
     if (bundleAudit.passed !== true) {
         failures.push('bundle audit did not pass')
     }
 }
 
-if (!fs.existsSync(licenseReportPath)) {
-    failures.push(`missing license report: ${licenseReportPath}`)
-} else if (JSON.parse(fs.readFileSync(licenseReportPath, 'utf8')).passed !== true) {
+const licenseReport = readJson(licenseReportPath, 'license report')
+if (licenseReport && licenseReport.passed !== true) {
     failures.push('license report did not pass')
 }
 
