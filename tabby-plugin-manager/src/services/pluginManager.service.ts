@@ -79,7 +79,7 @@ function parseRegistrySearchObject (value: unknown): RegistrySearchObject|null {
             maintainers,
             publisher: typeof publisher?.username === 'string' ? { username: publisher.username } : undefined,
         },
-        searchScore: typeof record.searchScore === 'number' ? record.searchScore : undefined,
+        searchScore: typeof record?.searchScore === 'number' ? record.searchScore : undefined,
     }
 }
 
