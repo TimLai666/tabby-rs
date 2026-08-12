@@ -419,10 +419,8 @@ async fn run_npm(
     mut cancel: oneshot::Receiver<()>,
     progress: Arc<dyn Fn(String) + Send + Sync>,
 ) -> Result<(), AppError> {
-    let mut command = Command::new(npm_path);
+    let mut command = npm_command(npm_path, action, args);
     command
-        .arg(action)
-        .args(args)
         .current_dir(root)
         .env("PATH", tool_search_path(node_path, npm_path))
         .stdin(Stdio::null())
@@ -470,6 +468,43 @@ async fn run_npm(
         return Err(AppError::Io(format!("npm {action} failed")));
     }
     Ok(())
+}
+
+fn npm_command(npm_path: &Path, action: &str, args: &[String]) -> Command {
+    #[cfg(windows)]
+    if npm_path
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("cmd"))
+    {
+        let command_line = std::iter::once(npm_path.to_string_lossy().into_owned())
+            .chain(std::iter::once(action.to_owned()))
+            .chain(args.iter().cloned())
+            .map(|value| windows_cmd_arg(&value))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let mut command = Command::new("cmd.exe");
+        command
+            .args(["/D", "/S", "/C"])
+            .arg(format!("\"{command_line}\""));
+        return command;
+    }
+
+    let mut command = Command::new(npm_path);
+    command.arg(action).args(args);
+    command
+}
+
+#[cfg(windows)]
+fn windows_cmd_arg(value: &str) -> String {
+    if value.is_empty()
+        || value
+            .chars()
+            .any(|character| character.is_whitespace() || "\"&|<>^".contains(character))
+    {
+        format!("\"{}\"", value.replace('"', "\"\""))
+    } else {
+        value.into()
+    }
 }
 
 fn tool_search_path(node_path: &Path, npm_path: &Path) -> OsString {
@@ -588,8 +623,8 @@ fn redact_output(bytes: &[u8], secret_values: &[String]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
     use std::sync::{Arc, Mutex};
+    use std::{fs, path::PathBuf};
 
     use tokio::io::AsyncWriteExt;
 
@@ -759,5 +794,69 @@ mod tests {
 
         let messages = messages.lock().unwrap().join("\n");
         assert!(!messages.contains("s3cr3t"));
+    }
+
+    #[tokio::test]
+    #[ignore = "runs only from the system npm lifecycle harness"]
+    async fn system_npm_plugin_lifecycle() {
+        let node_path = PathBuf::from(
+            std::env::var("TABBY_RS_NPM_E2E_NODE")
+                .expect("TABBY_RS_NPM_E2E_NODE must point to the system Node.js executable"),
+        );
+        let npm_path = PathBuf::from(
+            std::env::var("TABBY_RS_NPM_E2E_NPM")
+                .expect("TABBY_RS_NPM_E2E_NPM must point to the system npm executable"),
+        );
+        let root = PathBuf::from(
+            std::env::var("TABBY_RS_NPM_E2E_ROOT")
+                .expect("TABBY_RS_NPM_E2E_ROOT must point to an isolated plugin root"),
+        );
+        let package_name = std::env::var("TABBY_RS_NPM_E2E_PACKAGE")
+            .expect("TABBY_RS_NPM_E2E_PACKAGE must name the fixture package");
+        let versions = ["1.0.0", "1.0.1"];
+        let progress: Arc<dyn Fn(String) + Send + Sync> = Arc::new(|message: String| {
+            if std::env::var_os("TABBY_RS_NPM_E2E_DEBUG").is_some() {
+                eprintln!("{message}");
+            }
+        });
+
+        for (index, version) in versions.iter().enumerate() {
+            let (_sender, cancel) = tokio::sync::oneshot::channel();
+            let operation = super::install(
+                root.clone(),
+                node_path.clone(),
+                npm_path.clone(),
+                &format!("system-npm-{index}"),
+                &package_name,
+                version,
+                cancel,
+                Arc::clone(&progress),
+            )
+            .await
+            .expect("system npm install/update should succeed");
+            assert_eq!(operation.status, "succeeded");
+            let installed_manifest = root
+                .join("node_modules")
+                .join(&package_name)
+                .join("package.json");
+            let installed: serde_json::Value =
+                serde_json::from_slice(&fs::read(installed_manifest).unwrap()).unwrap();
+            assert_eq!(installed["version"], *version);
+        }
+
+        let (_sender, cancel) = tokio::sync::oneshot::channel();
+        let operation = super::uninstall(
+            root.clone(),
+            node_path,
+            npm_path,
+            "system-npm-uninstall",
+            &package_name,
+            cancel,
+            progress,
+        )
+        .await
+        .expect("system npm uninstall should succeed");
+        assert_eq!(operation.status, "succeeded");
+        assert!(!root.join("node_modules").join(&package_name).exists());
     }
 }
