@@ -218,7 +218,8 @@ pub fn app_quit(
 #[cfg(test)]
 mod tests {
     use super::{bootstrap_mode, current_runtime_info, BootstrapData};
-    use crate::storage::state_file::TabbyRsState;
+    use crate::storage::state_file::{load_state, save_state, TabbyRsState};
+    use tempfile::tempdir;
 
     #[test]
     fn reports_tauri_runtime() {
@@ -265,6 +266,28 @@ mod tests {
             mode,
             (true, Some("plugin evaluation failed".into()), Vec::new())
         );
+    }
+
+    #[test]
+    fn persisted_crash_simulation_enters_safe_mode_for_every_bootstrap_phase() {
+        for phase in ["discover", "read", "evaluate", "angular-bootstrap"] {
+            let temp = tempdir().unwrap();
+            let state_path = temp.path().join("tabby-rs.json");
+            let mut crashed = TabbyRsState::default();
+            crashed.safe_mode.attempt_id = Some(format!("attempt-{phase}"));
+            crashed.safe_mode.plugins = vec!["tabby-broken".into(), "tabby-good".into()];
+            crashed.safe_mode.last_started_plugin = Some("tabby-broken".into());
+            crashed.safe_mode.failure_phase = Some(phase.into());
+            crashed.safe_mode.failure_message = Some(format!("simulated {phase} crash"));
+            save_state(&state_path, &crashed).unwrap();
+
+            let restarted = load_state(&state_path).unwrap();
+            let mode = bootstrap_mode(&restarted, Ok(vec!["tabby-good".into()]));
+
+            assert_eq!(mode.0, true, "phase {phase} did not force safe mode");
+            assert_eq!(mode.1, Some(format!("simulated {phase} crash")));
+            assert!(mode.2.is_empty(), "phase {phase} loaded user plugins");
+        }
     }
 
     #[test]

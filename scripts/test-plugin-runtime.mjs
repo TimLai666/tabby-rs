@@ -71,6 +71,7 @@ function fixtureDescriptor (directory) {
 const fixtureDirectories = [
     'tabby-fixture-electron',
     'tabby-fixture-for-root',
+    'tabby-fixture-class',
     'tabby-fixture-missing-module',
     'tabby-fixture-native',
     'tabby-fixture-pure',
@@ -93,9 +94,10 @@ const result = await loadPluginModules({
         }
     },
 }, registry)
-assert.equal(result.modules.length, 3)
+assert.equal(result.modules.length, 4)
 assert.deepEqual(result.modules.map(module => module.pluginName), [
     'fixture-for-root',
+    'fixture-class',
     'fixture-pure',
     'fixture-legacy',
 ])
@@ -104,6 +106,8 @@ assert.equal(pureModule.core, core)
 assert.equal(pureModule.angular, angular)
 const forRootModule = result.modules.find(module => module.pluginName === 'fixture-for-root')
 assert.equal(forRootModule.fixture, 'for-root')
+const classModule = result.modules.find(module => module.pluginName === 'fixture-class')
+assert.equal(typeof classModule, 'function')
 const legacyModule = result.modules.find(module => module.pluginName === 'fixture-legacy')
 assert.equal(legacyModule.fixture, 'legacy')
 assert.equal(legacyModule.core, core)

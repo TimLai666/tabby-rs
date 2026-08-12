@@ -242,12 +242,12 @@ export async function loadPluginModules (
                 bootstrap?: unknown
             }
             const exported = packageModule.default ?? packageModule
-            if (!isObject(exported)) {
+            if (!isObject(exported) && typeof exported !== 'function') {
                 throw new Error('Plugin has no valid default export')
             }
             const exportedModule = exported as { forRoot?: () => unknown }
             const pluginModule = typeof exportedModule.forRoot === 'function' ? exportedModule.forRoot() : exported
-            if (!isObject(pluginModule)) {
+            if (!isObject(pluginModule) && typeof pluginModule !== 'function') {
                 throw new Error('Plugin default export did not produce a module')
             }
             const loadedModule = pluginModule as LoadedPluginModule

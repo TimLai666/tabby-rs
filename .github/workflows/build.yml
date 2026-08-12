@@ -112,6 +112,9 @@ jobs:
       - name: Test runtime capability providers
         run: yarn test:runtime-capabilities
 
+      - name: Test official plugin runtime fixture
+        run: yarn test:official-plugin-runtime
+
       - name: Test Electron updater policy
         run: yarn test:electron-updater
 
