@@ -10,4 +10,4 @@ Before generating the manifest, the workflow checks every bundle type declared b
 
 The updater public key is compiled into the release configuration. The private key is read only from the release environment secret used by the Tauri signing step. It must never be committed, printed, uploaded, or copied into an application bundle.
 
-Every release report records the source revision, channel, version, bundle file list, file sizes, SHA-256 values, dependency notices, and whether OS code signing was performed.
+Every release report records the source revision, channel, version, bundle file list, file sizes, SHA-256 values, dependency notices, and whether OS code signing was performed. Each staged release also contains `SHA256SUMS`, generated after the platform release gate, covering every other staged file with a stable relative path and SHA-256 digest.
