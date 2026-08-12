@@ -7,7 +7,7 @@ use crate::{
     error::AppError,
     plugins::manifest,
     state::AppState,
-    storage::{config_file::read_config, paths::StoragePaths},
+    storage::{config_file::read_config, paths::StoragePaths, state_file::TabbyRsState},
 };
 
 #[derive(Debug, Default, serde::Deserialize)]
@@ -104,6 +104,28 @@ fn parse_bootstrap_config(yaml: &str) -> Result<BTreeMap<String, serde_json::Val
         .map_err(|error| AppError::InvalidData(format!("config.yaml is invalid: {error}")))
 }
 
+fn bootstrap_mode(
+    previous: &TabbyRsState,
+    discovered: Result<Vec<String>, String>,
+) -> (bool, Option<String>, Vec<String>) {
+    if previous.safe_mode.attempt_id.is_some() {
+        return (
+            true,
+            previous
+                .safe_mode
+                .failure_message
+                .clone()
+                .or_else(|| Some("The previous plugin startup did not complete.".into())),
+            Vec::new(),
+        );
+    }
+
+    match discovered {
+        Ok(packages) => (false, None, packages),
+        Err(error) => (true, Some(error), Vec::new()),
+    }
+}
+
 #[tauri::command]
 pub fn app_bootstrap(
     request: EmptyRequest,
@@ -114,28 +136,19 @@ pub fn app_bootstrap(
     let config = bootstrap_config(&state)?;
 
     let previous = state.persisted_state();
-    let previous_attempt = previous.safe_mode.attempt_id.is_some();
-    let previous_reason = previous.safe_mode.failure_message.clone();
-    let (safe_mode, safe_mode_reason, plugin_packages) = if previous_attempt {
-        (
-            true,
-            previous_reason
-                .or_else(|| Some("The previous plugin startup did not complete.".into())),
-            Vec::new(),
-        )
+    let discovered = if previous.safe_mode.attempt_id.is_some() {
+        Ok(Vec::new())
     } else {
-        match manifest::discover(state.paths().plugins_dir()) {
-            Ok(plugins) => (
-                false,
-                None,
+        manifest::discover(state.paths().plugins_dir())
+            .map(|plugins| {
                 plugins
                     .into_iter()
                     .map(|plugin| plugin.package_name)
-                    .collect(),
-            ),
-            Err(error) => (true, Some(error.to_string()), Vec::new()),
-        }
+                    .collect()
+            })
+            .map_err(|error| error.to_string())
     };
+    let (safe_mode, safe_mode_reason, plugin_packages) = bootstrap_mode(&previous, discovered);
     let suspected_plugins = if safe_mode {
         previous.safe_mode.suspected_plugins.clone()
     } else {
@@ -199,7 +212,8 @@ pub fn app_quit(request: EmptyRequest, app: AppHandle) -> Result<(), AppError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{current_runtime_info, BootstrapData};
+    use super::{bootstrap_mode, current_runtime_info, BootstrapData};
+    use crate::storage::state_file::TabbyRsState;
 
     #[test]
     fn reports_tauri_runtime() {
@@ -232,5 +246,36 @@ mod tests {
     fn parses_plugin_blacklist_from_bootstrap_config() {
         let config = super::parse_bootstrap_config("pluginBlacklist: [tabby-broken]\n").unwrap();
         assert_eq!(config["pluginBlacklist"][0], "tabby-broken");
+    }
+
+    #[test]
+    fn unfinished_bootstrap_forces_builtin_only_restart() {
+        let mut previous = TabbyRsState::default();
+        previous.safe_mode.attempt_id = Some("attempt-1".into());
+        previous.safe_mode.failure_message = Some("plugin evaluation failed".into());
+
+        let mode = bootstrap_mode(&previous, Ok(vec!["tabby-good".into()]));
+
+        assert_eq!(
+            mode,
+            (true, Some("plugin evaluation failed".into()), Vec::new())
+        );
+    }
+
+    #[test]
+    fn clean_bootstrap_uses_discovered_packages() {
+        let mode = bootstrap_mode(
+            &TabbyRsState::default(),
+            Ok(vec!["tabby-good".into(), "tabby-legacy".into()]),
+        );
+
+        assert_eq!(
+            mode,
+            (
+                false,
+                None,
+                vec!["tabby-good".to_owned(), "tabby-legacy".to_owned()]
+            )
+        );
     }
 }

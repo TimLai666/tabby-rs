@@ -2,6 +2,7 @@ use crate::{
     error::AppError,
     plugins::{manifest, node_detect, node_detect::NodeToolchainStatus, npm},
     state::AppState,
+    storage::state_file::TabbyRsState,
 };
 use std::sync::Arc;
 use tauri::Emitter;
@@ -20,13 +21,58 @@ pub struct PluginBootstrapFailureRequest {
     pub message: String,
 }
 
+fn journal_plugin_started(state: &mut TabbyRsState, package_name: String) {
+    state.safe_mode.last_started_plugin = Some(package_name);
+}
+
+fn journal_plugin_completed(state: &mut TabbyRsState, package_name: String) {
+    state.safe_mode.last_completed_plugin = Some(package_name);
+}
+
+fn journal_plugin_failure(
+    state: &mut TabbyRsState,
+    package_name: Option<String>,
+    phase: String,
+    message: String,
+) {
+    state.safe_mode.failure_phase = Some(phase);
+    state.safe_mode.failure_message = Some(message);
+    if let Some(package_name) = package_name {
+        if !state.safe_mode.suspected_plugins.contains(&package_name) {
+            state.safe_mode.suspected_plugins.push(package_name);
+        }
+    } else if state.safe_mode.suspected_plugins.is_empty() {
+        state.safe_mode.suspected_plugins = state.safe_mode.plugins.clone();
+    }
+}
+
+fn clear_bootstrap_attempt(state: &mut TabbyRsState) {
+    state.safe_mode.attempt_id = None;
+    state.safe_mode.started_at = None;
+    state.safe_mode.plugins.clear();
+    state.safe_mode.last_started_plugin = None;
+    state.safe_mode.last_completed_plugin = None;
+    state.safe_mode.failure_phase = None;
+    state.safe_mode.failure_message = None;
+}
+
+fn mark_bootstrap_succeeded(state: &mut TabbyRsState) {
+    clear_bootstrap_attempt(state);
+    state.safe_mode.suspected_plugins.clear();
+}
+
+fn prepare_bootstrap_retry(state: &mut TabbyRsState) {
+    state.safe_mode.last_forced = false;
+    clear_bootstrap_attempt(state);
+}
+
 #[tauri::command]
 pub fn plugins_bootstrap_plugin_started(
     request: PluginPackageRequest,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), AppError> {
     state.update_persisted_state(|persisted| {
-        persisted.safe_mode.last_started_plugin = Some(request.package_name);
+        journal_plugin_started(persisted, request.package_name);
     })?;
     Ok(())
 }
@@ -37,7 +83,7 @@ pub fn plugins_bootstrap_plugin_completed(
     state: tauri::State<'_, AppState>,
 ) -> Result<(), AppError> {
     state.update_persisted_state(|persisted| {
-        persisted.safe_mode.last_completed_plugin = Some(request.package_name);
+        journal_plugin_completed(persisted, request.package_name);
     })?;
     Ok(())
 }
@@ -48,19 +94,12 @@ pub fn plugins_bootstrap_failed(
     state: tauri::State<'_, AppState>,
 ) -> Result<(), AppError> {
     state.update_persisted_state(|persisted| {
-        persisted.safe_mode.failure_phase = Some(request.phase);
-        persisted.safe_mode.failure_message = Some(request.message);
-        if let Some(package_name) = request.package_name {
-            if !persisted
-                .safe_mode
-                .suspected_plugins
-                .contains(&package_name)
-            {
-                persisted.safe_mode.suspected_plugins.push(package_name);
-            }
-        } else if persisted.safe_mode.suspected_plugins.is_empty() {
-            persisted.safe_mode.suspected_plugins = persisted.safe_mode.plugins.clone();
-        }
+        journal_plugin_failure(
+            persisted,
+            request.package_name,
+            request.phase,
+            request.message,
+        );
     })?;
     Ok(())
 }
@@ -68,13 +107,7 @@ pub fn plugins_bootstrap_failed(
 #[tauri::command]
 pub fn plugins_bootstrap_succeeded(state: tauri::State<'_, AppState>) -> Result<(), AppError> {
     state.update_persisted_state(|persisted| {
-        persisted.safe_mode.attempt_id = None;
-        persisted.safe_mode.started_at = None;
-        persisted.safe_mode.plugins.clear();
-        persisted.safe_mode.last_started_plugin = None;
-        persisted.safe_mode.last_completed_plugin = None;
-        persisted.safe_mode.failure_phase = None;
-        persisted.safe_mode.failure_message = None;
+        mark_bootstrap_succeeded(persisted);
     })?;
     Ok(())
 }
@@ -82,16 +115,95 @@ pub fn plugins_bootstrap_succeeded(state: tauri::State<'_, AppState>) -> Result<
 #[tauri::command]
 pub fn plugins_bootstrap_retry(state: tauri::State<'_, AppState>) -> Result<(), AppError> {
     state.update_persisted_state(|persisted| {
-        persisted.safe_mode.last_forced = false;
-        persisted.safe_mode.attempt_id = None;
-        persisted.safe_mode.started_at = None;
-        persisted.safe_mode.plugins.clear();
-        persisted.safe_mode.last_started_plugin = None;
-        persisted.safe_mode.last_completed_plugin = None;
-        persisted.safe_mode.failure_phase = None;
-        persisted.safe_mode.failure_message = None;
+        prepare_bootstrap_retry(persisted);
     })?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        journal_plugin_completed, journal_plugin_failure, journal_plugin_started,
+        mark_bootstrap_succeeded, prepare_bootstrap_retry,
+    };
+    use crate::storage::state_file::TabbyRsState;
+
+    #[test]
+    fn journal_preserves_crash_context_and_clears_after_success() {
+        let mut state = TabbyRsState::default();
+        state.safe_mode.attempt_id = Some("attempt-1".into());
+        state.safe_mode.plugins = vec!["tabby-broken".into(), "tabby-good".into()];
+
+        journal_plugin_started(&mut state, "tabby-broken".into());
+        journal_plugin_failure(
+            &mut state,
+            Some("tabby-broken".into()),
+            "evaluate".into(),
+            "unsupported module".into(),
+        );
+
+        assert_eq!(
+            state.safe_mode.last_started_plugin.as_deref(),
+            Some("tabby-broken")
+        );
+        assert_eq!(state.safe_mode.last_completed_plugin, None);
+        assert_eq!(state.safe_mode.failure_phase.as_deref(), Some("evaluate"));
+        assert_eq!(state.safe_mode.suspected_plugins, vec!["tabby-broken"]);
+
+        journal_plugin_started(&mut state, "tabby-good".into());
+        journal_plugin_completed(&mut state, "tabby-good".into());
+        assert_eq!(
+            state.safe_mode.last_completed_plugin.as_deref(),
+            Some("tabby-good")
+        );
+
+        mark_bootstrap_succeeded(&mut state);
+        assert_eq!(state.safe_mode.attempt_id, None);
+        assert!(state.safe_mode.plugins.is_empty());
+        assert!(state.safe_mode.suspected_plugins.is_empty());
+    }
+
+    #[test]
+    fn global_failure_marks_pending_plugins_without_duplicates() {
+        let mut state = TabbyRsState::default();
+        state.safe_mode.plugins = vec!["tabby-one".into(), "tabby-two".into()];
+
+        journal_plugin_failure(
+            &mut state,
+            None,
+            "angular-bootstrap".into(),
+            "root module failed".into(),
+        );
+        journal_plugin_failure(
+            &mut state,
+            None,
+            "angular-bootstrap".into(),
+            "root module failed again".into(),
+        );
+
+        assert_eq!(
+            state.safe_mode.suspected_plugins,
+            vec!["tabby-one", "tabby-two"]
+        );
+        assert_eq!(
+            state.safe_mode.failure_message.as_deref(),
+            Some("root module failed again")
+        );
+    }
+
+    #[test]
+    fn retry_clears_pending_attempt_but_keeps_suspects_for_ui() {
+        let mut state = TabbyRsState::default();
+        state.safe_mode.last_forced = true;
+        state.safe_mode.attempt_id = Some("attempt-1".into());
+        state.safe_mode.suspected_plugins = vec!["tabby-broken".into()];
+
+        prepare_bootstrap_retry(&mut state);
+
+        assert!(!state.safe_mode.last_forced);
+        assert_eq!(state.safe_mode.attempt_id, None);
+        assert_eq!(state.safe_mode.suspected_plugins, vec!["tabby-broken"]);
+    }
 }
 
 #[tauri::command]
