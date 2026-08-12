@@ -97,7 +97,7 @@ impl KnownHostsStore {
             }
             file.sync_all().map_err(|_| SshError::Internal)?;
         }
-        if let Err(error) = fs::rename(&temporary, &self.path) {
+        if let Err(error) = replace_file(&temporary, &self.path) {
             let _ = fs::remove_file(&temporary);
             return Err(if error.kind() == std::io::ErrorKind::PermissionDenied {
                 SshError::Internal
@@ -109,20 +109,79 @@ impl KnownHostsStore {
     }
 }
 
+fn replace_file(temporary: &Path, destination: &Path) -> std::io::Result<()> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Storage::FileSystem::{
+            MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+        };
+
+        let temporary = temporary
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect::<Vec<_>>();
+        let destination = destination
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect::<Vec<_>>();
+        let result = unsafe {
+            MoveFileExW(
+                temporary.as_ptr(),
+                destination.as_ptr(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+            )
+        };
+        if result == 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        return Ok(());
+    }
+    #[cfg(not(windows))]
+    fs::rename(temporary, destination)
+}
+
 struct FileLock {
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     file: File,
 }
 
 impl FileLock {
     fn acquire(path: &Path) -> Result<Self, SshError> {
         let lock_path = path.with_extension("lock");
-        let file = OpenOptions::new()
-            .create(true)
-            .read(true)
-            .write(true)
-            .open(lock_path)
-            .map_err(|_| SshError::Internal)?;
+        let file = {
+            #[cfg(unix)]
+            {
+                OpenOptions::new()
+                    .create(true)
+                    .read(true)
+                    .write(true)
+                    .open(&lock_path)
+                    .map_err(|_| SshError::Internal)?
+            }
+            #[cfg(windows)]
+            {
+                use std::os::windows::fs::OpenOptionsExt;
+                OpenOptions::new()
+                    .create(true)
+                    .read(true)
+                    .write(true)
+                    .share_mode(0)
+                    .open(&lock_path)
+                    .map_err(|_| SshError::Internal)?
+            }
+            #[cfg(not(any(unix, windows)))]
+            {
+                OpenOptions::new()
+                    .create(true)
+                    .read(true)
+                    .write(true)
+                    .open(&lock_path)
+                    .map_err(|_| SshError::Internal)?
+            }
+        };
         #[cfg(unix)]
         {
             use std::os::unix::{fs::PermissionsExt, io::AsRawFd};
@@ -134,7 +193,11 @@ impl FileLock {
             }
             return Ok(Self { file });
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
+        {
+            return Ok(Self { file });
+        }
+        #[cfg(not(any(unix, windows)))]
         {
             let _ = file;
             Ok(Self {})
@@ -251,5 +314,22 @@ mod tests {
         store.save("localhost", 2222, &key).unwrap();
         store.save("localhost", 2222, &key).unwrap();
         assert_eq!(fs::read_to_string(path).unwrap().lines().count(), 1);
+    }
+
+    #[test]
+    fn replaces_an_existing_file_when_adding_a_new_host() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("known_hosts");
+        let store = KnownHostsStore::new(path.clone());
+        let first = key("AAAAC3NzaC1lZDI1NTE5AAAAIJdD7y3aLq454yWBdwLWbieU1ebz9/cu7/QEXn9OIeZJ");
+        let second = key("AAAAC3NzaC1lZDI1NTE5AAAAILIG2T/B0l0gaqj3puu510tu9N1OkQ4znY3LYuEm5zCF");
+
+        store.save("localhost", 22, &first).unwrap();
+        store.save("example.com", 22, &second).unwrap();
+
+        let content = fs::read_to_string(path).unwrap();
+        assert_eq!(content.lines().count(), 2);
+        assert!(content.contains("localhost"));
+        assert!(content.contains("example.com"));
     }
 }
