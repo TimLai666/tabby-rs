@@ -148,7 +148,7 @@ export class PluginManagerService {
     _listAvailableInternal (namePrefix: string, keyword: string, query?: string): Observable<PluginInfo[]> {
         return from(this.searchRegistry(keyword, query)).pipe(
             map(objects => objects
-                .map(item => this.toPluginInfo(item, namePrefix))
+                .map(item => this.toPluginInfo(item, namePrefix, keyword))
                 .filter((item): item is PluginInfo => item !== null),
             ),
             map(plugins => plugins.filter(x => x.packageName.startsWith(namePrefix))),
@@ -238,9 +238,10 @@ export class PluginManagerService {
         return body + decoder.decode()
     }
 
-    private toPluginInfo (item: RegistrySearchObject, namePrefix: string): PluginInfo|null {
+    private toPluginInfo (item: RegistrySearchObject, namePrefix: string, keyword: string): PluginInfo|null {
         if (
             !item.package.name.startsWith(namePrefix)
+            || !item.package.keywords.some(value => value.toLowerCase() === keyword.toLowerCase())
             || item.package.keywords.includes('tabby-dummy-transition-plugin')
             || PLUGIN_BLACKLIST.includes(item.package.name)
         ) {
