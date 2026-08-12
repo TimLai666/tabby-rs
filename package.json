@@ -108,6 +108,8 @@
     "test:official-plugin-runtime": "node scripts/test-official-plugin-runtime.mjs",
     "create:license-report": "node scripts/create-license-report.mjs",
     "test:release-gate": "node scripts/check-release-gate.mjs",
+    "benchmark": "node scripts/run-benchmarks.mjs",
+    "test:benchmark": "node scripts/test-benchmark-harness.mjs",
     "test:runtime-capabilities": "node scripts/test-runtime-capabilities.mjs",
     "test:electron-updater": "node scripts/test-electron-updater-policy.mjs",
     "test:tauri:update-manifest": "node scripts/test-tauri-update-manifest.mjs",

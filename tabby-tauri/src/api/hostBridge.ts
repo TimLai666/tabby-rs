@@ -27,6 +27,7 @@ export interface RuntimeInfo {
     platform: string
     arch: string
     version: string
+    benchmarkReadyFile: string | null
 }
 
 export interface AppIdentity {
@@ -648,6 +649,10 @@ export interface HostRequestMap {
     'app.runtimeInfo': {
         request: Record<string, never>
         response: RuntimeInfo
+    }
+    'app.benchmarkReady': {
+        request: Record<string, never>
+        response: null
     }
     'app.initialLaunch': {
         request: Record<string, never>

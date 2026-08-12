@@ -3,6 +3,8 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import yaml from 'js-yaml'
 
+import { BENCHMARK_METRICS, validateBenchmarkReport } from './benchmark/schema.mjs'
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const args = process.argv.slice(2)
 const argument = name => {
@@ -11,9 +13,14 @@ const argument = name => {
 }
 const bundleAuditPath = path.resolve(argument('--bundle-audit') || path.join(root, 'bundle-audit.json'))
 const licenseReportPath = path.resolve(argument('--license-report') || path.join(root, 'license-report.json'))
+const benchmarksDirectory = path.resolve(argument('--benchmarks-dir') || path.join(root, 'benchmarks'))
 const outputPath = path.resolve(argument('--output') || path.join(root, 'release-gate.json'))
 const failures = []
-const benchmarkFiles = ['startup', 'memory', 'output', 'bundle-size'].map(name => path.join(root, 'benchmarks', `${name}.json`))
+const benchmarkFiles = Object.entries(BENCHMARK_METRICS).map(([name, metric]) => ({
+    name,
+    metric,
+    path: path.join(benchmarksDirectory, `${name}.json`),
+}))
 
 function readYaml (relativePath) {
     const filePath = path.join(root, relativePath)
@@ -57,14 +64,18 @@ for (const platform of platformDocument?.platforms || []) {
         failures.push(`platform ${platform.id} has no evidence`)
     }
 }
-for (const benchmarkPath of benchmarkFiles) {
-    if (!fs.existsSync(benchmarkPath)) {
-        failures.push(`missing benchmark report: ${benchmarkPath}`)
+for (const benchmark of benchmarkFiles) {
+    if (!fs.existsSync(benchmark.path)) {
+        failures.push(`missing benchmark report: ${benchmark.path}`)
         continue
     }
-    const benchmark = JSON.parse(fs.readFileSync(benchmarkPath, 'utf8'))
-    if (benchmark.samples < 1 || !benchmark.commit || !benchmark.configFixture) {
-        failures.push(`benchmark report is incomplete: ${benchmarkPath}`)
+    try {
+        const report = JSON.parse(fs.readFileSync(benchmark.path, 'utf8'))
+        for (const error of validateBenchmarkReport(report, benchmark.metric)) {
+            failures.push(`${benchmark.name}: ${error}`)
+        }
+    } catch (error) {
+        failures.push(`invalid benchmark report ${benchmark.path}: ${error.message}`)
     }
 }
 

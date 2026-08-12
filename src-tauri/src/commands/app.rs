@@ -1,4 +1,8 @@
-use std::{collections::BTreeMap, fs};
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::{Path, PathBuf},
+};
 
 use chrono::Utc;
 use tauri::{AppHandle, State};
@@ -20,6 +24,7 @@ pub struct RuntimeInfo {
     pub platform: String,
     pub arch: String,
     pub version: String,
+    pub benchmark_ready_file: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -55,7 +60,25 @@ fn current_runtime_info() -> RuntimeInfo {
         platform: std::env::consts::OS.to_owned(),
         arch: std::env::consts::ARCH.to_owned(),
         version: env!("CARGO_PKG_VERSION").to_owned(),
+        benchmark_ready_file: benchmark_ready_path()
+            .map(|path| path.to_string_lossy().into_owned()),
     }
+}
+
+fn benchmark_ready_path() -> Option<PathBuf> {
+    std::env::var_os("TABBY_RS_BENCHMARK_READY_FILE")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
+
+fn write_benchmark_ready(path: &Path) -> Result<(), AppError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let temporary = path.with_extension(format!("tmp-{}", std::process::id()));
+    fs::write(&temporary, "ready\n")?;
+    fs::rename(temporary, path)?;
+    Ok(())
 }
 
 fn built_in_plugin(name: &str, package_name: &str, description: &str) -> PluginInfo {
@@ -204,6 +227,14 @@ pub fn app_runtime_info(request: EmptyRequest) -> Result<RuntimeInfo, AppError> 
 }
 
 #[tauri::command]
+pub fn app_benchmark_ready(request: EmptyRequest) -> Result<(), AppError> {
+    let _ = request;
+    let path = benchmark_ready_path()
+        .ok_or_else(|| AppError::Unsupported("benchmark ready marker is disabled".to_owned()))?;
+    write_benchmark_ready(&path)
+}
+
+#[tauri::command]
 pub fn app_quit(
     request: EmptyRequest,
     app: AppHandle,
@@ -217,7 +248,7 @@ pub fn app_quit(
 
 #[cfg(test)]
 mod tests {
-    use super::{bootstrap_mode, current_runtime_info, BootstrapData};
+    use super::{bootstrap_mode, current_runtime_info, write_benchmark_ready, BootstrapData};
     use crate::storage::state_file::{load_state, save_state, TabbyRsState};
     use tempfile::tempdir;
 
@@ -228,6 +259,16 @@ mod tests {
         assert!(!info.platform.is_empty());
         assert!(!info.arch.is_empty());
         assert!(info.version.starts_with("1.0.231-tabbyrs."));
+    }
+
+    #[test]
+    fn writes_benchmark_ready_marker_atomically() {
+        let directory = tempdir().unwrap();
+        let marker = directory.path().join("nested").join("ready.marker");
+
+        write_benchmark_ready(&marker).unwrap();
+
+        assert_eq!(std::fs::read_to_string(marker).unwrap(), "ready\n");
     }
 
     #[test]

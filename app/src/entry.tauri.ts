@@ -108,6 +108,11 @@ async function main (): Promise<void> {
 
     window['__TABBY_PLATFORM__'] = runtimeInfo.platform
     window['__TABBY_ARCH__'] = runtimeInfo.arch
+    if (runtimeInfo.benchmarkReadyFile) {
+        window.addEventListener('tabby:terminal-ready', () => {
+            void bridge.invoke('app.benchmarkReady', {})
+        }, { once: true })
+    }
     updateProgress(40)
 
     const pluginResult = await loadPluginModules({
@@ -132,6 +137,14 @@ async function main (): Promise<void> {
             phase: 'discover',
             message: discoveryFailure.message,
         }).catch(journalError => console.warn('Could not journal plugin discovery failure:', journalError))
+    }
+    for (const failure of pluginResult.failures) {
+        if (failure.phase === 'discover') continue
+        await bridge.invoke('plugins.bootstrapFailed', {
+            packageName: failure.plugin.packageName,
+            phase: failure.phase,
+            message: failure.message,
+        }).catch(journalError => console.warn(`Could not journal plugin failure for ${failure.plugin.packageName}:`, journalError))
     }
     if (bootstrapData.safeMode && bootstrapData.safeModeReason) {
         window['safeModeReason'] = bootstrapData.safeModeReason
@@ -193,7 +206,7 @@ async function main (): Promise<void> {
         ], bootstrapOptions)
     }
 
-    if (!discoveryFailure && (!fallbackUsed || bootstrapData.safeMode)) {
+    if (pluginResult.failures.length === 0 && (!fallbackUsed || bootstrapData.safeMode)) {
         await bridge.invoke('plugins.bootstrapSucceeded', {})
     }
 
