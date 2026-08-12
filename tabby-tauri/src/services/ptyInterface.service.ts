@@ -204,15 +204,15 @@ export class TauriPTYProxy extends PTYProxy {
         })
     }
 
-    override write (data: Buffer): Promise<void> {
-        return this.bridge.invoke('pty.write', {
+    override async write (data: Buffer): Promise<void> {
+        await this.bridge.invoke('pty.write', {
             id: this.response.id,
             data: Array.from(data),
         })
     }
 
-    override kill (signal?: string): Promise<void> {
-        return this.bridge.invoke('pty.kill', {
+    override async kill (signal?: string): Promise<void> {
+        await this.bridge.invoke('pty.kill', {
             id: this.response.id,
             signal: signal ?? null,
         })

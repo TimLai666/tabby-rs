@@ -258,7 +258,7 @@ export class TauriSshSession extends BaseSession {
             const jumpOptions = jump.options as SSHProfile['options']
             chain.push({
                 host: jumpOptions.host,
-                port: jumpOptions.port,
+                port: jumpOptions.port ?? 22,
                 username: jumpOptions.user || null,
                 auth: await this.authForOptions(jumpOptions),
             })

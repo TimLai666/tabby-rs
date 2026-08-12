@@ -57,8 +57,7 @@ export class TauriSshTabComponent extends ConnectableTerminalTabComponent<SSHPro
     async getRecoveryToken (options?: GetRecoveryTokenOptions): Promise<RecoveryToken> {
         const token = await super.getRecoveryToken(options)
         const profile = token.profile as SSHProfile
-        const safeOptions = { ...profile.options } as SSHProfile['options'] & { password?: string|null }
-        delete safeOptions.password
+        const { password: _password, ...safeOptions } = profile.options
         token.profile = { ...profile, options: safeOptions }
         return token
     }
