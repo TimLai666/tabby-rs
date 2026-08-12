@@ -15,4 +15,10 @@ assert.match(session, /this\.serviceMessage\.complete\(\)/)
 assert.match(session, /const account = options\.user \|\| 'root'/)
 assert.match(tab, /attachSessionHandler\(session\.serviceMessage\$/)
 
+const rust = fs.readFileSync(path.join(root, 'src-tauri/src/ssh/mod.rs'), 'utf8')
+assert.match(rust, /let mut exit_event_emitted = false/)
+assert.match(rust, /ChannelMsg::ExitStatus \{ \.\. \}[\s\S]*ChannelMsg::ExitSignal \{ \.\. \}/)
+assert.match(rust, /exit_event_emitted \|= is_exit_message/)
+assert.match(rust, /if !exit_event_emitted \{[\s\S]*exit_code: None[\s\S]*signal: None/)
+
 console.log('SSH session exit contract passed')

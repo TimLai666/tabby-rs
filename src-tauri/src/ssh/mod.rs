@@ -603,10 +603,15 @@ impl SshManager {
         tauri::async_runtime::spawn(async move {
             let _keep_jump_handles = &jump_handles;
             let mut sftp = None;
+            let mut exit_event_emitted = false;
             loop {
                 tokio::select! {
                     message = reader.wait() => {
                         let Some(message) = message else { break };
+                        let is_exit_message = matches!(
+                            &message,
+                            ChannelMsg::ExitStatus { .. } | ChannelMsg::ExitSignal { .. }
+                        );
                         if !emit_channel_message(
                             &task_app,
                             &task_id_for_task,
@@ -616,6 +621,7 @@ impl SshManager {
                         ) {
                             break;
                         }
+                        exit_event_emitted |= is_exit_message;
                     }
                     control_message = controls.recv() => {
                         let Some(control_message) = control_message else { break };
@@ -639,16 +645,18 @@ impl SshManager {
                 .lock()
                 .unwrap_or_else(|error| error.into_inner())
                 .remove(&task_id_for_task);
-            let _ = task_app.emit(
-                "ssh:exit",
-                SshExitEvent {
-                    id: task_id_for_task.clone(),
-                    connection_id: task_connection_id.clone(),
-                    profile_id: task_profile_id,
-                    exit_code: None,
-                    signal: None,
-                },
-            );
+            if !exit_event_emitted {
+                let _ = task_app.emit(
+                    "ssh:exit",
+                    SshExitEvent {
+                        id: task_id_for_task.clone(),
+                        connection_id: task_connection_id.clone(),
+                        profile_id: task_profile_id,
+                        exit_code: None,
+                        signal: None,
+                    },
+                );
+            }
             task_manager.stop_forwardings_for_session(&task_id_for_task, &task_connection_id);
         });
 
