@@ -1,3 +1,5 @@
+use std::collections::{BTreeMap, BTreeSet};
+
 #[derive(Debug, Clone, Default)]
 pub struct RedactionContext {
     pub known_secrets: Vec<String>,
@@ -15,6 +17,8 @@ pub struct RedactedText {
 #[derive(Debug, Clone, Default)]
 pub struct Redactor {
     context: RedactionContext,
+    host_placeholders: BTreeMap<String, String>,
+    username_placeholders: BTreeMap<String, String>,
 }
 
 impl Redactor {
@@ -60,11 +64,17 @@ impl Redactor {
                 );
             }
         }
-        redactor
+        Self::new(redactor.context)
     }
 
     pub fn new(context: RedactionContext) -> Self {
-        Self { context }
+        let host_placeholders = indexed_placeholders(&context.hosts, "HOST");
+        let username_placeholders = indexed_placeholders(&context.usernames, "USER");
+        Self {
+            context,
+            host_placeholders,
+            username_placeholders,
+        }
     }
 
     pub fn redact_text(&self, input: &str) -> RedactedText {
@@ -83,21 +93,16 @@ impl Redactor {
         }
         redacted |= redact_private_key_blocks(&mut text);
         redacted |= redact_url_credentials(&mut text);
-        for username in self
-            .context
-            .usernames
-            .iter()
-            .filter(|value| !value.is_empty())
-        {
-            redacted |= replace_all(&mut text, username, "<USER>");
-        }
-        for host in self.context.hosts.iter().filter(|value| !value.is_empty()) {
-            redacted |= replace_all(&mut text, host, "<HOST>");
-        }
         redacted |= redact_auth_headers(&mut text);
         redacted |= redact_emails(&mut text);
         redacted |= redact_ipv6s(&mut text);
         redacted |= redact_ips(&mut text);
+        for (username, placeholder) in replacement_order(&self.username_placeholders) {
+            redacted |= replace_all(&mut text, username, placeholder);
+        }
+        for (host, placeholder) in replacement_order(&self.host_placeholders) {
+            redacted |= replace_all(&mut text, host, placeholder);
+        }
         RedactedText { text, redacted }
     }
 
@@ -149,6 +154,35 @@ fn collect_config_identifiers(value: &serde_yaml::Value, context: &mut Redaction
         }
         _ => {}
     }
+}
+
+fn indexed_placeholders(values: &[String], label: &str) -> BTreeMap<String, String> {
+    let values = values
+        .iter()
+        .filter(|value| !value.is_empty())
+        .cloned()
+        .collect::<BTreeSet<_>>()
+        .into_iter();
+    let mut placeholders = BTreeMap::new();
+    for (index, value) in values.enumerate() {
+        placeholders.insert(value, format!("<{label}:{}>", index + 1));
+    }
+    placeholders
+}
+
+fn replacement_order(placeholders: &BTreeMap<String, String>) -> Vec<(&str, &str)> {
+    let mut values = placeholders
+        .iter()
+        .map(|(value, placeholder)| (value.as_str(), placeholder.as_str()))
+        .collect::<Vec<_>>();
+    values.sort_by(|left, right| {
+        right
+            .0
+            .len()
+            .cmp(&left.0.len())
+            .then_with(|| left.0.cmp(right.0))
+    });
+    values
 }
 
 fn is_sensitive_key(key: &str) -> bool {
@@ -392,7 +426,7 @@ mod tests {
         assert!(!output.text.contains("alice@example.com"));
         assert!(!output.text.contains("server.internal"));
         assert!(!output.text.contains("/home/alice"));
-        assert!(output.text.contains("<USER>"));
+        assert!(output.text.contains("<USER:1>"));
         assert!(output.text.contains("<IP>"));
     }
 
@@ -424,7 +458,7 @@ mod tests {
         let value = serde_json::json!({"token": "abc123", "nested": {"host": "server.internal"}, "ok": "alice@example.com"});
         let output = redactor().redact_json(&value);
         assert_eq!(output["token"], "<REDACTED>");
-        assert_eq!(output["nested"]["host"], "<HOST>");
+        assert_eq!(output["nested"]["host"], "<HOST:1>");
         assert_eq!(output["ok"], "<EMAIL>");
     }
 
@@ -446,5 +480,15 @@ mod tests {
         assert!(!output.text.contains("private.example"));
         assert!(!output.text.contains("known.example"));
         assert!(!output.text.contains("bob"));
+    }
+
+    #[test]
+    fn keeps_host_placeholders_stable_and_distinct_within_one_redactor() {
+        let redactor = Redactor::new(RedactionContext {
+            hosts: vec!["z.example".into(), "a.example".into()],
+            ..Default::default()
+        });
+        let output = redactor.redact_text("a.example z.example a.example");
+        assert_eq!(output.text, "<HOST:1> <HOST:2> <HOST:1>");
     }
 }

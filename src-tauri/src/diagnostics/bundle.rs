@@ -270,6 +270,7 @@ fn read_logs(directory: &Path) -> Result<Vec<(String, Vec<u8>)>, AppError> {
             "diagnostic logs path is not a directory".into(),
         ));
     }
+    let redactor = crate::diagnostics::redaction::Redactor::from_storage_directory(directory);
     let mut files = Vec::new();
     for entry in fs::read_dir(directory)? {
         let entry = entry?;
@@ -289,7 +290,7 @@ fn read_logs(directory: &Path) -> Result<Vec<(String, Vec<u8>)>, AppError> {
             ));
         }
         let bytes = read_optional_regular_file(&entry.path())?.unwrap_or_default();
-        let redacted = crate::diagnostics::redaction::Redactor::from_storage_directory(directory)
+        let redacted = redactor
             .redact_text(&String::from_utf8_lossy(&bytes))
             .text
             .into_bytes();

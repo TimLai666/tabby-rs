@@ -275,7 +275,7 @@ mod tests {
             .unwrap();
         let contents = std::fs::read_to_string(temp.path().join("tabby-rs.log")).unwrap();
         assert!(!contents.contains("server.internal"));
-        assert!(contents.contains("ssh-<HOST>-22"));
+        assert!(contents.contains("ssh-<HOST:1>-22"));
     }
 
     #[test]
