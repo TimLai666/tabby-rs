@@ -7,7 +7,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { assertBenchmarkReport, BENCHMARK_METRICS } from './benchmark/schema.mjs'
+import { assertBenchmarkReport, BENCHMARK_METRICS, MIN_LARGE_OUTPUT_BYTES } from './benchmark/schema.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -246,8 +246,13 @@ async function run (options) {
     const warmups = Number(options['warmup-samples'] || 1)
     const readyTimeoutMs = Number(options['ready-timeout-ms'] || 30000)
     const maxOutputBytes = Number(options['max-output-bytes'] || 512 * 1024 * 1024)
+    const minimumOutputBytes = Number(options['minimum-output-bytes'] || 1)
     if (!Number.isInteger(samples) || samples < 1) throw new Error('--samples must be a positive integer')
     if (!Number.isInteger(maxOutputBytes) || maxOutputBytes < 1) throw new Error('--max-output-bytes must be a positive integer')
+    if (!Number.isInteger(minimumOutputBytes) || minimumOutputBytes < 1) throw new Error('--minimum-output-bytes must be a positive integer')
+    if (minimumOutputBytes < MIN_LARGE_OUTPUT_BYTES && options['minimum-output-bytes']) {
+        throw new Error(`--minimum-output-bytes must be at least ${MIN_LARGE_OUTPUT_BYTES} for release evidence`)
+    }
     fs.mkdirSync(outputDir, { recursive: true })
 
     const binary = required(options, 'binary')
@@ -298,6 +303,9 @@ async function run (options) {
         uiFrameResponsiveness: outputFrameReport,
         provenance: { runner: 'scripts/run-benchmarks.mjs', runnerVersion: '1', command: [outputCommand, ...outputArgs] },
     })
+    if (output.bytes < minimumOutputBytes) {
+        throw new Error(`output benchmark produced ${output.bytes} bytes, below the requested minimum of ${minimumOutputBytes}`)
+    }
     if (outputSamples.some(sample => sample.bytes !== output.bytes || sample.checksum !== output.outputSha256)) {
         throw new Error('output benchmark samples did not produce identical bytes and checksum')
     }

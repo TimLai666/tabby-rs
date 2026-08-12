@@ -28,7 +28,7 @@ function walk (directory) {
     return files
 }
 
-if (!Array.isArray(expectedTargets) || expectedTargets.some(target => typeof target !== 'string' || !target)) {
+if (!Array.isArray(expectedTargets) || expectedTargets.length === 0 || expectedTargets.some(target => typeof target !== 'string' || !target)) {
     failures.push('expected targets must be a non-empty array of strings')
 }
 

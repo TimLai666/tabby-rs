@@ -8,6 +8,8 @@ export const BENCHMARK_METRICS = {
     'bundle-size': 'bundle-size-bytes',
 }
 
+export const MIN_LARGE_OUTPUT_BYTES = 100 * 1024 * 1024
+
 function isRecord (value) {
     return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
@@ -54,7 +56,7 @@ function validateSummary (errors, report) {
     }
 }
 
-export function validateBenchmarkReport (report, expectedMetric) {
+export function validateBenchmarkReport (report, expectedMetric, { requireLargeOutput = false } = {}) {
     const errors = []
     if (!isRecord(report)) {
         return ['report must be an object']
@@ -91,6 +93,9 @@ export function validateBenchmarkReport (report, expectedMetric) {
         case BENCHMARK_METRICS.output:
             if (report.unit !== 'bytesPerSecond') errors.push('output unit must be bytesPerSecond')
             requireFiniteNumber(errors, report, 'bytes', { integer: true, positive: true })
+            if (requireLargeOutput && typeof report.bytes === 'number' && report.bytes < MIN_LARGE_OUTPUT_BYTES) {
+                errors.push(`bytes must be at least ${MIN_LARGE_OUTPUT_BYTES} for a release gate`)
+            }
             if (typeof report.outputSha256 !== 'string' || !HASH_PATTERN.test(report.outputSha256)) errors.push('outputSha256 must be a SHA-256 digest')
             if (!isRecord(report.uiFrameResponsiveness)) errors.push('uiFrameResponsiveness must be an object')
             requireString(errors, report.uiFrameResponsiveness, 'method')

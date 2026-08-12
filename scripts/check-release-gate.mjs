@@ -88,7 +88,7 @@ for (const benchmark of benchmarkFiles) {
     }
     try {
         const report = JSON.parse(fs.readFileSync(benchmark.path, 'utf8'))
-        const errors = validateBenchmarkReport(report, benchmark.metric)
+        const errors = validateBenchmarkReport(report, benchmark.metric, { requireLargeOutput: true })
         if (expectedRevision && report.commit !== expectedRevision) errors.push(`commit must match ${expectedRevision}`)
         if (expectedPlatform && report.platform !== expectedPlatform) errors.push(`platform must match ${expectedPlatform}`)
         if (expectedArch && report.arch !== expectedArch) errors.push(`arch must match ${expectedArch}`)

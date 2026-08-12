@@ -64,6 +64,8 @@ assert.equal(outputReport.bytes, 131072)
 assert.equal(outputReport.uiFrameResponsiveness.droppedFrameCount, 0)
 assert.equal(outputReport.uiFrameResponsiveness.traceSha256.length, 64)
 assert.equal(outputReport.artifactSha256.length, 64)
+assert.ok(validateBenchmarkReport(outputReport, expected.output, { requireLargeOutput: true })
+    .some(error => error.startsWith('bytes must be at least ')))
 
 const tamperedReport = { ...outputReport, median: outputReport.median + 1 }
 assert.ok(validateBenchmarkReport(tamperedReport, expected.output).includes('median does not match values'))

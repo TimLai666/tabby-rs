@@ -36,4 +36,15 @@ const report = JSON.parse(fs.readFileSync(output, 'utf8'))
 assert.equal(report.passed, true)
 assert.deepEqual(report.targets.map(target => target.target).sort(), [...targets].sort())
 
+const emptyOutput = path.join(work, 'empty-aggregate.json')
+await assert.rejects(
+    execFileAsync(process.execPath, [script, path.join(work, 'empty-input'),
+        '--expected-targets', '[]',
+        '--output', emptyOutput,
+    ], { cwd: root }),
+)
+const emptyReport = JSON.parse(fs.readFileSync(emptyOutput, 'utf8'))
+assert.equal(emptyReport.passed, false)
+assert.ok(emptyReport.failures.includes('expected targets must be a non-empty array of strings'))
+
 console.log('Aggregate release gate fixtures passed')

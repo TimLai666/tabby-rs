@@ -169,6 +169,13 @@ jobs:
           export TABBY_RS_UPDATE_SIGNATURE="$update_artifact.sig"
           node scripts/create-tauri-update-manifest.mjs
 
+      - name: Verify updater signature against artifact
+        shell: bash
+        run: |
+          primary_artifact=$(node scripts/assert-tauri-release-artifacts.mjs release-staging --platform "${{ matrix.platform }}" --bundles "${{ matrix.bundles }}")
+          cargo run --quiet --manifest-path src-tauri/Cargo.toml --bin verify-tauri-signature -- \
+            "$primary_artifact" "$primary_artifact.sig" release-staging/updater-public-key.txt
+
       - name: Snapshot release bundle for benchmarks
         shell: bash
         run: cp -R release-staging release-benchmark-bundle
@@ -200,7 +207,8 @@ jobs:
             --platform "${{ matrix.platform }}" \
             --arch "${{ matrix.arch }}" \
             --output-command node \
-            --output-args '["scripts/fixtures/benchmark-process.mjs","--output","131072"]' \
+            --output-args '["scripts/fixtures/benchmark-process.mjs","--output","104857600"]' \
+            --minimum-output-bytes 104857600 \
             --bundle release-benchmark-bundle \
             --ui-frame-report release-staging/benchmarks/ui-frames.json \
             --config-fixture-path scripts/fixtures/benchmark-config.json \
