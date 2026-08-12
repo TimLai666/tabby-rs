@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use crate::{
     error::AppError,
     storage::{
@@ -55,11 +57,11 @@ fn config_is_readable(paths: &StoragePaths) -> Result<bool, AppError> {
     if bytes.is_empty() {
         return Ok(true);
     }
-    let value: serde_yaml::Value = match serde_yaml::from_slice(&bytes) {
+    let value: BTreeMap<String, serde_json::Value> = match serde_yaml::from_slice(&bytes) {
         Ok(value) => value,
         Err(_) => return Ok(false),
     };
-    Ok(matches!(value, serde_yaml::Value::Mapping(_)))
+    Ok(!value.is_empty() || bytes.iter().all(u8::is_ascii_whitespace))
 }
 
 #[cfg(test)]
@@ -126,6 +128,38 @@ mod tests {
 
         let recovered = recover_pending_update(&paths, state, "1.0.231-tabbyrs.1").unwrap();
         assert!(recovered.pending_update.is_none());
+    }
+
+    #[test]
+    fn restores_when_config_is_yaml_but_not_a_bootstrap_mapping() {
+        let temp = tempdir().unwrap();
+        let paths = StoragePaths::from_data_dir(temp.path().join("data"));
+        paths.ensure_layout().unwrap();
+        atomic_write(paths.config_file(), b"version: 1\n").unwrap();
+        let backup = create_backup(
+            &paths,
+            &BackupRequest {
+                reason: "before-update".into(),
+                source_version: Some("1.0.231-tabbyrs.1".into()),
+                channel: Some(UpdateChannel::Stable),
+            },
+            "1.0.231-tabbyrs.1",
+        )
+        .unwrap();
+        atomic_write(paths.config_file(), b"- valid-yaml-but-not-a-config-map\n").unwrap();
+
+        let mut state = TabbyRsState::default();
+        state.pending_update = Some(PendingUpdateState {
+            target_version: "1.0.231-tabbyrs.2".into(),
+            backup_id: backup.backup_id.clone(),
+            channel: UpdateChannel::Stable,
+        });
+        state.extra = BTreeMap::new();
+        save_state(paths.state_file(), &state).unwrap();
+
+        let recovered = recover_pending_update(&paths, state, "1.0.231-tabbyrs.2").unwrap();
+        assert!(recovered.pending_update.is_none());
+        assert_eq!(std::fs::read(paths.config_file()).unwrap(), b"version: 1\n");
     }
 
     #[test]
