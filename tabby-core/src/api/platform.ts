@@ -310,6 +310,10 @@ export abstract class PlatformService {
         throw new Error('Not implemented')
     }
 
+    getPluginOperationId (_name: string): string|null {
+        return null
+    }
+
     async getNodeToolchainStatus (_customNodePath?: string): Promise<NodeToolchainStatus> {
         return {
             nodePath: null,

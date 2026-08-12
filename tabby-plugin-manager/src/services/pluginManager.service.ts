@@ -285,4 +285,8 @@ export class PluginManagerService {
             throw err
         }
     }
+
+    getPluginOperationId (plugin: PluginInfo): string|null {
+        return this.platform.getPluginOperationId(plugin.packageName)
+    }
 }

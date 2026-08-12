@@ -37,6 +37,7 @@ export class PluginsSettingsTabComponent {
     nodeStatus: NodeToolchainStatus | null = null
     customNodePath = ''
     nodeStatusLoading = false
+    cancellingPlugins = new Set<string>()
 
     constructor (
         private config: ConfigService,
@@ -154,6 +155,31 @@ export class PluginsSettingsTabComponent {
             this.errorMessage = err
             this.busy.delete(plugin.name)
             throw err
+        }
+    }
+
+    canCancelPlugin (plugin: PluginInfo): boolean {
+        return this.pluginManager.getPluginOperationId(plugin) !== null
+    }
+
+    isCancellingPlugin (plugin: PluginInfo): boolean {
+        return this.cancellingPlugins.has(plugin.name)
+    }
+
+    async cancelPlugin (plugin: PluginInfo): Promise<void> {
+        const operationId = this.pluginManager.getPluginOperationId(plugin)
+        if (!operationId || this.cancellingPlugins.has(plugin.name)) {
+            return
+        }
+        this.cancellingPlugins.add(plugin.name)
+        try {
+            await this.platform.cancelPluginOperation(operationId)
+        } catch (err) {
+            console.error('Error cancelling plugin operation', plugin.name, err)
+            this.erroredPlugin = plugin.name
+            this.errorMessage = err
+        } finally {
+            this.cancellingPlugins.delete(plugin.name)
         }
     }
 

@@ -32,6 +32,7 @@ export class TauriPlatformService extends PlatformService {
     private configRevision: string | null = null
     private configPath: string | null = null
     private customNodePath: string | null = null
+    private activePluginOperations = new Map<string, string>()
     private theme: PlatformTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
     private contextMenuElement: HTMLElement | null = null
     private contextMenuCleanup: (() => void) | null = null
@@ -209,9 +210,10 @@ export class TauriPlatformService extends PlatformService {
     }
 
     async installPlugin (name: string, version: string): Promise<void> {
-        const operationId = crypto.randomUUID()
-        const watcher = await this.watchPluginOperation(operationId)
+        const operationId = this.beginPluginOperation(name)
+        let watcher: { result: Promise<PluginOperation>; dispose: () => void }|null = null
         try {
+            watcher = await this.watchPluginOperation(operationId)
             await this.bridge.invoke('plugins.install', {
                 operationId,
                 packageName: name,
@@ -220,14 +222,18 @@ export class TauriPlatformService extends PlatformService {
             })
             this.requireSuccessfulPluginOperation(await watcher.result)
         } finally {
-            watcher.dispose()
+            watcher?.dispose()
+            if (this.activePluginOperations.get(name) === operationId) {
+                this.activePluginOperations.delete(name)
+            }
         }
     }
 
     async uninstallPlugin (name: string): Promise<void> {
-        const operationId = crypto.randomUUID()
-        const watcher = await this.watchPluginOperation(operationId)
+        const operationId = this.beginPluginOperation(name)
+        let watcher: { result: Promise<PluginOperation>; dispose: () => void }|null = null
         try {
+            watcher = await this.watchPluginOperation(operationId)
             await this.bridge.invoke('plugins.uninstall', {
                 operationId,
                 packageName: name,
@@ -235,7 +241,10 @@ export class TauriPlatformService extends PlatformService {
             })
             this.requireSuccessfulPluginOperation(await watcher.result)
         } finally {
-            watcher.dispose()
+            watcher?.dispose()
+            if (this.activePluginOperations.get(name) === operationId) {
+                this.activePluginOperations.delete(name)
+            }
         }
     }
 
@@ -245,6 +254,19 @@ export class TauriPlatformService extends PlatformService {
 
     async cancelPluginOperation (id: string): Promise<void> {
         await this.bridge.invoke('plugins.cancelOperation', { id })
+    }
+
+    override getPluginOperationId (name: string): string|null {
+        return this.activePluginOperations.get(name) ?? null
+    }
+
+    private beginPluginOperation (name: string): string {
+        if (this.activePluginOperations.has(name)) {
+            throw new Error(`Plugin operation for ${name} is already running`)
+        }
+        const operationId = crypto.randomUUID()
+        this.activePluginOperations.set(name, operationId)
+        return operationId
     }
 
     private async watchPluginOperation (id: string): Promise<{

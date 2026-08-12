@@ -64,11 +64,22 @@ ul.nav-tabs.mb-2(ngbNav, #nav='ngbNav')
                             .d-flex.flex-column.flex-md-row.gap-3.align-items-start
                                 button.btn.btn-primary.btn-block.justify-content-center(
                                     (click)='installPlugin(plugin)',
-                                    [disabled]='busy.has(plugin.name) || !canManagePlugins()'
+                                    [disabled]='busy.has(plugin.name) || !canManagePlugins()',
+                                    *ngIf='!canCancelPlugin(plugin)'
                                 )
                                     i.fas.fa-fw.fa-cloud-download(*ngIf='busy.get(plugin.name) != BusyState.Installing')
                                     i.fas.fa-fw.fa-circle-notch.fa-spin(*ngIf='busy.get(plugin.name) == BusyState.Installing')
                                     span.ms-2(translate) Get
+
+                                button.btn.btn-danger.btn-block.justify-content-center(
+                                    type='button',
+                                    (click)='cancelPlugin(plugin)',
+                                    [disabled]='isCancellingPlugin(plugin)',
+                                    *ngIf='canCancelPlugin(plugin)'
+                                )
+                                    i.fas.fa-fw.fa-ban(*ngIf='!isCancellingPlugin(plugin)')
+                                    i.fas.fa-fw.fa-circle-notch.fa-spin(*ngIf='isCancellingPlugin(plugin)')
+                                    span.ms-2(translate) Cancel
 
                                 button.btn.btn-secondary.btn-block.justify-content-center(
                                     *ngIf='plugin.homepage',
@@ -106,9 +117,9 @@ ul.nav-tabs.mb-2(ngbNav, #nav='ngbNav')
                                 small.d-block.text-muted {{plugin.description}}
 
                             button.btn.btn-primary.ms-2(
-                                *ngIf='knownUpgrades[plugin.name]',
+                                *ngIf='knownUpgrades[plugin.name] && !canCancelPlugin(plugin)',
                                 (click)='upgradePlugin(plugin)',
-                                [disabled]='busy.has(plugin.name) || !canManagePlugins()'
+                                [disabled]='busy.has(plugin.name) || !canManagePlugins()',
                             )
                                 i.fas.fa-fw.fa-arrow-up(*ngIf='busy.get(plugin.name) != BusyState.Installing')
                                 i.fas.fa-fw.fa-circle-notch.fa-spin(*ngIf='busy.get(plugin.name) == BusyState.Installing')
@@ -116,6 +127,16 @@ ul.nav-tabs.mb-2(ngbNav, #nav='ngbNav')
                                     translate='Upgrade to {version}',
                                     [translateParams]='{version: knownUpgrades[plugin.name]?.version}'
                                 )
+
+                            button.btn.btn-danger.ms-2(
+                                type='button',
+                                (click)='cancelPlugin(plugin)',
+                                [disabled]='isCancellingPlugin(plugin)',
+                                *ngIf='canCancelPlugin(plugin)'
+                            )
+                                i.fas.fa-fw.fa-ban(*ngIf='!isCancellingPlugin(plugin)')
+                                i.fas.fa-fw.fa-circle-notch.fa-spin(*ngIf='isCancellingPlugin(plugin)')
+                                span.ms-1(translate) Cancel
 
                         ng-template(ngbPanelContent)
                             .d-flex.flex-column.flex-md-row.gap-3.align-items-start
@@ -134,12 +155,22 @@ ul.nav-tabs.mb-2(ngbNav, #nav='ngbNav')
 
                                 button.btn.btn-danger.btn-block.justify-content-center(
                                     (click)='uninstallPlugin(plugin)',
-                                    *ngIf='!plugin.isBuiltin',
+                                    *ngIf='!plugin.isBuiltin && !canCancelPlugin(plugin)',
                                     [disabled]='busy.has(plugin.name) || !canManagePlugins()'
                                 )
                                     i.fas.fa-fw.fa-trash(*ngIf='busy.get(plugin.name) != BusyState.Uninstalling')
                                     i.fas.fa-fw.fa-circle-notch.fa-spin(*ngIf='busy.get(plugin.name) == BusyState.Uninstalling')
                                     span(translate) Uninstall
+
+                                button.btn.btn-danger.btn-block.justify-content-center(
+                                    type='button',
+                                    (click)='cancelPlugin(plugin)',
+                                    [disabled]='isCancellingPlugin(plugin)',
+                                    *ngIf='!plugin.isBuiltin && canCancelPlugin(plugin)'
+                                )
+                                    i.fas.fa-fw.fa-ban(*ngIf='!isCancellingPlugin(plugin)')
+                                    i.fas.fa-fw.fa-circle-notch.fa-spin(*ngIf='isCancellingPlugin(plugin)')
+                                    span(translate) Cancel
 
                                 .ms-auto
                                 div
