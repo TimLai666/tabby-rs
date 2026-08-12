@@ -148,7 +148,7 @@ export class AppRootComponent {
             this.app.closeWindow()
         })
 
-        if (window['safeModeReason']) {
+        if (window['safeModeReason'] || Array.isArray(window['pluginLoadFailures']) && window['pluginLoadFailures'].length) {
             ngbModal.open(SafeModeModalComponent)
         }
 

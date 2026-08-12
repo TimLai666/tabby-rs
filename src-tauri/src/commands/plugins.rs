@@ -6,6 +6,109 @@ use crate::{
 use std::sync::Arc;
 use tauri::Emitter;
 
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginPackageRequest {
+    pub package_name: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginBootstrapFailureRequest {
+    pub package_name: Option<String>,
+    pub phase: String,
+    pub message: String,
+}
+
+#[tauri::command]
+pub fn plugins_bootstrap_plugin_started(
+    request: PluginPackageRequest,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), AppError> {
+    state.update_persisted_state(|persisted| {
+        persisted.safe_mode.last_started_plugin = Some(request.package_name);
+    })?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn plugins_bootstrap_plugin_completed(
+    request: PluginPackageRequest,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), AppError> {
+    state.update_persisted_state(|persisted| {
+        persisted.safe_mode.last_completed_plugin = Some(request.package_name);
+    })?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn plugins_bootstrap_failed(
+    request: PluginBootstrapFailureRequest,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), AppError> {
+    state.update_persisted_state(|persisted| {
+        persisted.safe_mode.failure_phase = Some(request.phase);
+        persisted.safe_mode.failure_message = Some(request.message);
+        if let Some(package_name) = request.package_name {
+            if !persisted
+                .safe_mode
+                .suspected_plugins
+                .contains(&package_name)
+            {
+                persisted.safe_mode.suspected_plugins.push(package_name);
+            }
+        } else if persisted.safe_mode.suspected_plugins.is_empty() {
+            persisted.safe_mode.suspected_plugins = persisted.safe_mode.plugins.clone();
+        }
+    })?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn plugins_bootstrap_succeeded(state: tauri::State<'_, AppState>) -> Result<(), AppError> {
+    state.update_persisted_state(|persisted| {
+        persisted.safe_mode.attempt_id = None;
+        persisted.safe_mode.started_at = None;
+        persisted.safe_mode.plugins.clear();
+        persisted.safe_mode.last_started_plugin = None;
+        persisted.safe_mode.last_completed_plugin = None;
+        persisted.safe_mode.failure_phase = None;
+        persisted.safe_mode.failure_message = None;
+    })?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn plugins_bootstrap_retry(state: tauri::State<'_, AppState>) -> Result<(), AppError> {
+    state.update_persisted_state(|persisted| {
+        persisted.safe_mode.last_forced = false;
+        persisted.safe_mode.attempt_id = None;
+        persisted.safe_mode.started_at = None;
+        persisted.safe_mode.plugins.clear();
+        persisted.safe_mode.last_started_plugin = None;
+        persisted.safe_mode.last_completed_plugin = None;
+        persisted.safe_mode.failure_phase = None;
+        persisted.safe_mode.failure_message = None;
+    })?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn plugins_discover(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<manifest::PluginDescriptor>, AppError> {
+    manifest::discover(state.paths().plugins_dir())
+}
+
+#[tauri::command]
+pub fn plugins_read_entry(
+    request: PluginPackageRequest,
+    state: tauri::State<'_, AppState>,
+) -> Result<manifest::PluginSource, AppError> {
+    manifest::read_entry(state.paths().plugins_dir(), &request.package_name)
+}
+
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NodeStatusRequest {

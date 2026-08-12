@@ -1,7 +1,22 @@
 .modal-body
-    .alert.alert-danger(translate) Tabby could not start with your plugins, so all third party plugins have been disabled in this session. The error was:
+    .alert.alert-danger(*ngIf='error', translate) Tabby could not start with your plugins, so all third party plugins have been disabled in this session. The error was:
 
-    pre {{error}}
+    pre(*ngIf='error') {{error}}
+
+    .alert.alert-warning(*ngIf='!error', translate) Some plugins could not be loaded. The rest of Tabby is still available.
+
+    div(*ngIf='failures.length')
+        p(translate) Some plugins could not be loaded:
+        ul
+            li(*ngFor='let failure of failures') {{failure.plugin?.name || 'unknown'}}: {{failure.code || failure.phase}} - {{failure.message}}
+
+    div(*ngIf='suspectedPlugins.length')
+        p(translate) Disable a suspected plugin and retry:
+        button.btn.btn-outline-danger.me-2.mb-2(
+            *ngFor='let plugin of suspectedPlugins',
+            (click)='disablePlugin(plugin)'
+        ) {{plugin}}
 
 .modal-footer
+    button.btn.btn-primary((click)='retry()', translate) Retry
     button.btn.btn-primary((click)='close()', translate) Close

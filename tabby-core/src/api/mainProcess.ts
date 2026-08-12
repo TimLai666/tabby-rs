@@ -22,4 +22,7 @@ export interface BootstrapData {
     windowID: number
     installedPlugins: PluginInfo[]
     userPluginsPath: string
+    safeMode?: boolean
+    safeModeReason?: string | null
+    safeModeSuspectedPlugins?: string[]
 }

@@ -1,8 +1,14 @@
 use std::{collections::BTreeMap, fs};
 
+use chrono::Utc;
 use tauri::{AppHandle, State};
 
-use crate::{error::AppError, state::AppState};
+use crate::{
+    error::AppError,
+    plugins::manifest,
+    state::AppState,
+    storage::{config_file::read_config, paths::StoragePaths},
+};
 
 #[derive(Debug, Default, serde::Deserialize)]
 pub struct EmptyRequest {}
@@ -38,6 +44,9 @@ pub struct BootstrapData {
     pub window_id: u64,
     pub installed_plugins: Vec<PluginInfo>,
     pub user_plugins_path: String,
+    pub safe_mode: bool,
+    pub safe_mode_reason: Option<String>,
+    pub safe_mode_suspected_plugins: Vec<String>,
 }
 
 fn current_runtime_info() -> RuntimeInfo {
@@ -61,6 +70,40 @@ fn built_in_plugin(name: &str, package_name: &str, description: &str) -> PluginI
     }
 }
 
+fn user_plugin(plugin: manifest::InstalledPlugin) -> PluginInfo {
+    PluginInfo {
+        name: plugin.name,
+        description: plugin.description,
+        package_name: plugin.package_name,
+        is_builtin: plugin.is_builtin,
+        is_legacy: plugin.is_legacy,
+        version: plugin.version,
+        author: plugin.author,
+    }
+}
+
+fn bootstrap_attempt_id() -> String {
+    format!(
+        "{}-{}",
+        Utc::now().timestamp_nanos_opt().unwrap_or_default(),
+        std::process::id()
+    )
+}
+
+fn bootstrap_config(state: &AppState) -> Result<BTreeMap<String, serde_json::Value>, AppError> {
+    let paths = StoragePaths::from_app_paths(state.paths());
+    let config = read_config(paths.config_file())?;
+    parse_bootstrap_config(&config.yaml)
+}
+
+fn parse_bootstrap_config(yaml: &str) -> Result<BTreeMap<String, serde_json::Value>, AppError> {
+    if yaml.trim().is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    serde_yaml::from_str(yaml)
+        .map_err(|error| AppError::InvalidData(format!("config.yaml is invalid: {error}")))
+}
+
 #[tauri::command]
 pub fn app_bootstrap(
     request: EmptyRequest,
@@ -68,23 +111,76 @@ pub fn app_bootstrap(
 ) -> Result<BootstrapData, AppError> {
     let _ = request;
     fs::create_dir_all(state.paths().plugins_dir())?;
+    let config = bootstrap_config(&state)?;
+
+    let previous = state.persisted_state();
+    let previous_attempt = previous.safe_mode.attempt_id.is_some();
+    let previous_reason = previous.safe_mode.failure_message.clone();
+    let (safe_mode, safe_mode_reason, plugin_packages) = if previous_attempt {
+        (
+            true,
+            previous_reason
+                .or_else(|| Some("The previous plugin startup did not complete.".into())),
+            Vec::new(),
+        )
+    } else {
+        match manifest::discover(state.paths().plugins_dir()) {
+            Ok(plugins) => (
+                false,
+                None,
+                plugins
+                    .into_iter()
+                    .map(|plugin| plugin.package_name)
+                    .collect(),
+            ),
+            Err(error) => (true, Some(error.to_string()), Vec::new()),
+        }
+    };
+    let suspected_plugins = if safe_mode {
+        previous.safe_mode.suspected_plugins.clone()
+    } else {
+        Vec::new()
+    };
+    let failure_message = safe_mode_reason.clone();
+    state.update_persisted_state(|persisted| {
+        persisted.safe_mode.last_forced = safe_mode;
+        persisted.safe_mode.suspected_plugins = suspected_plugins.clone();
+        persisted.safe_mode.attempt_id = Some(bootstrap_attempt_id());
+        persisted.safe_mode.started_at = Some(Utc::now());
+        persisted.safe_mode.plugins = plugin_packages.clone();
+        persisted.safe_mode.last_started_plugin = None;
+        persisted.safe_mode.last_completed_plugin = None;
+        persisted.safe_mode.failure_phase = safe_mode.then_some("discover".into());
+        persisted.safe_mode.failure_message = failure_message.clone();
+    })?;
+
+    let user_plugins = manifest::list_installed(state.paths().plugins_dir())
+        .unwrap_or_default()
+        .into_iter()
+        .map(user_plugin)
+        .collect::<Vec<_>>();
+    let mut installed_plugins = vec![
+        built_in_plugin("core", "tabby-core", "Tabby core UI"),
+        built_in_plugin("settings", "tabby-settings", "Tabby settings UI"),
+        built_in_plugin("tauri", "tabby-tauri", "Tabby RS Tauri host providers"),
+        built_in_plugin(
+            "plugin-manager",
+            "tabby-plugin-manager",
+            "Tabby plugin manager",
+        ),
+    ];
+    installed_plugins.extend(user_plugins);
 
     Ok(BootstrapData {
-        config: BTreeMap::new(),
+        config,
         executable: state.paths().executable().to_string_lossy().into_owned(),
         is_main_window: true,
         window_id: state.next_window_id(),
-        installed_plugins: vec![
-            built_in_plugin("core", "tabby-core", "Tabby core UI"),
-            built_in_plugin("settings", "tabby-settings", "Tabby settings UI"),
-            built_in_plugin("tauri", "tabby-tauri", "Tabby RS Tauri host providers"),
-            built_in_plugin(
-                "plugin-manager",
-                "tabby-plugin-manager",
-                "Tabby plugin manager",
-            ),
-        ],
+        installed_plugins,
         user_plugins_path: state.paths().plugins_dir().to_string_lossy().into_owned(),
+        safe_mode,
+        safe_mode_reason,
+        safe_mode_suspected_plugins: suspected_plugins,
     })
 }
 
@@ -123,9 +219,18 @@ mod tests {
             window_id: 1,
             installed_plugins: Vec::new(),
             user_plugins_path: "plugins".into(),
+            safe_mode: false,
+            safe_mode_reason: None,
+            safe_mode_suspected_plugins: Vec::new(),
         };
         let value = serde_json::to_value(data).unwrap();
         assert_eq!(value["windowID"], 1);
         assert!(value.get("windowId").is_none());
+    }
+
+    #[test]
+    fn parses_plugin_blacklist_from_bootstrap_config() {
+        let config = super::parse_bootstrap_config("pluginBlacklist: [tabby-broken]\n").unwrap();
+        assert_eq!(config["pluginBlacklist"][0], "tabby-broken");
     }
 }

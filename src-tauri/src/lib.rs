@@ -37,8 +37,10 @@ use commands::{
     launch::app_initial_launch,
     migration::{migration_detect, migration_execute},
     plugins::{
-        plugins_cancel_operation, plugins_install, plugins_list_installed, plugins_node_status,
-        plugins_remove, plugins_uninstall, plugins_update,
+        plugins_bootstrap_failed, plugins_bootstrap_plugin_completed,
+        plugins_bootstrap_plugin_started, plugins_bootstrap_retry, plugins_bootstrap_succeeded,
+        plugins_cancel_operation, plugins_discover, plugins_install, plugins_list_installed,
+        plugins_node_status, plugins_read_entry, plugins_remove, plugins_uninstall, plugins_update,
     },
     pty::{
         pty_ack, pty_attach, pty_detach, pty_exists, pty_get_children, pty_get_cwd, pty_get_pid,
@@ -211,7 +213,7 @@ pub fn run() {
             if !state_file_existed {
                 save_state(storage_paths.state_file(), &persisted_state)?;
             }
-            app.manage(AppState::new(paths, initial_launch));
+            app.manage(AppState::new(paths, initial_launch, persisted_state));
             app.manage(Arc::new(SecretState::default()));
             app.manage(Arc::new(PtyManager::default()));
             app.manage(Arc::new(SshManager::new(known_hosts_path)));
@@ -272,10 +274,17 @@ pub fn run() {
             keychain_delete,
             migration_detect,
             migration_execute,
+            plugins_bootstrap_failed,
+            plugins_bootstrap_plugin_completed,
+            plugins_bootstrap_plugin_started,
+            plugins_bootstrap_retry,
+            plugins_bootstrap_succeeded,
             plugins_cancel_operation,
+            plugins_discover,
             plugins_install,
             plugins_list_installed,
             plugins_node_status,
+            plugins_read_entry,
             plugins_remove,
             plugins_uninstall,
             plugins_update,

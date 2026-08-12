@@ -33,6 +33,29 @@ export interface PluginOperation {
     message: string | null
 }
 
+export interface PluginDescriptor {
+    name: string
+    packageName: string
+    version: string
+    path: string
+    entry: string
+    isBuiltin: boolean
+    isLegacy: boolean
+    manifest: Record<string, unknown>
+}
+
+export interface PluginSource {
+    packageName: string
+    entry: string
+    code: string
+}
+
+export interface PluginBootstrapFailure {
+    packageName?: string | null
+    phase: string
+    message: string
+}
+
 export interface CliAliasStatus {
     supported: boolean
     enabled: boolean
@@ -650,6 +673,34 @@ export interface HostRequestMap {
     'plugins.listInstalled': {
         request: Record<string, never>
         response: PluginInfo[]
+    }
+    'plugins.discover': {
+        request: Record<string, never>
+        response: PluginDescriptor[]
+    }
+    'plugins.readEntry': {
+        request: { packageName: string }
+        response: PluginSource
+    }
+    'plugins.bootstrapPluginStarted': {
+        request: { packageName: string }
+        response: null
+    }
+    'plugins.bootstrapPluginCompleted': {
+        request: { packageName: string }
+        response: null
+    }
+    'plugins.bootstrapFailed': {
+        request: PluginBootstrapFailure
+        response: null
+    }
+    'plugins.bootstrapSucceeded': {
+        request: Record<string, never>
+        response: null
+    }
+    'plugins.bootstrapRetry': {
+        request: Record<string, never>
+        response: null
     }
     'plugins.cancelOperation': {
         request: { id: string }
