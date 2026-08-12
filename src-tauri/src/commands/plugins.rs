@@ -18,6 +18,7 @@ pub struct PluginPackageRequest {
 pub struct PluginBootstrapFailureRequest {
     pub package_name: Option<String>,
     pub phase: String,
+    pub code: Option<String>,
     pub message: String,
 }
 
@@ -33,9 +34,11 @@ fn journal_plugin_failure(
     state: &mut TabbyRsState,
     package_name: Option<String>,
     phase: String,
+    code: Option<String>,
     message: String,
 ) {
     state.safe_mode.failure_phase = Some(phase);
+    state.safe_mode.failure_code = code;
     state.safe_mode.failure_message = Some(message);
     if let Some(package_name) = package_name {
         if !state.safe_mode.suspected_plugins.contains(&package_name) {
@@ -53,6 +56,7 @@ fn clear_bootstrap_attempt(state: &mut TabbyRsState) {
     state.safe_mode.last_started_plugin = None;
     state.safe_mode.last_completed_plugin = None;
     state.safe_mode.failure_phase = None;
+    state.safe_mode.failure_code = None;
     state.safe_mode.failure_message = None;
 }
 
@@ -98,6 +102,7 @@ pub fn plugins_bootstrap_failed(
             persisted,
             request.package_name,
             request.phase,
+            request.code,
             request.message,
         );
     })?;
@@ -139,6 +144,7 @@ mod tests {
             &mut state,
             Some("tabby-broken".into()),
             "evaluate".into(),
+            Some("node-runtime-required".into()),
             "unsupported module".into(),
         );
 
@@ -148,6 +154,10 @@ mod tests {
         );
         assert_eq!(state.safe_mode.last_completed_plugin, None);
         assert_eq!(state.safe_mode.failure_phase.as_deref(), Some("evaluate"));
+        assert_eq!(
+            state.safe_mode.failure_code.as_deref(),
+            Some("node-runtime-required")
+        );
         assert_eq!(state.safe_mode.suspected_plugins, vec!["tabby-broken"]);
 
         journal_plugin_started(&mut state, "tabby-good".into());
@@ -161,6 +171,7 @@ mod tests {
         assert_eq!(state.safe_mode.attempt_id, None);
         assert!(state.safe_mode.plugins.is_empty());
         assert!(state.safe_mode.suspected_plugins.is_empty());
+        assert_eq!(state.safe_mode.failure_code, None);
     }
 
     #[test]
@@ -172,12 +183,14 @@ mod tests {
             &mut state,
             None,
             "angular-bootstrap".into(),
+            Some("angular-bootstrap".into()),
             "root module failed".into(),
         );
         journal_plugin_failure(
             &mut state,
             None,
             "angular-bootstrap".into(),
+            Some("angular-bootstrap".into()),
             "root module failed again".into(),
         );
 

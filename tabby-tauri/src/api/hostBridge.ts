@@ -81,6 +81,7 @@ export interface PluginSource {
 export interface PluginBootstrapFailure {
     packageName?: string | null
     phase: string
+    code?: string | null
     message: string
 }
 

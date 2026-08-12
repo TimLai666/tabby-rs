@@ -172,6 +172,7 @@ async function main (): Promise<void> {
         await bridge.invoke('plugins.bootstrapFailed', {
             packageName: null,
             phase: 'discover',
+            code: 'discover',
             message: discoveryFailure.message,
         }).catch(journalError => console.warn('Could not journal plugin discovery failure:', journalError))
     }
@@ -180,6 +181,7 @@ async function main (): Promise<void> {
         await bridge.invoke('plugins.bootstrapFailed', {
             packageName: failure.plugin.packageName,
             phase: failure.phase,
+            code: failure.code,
             message: failure.message,
         }).catch(journalError => console.warn(`Could not journal plugin failure for ${failure.plugin.packageName}:`, journalError))
     }
@@ -227,6 +229,7 @@ async function main (): Promise<void> {
         await bridge.invoke('plugins.bootstrapFailed', {
             packageName: null,
             phase: 'angular-bootstrap',
+            code: 'angular-bootstrap',
             message: String(error),
         }).catch(journalError => console.warn('Could not journal Angular bootstrap failure:', journalError))
         if (bootstrapData.safeMode) {

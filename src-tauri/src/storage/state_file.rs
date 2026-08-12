@@ -51,6 +51,7 @@ pub struct SafeModeState {
     pub last_started_plugin: Option<String>,
     pub last_completed_plugin: Option<String>,
     pub failure_phase: Option<String>,
+    pub failure_code: Option<String>,
     pub failure_message: Option<String>,
 }
 

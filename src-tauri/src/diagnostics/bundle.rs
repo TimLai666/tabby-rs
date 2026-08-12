@@ -220,20 +220,45 @@ fn config_summary(state: &AppState) -> Result<Vec<u8>, AppError> {
 }
 
 fn plugin_summary(state: &AppState) -> Result<Vec<u8>, AppError> {
+    let safe_mode = state.persisted_state().safe_mode;
     let plugins = manifest::list_installed(state.paths().plugins_dir())
         .unwrap_or_default()
         .into_iter()
         .map(|plugin| {
+            let (load_status, failure_code) =
+                plugin_diagnostic_status(&safe_mode, &plugin.package_name);
             serde_json::json!({
                 "packageName": plugin.package_name,
                 "version": plugin.version,
                 "isBuiltin": plugin.is_builtin,
                 "isLegacy": plugin.is_legacy,
-                "loadStatus": "installed",
+                "loadStatus": load_status,
+                "failureCode": failure_code,
             })
         })
         .collect::<Vec<_>>();
     Ok(serde_json::to_vec_pretty(&plugins)?)
+}
+
+fn plugin_diagnostic_status(
+    safe_mode: &crate::storage::state_file::SafeModeState,
+    package_name: &str,
+) -> (&'static str, Option<String>) {
+    if safe_mode
+        .suspected_plugins
+        .iter()
+        .any(|suspected| suspected == package_name)
+    {
+        (
+            "failed",
+            safe_mode
+                .failure_code
+                .clone()
+                .or_else(|| safe_mode.failure_phase.clone()),
+        )
+    } else {
+        ("installed", None)
+    }
 }
 
 fn read_logs(directory: &Path) -> Result<Vec<(String, Vec<u8>)>, AppError> {
@@ -395,7 +420,8 @@ fn crc32(bytes: &[u8]) -> u32 {
 mod tests {
     use tempfile::tempdir;
 
-    use super::{crc32, validate_destination, write_zip, BundleEntry};
+    use super::{crc32, plugin_diagnostic_status, validate_destination, write_zip, BundleEntry};
+    use crate::storage::state_file::SafeModeState;
 
     #[test]
     fn zip_entries_use_fixed_relative_paths() {
@@ -420,5 +446,24 @@ mod tests {
         assert!(validate_destination("bundle.zip").is_err());
         assert!(validate_destination("/tmp/../bundle.zip").is_ok());
         assert!(validate_destination("/tmp/a/bundle.zip").is_ok());
+    }
+
+    #[test]
+    fn reports_plugin_failure_code_without_exposing_failure_message() {
+        let state = SafeModeState {
+            suspected_plugins: vec!["tabby-broken".into()],
+            failure_code: Some("node-runtime-required".into()),
+            failure_message: Some("require(\"fs\") is blocked".into()),
+            ..SafeModeState::default()
+        };
+
+        assert_eq!(
+            plugin_diagnostic_status(&state, "tabby-broken"),
+            ("failed", Some("node-runtime-required".into()))
+        );
+        assert_eq!(
+            plugin_diagnostic_status(&state, "tabby-good"),
+            ("installed", None)
+        );
     }
 }

@@ -233,6 +233,7 @@ pub fn app_bootstrap(
         persisted.safe_mode.last_started_plugin = None;
         persisted.safe_mode.last_completed_plugin = None;
         persisted.safe_mode.failure_phase = safe_mode.then_some("discover".into());
+        persisted.safe_mode.failure_code = safe_mode.then_some("discover".into());
         persisted.safe_mode.failure_message = failure_message.clone();
     })?;
 
