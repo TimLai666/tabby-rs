@@ -12,6 +12,7 @@ assert.match(session, /private readonly serviceMessage = new Subject<string>\(\)
 assert.match(session, /get serviceMessage\$ \(\): Observable<string>/)
 assert.match(session, /event\.exitCode !== null[\s\S]*event\.signal !== null/)
 assert.match(session, /this\.serviceMessage\.complete\(\)/)
+assert.match(session, /const account = options\.user \|\| 'root'/)
 assert.match(tab, /attachSessionHandler\(session\.serviceMessage\$/)
 
 console.log('SSH session exit contract passed')

@@ -301,7 +301,7 @@ export class TauriSshSession extends BaseSession {
     }
 
     private async passwordSecretRef (options = this.profile.options): Promise<string> {
-        const account = options.user
+        const account = options.user || 'root'
         if (!this.vault.isEnabled()) {
             return `keychain://ssh@${options.host}:${options.port ?? 22}/${account}`
         }
