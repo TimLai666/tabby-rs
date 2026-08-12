@@ -316,6 +316,9 @@ impl UpdateManager {
             .state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if matches!(state.state, UpdateState::Idle) {
+            return;
+        }
         state.pending = None;
         state.cancellation = None;
         state.state = UpdateState::Failed {
@@ -557,6 +560,8 @@ mod tests {
         assert!(matches!(manager.state(), UpdateState::Checking));
         assert!(manager.begin_check().is_err());
         manager.cancel();
+        assert!(matches!(manager.state(), UpdateState::Idle));
+        manager.fail(super::UpdateStage::Checking, "late network failure");
         assert!(matches!(manager.state(), UpdateState::Idle));
 
         manager.begin_check().unwrap();
