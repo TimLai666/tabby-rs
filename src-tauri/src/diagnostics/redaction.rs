@@ -94,8 +94,9 @@ impl Redactor {
         redacted |= redact_private_key_blocks(&mut text);
         redacted |= redact_url_credentials(&mut text);
         redacted |= redact_auth_headers(&mut text);
+        redacted |= redact_usernames_in_authorities(&mut text, &self.context.usernames);
+        redacted |= redact_hosts_in_authorities(&mut text, &self.context.hosts);
         redacted |= redact_emails(&mut text);
-        redacted |= redact_usernames_in_ip_authorities(&mut text, &self.context.usernames);
         redacted |= redact_ipv6s(&mut text);
         redacted |= redact_ips(&mut text);
         for (username, placeholder) in replacement_order(&self.username_placeholders) {
@@ -296,6 +297,11 @@ fn redact_emails(text: &mut String) -> bool {
         if !token.contains("://")
             && token.contains('@')
             && token.split('@').count() == 2
+            && !token.contains("<HOST>")
+            && !token
+                .split('@')
+                .next_back()
+                .is_some_and(|value| value.contains(':'))
             && !token
                 .split('@')
                 .next_back()
@@ -320,7 +326,7 @@ fn redact_emails(text: &mut String) -> bool {
     changed
 }
 
-fn redact_usernames_in_ip_authorities(text: &mut String, known_usernames: &[String]) -> bool {
+fn redact_usernames_in_authorities(text: &mut String, known_usernames: &[String]) -> bool {
     let mut changed = false;
     let mut output = String::with_capacity(text.len());
     for token in text.split_inclusive(char::is_whitespace) {
@@ -330,7 +336,18 @@ fn redact_usernames_in_ip_authorities(text: &mut String, known_usernames: &[Stri
         };
         let address = token[at + 1..]
             .trim_matches(|character: char| ",.;()[]{}<> \t\r\n".contains(character));
-        if !is_ipv4(address) && address.parse::<std::net::Ipv6Addr>().is_err() {
+        if !token.contains("://")
+            && !address.contains(':')
+            && !is_ipv4(authority_host(address))
+            && authority_host(address)
+                .parse::<std::net::Ipv6Addr>()
+                .is_err()
+        {
+            output.push_str(token);
+            continue;
+        }
+        let host = authority_host(address);
+        if !is_authority_host(host) {
             output.push_str(token);
             continue;
         }
@@ -348,9 +365,14 @@ fn redact_usernames_in_ip_authorities(text: &mut String, known_usernames: &[Stri
             output.push_str(token);
             continue;
         }
+        let username = &token[user_start..at];
+        if username.contains('<') || username.contains('>') || username.contains(':') {
+            output.push_str(token);
+            continue;
+        }
         if known_usernames
             .iter()
-            .any(|username| username == &token[user_start..at])
+            .any(|known_username| known_username == username)
         {
             output.push_str(token);
             continue;
@@ -364,6 +386,78 @@ fn redact_usernames_in_ip_authorities(text: &mut String, known_usernames: &[Stri
         *text = output;
     }
     changed
+}
+
+fn redact_hosts_in_authorities(text: &mut String, known_hosts: &[String]) -> bool {
+    let mut changed = false;
+    let mut output = String::with_capacity(text.len());
+    for token in text.split_inclusive(char::is_whitespace) {
+        let Some(host_start) = authority_host_start(token) else {
+            output.push_str(token);
+            continue;
+        };
+        if !token.contains("://")
+            && token[host_start..]
+                .split(|character: char| ",;()[]{}<> \t\r\n".contains(character))
+                .next()
+                .is_some_and(|address| !address.contains(':'))
+        {
+            output.push_str(token);
+            continue;
+        }
+        let host_end = token[host_start..]
+            .char_indices()
+            .find_map(|(offset, character)| {
+                ":/?#;,(){}<> \t\r\n"
+                    .contains(character)
+                    .then_some(host_start + offset)
+            })
+            .unwrap_or(token.len());
+        let host = &token[host_start..host_end];
+        if !looks_like_hostname(host) || known_hosts.iter().any(|known_host| known_host == host) {
+            output.push_str(token);
+            continue;
+        }
+        output.push_str(&token[..host_start]);
+        output.push_str("<HOST>");
+        output.push_str(&token[host_end..]);
+        changed = true;
+    }
+    if changed {
+        *text = output;
+    }
+    changed
+}
+
+fn authority_host_start(token: &str) -> Option<usize> {
+    if let Some(at) = token.find('@') {
+        return Some(at + 1);
+    }
+    token.find("://").map(|scheme_end| scheme_end + 3)
+}
+
+fn authority_host(address: &str) -> &str {
+    let address = address.trim_matches(|character: char| ",.;()[]{}<> \t\r\n".contains(character));
+    let address = address.strip_prefix('[').unwrap_or(address);
+    address
+        .split_once(']')
+        .map(|(host, _)| host)
+        .unwrap_or_else(|| address.split(':').next().unwrap_or(address))
+}
+
+fn is_authority_host(host: &str) -> bool {
+    is_ipv4(host) || host.parse::<std::net::Ipv6Addr>().is_ok() || looks_like_hostname(host)
+}
+
+fn looks_like_hostname(value: &str) -> bool {
+    let value = value.trim_matches(|character: char| ",.;()[]{}<> \t\r\n".contains(character));
+    value.contains('.')
+        && value.chars().all(|character| {
+            character.is_ascii_alphanumeric() || character == '-' || character == '.'
+        })
+        && value
+            .chars()
+            .any(|character| character.is_ascii_alphabetic())
 }
 
 fn redact_ips(text: &mut String) -> bool {
@@ -490,13 +584,24 @@ mod tests {
     }
 
     #[test]
+    fn redacts_unknown_hostnames_only_in_authorities() {
+        let output = Redactor::default().redact_text(
+            "ssh alice@db.internal:22 https://api.example.test/path note=api.example.test",
+        );
+        assert!(!output.text.contains("alice@db.internal"));
+        assert!(output.text.contains("<USER>@<HOST>:22"));
+        assert!(output.text.contains("https://<HOST>/path"));
+        assert!(output.text.contains("note=api.example.test"));
+    }
+
+    #[test]
     fn redacts_private_keys_and_url_credentials() {
         let output = redactor().redact_text(
             "https://alice:abc123@example.com/a\n-----BEGIN OPENSSH PRIVATE KEY-----\nsecret material\n-----END OPENSSH PRIVATE KEY-----",
         );
         assert_eq!(
             output.text,
-            "https://<USER>:<SECRET>@example.com/a\n<PRIVATE_KEY>"
+            "https://<USER>:<SECRET>@<HOST>/a\n<PRIVATE_KEY>"
         );
     }
 
