@@ -78,6 +78,7 @@ pub(crate) struct DownloadHandle {
     pub manifest: UpdateManifest,
     pub info: UpdateInfo,
     pub cancellation: watch::Receiver<bool>,
+    pub abort: watch::Sender<bool>,
 }
 
 pub(crate) struct ReadyUpdate {
@@ -207,7 +208,7 @@ impl UpdateManager {
             ));
         }
         let (sender, receiver) = watch::channel(false);
-        state.cancellation = Some(sender);
+        state.cancellation = Some(sender.clone());
         state.state = UpdateState::Downloading {
             version: info.version.clone(),
             downloaded: 0,
@@ -218,6 +219,7 @@ impl UpdateManager {
             manifest,
             info,
             cancellation: receiver,
+            abort: sender,
         })
     }
 
@@ -377,6 +379,10 @@ pub fn verify_download(bytes: &[u8], manifest: &UpdateManifest) -> Result<(), Ap
     Ok(())
 }
 
+pub fn download_exceeds_limit(downloaded: u64, content_length: Option<u64>) -> bool {
+    downloaded > MAX_ARTIFACT_BYTES || content_length.is_some_and(|size| size > MAX_ARTIFACT_BYTES)
+}
+
 pub fn verify_signature(
     bytes: &[u8],
     signature_text: &str,
@@ -495,10 +501,13 @@ pub fn is_cancelled(receiver: &watch::Receiver<bool>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        channel_name, configured_endpoint, is_cancelled, verify_download, verify_signature,
-        UpdateManager, UpdateState,
+        channel_name, configured_endpoint, download_exceeds_limit, is_cancelled, verify_download,
+        verify_signature, UpdateManager, UpdateState,
     };
-    use crate::{storage::state_file::UpdateChannel, update::manifest::UpdateManifest};
+    use crate::{
+        storage::state_file::UpdateChannel,
+        update::manifest::{UpdateManifest, MAX_ARTIFACT_BYTES},
+    };
     use tokio::sync::watch;
 
     fn manifest(hash: &str, size: Option<u64>) -> UpdateManifest {
@@ -527,6 +536,16 @@ mod tests {
             verify_download(bytes, &manifest(&"0".repeat(64), Some(bytes.len() as u64))).is_err()
         );
         assert!(verify_download(bytes, &manifest(&hash, Some(1))).is_err());
+    }
+
+    #[test]
+    fn rejects_downloads_that_exceed_the_artifact_limit() {
+        assert!(!download_exceeds_limit(
+            MAX_ARTIFACT_BYTES,
+            Some(MAX_ARTIFACT_BYTES)
+        ));
+        assert!(download_exceeds_limit(MAX_ARTIFACT_BYTES + 1, None));
+        assert!(download_exceeds_limit(0, Some(MAX_ARTIFACT_BYTES + 1)));
     }
 
     #[test]

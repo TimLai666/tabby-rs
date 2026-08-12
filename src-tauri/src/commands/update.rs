@@ -12,8 +12,8 @@ use crate::{
         state_file::{PendingUpdateState, UpdateChannel},
     },
     update::service::{
-        build_updater, configured_endpoint, configured_public_key, is_cancelled,
-        update_info_from_remote, DownloadHandle, UpdateInfo, UpdateStage,
+        build_updater, configured_endpoint, configured_public_key, download_exceeds_limit,
+        is_cancelled, update_info_from_remote, DownloadHandle, UpdateInfo, UpdateStage,
     },
 };
 
@@ -112,6 +112,7 @@ pub async fn update_download(
     let progress_app = app.clone();
     let progress_version = handle.info.version.clone();
     let progress_total = handle.manifest.size;
+    let abort = handle.abort.clone();
     let update = handle.update;
     let mut cancellation = handle.cancellation;
     let mut downloaded = 0_u64;
@@ -123,6 +124,9 @@ pub async fn update_download(
                 downloaded,
                 progress_total.or(content_length),
             );
+            if download_exceeds_limit(downloaded, content_length) {
+                let _ = abort.send(true);
+            }
             let _ = progress_app.emit("update.state", manager.state());
         },
         || {},
