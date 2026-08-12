@@ -691,4 +691,37 @@ mod tests {
             .is_none());
         assert!(matches!(manager.state(), UpdateState::Idle));
     }
+
+    #[test]
+    fn stale_download_generation_cannot_mutate_current_download() {
+        let manager = UpdateManager::default();
+        let (sender, _receiver) = watch::channel(false);
+        {
+            let mut state = manager
+                .state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            state.download_generation = 2;
+            state.cancellation = Some(sender);
+            state.state = UpdateState::Downloading {
+                version: "new-version".into(),
+                downloaded: 10,
+                total: Some(100),
+            };
+        }
+
+        manager.set_download_progress(1, "old-version", 99, Some(100));
+        assert!(matches!(
+            manager.state(),
+            UpdateState::Downloading {
+                version,
+                downloaded: 10,
+                ..
+            } if version == "new-version"
+        ));
+        assert!(!manager.fail_download(1, super::UpdateStage::Downloading, "stale failure"));
+        assert!(!manager.cancel_download(1));
+        assert!(manager.finish_download(1, Vec::new()).is_err());
+        assert!(matches!(manager.state(), UpdateState::Downloading { .. }));
+    }
 }
