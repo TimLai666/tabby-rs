@@ -74,6 +74,7 @@ const fixtureDirectories = [
     'tabby-fixture-missing-module',
     'tabby-fixture-native',
     'tabby-fixture-pure',
+    'tabby-fixture-throw',
     'terminus-fixture-legacy',
 ]
 const fixtureDescriptors = fixtureDirectories.map(fixtureDescriptor)
@@ -110,6 +111,7 @@ assert.deepEqual(result.failures.map(failure => [failure.plugin.name, failure.co
     ['fixture-missing-module', 'missing-module'],
     ['fixture-electron', 'node-runtime-required'],
     ['fixture-native', 'node-runtime-required'],
+    ['fixture-throw', 'exception'],
 ].sort())
 
 const discoveryFailure = await loadPluginModules({
