@@ -13,6 +13,7 @@ import './styles.scss'
 
 @Injectable()
 export class WebPlatformService extends PlatformService {
+    supportsPluginManagement = false
     private menu: ContextMenuElement
     private contextMenuHandlers = new Map<ContextMenuItem, () => void>()
     private fileSelector: HTMLInputElement
@@ -148,6 +149,10 @@ export class WebPlatformService extends PlatformService {
     }
 
     async pickDirectory (): Promise<string> {
+        throw new UnsupportedCapabilityError('filesystem')
+    }
+
+    openPath (_path: string): void {
         throw new UnsupportedCapabilityError('filesystem')
     }
 }
