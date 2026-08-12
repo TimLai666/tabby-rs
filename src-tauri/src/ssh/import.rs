@@ -705,6 +705,22 @@ mod tests {
         );
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn expands_windows_tilde_identity_paths_from_explicit_home_directory() {
+        let home = PathBuf::from(r"C:\Users\alice");
+        let resolved = resolve_identity_path_with_home(
+            r"~\.ssh\id_ed25519",
+            Path::new(r"C:\tmp"),
+            Some(&home),
+        );
+
+        assert_eq!(
+            PathBuf::from(resolved),
+            home.join(".ssh").join("id_ed25519")
+        );
+    }
+
     #[test]
     fn parses_quoted_include_and_identity_paths() {
         let directory = tempdir().unwrap();
