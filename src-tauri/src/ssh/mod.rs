@@ -32,6 +32,7 @@ use tokio::{
     sync::{broadcast, mpsc, oneshot},
     time::timeout,
 };
+use zeroize::Zeroize;
 
 use crate::{
     security::{
@@ -1401,24 +1402,39 @@ impl SshManager {
         secrets: &SecretState,
         credentials: &CredentialState,
     ) -> Result<russh::keys::PrivateKey, SshError> {
-        let bytes = if let Some(id) = file_ref.strip_prefix("vault://") {
+        let mut bytes = if let Some(id) = file_ref.strip_prefix("vault://") {
             secrets.get_file(id).map_err(|_| SshError::KeyParse)?
         } else {
             fs::read(file_ref).map_err(|_| SshError::KeyParse)?
         };
         if bytes.len() > MAX_BUFFER {
+            bytes.zeroize();
             return Err(SshError::KeyParse);
         }
-        let text = String::from_utf8(bytes).map_err(|_| SshError::KeyParse)?;
-        let passphrase = passphrase_ref
+        let mut text = match String::from_utf8(bytes) {
+            Ok(text) => text,
+            Err(error) => {
+                let mut bytes = error.into_bytes();
+                bytes.zeroize();
+                return Err(SshError::KeyParse);
+            }
+        };
+        let passphrase = match passphrase_ref
             .map(|reference| resolve_secret_ref(reference, secrets, credentials))
-            .transpose()?;
+            .transpose()
+        {
+            Ok(passphrase) => passphrase,
+            Err(error) => {
+                text.zeroize();
+                return Err(error);
+            }
+        };
         let explicit = passphrase.as_ref().map(|value| value.expose_secret());
         let key = decode_secret_key(&text, explicit.map(|value| value.as_str()));
-        match key {
+        let result = match key {
             Ok(key) => Ok(key),
             Err(_) if passphrase_ref.is_none() => {
-                let responses = self
+                let responses = match self
                     .prompt_for_responses(
                         app,
                         SshAuthPrompt {
@@ -1433,12 +1449,24 @@ impl SshManager {
                             }],
                         },
                     )
-                    .await?;
-                let passphrase = responses.first().ok_or(SshError::AuthenticationRejected)?;
+                    .await
+                {
+                    Ok(responses) => responses,
+                    Err(error) => {
+                        text.zeroize();
+                        return Err(error);
+                    }
+                };
+                let Some(passphrase) = responses.first() else {
+                    text.zeroize();
+                    return Err(SshError::AuthenticationRejected);
+                };
                 decode_secret_key(&text, Some(passphrase)).map_err(|_| SshError::KeyParse)
             }
             Err(_) => Err(SshError::KeyParse),
-        }
+        };
+        text.zeroize();
+        result
     }
 
     fn session(&self, id: &str) -> Result<SshSession, SshError> {

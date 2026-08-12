@@ -20,5 +20,8 @@ assert.match(rust, /let mut exit_event_emitted = false/)
 assert.match(rust, /ChannelMsg::ExitStatus \{ \.\. \}[\s\S]*ChannelMsg::ExitSignal \{ \.\. \}/)
 assert.match(rust, /exit_event_emitted \|= is_exit_message/)
 assert.match(rust, /if !exit_event_emitted \{[\s\S]*exit_code: None[\s\S]*signal: None/)
+assert.match(rust, /use zeroize::Zeroize/)
+assert.match(rust, /bytes\.zeroize\(\)/)
+assert.match(rust, /text\.zeroize\(\)/)
 
 console.log('SSH session exit contract passed')
