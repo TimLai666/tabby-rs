@@ -127,6 +127,9 @@ jobs:
       - name: Audit Tauri renderer bundle
         run: yarn test:tauri:bundle
 
+      - name: Test release artifact contract
+        run: yarn test:tauri:release-artifacts
+
       - name: Check Rust formatting
         run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
 

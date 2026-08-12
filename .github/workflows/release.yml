@@ -164,12 +164,7 @@ jobs:
           TABBY_RS_LICENSE_PATH=LICENSE TABBY_RS_NOTICES_PATH=release-staging/THIRD_PARTY_NOTICES.md TABBY_RS_LICENSE_REPORT=release-staging/license-report.json node scripts/create-license-report.mjs
           node scripts/create-tauri-release-metadata.mjs
           node scripts/stage-tauri-release.mjs
-          case "${{ matrix.platform }}" in
-            linux) update_artifact=$(find release-staging -type f -name '*.AppImage' -print -quit) ;;
-            macos) update_artifact=$(find release-staging -type f -name '*.tar.gz' -print -quit) ;;
-            windows) update_artifact=$(find release-staging -type f -name '*.exe' -print -quit) ;;
-          esac
-          test -n "$update_artifact" && test -f "$update_artifact.sig"
+          update_artifact=$(node scripts/assert-tauri-release-artifacts.mjs release-staging --platform "${{ matrix.platform }}" --bundles "${{ matrix.bundles }}" --output release-staging/artifact-contract.json)
           export TABBY_RS_UPDATE_ARTIFACT="$update_artifact"
           export TABBY_RS_UPDATE_SIGNATURE="$update_artifact.sig"
           node scripts/create-tauri-update-manifest.mjs
