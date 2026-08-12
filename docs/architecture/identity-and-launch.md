@@ -94,4 +94,6 @@ The alias status and conflict path are exposed in the **Settings → Tabby RS** 
 
 ## Ownership boundaries
 
-This foundation only parses and transports `--new-window`, `--safe-mode`, and `--config`. Their full behavior belongs to the desktop-window, safe-mode, and configuration milestones respectively. This keeps the launch contract stable without duplicating those implementations here.
+The Rust host owns the desktop window lifecycle. `--new-window` is transported through the launch contract, while the Tauri `window.new` command creates an additional renderer window with the same application entry point. Window state commands and desktop events are scoped to the invoking window, so moving or closing one window cannot mutate another window.
+
+Safe-mode and configuration behavior remain owned by their respective milestones. Keeping those concerns out of the window builder preserves one launch contract without duplicating their implementations.

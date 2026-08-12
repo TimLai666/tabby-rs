@@ -32,7 +32,7 @@ use commands::{
         clipboard_read_text, clipboard_write_text, desktop_open_external, desktop_open_path,
         desktop_read_file, desktop_reveal_path, dialog_open, dialog_save, hotkey_replace,
         notification_show, window_apply_state, window_bring_to_front, window_close,
-        window_get_state, window_list_screens, window_minimize, window_open_devtools,
+        window_get_state, window_list_screens, window_minimize, window_new, window_open_devtools,
         window_reload, window_set_docking, window_toggle_maximize, window_toggle_quake,
     },
     diagnostics::{
@@ -129,32 +129,29 @@ fn present_and_dispatch(app: &tauri::AppHandle, context: LaunchContext) {
     }
 }
 
-fn register_desktop_window_events(app: &tauri::AppHandle) {
-    let Some(window) = app.get_webview_window("main") else {
-        return;
-    };
-    let handle = app.clone();
-    window.on_window_event(move |event| match event {
+pub(crate) fn register_desktop_window_events(window: &tauri::WebviewWindow) {
+    let emitter = window.clone();
+    window.clone().on_window_event(move |event| match event {
         tauri::WindowEvent::Focused(focused) => {
-            let _ = handle.emit("desktop.windowFocused", *focused);
+            let _ = emitter.emit("desktop.windowFocused", *focused);
         }
         tauri::WindowEvent::Moved(position) => {
-            let _ = handle.emit(
+            let _ = emitter.emit(
                 "desktop.windowMoved",
                 serde_json::json!({ "x": position.x, "y": position.y }),
             );
         }
         tauri::WindowEvent::Resized(size) => {
-            let _ = handle.emit(
+            let _ = emitter.emit(
                 "desktop.windowResized",
                 serde_json::json!({ "width": size.width, "height": size.height }),
             );
         }
         tauri::WindowEvent::CloseRequested { .. } => {
-            let _ = handle.emit("desktop.windowCloseRequested", ());
+            let _ = emitter.emit("desktop.windowCloseRequested", ());
         }
         tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, position }) => {
-            let _ = handle.emit(
+            let _ = emitter.emit(
                 "desktop.fileDrop",
                 serde_json::json!({
                     "paths": paths
@@ -172,10 +169,10 @@ fn register_desktop_window_events(app: &tauri::AppHandle) {
                 tauri::Theme::Light => "light",
                 _ => "system",
             };
-            let _ = handle.emit("desktop.themeChanged", value);
+            let _ = emitter.emit("desktop.themeChanged", value);
         }
         tauri::WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
-            let _ = handle.emit("desktop.displayMetricsChanged", *scale_factor);
+            let _ = emitter.emit("desktop.displayMetricsChanged", *scale_factor);
         }
         _ => {}
     });
@@ -241,7 +238,9 @@ pub fn run() {
                 crate::transfer::manager::TransferManager::default(),
             ));
             app.manage(CredentialState::default());
-            register_desktop_window_events(app.handle());
+            if let Some(window) = app.get_webview_window("main") {
+                register_desktop_window_events(&window);
+            }
 
             #[cfg(any(target_os = "linux", all(debug_assertions, windows)))]
             app.deep_link().register_all()?;
@@ -405,6 +404,7 @@ pub fn run() {
             window_list_screens,
             window_minimize,
             window_open_devtools,
+            window_new,
             window_reload,
             window_set_docking,
             window_toggle_maximize,

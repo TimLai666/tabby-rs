@@ -49,7 +49,9 @@ export class TauriHostAppService extends HostAppService {
     }
 
     newWindow (): void {
-        this.logger.warn('Opening additional windows is implemented by the desktop-integration milestone')
+        void this.bridge.invoke('window.new', {}).catch(error => {
+            this.logger.warn('Failed to open a new window:', error)
+        })
     }
 
     emitReady (): void {
@@ -79,6 +81,13 @@ export class TauriHostAppService extends HostAppService {
     private async dispatchLaunch (context: LaunchContext): Promise<void> {
         if (context.parseError) {
             this.logger.warn('Rejected launch request:', context.parseError)
+            return
+        }
+
+        if (context.secondInstance || context.request.newWindow) {
+            void this.bridge.invoke('window.new', { launch: context }).catch(error => {
+                this.logger.warn('Failed to open a launch window:', error)
+            })
             return
         }
 

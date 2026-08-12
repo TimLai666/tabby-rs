@@ -139,6 +139,9 @@ jobs:
       - name: Test Tauri updater confirmation
         run: yarn test:tauri-updater-confirmation
 
+      - name: Test Tauri multi-window contract
+        run: yarn test:tauri-multi-window
+
       - name: Build Tauri renderer
         run: yarn build:tauri:frontend
 

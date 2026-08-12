@@ -5,7 +5,7 @@ use std::{
 };
 
 use chrono::Utc;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, State, WebviewWindow};
 
 use crate::{
     error::AppError,
@@ -197,6 +197,7 @@ fn bootstrap_mode(
 
 #[tauri::command]
 pub fn app_bootstrap(
+    window: WebviewWindow,
     request: EmptyRequest,
     state: State<'_, AppState>,
 ) -> Result<BootstrapData, AppError> {
@@ -257,7 +258,7 @@ pub fn app_bootstrap(
     Ok(BootstrapData {
         config,
         executable: state.paths().executable().to_string_lossy().into_owned(),
-        is_main_window: true,
+        is_main_window: window.label() == "main",
         window_id: state.next_window_id(),
         installed_plugins,
         user_plugins_path: state.paths().plugins_dir().to_string_lossy().into_owned(),

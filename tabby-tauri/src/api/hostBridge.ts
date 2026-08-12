@@ -910,6 +910,10 @@ export interface HostRequestMap {
         request: WindowStatePatch
         response: null
     }
+    'window.new': {
+        request: { launch?: LaunchContext }
+        response: null
+    }
     'window.reload': {
         request: Record<string, never>
         response: null
