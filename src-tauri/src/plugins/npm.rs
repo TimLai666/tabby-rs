@@ -419,7 +419,7 @@ async fn run_npm(
     mut cancel: oneshot::Receiver<()>,
     progress: Arc<dyn Fn(String) + Send + Sync>,
 ) -> Result<(), AppError> {
-    let mut command = npm_command(npm_path, action, args);
+    let mut command = npm_command(node_path, npm_path, action, args)?;
     command
         .current_dir(root)
         .env("PATH", tool_search_path(node_path, npm_path))
@@ -470,41 +470,41 @@ async fn run_npm(
     Ok(())
 }
 
-fn npm_command(npm_path: &Path, action: &str, args: &[String]) -> Command {
+fn npm_command(
+    _node_path: &Path,
+    npm_path: &Path,
+    action: &str,
+    args: &[String],
+) -> Result<Command, AppError> {
     #[cfg(windows)]
     if npm_path
         .extension()
         .is_some_and(|extension| extension.eq_ignore_ascii_case("cmd"))
     {
-        let command_line = std::iter::once(npm_path.to_string_lossy().into_owned())
-            .chain(std::iter::once(action.to_owned()))
-            .chain(args.iter().cloned())
-            .map(|value| windows_cmd_arg(&value))
-            .collect::<Vec<_>>()
-            .join(" ");
-        let mut command = Command::new("cmd.exe");
-        command
-            .args(["/D", "/S", "/C"])
-            .arg(format!("\"{command_line}\""));
-        return command;
+        let cli = npm_cli_path(_node_path, npm_path).ok_or_else(|| {
+            AppError::Unsupported("npm CLI JavaScript entry was not found".into())
+        })?;
+        let mut command = Command::new(node_path);
+        command.arg(cli).arg(action).args(args);
+        return Ok(command);
     }
 
     let mut command = Command::new(npm_path);
     command.arg(action).args(args);
-    command
+    Ok(command)
 }
 
 #[cfg(windows)]
-fn windows_cmd_arg(value: &str) -> String {
-    if value.is_empty()
-        || value
-            .chars()
-            .any(|character| character.is_whitespace() || "\"&|<>^".contains(character))
+fn npm_cli_path(node_path: &Path, npm_path: &Path) -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    for parent in [node_path.parent(), npm_path.parent()]
+        .into_iter()
+        .flatten()
     {
-        format!("\"{}\"", value.replace('"', "\"\""))
-    } else {
-        value.into()
+        candidates.push(parent.join("node_modules/npm/bin/npm-cli.js"));
+        candidates.push(parent.join("../lib/node_modules/npm/bin/npm-cli.js"));
     }
+    candidates.into_iter().find(|candidate| candidate.is_file())
 }
 
 fn tool_search_path(node_path: &Path, npm_path: &Path) -> OsString {
@@ -720,6 +720,21 @@ mod tests {
         let entries = std::env::split_paths(&path).collect::<Vec<_>>();
         assert_eq!(entries[0], std::path::PathBuf::from("/custom/node/bin"));
         assert_eq!(entries[1], std::path::PathBuf::from("/custom/npm/bin"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn resolves_npm_cli_without_a_cmd_shell() {
+        let temp = tempfile::tempdir().unwrap();
+        let node_path = temp.path().join("node.exe");
+        let npm_path = temp.path().join("npm.cmd");
+        let cli = temp.path().join("node_modules/npm/bin/npm-cli.js");
+        fs::create_dir_all(cli.parent().unwrap()).unwrap();
+        fs::write(&node_path, b"").unwrap();
+        fs::write(&npm_path, b"").unwrap();
+        fs::write(&cli, b"").unwrap();
+
+        assert_eq!(super::npm_cli_path(&node_path, &npm_path), Some(cli));
     }
 
     #[test]
