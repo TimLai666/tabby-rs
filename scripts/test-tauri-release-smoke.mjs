@@ -1,0 +1,45 @@
+import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const root = path.resolve(fileURLToPath(new URL('..', import.meta.url)))
+const smoke = path.join(root, 'scripts', 'smoke-tauri-release.mjs')
+const work = fs.mkdtempSync(path.join(os.tmpdir(), 'tabby-rs-release-smoke-test-'))
+const staging = path.join(work, 'release-staging')
+fs.mkdirSync(staging)
+
+for (const fixture of [
+    'tabby-rs-setup.exe',
+    'tabby-rs.dmg',
+    'tabby-rs.AppImage',
+    'tabby-rs.deb',
+    'tabby-rs.rpm',
+]) {
+    fs.writeFileSync(path.join(staging, fixture), fixture)
+}
+
+function run (platform, expected) {
+    const output = execFileSync(process.execPath, [smoke, '--staging', staging, '--platform', platform, '--plan'], { encoding: 'utf8' })
+    const report = JSON.parse(output)
+    assert.equal(report.passed, true)
+    assert.equal(report.planOnly, true)
+    assert.deepEqual(report.operations.map(operation => operation.artifact).filter(Boolean), expected)
+}
+
+run('windows', ['tabby-rs-setup.exe'])
+run('macos', ['tabby-rs.dmg'])
+run('linux', ['tabby-rs.AppImage', 'tabby-rs.deb', 'tabby-rs.rpm'])
+
+fs.rmSync(path.join(staging, 'tabby-rs.rpm'))
+assert.throws(
+    () => execFileSync(process.execPath, [smoke, '--staging', staging, '--platform', 'linux', '--plan'], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+    }),
+    /expected exactly one \.rpm artifact/,
+)
+
+console.log('Tauri release installer smoke fixtures passed')

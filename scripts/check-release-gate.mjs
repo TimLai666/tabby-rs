@@ -14,6 +14,7 @@ const argument = name => {
 const bundleAuditPath = path.resolve(argument('--bundle-audit') || path.join(root, 'bundle-audit.json'))
 const licenseReportPath = path.resolve(argument('--license-report') || path.join(root, 'license-report.json'))
 const benchmarksDirectory = path.resolve(argument('--benchmarks-dir') || path.join(root, 'benchmarks'))
+const installerSmokePath = path.resolve(argument('--installer-smoke') || path.join(root, 'installer-smoke.json'))
 const outputPath = path.resolve(argument('--output') || path.join(root, 'release-gate.json'))
 const expectedRevision = argument('--source-revision') || process.env.GITHUB_SHA || null
 const expectedPlatform = argument('--platform') || null
@@ -118,6 +119,14 @@ if (licenseReport && licenseReport.passed !== true) {
 }
 if (licenseReport && expectedRevision && licenseReport.sourceRevision !== expectedRevision) {
     failures.push(`license report sourceRevision must match ${expectedRevision}`)
+}
+
+const installerSmoke = readJson(installerSmokePath, 'installer smoke report')
+if (installerSmoke && installerSmoke.passed !== true) {
+    failures.push('installer smoke did not pass')
+}
+if (installerSmoke && expectedPlatform && installerSmoke.platform !== expectedPlatform) {
+    failures.push(`installer smoke platform must match ${expectedPlatform}`)
 }
 
 if (bundleAudit) {

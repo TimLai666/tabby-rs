@@ -114,6 +114,7 @@
     "test:release-gate-aggregate": "node scripts/test-aggregate-release-gate.mjs",
     "test:tauri:release-artifacts": "node scripts/test-tauri-release-artifacts.mjs",
     "test:tauri:signature": "node scripts/test-tauri-signature.mjs",
+    "test:tauri:release-smoke": "node scripts/test-tauri-release-smoke.mjs",
     "test:release-checksums": "node scripts/test-release-checksums.mjs",
     "benchmark": "node scripts/run-benchmarks.mjs",
     "test:benchmark": "node scripts/test-benchmark-harness.mjs",
