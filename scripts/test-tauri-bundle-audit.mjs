@@ -40,6 +40,12 @@ assert.ok(forbiddenReport.findings.some(finding => finding.rule === 'node-runtim
 assert.ok(forbiddenReport.findings.some(finding => finding.rule === 'sentry-sdk-or-endpoint'))
 assert.ok(forbiddenReport.findings.some(finding => finding.rule === 'electron-runtime-import'))
 
+const binaryFixture = createReleaseFixture()
+fs.writeFileSync(path.join(binaryFixture, 'runtime.bin'), Buffer.from([0, ...Buffer.from('electron.asar'), 0]))
+const binaryReport = auditBundle(binaryFixture, { release: true })
+assert.equal(binaryReport.passed, false)
+assert.ok(binaryReport.findings.some(finding => finding.rule === 'electron-runtime-binary'))
+
 const incompleteFixture = fs.mkdtempSync(path.join(os.tmpdir(), 'tabby-rs-bundle-audit-incomplete-'))
 fs.writeFileSync(path.join(incompleteFixture, 'bundle.js'), 'renderer')
 const incompleteReport = auditBundle(incompleteFixture, { release: true })

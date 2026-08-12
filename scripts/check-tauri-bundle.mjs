@@ -18,6 +18,8 @@ const forbiddenContentRules = [
         id: 'electron-runtime-import',
         pattern: /(?:\b(?:from|require|import)\s*(?:\(\s*)?["'](?:electron|@electron\/remote)(?:[\\/'"]|$)|\belectron-updater\b)/i,
     },
+    { id: 'electron-runtime-binary', binaryOnly: true, pattern: /electron(?:\.asar|\.exe| helper)/i },
+    { id: 'node-runtime-binary', binaryOnly: true, pattern: /node(?:\.exe|-runtime)/i },
     { id: 'sentry-sdk-or-endpoint', pattern: /(?:@sentry\/|sentry\.io|SENTRY_DSN)/i },
     { id: 'mixpanel-sdk-or-endpoint', pattern: /(?:mixpanel(?:-browser)?|mixpanel\.com)/i },
 ]
@@ -53,15 +55,26 @@ function sha256 (filePath) {
     return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex')
 }
 
-function readTextForAudit (filePath, size) {
+function readAuditContent (filePath, size) {
     if (size > 16 * 1024 * 1024) {
         return null
     }
     const bytes = fs.readFileSync(filePath)
     if (bytes.includes(0)) {
-        return null
+        const strings = []
+        let current = []
+        for (const byte of bytes) {
+            if (byte >= 0x20 && byte <= 0x7e) {
+                current.push(byte)
+            } else {
+                if (current.length >= 4) strings.push(Buffer.from(current).toString('ascii'))
+                current = []
+            }
+        }
+        if (current.length >= 4) strings.push(Buffer.from(current).toString('ascii'))
+        return { text: strings.join('\n'), binary: true }
     }
-    return bytes.toString('utf8')
+    return { text: bytes.toString('utf8'), binary: false }
 }
 
 export function auditBundle (bundlePath, { release = false } = {}) {
@@ -84,10 +97,11 @@ export function auditBundle (bundlePath, { release = false } = {}) {
                 findings.push({ rule: rule.id, path: file.relativePath })
             }
         }
-        const text = readTextForAudit(file.absolutePath, size)
-        if (text !== null) {
+        const content = readAuditContent(file.absolutePath, size)
+        if (content !== null) {
             for (const rule of forbiddenContentRules) {
-                if (rule.pattern.test(text)) {
+                if (rule.binaryOnly && !content.binary) continue
+                if (rule.pattern.test(content.text)) {
                     findings.push({ rule: rule.id, path: file.relativePath })
                 }
             }
