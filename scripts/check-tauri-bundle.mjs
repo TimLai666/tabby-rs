@@ -14,6 +14,10 @@ const forbiddenFileRules = [
 ]
 
 const forbiddenContentRules = [
+    {
+        id: 'electron-runtime-import',
+        pattern: /(?:\b(?:from|require|import)\s*(?:\(\s*)?["'](?:electron|@electron\/remote)(?:[\\/'"]|$)|\belectron-updater\b)/i,
+    },
     { id: 'sentry-sdk-or-endpoint', pattern: /(?:@sentry\/|sentry\.io|SENTRY_DSN)/i },
     { id: 'mixpanel-sdk-or-endpoint', pattern: /(?:mixpanel(?:-browser)?|mixpanel\.com)/i },
 ]
