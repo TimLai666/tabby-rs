@@ -112,6 +112,9 @@ jobs:
       - name: Test tabby-web bundle audit
         run: yarn test:web-output-audit
 
+      - name: Test release documentation contract
+        run: yarn test:release-documentation
+
       - name: Test runtime capability providers
         run: yarn test:runtime-capabilities
 
