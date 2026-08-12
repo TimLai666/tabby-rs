@@ -115,6 +115,7 @@
     "test:runtime-capabilities": "node scripts/test-runtime-capabilities.mjs",
     "test:electron-updater": "node scripts/test-electron-updater-policy.mjs",
     "test:updater-cancellation": "node scripts/test-updater-cancellation.mjs",
+    "test:updater-startup": "node scripts/test-updater-startup.mjs",
     "test:tauri:update-manifest": "node scripts/test-tauri-update-manifest.mjs",
     "test:tauri:bundle": "node scripts/test-tauri-bundle-audit.mjs && node scripts/check-tauri-bundle.mjs",
     "generate:third-party-notices": "node scripts/generate-third-party-notices.mjs",

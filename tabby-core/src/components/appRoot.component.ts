@@ -180,15 +180,25 @@ export class AppRootComponent {
             this.leftToolbarButtons = await this.getToolbarButtons(false)
             this.rightToolbarButtons = await this.getToolbarButtons(true)
 
+            void this.refreshUpdateAvailability()
             setInterval(() => {
-                if (this.config.store.enableAutomaticUpdates) {
-                    this.updater.check().then(available => {
-                        this.availableUpdate = available
-                        this.updatesAvailable = !!available
-                    })
-                }
+                void this.refreshUpdateAvailability()
             }, 3600 * 12 * 1000)
         })
+    }
+
+    private async refreshUpdateAvailability (): Promise<void> {
+        if (!this.runtimeCapabilities.capabilities.updater || !this.config.store.enableAutomaticUpdates) {
+            return
+        }
+
+        try {
+            const available = await this.updater.check()
+            this.availableUpdate = available
+            this.updatesAvailable = !!available
+        } catch (error) {
+            this.logger.warn('Automatic update check failed', error)
+        }
     }
 
     async installUpdate () {

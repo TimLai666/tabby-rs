@@ -39,6 +39,11 @@
                                     i.fas.fa-ban
                                     span.ms-2(translate) Cancel
 
+                                .alert.alert-info.mt-2(*ngIf='updateAvailable')
+                                    .fw-bold {{updateAvailable.version}} ({{updateAvailable.channel}})
+                                    small.d-block.text-muted {{updateAvailable.publishedAt}}
+                                    p.mb-0.mt-2 {{updateAvailable.notes}}
+
                         .col-12.col-md-6
                             .list-group.list-group-light.mb-5
                                 button.list-group-item.list-group-item-action.link-card((click)='homeBase.reportBug()')
