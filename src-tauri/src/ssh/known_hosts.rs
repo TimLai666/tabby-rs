@@ -53,7 +53,6 @@ impl KnownHostsStore {
 
     pub fn save(&self, host: &str, port: u16, key: &PublicKey) -> Result<(), SshError> {
         validate_host(host)?;
-        let line = known_host_line(host, port, key)?;
         let _guard = self.lock.lock().unwrap_or_else(|error| error.into_inner());
         let parent = self
             .path
@@ -62,14 +61,39 @@ impl KnownHostsStore {
         fs::create_dir_all(parent).map_err(|_| SshError::Internal)?;
         let _file_lock = FileLock::acquire(&self.path)?;
         let existing = fs::read_to_string(&self.path).unwrap_or_default();
-        if existing.lines().any(|existing| existing == line) {
-            return Ok(());
-        }
-        let mut content = existing;
-        if !content.is_empty() && !content.ends_with('\n') {
+        let existing_lines = existing.lines().collect::<Vec<_>>();
+        let matching_lines =
+            known_host_keys_path(host, port, &self.path).map_err(|_| SshError::Internal)?;
+        let matching_line_numbers = matching_lines
+            .iter()
+            .map(|(line, _)| *line)
+            .collect::<Vec<_>>();
+        let matching_host_tokens = matching_line_numbers
+            .iter()
+            .filter_map(|line| {
+                existing_lines
+                    .get(line.saturating_sub(1))
+                    .and_then(|value| value.split_ascii_whitespace().next())
+            })
+            .collect::<Vec<_>>();
+        let default_host_token = host_token(host, port);
+        let replacement_host_token = matching_host_tokens
+            .iter()
+            .find(|token| token.starts_with("|1|"))
+            .or_else(|| matching_host_tokens.first())
+            .copied()
+            .unwrap_or(default_host_token.as_str());
+        let mut content = existing_lines
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| !matching_line_numbers.contains(&(index + 1)))
+            .map(|(_, line)| *line)
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !content.is_empty() {
             content.push('\n');
         }
-        content.push_str(&line);
+        content.push_str(&known_host_line_for_token(replacement_host_token, key)?);
         content.push('\n');
 
         let temporary = self
@@ -219,12 +243,15 @@ pub fn fingerprint(key: &PublicKey) -> String {
     key.fingerprint(HashAlg::Sha256).to_string()
 }
 
-fn known_host_line(host: &str, port: u16, key: &PublicKey) -> Result<String, SshError> {
-    let host = if port == 22 {
+fn host_token(host: &str, port: u16) -> String {
+    if port == 22 {
         host.to_owned()
     } else {
         format!("[{host}]:{port}")
-    };
+    }
+}
+
+fn known_host_line_for_token(host: &str, key: &PublicKey) -> Result<String, SshError> {
     let key = key.to_openssh().map_err(|_| SshError::KeyParse)?;
     Ok(format!("{host} {key}"))
 }
@@ -314,6 +341,50 @@ mod tests {
         store.save("localhost", 2222, &key).unwrap();
         store.save("localhost", 2222, &key).unwrap();
         assert_eq!(fs::read_to_string(path).unwrap().lines().count(), 1);
+    }
+
+    #[test]
+    fn replacing_a_changed_key_removes_the_old_trusted_key() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("known_hosts");
+        let store = KnownHostsStore::new(path.clone());
+        let first = key("AAAAC3NzaC1lZDI1NTE5AAAAIJdD7y3aLq454yWBdwLWbieU1ebz9/cu7/QEXn9OIeZJ");
+        let second = key("AAAAC3NzaC1lZDI1NTE5AAAAILIG2T/B0l0gaqj3puu510tu9N1OkQ4znY3LYuEm5zCF");
+
+        store.save("example.com", 22, &first).unwrap();
+        store.save("example.com", 22, &second).unwrap();
+
+        assert!(store.classify("example.com", 22, &first).unwrap().is_some());
+        assert!(store
+            .classify("example.com", 22, &second)
+            .unwrap()
+            .is_none());
+        let content = fs::read_to_string(path).unwrap();
+        assert!(!content
+            .contains("AAAAC3NzaC1lZDI1NTE5AAAAIJdD7y3aLq454yWBdwLWbieU1ebz9/cu7/QEXn9OIeZJ"));
+        assert!(content
+            .contains("AAAAC3NzaC1lZDI1NTE5AAAAILIG2T/B0l0gaqj3puu510tu9N1OkQ4znY3LYuEm5zCF"));
+    }
+
+    #[test]
+    fn replacing_a_hashed_host_preserves_the_hashed_host_token() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("known_hosts");
+        fs::write(
+            &path,
+            "|1|O33ESRMWPVkMYIwJ1Uw+n877jTo=|nuuC5vEqXlEZ/8BXQR7m619W6Ak= ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJdD7y3aLq454yWBdwLWbieU1ebz9/cu7/QEXn9OIeZJ\nother.example ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILIG2T/B0l0gaqj3puu510tu9N1OkQ4znY3LYuEm5zCF\n",
+        )
+        .unwrap();
+        let store = KnownHostsStore::new(path.clone());
+        let replacement =
+            key("AAAAC3NzaC1lZDI1NTE5AAAAILIG2T/B0l0gaqj3puu510tu9N1OkQ4znY3LYuEm5zCF");
+
+        store.save("example.com", 22, &replacement).unwrap();
+
+        let content = fs::read_to_string(path).unwrap();
+        assert!(content.contains("|1|O33ESRMWPVkMYIwJ1Uw+n877jTo=|nuuC5vEqXlEZ/8BXQR7m619W6Ak="));
+        assert!(content.contains("other.example"));
+        assert_eq!(content.lines().count(), 2);
     }
 
     #[test]
