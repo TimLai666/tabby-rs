@@ -15,7 +15,8 @@ use crate::{
         rollback::{clear_pending_update_journal, write_pending_update_journal},
         service::{
             build_updater, configured_endpoint, configured_public_key, download_exceeds_limit,
-            is_cancelled, update_info_from_remote, DownloadHandle, UpdateInfo, UpdateStage,
+            is_cancelled, read_ready_artifact, update_info_from_remote, DownloadHandle, UpdateInfo,
+            UpdateStage,
         },
     },
 };
@@ -191,6 +192,14 @@ pub async fn update_install(
 ) -> Result<(), AppError> {
     let ready = state.update_manager().take_ready(&request.version)?;
     emit_state(&app, &state);
+    let bytes = match read_ready_artifact(&ready) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            state.update_manager().restore_ready(ready);
+            emit_state(&app, &state);
+            return Err(error);
+        }
+    };
     let current_state = state.persisted_state();
     let paths = StoragePaths::from_app_paths(state.paths());
     let backup = {
@@ -238,7 +247,7 @@ pub async fn update_install(
         emit_state(&app, &state);
         return Err(AppError::Io("update state could not be persisted".into()));
     }
-    if ready.update.install(&ready.bytes).is_err() {
+    if ready.update.install(&bytes).is_err() {
         let _ = state.update_persisted_state(|persisted| persisted.pending_update = None);
         let _ = clear_pending_update_journal(&paths);
         state.update_manager().restore_ready(ready);

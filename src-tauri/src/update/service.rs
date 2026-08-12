@@ -1,10 +1,11 @@
-use std::sync::Mutex;
 use std::time::Duration;
+use std::{io::Write, sync::Mutex};
 
 use minisign_verify::{PublicKey, Signature};
 use serde::Serialize;
 use tauri::{AppHandle, Runtime};
 use tauri_plugin_updater::{Update, Updater, UpdaterExt};
+use tempfile::{NamedTempFile, TempPath};
 use tokio::sync::watch;
 use url::Url;
 
@@ -70,7 +71,7 @@ struct PendingUpdate {
     update: Update,
     manifest: UpdateManifest,
     info: UpdateInfo,
-    bytes: Option<Vec<u8>>,
+    artifact: Option<TempPath>,
 }
 
 pub(crate) struct DownloadHandle {
@@ -85,7 +86,7 @@ pub(crate) struct ReadyUpdate {
     pub update: Update,
     pub manifest: UpdateManifest,
     pub info: UpdateInfo,
-    pub bytes: Vec<u8>,
+    pub artifact: TempPath,
 }
 
 struct ManagerState {
@@ -160,7 +161,7 @@ impl UpdateManager {
             update,
             manifest,
             info: info.clone(),
-            bytes: None,
+            artifact: None,
         });
         Ok(Some(info))
     }
@@ -254,7 +255,7 @@ impl UpdateManager {
             .pending
             .as_mut()
             .ok_or_else(|| AppError::Conflict("update download was cancelled".into()))?;
-        pending.bytes = Some(bytes);
+        pending.artifact = Some(persist_download_artifact(&bytes)?);
         let version = pending.info.version.clone();
         state.cancellation = None;
         state.state = UpdateState::ReadyToInstall { version };
@@ -291,7 +292,7 @@ impl UpdateManager {
                 "requested update version is not the downloaded version".into(),
             ));
         }
-        let Some(bytes) = pending.bytes else {
+        let Some(artifact) = pending.artifact else {
             return Err(AppError::Conflict(
                 "downloaded update bytes are missing".into(),
             ));
@@ -303,7 +304,7 @@ impl UpdateManager {
             update: pending.update,
             manifest: pending.manifest,
             info: pending.info,
-            bytes,
+            artifact,
         })
     }
 
@@ -319,7 +320,7 @@ impl UpdateManager {
             update: ready.update,
             manifest: ready.manifest,
             info: ready.info,
-            bytes: Some(ready.bytes),
+            artifact: Some(ready.artifact),
         });
     }
 
@@ -361,6 +362,23 @@ impl UpdateManager {
         state.pending = None;
         state.state = UpdateState::Idle;
     }
+}
+
+pub(crate) fn read_ready_artifact(ready: &ReadyUpdate) -> Result<Vec<u8>, AppError> {
+    let bytes = std::fs::read(ready.artifact.to_path_buf())?;
+    verify_download(&bytes, &ready.manifest)?;
+    let public_key = configured_public_key()
+        .ok_or_else(|| AppError::Unsupported("updater public key is not configured".into()))?;
+    verify_signature(&bytes, &ready.manifest.signature, public_key)?;
+    Ok(bytes)
+}
+
+fn persist_download_artifact(bytes: &[u8]) -> Result<TempPath, AppError> {
+    let mut file = NamedTempFile::new()?;
+    file.write_all(bytes)?;
+    file.as_file().flush()?;
+    file.as_file().sync_all()?;
+    Ok(file.into_temp_path())
 }
 
 pub fn verify_download(bytes: &[u8], manifest: &UpdateManifest) -> Result<(), AppError> {
@@ -501,8 +519,8 @@ pub fn is_cancelled(receiver: &watch::Receiver<bool>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        channel_name, configured_endpoint, download_exceeds_limit, is_cancelled, verify_download,
-        verify_signature, UpdateManager, UpdateState,
+        channel_name, configured_endpoint, download_exceeds_limit, is_cancelled,
+        persist_download_artifact, verify_download, verify_signature, UpdateManager, UpdateState,
     };
     use crate::{
         storage::state_file::UpdateChannel,
@@ -536,6 +554,15 @@ mod tests {
             verify_download(bytes, &manifest(&"0".repeat(64), Some(bytes.len() as u64))).is_err()
         );
         assert!(verify_download(bytes, &manifest(&hash, Some(1))).is_err());
+    }
+
+    #[test]
+    fn persists_download_in_a_temporary_file_until_ready_state_is_dropped() {
+        let artifact = persist_download_artifact(b"signed artifact").unwrap();
+        let path = artifact.to_path_buf();
+        assert_eq!(std::fs::read(&path).unwrap(), b"signed artifact");
+        drop(artifact);
+        assert!(!path.exists());
     }
 
     #[test]

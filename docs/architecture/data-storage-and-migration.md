@@ -92,7 +92,7 @@ The user selects whether to import configuration and which detected plugin names
 
 Any failure attempts to restore the pre-import snapshot and records a failed report. A successful import reloads the application so Angular reads the imported YAML with a fresh revision.
 
-The Tauri updater API currently returns the verified artifact as an in-memory byte buffer before installation. The host rejects oversized downloads during progress reporting and verifies the declared size and hash, but does not claim resumable or disk-streamed downloads until the updater transport supports them.
+The Tauri updater API currently buffers the complete response in memory during download. After size, hash, and signature verification, the host stores the artifact in a private temporary file until installation, and removes it when the ready, failed, cancelled, or completed state is dropped. The host does not claim resumable or streamed transport until the updater API supports it.
 
 ## Deferred secret migration
 
