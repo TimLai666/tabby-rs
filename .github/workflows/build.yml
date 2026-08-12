@@ -121,6 +121,9 @@ jobs:
       - name: Test system npm plugin lifecycle
         run: yarn test:plugin-npm-lifecycle
 
+      - name: Test plugin node status contract
+        run: yarn test:plugin-node-status
+
       - name: Test Electron updater policy
         run: yarn test:electron-updater
 
@@ -226,6 +229,9 @@ jobs:
 
       - name: Test system npm plugin lifecycle
         run: yarn test:plugin-npm-lifecycle
+
+      - name: Test plugin node status contract
+        run: yarn test:plugin-node-status
 
       - name: Test Rust host
         run: cargo test --manifest-path src-tauri/Cargo.toml

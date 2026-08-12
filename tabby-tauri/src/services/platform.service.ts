@@ -204,9 +204,14 @@ export class TauriPlatformService extends PlatformService {
     async getNodeToolchainStatus (customNodePath?: string): Promise<NodeToolchainStatus> {
         const trimmedNodePath = customNodePath?.trim()
         this.customNodePath = trimmedNodePath ? trimmedNodePath : null
-        const status = await this.bridge.invoke('plugins.nodeStatus', { customNodePath: this.customNodePath })
-        this.supportsPluginManagement = status.supported
-        return status
+        try {
+            const status = await this.bridge.invoke('plugins.nodeStatus', { customNodePath: this.customNodePath })
+            this.supportsPluginManagement = status.supported
+            return status
+        } catch (error) {
+            this.supportsPluginManagement = false
+            throw error
+        }
     }
 
     async installPlugin (name: string, version: string): Promise<void> {
