@@ -35,17 +35,44 @@ fn journal_plugin_failure(
     package_name: Option<String>,
     phase: String,
     code: Option<String>,
-    message: String,
+    _message: String,
 ) {
-    state.safe_mode.failure_phase = Some(phase);
-    state.safe_mode.failure_code = code;
-    state.safe_mode.failure_message = Some(message);
+    let phase = normalize_failure_phase(&phase);
+    let code = code.as_deref().map(normalize_failure_code);
+    state.safe_mode.failure_phase = Some(phase.into());
+    state.safe_mode.failure_code = code.map(Into::into);
+    state.safe_mode.failure_message = Some(match code {
+        Some(code) => format!("Plugin bootstrap failed during {phase} ({code})"),
+        None => format!("Plugin bootstrap failed during {phase}"),
+    });
     if let Some(package_name) = package_name {
         if !state.safe_mode.suspected_plugins.contains(&package_name) {
             state.safe_mode.suspected_plugins.push(package_name);
         }
     } else if state.safe_mode.suspected_plugins.is_empty() {
         state.safe_mode.suspected_plugins = state.safe_mode.plugins.clone();
+    }
+}
+
+fn normalize_failure_phase(phase: &str) -> &'static str {
+    match phase {
+        "discover" => "discover",
+        "read" => "read",
+        "evaluate" => "evaluate",
+        "angular-bootstrap" => "angular-bootstrap",
+        _ => "unknown",
+    }
+}
+
+fn normalize_failure_code(code: &str) -> &'static str {
+    match code {
+        "missing-module" => "missing-module",
+        "node-runtime-required" => "node-runtime-required",
+        "invalid-export" => "invalid-export",
+        "exception" => "exception",
+        "discover" => "discover",
+        "angular-bootstrap" => "angular-bootstrap",
+        _ => "unknown",
     }
 }
 
@@ -129,7 +156,8 @@ pub fn plugins_bootstrap_retry(state: tauri::State<'_, AppState>) -> Result<(), 
 mod tests {
     use super::{
         journal_plugin_completed, journal_plugin_failure, journal_plugin_started,
-        mark_bootstrap_succeeded, prepare_bootstrap_retry,
+        mark_bootstrap_succeeded, normalize_failure_code, normalize_failure_phase,
+        prepare_bootstrap_retry,
     };
     use crate::storage::state_file::TabbyRsState;
 
@@ -200,7 +228,7 @@ mod tests {
         );
         assert_eq!(
             state.safe_mode.failure_message.as_deref(),
-            Some("root module failed again")
+            Some("Plugin bootstrap failed during angular-bootstrap (angular-bootstrap)")
         );
     }
 
@@ -216,6 +244,34 @@ mod tests {
         assert!(!state.safe_mode.last_forced);
         assert_eq!(state.safe_mode.attempt_id, None);
         assert_eq!(state.safe_mode.suspected_plugins, vec!["tabby-broken"]);
+    }
+
+    #[test]
+    fn persists_only_bounded_failure_metadata() {
+        let mut state = TabbyRsState::default();
+
+        journal_plugin_failure(
+            &mut state,
+            Some("tabby-broken".into()),
+            "unexpected-phase".into(),
+            Some("secret-value".into()),
+            "secret-value from /Users/alice/.env".into(),
+        );
+
+        assert_eq!(state.safe_mode.failure_phase.as_deref(), Some("unknown"));
+        assert_eq!(state.safe_mode.failure_code.as_deref(), Some("unknown"));
+        assert_eq!(
+            state.safe_mode.failure_message.as_deref(),
+            Some("Plugin bootstrap failed during unknown (unknown)")
+        );
+        assert!(!state
+            .safe_mode
+            .failure_message
+            .as_deref()
+            .unwrap()
+            .contains("secret-value"));
+        assert_eq!(normalize_failure_phase("read"), "read");
+        assert_eq!(normalize_failure_code("exception"), "exception");
     }
 }
 
