@@ -163,7 +163,7 @@ const report = {
     schemaVersion: 1,
     passed: failures.length === 0,
     failures,
-    sourceRevision: process.env.GITHUB_SHA || 'local',
+    sourceRevision: expectedRevision || 'local',
 }
 fs.mkdirSync(path.dirname(outputPath), { recursive: true })
 fs.writeFileSync(outputPath, `${JSON.stringify(report, null, 2)}\n`)

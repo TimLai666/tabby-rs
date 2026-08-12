@@ -28,6 +28,7 @@ await assert.rejects(
 
 const report = JSON.parse(fs.readFileSync(output, 'utf8'))
 assert.equal(report.passed, false)
+assert.equal(report.sourceRevision, expectedRevision)
 assert.ok(report.failures.some(error => error.startsWith('invalid bundle audit ')))
 assert.ok(report.failures.includes(`license report sourceRevision must match ${expectedRevision}`))
 
