@@ -68,6 +68,14 @@ impl Default for DiagnosticsState {
     }
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingUpdateState {
+    pub target_version: String,
+    pub backup_id: String,
+    pub channel: UpdateChannel,
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct TabbyRsState {
@@ -75,6 +83,7 @@ pub struct TabbyRsState {
     pub first_run_import: FirstRunImportState,
     pub update_channel: UpdateChannel,
     pub last_stable_backup: Option<String>,
+    pub pending_update: Option<PendingUpdateState>,
     pub safe_mode: SafeModeState,
     pub diagnostics: DiagnosticsState,
     pub pending_plugins: Vec<String>,
@@ -89,6 +98,7 @@ impl Default for TabbyRsState {
             first_run_import: FirstRunImportState::NotStarted,
             update_channel: UpdateChannel::Stable,
             last_stable_backup: None,
+            pending_update: None,
             safe_mode: SafeModeState::default(),
             diagnostics: DiagnosticsState::default(),
             pending_plugins: Vec::new(),

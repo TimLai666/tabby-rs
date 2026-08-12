@@ -27,7 +27,7 @@
 
                                 button.btn.btn-info.mt-3.mb-2(
                                     *ngIf='updateAvailable',
-                                    (click)='updater.update()',
+                                    (click)='installUpdate()',
                                 )
                                     i.fas.fa-sync
                                     span(translate) Update
@@ -79,13 +79,24 @@
                             .description(translate) Allows quickly opening a terminal in the selected folder
                         toggle([ngModel]='isShellIntegrationInstalled', (ngModelChange)='toggleShellIntegration()')
 
-                    .form-line(*ngIf='hostApp.platform !== Platform.Web')
+                    .form-line(*ngIf='runtimeCapabilities.capabilities.updater')
                         .header
                             .title(translate) Automatic Updates
-                            .description(translate) Enable automatic installation of updates when they become available.
+                            .description(translate) Enable automatic update checks. Installing an update always requires your confirmation.
                         toggle([(ngModel)]='config.store.enableAutomaticUpdates', (ngModelChange)='saveConfiguration()')
 
-                    .form-line(*ngIf='hostApp.platform !== Platform.Web')
+                    .form-line(*ngIf='runtimeCapabilities.capabilities.updater')
+                        .header
+                            .title(translate) Update channel
+                            .description(translate) Stable updates are recommended. Nightly updates may contain unfinished changes.
+                        select.form-control(
+                            [ngModel]='updateChannel',
+                            (ngModelChange)='setUpdateChannel($event)'
+                        )
+                            option(value='stable', translate) Stable
+                            option(value='nightly', translate) Nightly
+
+                    .form-line(*ngIf='runtimeCapabilities.capabilities.updater')
                         .header
                             .title(translate) Debugging
 

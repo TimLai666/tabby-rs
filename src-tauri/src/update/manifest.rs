@@ -1,12 +1,14 @@
 use url::Url;
 
-use crate::error::AppError;
+use crate::{error::AppError, storage::state_file::UpdateChannel};
 
 use super::version::Version;
 
 const MAX_NOTES_BYTES: usize = 64 * 1024;
 const MAX_URL_BYTES: usize = 2048;
 const MAX_SIGNATURE_BYTES: usize = 4096;
+const MAX_PUBLISHED_AT_BYTES: usize = 128;
+pub const MAX_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -20,12 +22,23 @@ pub struct UpdateManifest {
     pub sha256: String,
     pub signature: String,
     pub notes: String,
+    #[serde(alias = "pub_date")]
     pub published_at: String,
     pub size: Option<u64>,
+    #[serde(default)]
+    pub requires_config_migration: bool,
 }
 
 impl UpdateManifest {
     pub fn validate(
+        &self,
+        expected_channel: &str,
+        current_version: &str,
+    ) -> Result<Version, AppError> {
+        self.validate_for_channel(expected_channel, current_version)
+    }
+
+    pub fn validate_for_channel(
         &self,
         expected_channel: &str,
         current_version: &str,
@@ -54,7 +67,12 @@ impl UpdateManifest {
             ));
         }
         let current = Version::parse(current_version)?;
-        if !version.is_newer_than(&current) {
+        let channel = match expected_channel {
+            "stable" => UpdateChannel::Stable,
+            "nightly" => UpdateChannel::Nightly,
+            _ => return Err(AppError::InvalidData("unknown update channel".into())),
+        };
+        if !version.is_newer_for_channel(&current, &channel) {
             return Err(AppError::InvalidData(
                 "update manifest is not newer than the current version".into(),
             ));
@@ -62,6 +80,9 @@ impl UpdateManifest {
         if self.url.len() > MAX_URL_BYTES
             || self.sha256.len() != 64
             || self.signature.len() > MAX_SIGNATURE_BYTES
+            || self
+                .size
+                .is_some_and(|size| size == 0 || size > MAX_ARTIFACT_BYTES)
         {
             return Err(AppError::InvalidData(
                 "update manifest contains an oversized or invalid field".into(),
@@ -88,7 +109,11 @@ impl UpdateManifest {
                 "update manifest hash or signature is invalid".into(),
             ));
         }
-        if self.notes.len() > MAX_NOTES_BYTES || self.published_at.is_empty() {
+        if self.notes.len() > MAX_NOTES_BYTES
+            || self.published_at.is_empty()
+            || self.published_at.len() > MAX_PUBLISHED_AT_BYTES
+            || self.published_at.chars().any(char::is_control)
+        {
             return Err(AppError::InvalidData(
                 "update manifest notes or publication time is invalid".into(),
             ));
@@ -99,7 +124,7 @@ impl UpdateManifest {
 
 #[cfg(test)]
 mod tests {
-    use super::UpdateManifest;
+    use super::{UpdateManifest, MAX_ARTIFACT_BYTES, MAX_PUBLISHED_AT_BYTES};
 
     fn manifest() -> UpdateManifest {
         UpdateManifest {
@@ -114,6 +139,7 @@ mod tests {
             notes: "security fixes".into(),
             published_at: "2026-08-12T00:00:00Z".into(),
             size: Some(123),
+            requires_config_migration: false,
         }
     }
 
@@ -137,6 +163,35 @@ mod tests {
         let mut value = manifest();
         value.channel = "nightly".into();
         value.version = "1.0.231-tabbyrs.2.nightly.20260812.1".into();
+        assert!(value.validate("stable", "1.0.231-tabbyrs.1").is_err());
+    }
+
+    #[test]
+    fn accepts_tauri_dynamic_manifest_fields() {
+        let value = serde_json::json!({
+            "version": "1.0.231-tabbyrs.2",
+            "notes": "security fixes",
+            "url": "https://updates.example.test/tabby-rs.AppImage",
+            "signature": "signed-by-ci-key",
+            "schemaVersion": 1,
+            "channel": "stable",
+            "platform": std::env::consts::OS,
+            "arch": std::env::consts::ARCH,
+            "sha256": "a".repeat(64),
+            "publishedAt": "2026-08-12T00:00:00Z"
+        });
+        let manifest: UpdateManifest = serde_json::from_value(value).unwrap();
+        assert_eq!(manifest.published_at, "2026-08-12T00:00:00Z");
+        assert!(manifest.validate("stable", "1.0.231-tabbyrs.1").is_ok());
+    }
+
+    #[test]
+    fn rejects_oversized_artifacts_and_unbounded_dates() {
+        let mut value = manifest();
+        value.size = Some(MAX_ARTIFACT_BYTES + 1);
+        assert!(value.validate("stable", "1.0.231-tabbyrs.1").is_err());
+        let mut value = manifest();
+        value.published_at = "x".repeat(MAX_PUBLISHED_AT_BYTES + 1);
         assert!(value.validate("stable", "1.0.231-tabbyrs.1").is_err());
     }
 }

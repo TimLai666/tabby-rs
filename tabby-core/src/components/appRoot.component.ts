@@ -9,14 +9,14 @@ import { HotkeysService } from '../services/hotkeys.service'
 import { Logger, LogService } from '../services/log.service'
 import { ConfigService } from '../services/config.service'
 import { ThemesService } from '../services/themes.service'
-import { UpdaterService } from '../services/updater.service'
+import { UpdateInfo, UpdaterService } from '../services/updater.service'
 import { CommandService } from '../services/commands.service'
 
 import { BaseTabComponent } from './baseTab.component'
 import { SafeModeModalComponent } from './safeModeModal.component'
 import { TabBodyComponent } from './tabBody.component'
 import { SplitTabComponent } from './splitTab.component'
-import { AppService, Command, CommandLocation, FileTransfer, HostWindowService, PlatformService } from '../api'
+import { AppService, Command, CommandLocation, FileTransfer, HostWindowService, PlatformService, RuntimeCapabilitiesService } from '../api'
 
 function makeTabAnimation (dimension: string, size: number) {
     return [
@@ -74,6 +74,7 @@ export class AppRootComponent {
     @ViewChild('activeTransfersDropdown') activeTransfersDropdown: NgbDropdown
     unsortedTabs: BaseTabComponent[] = []
     updatesAvailable = false
+    availableUpdate: UpdateInfo|null = null
     activeTransfers: FileTransfer[] = []
     private logger: Logger
 
@@ -85,6 +86,7 @@ export class AppRootComponent {
         public hostApp: HostAppService,
         public config: ConfigService,
         public app: AppService,
+        public runtimeCapabilities: RuntimeCapabilitiesService,
         platform: PlatformService,
         log: LogService,
         ngbModal: NgbModal,
@@ -181,11 +183,18 @@ export class AppRootComponent {
             setInterval(() => {
                 if (this.config.store.enableAutomaticUpdates) {
                     this.updater.check().then(available => {
-                        this.updatesAvailable = available
+                        this.availableUpdate = available
+                        this.updatesAvailable = !!available
                     })
                 }
             }, 3600 * 12 * 1000)
         })
+    }
+
+    async installUpdate () {
+        if (this.availableUpdate) {
+            await this.updater.update(this.availableUpdate)
+        }
     }
 
     async ngOnInit () {

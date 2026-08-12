@@ -109,11 +109,20 @@ jobs:
       - name: Verify tabby-web bundle boundary
         run: yarn audit:web
 
+      - name: Test runtime capability providers
+        run: yarn test:runtime-capabilities
+
+      - name: Test Electron updater policy
+        run: yarn test:electron-updater
+
       - name: Build Tauri renderer
         run: yarn build:tauri:frontend
 
       - name: Verify Tauri renderer output
         run: node scripts/ci/assert-tauri-output.mjs
+
+      - name: Audit Tauri renderer bundle
+        run: yarn test:tauri:bundle
 
       - name: Check Rust formatting
         run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
@@ -199,6 +208,9 @@ jobs:
 
       - name: Verify Tauri renderer output
         run: node scripts/ci/assert-tauri-output.mjs
+
+      - name: Audit Tauri renderer bundle
+        run: yarn test:tauri:bundle
 
       - name: Test Rust host
         run: cargo test --manifest-path src-tauri/Cargo.toml

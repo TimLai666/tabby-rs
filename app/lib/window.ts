@@ -488,11 +488,13 @@ export class Window {
     }
 
     private setupUpdater () {
-        autoUpdater.autoDownload = true
-        autoUpdater.autoInstallOnAppQuit = true
+        // The renderer owns the confirmation flow. A check must never start a
+        // download or install on behalf of the user.
+        autoUpdater.autoDownload = false
+        autoUpdater.autoInstallOnAppQuit = false
 
-        autoUpdater.on('update-available', () => {
-            this.send('updater:update-available')
+        autoUpdater.on('update-available', updateInfo => {
+            this.send('updater:update-available', updateInfo)
         })
 
         autoUpdater.on('update-not-available', () => {
@@ -508,7 +510,15 @@ export class Window {
         })
 
         this.on('updater:check-for-updates', () => {
-            autoUpdater.checkForUpdates()
+            autoUpdater.checkForUpdates().catch(error => {
+                this.send('updater:error', error)
+            })
+        })
+
+        this.on('updater:download-update', () => {
+            autoUpdater.downloadUpdate().catch(error => {
+                this.send('updater:error', error)
+            })
         })
 
         this.on('updater:quit-and-install', () => {

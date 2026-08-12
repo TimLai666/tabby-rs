@@ -13,6 +13,7 @@ import {
     PlatformService,
     NotificationsService,
     ProfileProvider,
+    RuntimeCapabilitiesService,
     TabRecoveryProvider,
     UpdaterService,
     VaultService,
@@ -59,6 +60,7 @@ import {
 import { TauriHostBridge } from './services/tauriHostBridge.service'
 import { TauriUACService } from './services/uac.service'
 import { TauriUpdaterService } from './services/updater.service'
+import { TauriRuntimeCapabilitiesService } from './services/runtimeCapabilities.service'
 import { TauriNotificationsService } from './services/notifications.service'
 import { TauriVaultService } from './services/vault.service'
 import { TauriPathDropDecorator } from './pathDrop'
@@ -139,6 +141,7 @@ function initializeDesktop (service: TauriDesktopIntegrationService): () => Prom
         { provide: LogService, useClass: TauriLogService },
         { provide: SettingsTabProvider, useClass: TauriDiagnosticsSettingsTabProvider, multi: true },
         { provide: UpdaterService, useClass: TauriUpdaterService },
+        { provide: RuntimeCapabilitiesService, useClass: TauriRuntimeCapabilitiesService },
         TauriVaultService,
         { provide: VaultService, useExisting: TauriVaultService },
         TauriSecretImporter,

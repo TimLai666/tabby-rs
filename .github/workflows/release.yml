@@ -1,19 +1,221 @@
----
-name: "tagged-release"
+name: Release
 
 on:
   push:
     tags:
-      - "v*"
+      - 'v*'
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: 'Release channel'
+        required: true
+        default: stable
+        type: choice
+        options:
+          - stable
+          - nightly
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: '22'
+  YARN_VERSION: '1.22.22'
+  YARN_NETWORK_TIMEOUT: '1000000'
+  TAURI_CLI_VERSION: '2.11.4'
 
 jobs:
-  tagged-release:
-    name: "Tagged Release"
-    runs-on: "ubuntu-latest"
+  build:
+    name: bundle (${{ matrix.name }})
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-x64
+            os: windows-2022
+            target: x86_64-pc-windows-msvc
+            bundles: nsis
+            platform: windows
+            arch: x86_64
+          - name: macos-arm64
+            os: macos-14
+            target: aarch64-apple-darwin
+            bundles: dmg
+            platform: macos
+            arch: aarch64
+          - name: macos-x64
+            os: macos-13
+            target: x86_64-apple-darwin
+            bundles: dmg
+            platform: macos
+            arch: x86_64
+          - name: linux-x64
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            bundles: appimage,deb,rpm
+            platform: linux
+            arch: x86_64
+
+    environment: ${{ (github.event.inputs.channel || (github.event_name == 'schedule' && 'nightly') || 'stable') == 'stable' && 'stable-release' || 'nightly-release' }}
 
     steps:
-      - uses: "marvinpinto/action-automatic-releases@latest"
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
-          repo_token: "${{ secrets.GITHUB_TOKEN }}"
-          prerelease: false
-          draft: true
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            libayatana-appindicator3-dev libfontconfig1-dev librsvg2-dev \
+            libsecret-1-dev libudev-dev libwebkit2gtk-4.1-dev patchelf xvfb
+
+      - name: Install Windows build dependencies
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install nasm --no-progress --yes
+          Add-Content -Path $env:GITHUB_PATH -Value "${env:ProgramFiles}\NASM"
+
+      - name: Install Yarn
+        run: npm install --global yarn@${{ env.YARN_VERSION }}
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile --network-timeout ${{ env.YARN_NETWORK_TIMEOUT }}
+
+      - name: Build Tauri renderer
+        run: yarn build:tauri:frontend
+
+      - name: Install pinned Tauri CLI
+        run: cargo install tauri-cli --version ${{ env.TAURI_CLI_VERSION }} --locked
+
+      - name: Select release channel
+        id: channel
+        shell: bash
+        run: |
+          release_channel=stable
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            release_channel=nightly
+            echo "name=nightly" >> "$GITHUB_OUTPUT"
+          elif [ -n "${{ github.event.inputs.channel }}" ]; then
+            release_channel="${{ github.event.inputs.channel }}"
+            echo "name=${{ github.event.inputs.channel }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=stable" >> "$GITHUB_OUTPUT"
+          fi
+          base_version=$(node -e 'const fs = require("fs"); const line = fs.readFileSync("src-tauri/Cargo.toml", "utf8").split("\\n").find(value => value.startsWith("version = ")); console.log(line.match(/"([^"]+)"/)[1])')
+          if [ "$release_channel" = "nightly" ]; then
+            version="${base_version}.nightly.$(date -u +%Y%m%d).${GITHUB_RUN_NUMBER}"
+          else
+            version="$base_version"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Generate release configuration
+        env:
+          TABBY_RS_RELEASE_CHANNEL: ${{ steps.channel.outputs.name }}
+          TABBY_RS_RELEASE_VERSION: ${{ steps.channel.outputs.version }}
+          TABBY_RS_UPDATE_PUBLIC_KEY: ${{ secrets.TABBY_RS_UPDATE_PUBLIC_KEY }}
+          TABBY_RS_UPDATE_ENDPOINT: ${{ steps.channel.outputs.name == 'stable' && vars.TABBY_RS_UPDATE_ENDPOINT_STABLE || vars.TABBY_RS_UPDATE_ENDPOINT_NIGHTLY }}
+          TABBY_RS_BUNDLE_TARGETS: ${{ matrix.bundles }}
+        run: node scripts/create-tauri-release-config.mjs
+
+      - name: Build signed Tauri bundle
+        env:
+          TABBY_RS_UPDATE_PUBLIC_KEY: ${{ secrets.TABBY_RS_UPDATE_PUBLIC_KEY }}
+          TABBY_RS_UPDATE_ENDPOINT_STABLE: ${{ vars.TABBY_RS_UPDATE_ENDPOINT_STABLE }}
+          TABBY_RS_UPDATE_ENDPOINT_NIGHTLY: ${{ vars.TABBY_RS_UPDATE_ENDPOINT_NIGHTLY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: cargo tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config src-tauri/tauri.release.conf.json
+
+      - name: Prepare release metadata
+        shell: bash
+        env:
+          TABBY_RS_RELEASE_CHANNEL: ${{ steps.channel.outputs.name }}
+          TABBY_RS_RELEASE_VERSION: ${{ steps.channel.outputs.version }}
+          TABBY_RS_UPDATE_PUBLIC_KEY: ${{ secrets.TABBY_RS_UPDATE_PUBLIC_KEY }}
+          TABBY_RS_UPDATE_ARTIFACT_URL: ${{ vars.TABBY_RS_UPDATE_ARTIFACT_URL }}
+          TABBY_RS_UPDATE_PLATFORM: ${{ matrix.platform }}
+          TABBY_RS_UPDATE_ARCH: ${{ matrix.arch }}
+          TABBY_RS_BUNDLE_ROOT: src-tauri/target/${{ matrix.target }}/release/bundle
+          TABBY_RS_RELEASE_STAGING: release-staging
+        run: |
+          node scripts/generate-third-party-notices.mjs --output release-staging/THIRD_PARTY_NOTICES.md
+          node scripts/create-tauri-release-metadata.mjs
+          node scripts/stage-tauri-release.mjs
+          case "${{ matrix.platform }}" in
+            linux) update_artifact=$(find release-staging -type f -name '*.AppImage' -print -quit) ;;
+            macos) update_artifact=$(find release-staging -type f -name '*.tar.gz' -print -quit) ;;
+            windows) update_artifact=$(find release-staging -type f -name '*.exe' -print -quit) ;;
+          esac
+          test -n "$update_artifact" && test -f "$update_artifact.sig"
+          export TABBY_RS_UPDATE_ARTIFACT="$update_artifact"
+          export TABBY_RS_UPDATE_SIGNATURE="$update_artifact.sig"
+          node scripts/create-tauri-update-manifest.mjs
+
+      - name: Audit release bundle
+        run: node scripts/check-tauri-bundle.mjs release-staging --release --output release-staging/bundle-audit.json
+
+      - name: Upload bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: tabby-rs-${{ steps.channel.outputs.name }}-${{ matrix.name }}
+          path: release-staging
+          if-no-files-found: error
+
+  publish:
+    name: publish release
+    needs: build
+    if: needs.build.result == 'success'
+    runs-on: ubuntu-22.04
+    environment: ${{ (github.event.inputs.channel || (github.event_name == 'schedule' && 'nightly') || 'stable') == 'stable' && 'stable-release' || 'nightly-release' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Select release channel
+        id: channel
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then echo "name=nightly" >> "$GITHUB_OUTPUT"; \
+          elif [ -n "${{ github.event.inputs.channel }}" ]; then echo "name=${{ github.event.inputs.channel }}" >> "$GITHUB_OUTPUT"; \
+          else echo "name=stable" >> "$GITHUB_OUTPUT"; fi
+      - name: Download bundles
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          base_version=$(node -e 'const fs = require("fs"); const line = fs.readFileSync("src-tauri/Cargo.toml", "utf8").split("\\n").find(value => value.startsWith("version = ")); console.log(line.match(/"([^"]+)"/)[1])')
+          if [ "${{ steps.channel.outputs.name }}" = "nightly" ]; then
+            release_tag="nightly-${GITHUB_SHA}"
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            release_tag="$GITHUB_REF_NAME"
+          else
+            release_tag="v${base_version}"
+          fi
+          mapfile -d '' assets < <(find release-assets -type f -print0)
+          test "${#assets[@]}" -gt 0
+          if [ "${{ steps.channel.outputs.name }}" = "nightly" ]; then
+            gh release create "$release_tag" "${assets[@]}" --prerelease --title "Tabby RS Nightly ${GITHUB_SHA}" --notes "Automated nightly build."
+          else
+            gh release create "$release_tag" "${assets[@]}" --draft --title "Tabby RS ${release_tag}" --generate-notes
+          fi

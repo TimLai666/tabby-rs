@@ -75,6 +75,10 @@ use commands::{
         transfer_list_directory, transfer_open_download, transfer_open_upload, transfer_read,
         transfer_write,
     },
+    update::{
+        update_cancel, update_check, update_download, update_get_channel, update_install,
+        update_set_channel,
+    },
     vault::{
         vault_get_file, vault_get_secret, vault_lock, vault_put_file, vault_put_secret,
         vault_remove_secret, vault_replace, vault_set_config, vault_set_enabled, vault_snapshot,
@@ -184,6 +188,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init());
+    builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
 
     #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
     {
@@ -218,7 +223,11 @@ pub fn run() {
             let _ = crate::diagnostics::crash::mark_startup(&logs_dir);
             crate::diagnostics::crash::install_panic_hook(logs_dir);
             let state_file_existed = std::fs::symlink_metadata(storage_paths.state_file()).is_ok();
-            let persisted_state = load_state(storage_paths.state_file())?;
+            let persisted_state = crate::update::rollback::recover_pending_update(
+                &storage_paths,
+                load_state(storage_paths.state_file())?,
+                &app.package_info().version.to_string(),
+            )?;
             if !state_file_existed {
                 save_state(storage_paths.state_file(), &persisted_state)?;
             }
@@ -367,6 +376,12 @@ pub fn run() {
             transfer_create_directory,
             transfer_list_directory,
             terminal_export,
+            update_check,
+            update_download,
+            update_install,
+            update_cancel,
+            update_set_channel,
+            update_get_channel,
             vault_status,
             vault_unlock,
             vault_replace,

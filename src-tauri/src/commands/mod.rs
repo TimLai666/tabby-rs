@@ -18,5 +18,6 @@ pub mod ssh;
 pub mod sudo;
 pub mod telnet;
 pub mod transfer;
+pub mod update;
 pub mod vault;
 pub mod windows;

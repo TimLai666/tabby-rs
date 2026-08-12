@@ -8,6 +8,7 @@ import {
     BaseTabComponent,
     HostAppService,
     Platform,
+    UpdateChannel,
     HomeBaseService,
     UpdaterService,
     PlatformService,
@@ -15,6 +16,8 @@ import {
     AppService,
     LocaleService,
     TranslateService,
+    UpdateInfo,
+    RuntimeCapabilitiesService,
 } from 'tabby-core'
 
 import { SettingsTabProvider } from '../api'
@@ -37,7 +40,8 @@ export class SettingsTabComponent extends BaseTabComponent {
     configFileError: string|null = null
     isShellIntegrationInstalled = false
     checkingForUpdate = false
-    updateAvailable = false
+    updateAvailable: UpdateInfo|null = null
+    updateChannel: UpdateChannel = 'stable'
     showConfigDefaults = false
     allLanguages = LocaleService.allLanguages
     @HostBinding('class.pad-window-controls') padWindowControls = false
@@ -50,6 +54,7 @@ export class SettingsTabComponent extends BaseTabComponent {
         public platform: PlatformService,
         public locale: LocaleService,
         public updater: UpdaterService,
+        public runtimeCapabilities: RuntimeCapabilitiesService,
         private app: AppService,
         @Inject(SettingsTabProvider) public settingsProviders: SettingsTabProvider[],
         translate: TranslateService,
@@ -76,6 +81,13 @@ export class SettingsTabComponent extends BaseTabComponent {
 
     async ngOnInit () {
         this.isShellIntegrationInstalled = await this.platform.isShellIntegrationInstalled()
+        if (this.runtimeCapabilities.capabilities.updater) {
+            try {
+                this.updateChannel = await this.updater.getChannel()
+            } catch {
+                // The host may expose update checks without channel persistence.
+            }
+        }
     }
 
     async toggleShellIntegration () {
@@ -137,6 +149,18 @@ export class SettingsTabComponent extends BaseTabComponent {
         this.checkingForUpdate = true
         this.updateAvailable = await this.updater.check()
         this.checkingForUpdate = false
+    }
+
+    async installUpdate () {
+        if (this.updateAvailable) {
+            await this.updater.update(this.updateAvailable)
+        }
+    }
+
+    async setUpdateChannel (channel: UpdateChannel) {
+        await this.updater.setChannel(channel)
+        this.updateChannel = channel
+        await this.checkForUpdates()
     }
 
     showReleaseNotes () {

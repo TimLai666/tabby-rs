@@ -3,6 +3,25 @@ import { BootstrapData, NodeToolchainStatus, PluginInfo, StoredVault, TransferDe
 
 export type UpdateChannel = 'stable' | 'nightly'
 
+export interface UpdateInfo {
+    version: string
+    currentVersion: string
+    channel: UpdateChannel
+    publishedAt: string
+    notes: string
+    downloadSize: number | null
+    requiresConfigMigration: boolean
+}
+
+export type UpdateStateDto =
+    | { status: 'idle' }
+    | { status: 'checking' }
+    | { status: 'available'; info: UpdateInfo }
+    | { status: 'downloading'; version: string; downloaded: number; total: number | null }
+    | { status: 'readyToInstall'; version: string }
+    | { status: 'installing'; version: string }
+    | { status: 'failed'; stage: string; publicError: string }
+
 export interface RuntimeInfo {
     host: 'tauri'
     platform: string
@@ -654,6 +673,30 @@ export interface HostRequestMap {
         request: { backupId: string }
         response: RestoreReport
     }
+    'update.check': {
+        request: Record<string, never>
+        response: UpdateInfo | null
+    }
+    'update.download': {
+        request: { version: string }
+        response: null
+    }
+    'update.install': {
+        request: { version: string }
+        response: null
+    }
+    'update.cancel': {
+        request: Record<string, never>
+        response: null
+    }
+    'update.setChannel': {
+        request: { channel: UpdateChannel }
+        response: null
+    }
+    'update.getChannel': {
+        request: Record<string, never>
+        response: UpdateChannel
+    }
     'config.read': {
         request: Record<string, never>
         response: ConfigReadResult
@@ -1135,6 +1178,7 @@ export interface HostRequestMap {
 export interface HostEventMap {
     'app.start': BootstrapData
     'app.launch': LaunchContext
+    'update.state': UpdateStateDto
     'desktop.hotkey': GlobalHotkeyEvent
     'desktop.windowFocused': boolean
     'desktop.windowMoved': { x: number; y: number }

@@ -1,6 +1,7 @@
 use std::cmp::Ordering;
 
 use crate::error::AppError;
+use crate::storage::state_file::UpdateChannel;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Version {
@@ -78,6 +79,30 @@ impl Version {
         }
         self.cmp(current) == Ordering::Greater
     }
+
+    pub fn is_newer_for_channel(&self, current: &Self, channel: &UpdateChannel) -> bool {
+        match channel {
+            UpdateChannel::Stable => match (&self.nightly, &current.nightly) {
+                (None, None) => self.cmp(current) == Ordering::Greater,
+                (None, Some(_)) => self.base_cmp(current) != Ordering::Less,
+                _ => false,
+            },
+            UpdateChannel::Nightly => match (&self.nightly, &current.nightly) {
+                (Some(_), Some(_)) => self.cmp(current) == Ordering::Greater,
+                (Some(_), None) => self.base_cmp(current) != Ordering::Less,
+                _ => false,
+            },
+        }
+    }
+
+    fn base_cmp(&self, other: &Self) -> Ordering {
+        (self.major, self.minor, self.patch, self.build).cmp(&(
+            other.major,
+            other.minor,
+            other.patch,
+            other.build,
+        ))
+    }
 }
 
 impl Ord for Version {
@@ -123,9 +148,18 @@ fn parse_date(value: Option<&str>) -> Result<u32, AppError> {
     let date = value
         .parse::<u32>()
         .map_err(|_| AppError::InvalidData("nightly version date is invalid".into()))?;
+    let year = date / 10_000;
     let month = (date / 100) % 100;
     let day = date % 100;
-    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let max_day = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap => 29,
+        2 => 28,
+        _ => 0,
+    };
+    if year == 0 || day == 0 || day > max_day {
         return Err(AppError::InvalidData(
             "nightly version date is invalid".into(),
         ));
@@ -136,6 +170,7 @@ fn parse_date(value: Option<&str>) -> Result<u32, AppError> {
 #[cfg(test)]
 mod tests {
     use super::Version;
+    use crate::storage::state_file::UpdateChannel;
 
     #[test]
     fn parses_stable_and_nightly_versions_without_semver_assumptions() {
@@ -150,9 +185,24 @@ mod tests {
     #[test]
     fn stable_and_nightly_are_not_interchangeable() {
         let stable = Version::parse("1.0.231-tabbyrs.4").unwrap();
-        let nightly = Version::parse("1.0.231-tabbyrs.5.nightly.20260812.1").unwrap();
+        let nightly = Version::parse("1.0.231-tabbyrs.4.nightly.20260812.1").unwrap();
         assert!(!nightly.is_newer_than(&stable));
         assert!(!stable.is_newer_than(&nightly));
+        assert!(nightly.is_newer_for_channel(&stable, &UpdateChannel::Nightly));
+        assert!(stable.is_newer_for_channel(&nightly, &UpdateChannel::Stable));
+    }
+
+    #[test]
+    fn channel_switch_requires_the_same_or_newer_upstream_build() {
+        let stable = Version::parse("1.0.231-tabbyrs.4").unwrap();
+        let nightly = Version::parse("1.0.231-tabbyrs.4.nightly.20260812.1").unwrap();
+        let older_nightly = Version::parse("1.0.231-tabbyrs.3.nightly.20260812.1").unwrap();
+        let older_stable = Version::parse("1.0.231-tabbyrs.3").unwrap();
+
+        assert!(nightly.is_newer_for_channel(&stable, &UpdateChannel::Nightly));
+        assert!(!older_nightly.is_newer_for_channel(&stable, &UpdateChannel::Nightly));
+        assert!(stable.is_newer_for_channel(&nightly, &UpdateChannel::Stable));
+        assert!(!older_stable.is_newer_for_channel(&nightly, &UpdateChannel::Stable));
     }
 
     #[test]
@@ -162,6 +212,7 @@ mod tests {
             "01.0.231-tabbyrs.1",
             "1.0.231-tabbyrs.1.preview",
             "1.0.231-tabbyrs.1.nightly.20260299.1",
+            "1.0.231-tabbyrs.1.nightly.20260229.1",
         ] {
             assert!(Version::parse(value).is_err(), "{value}");
         }

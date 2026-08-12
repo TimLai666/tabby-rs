@@ -1,6 +1,6 @@
 use std::sync::{
     atomic::{AtomicU64, Ordering},
-    Mutex, MutexGuard,
+    Arc, Mutex, MutexGuard,
 };
 
 use crate::{
@@ -12,6 +12,7 @@ use crate::{
         paths::StoragePaths,
         state_file::{save_state, TabbyRsState},
     },
+    update::service::UpdateManager,
 };
 
 pub struct AppState {
@@ -21,6 +22,7 @@ pub struct AppState {
     plugin_operations: OperationManager,
     paths: AppPaths,
     persisted_state: Mutex<TabbyRsState>,
+    update_manager: Arc<UpdateManager>,
 }
 
 impl AppState {
@@ -36,6 +38,7 @@ impl AppState {
             plugin_operations: OperationManager::default(),
             paths,
             persisted_state: Mutex::new(persisted_state),
+            update_manager: Arc::new(UpdateManager::default()),
         }
     }
 
@@ -62,6 +65,10 @@ impl AppState {
 
     pub fn plugin_operations(&self) -> &OperationManager {
         &self.plugin_operations
+    }
+
+    pub fn update_manager(&self) -> &Arc<UpdateManager> {
+        &self.update_manager
     }
 
     pub fn persisted_state(&self) -> TabbyRsState {
