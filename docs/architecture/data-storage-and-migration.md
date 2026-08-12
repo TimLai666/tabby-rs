@@ -21,6 +21,7 @@ The host never rewrites the original Tabby directory.
 <data-dir>/
   config.yaml
   tabby-rs.json
+  pending-update.json
   backups/
     <backup-id>/
       manifest.json
@@ -51,6 +52,8 @@ The first write requires the file to remain absent when it was absent during loa
 - plugin names pending reinstallation.
 
 Unknown top-level fields are retained when the state is loaded and saved. A state schema newer than the current reader is rejected.
+
+Before an updater install, Rust writes `pending-update.json` atomically after creating the `before-update` backup. It contains only the target version, backup id, and channel. Startup reads this journal independently from `tabby-rs.json`: if the installed version matches and the configuration or state is unreadable, it restores the recorded backup before clearing the journal. A successful startup also clears the journal. A failed install clears it before returning control to the current version.
 
 ## Backups
 
@@ -88,6 +91,8 @@ The user selects whether to import configuration and which detected plugin names
 8. writes the report before marking the import completed.
 
 Any failure attempts to restore the pre-import snapshot and records a failed report. A successful import reloads the application so Angular reads the imported YAML with a fresh revision.
+
+The Tauri updater API currently returns the verified artifact as an in-memory byte buffer before installation. The host rejects oversized downloads during progress reporting and verifies the declared size and hash, but does not claim resumable or disk-streamed downloads until the updater transport supports them.
 
 ## Deferred secret migration
 
