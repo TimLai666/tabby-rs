@@ -109,6 +109,7 @@
     "create:license-report": "node scripts/create-license-report.mjs",
     "test:release-gate": "node scripts/check-release-gate.mjs",
     "test:release-gate-contract": "node scripts/test-release-gate-contract.mjs",
+    "test:release-gate-aggregate": "node scripts/test-aggregate-release-gate.mjs",
     "benchmark": "node scripts/run-benchmarks.mjs",
     "test:benchmark": "node scripts/test-benchmark-harness.mjs",
     "test:runtime-capabilities": "node scripts/test-runtime-capabilities.mjs",
