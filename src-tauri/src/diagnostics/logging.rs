@@ -86,8 +86,18 @@ pub struct LogWriter {
 
 impl LogWriter {
     pub fn from_environment(directory: impl Into<PathBuf>) -> Self {
+        Self::from_storage_directory_with_secrets(directory, &[])
+    }
+
+    pub fn from_storage_directory_with_secrets(
+        directory: impl Into<PathBuf>,
+        known_secrets: &[String],
+    ) -> Self {
         let directory = directory.into();
-        Self::new(&directory, Redactor::from_storage_directory(&directory))
+        Self::new(
+            &directory,
+            Redactor::from_storage_directory_with_secrets(&directory, known_secrets),
+        )
     }
 
     pub fn new(directory: impl Into<PathBuf>, redactor: Redactor) -> Self {

@@ -6,6 +6,7 @@ use crate::{
     commands::app::EmptyRequest,
     diagnostics::{bundle, logging::LogStatus},
     error::AppError,
+    security::SecretState,
     state::AppState,
 };
 
@@ -41,15 +42,35 @@ fn default_true() -> bool {
     true
 }
 
+fn known_secret_values(secret_state: &SecretState) -> Vec<String> {
+    secret_state
+        .snapshot()
+        .map(|snapshot| {
+            snapshot
+                .secrets
+                .into_iter()
+                .map(|secret| secret.value)
+                .filter(|value| !value.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 #[tauri::command]
 pub fn diagnostics_append(
     request: DiagnosticsAppendRequest,
     state: State<'_, AppState>,
+    secret_state: State<'_, std::sync::Arc<SecretState>>,
 ) -> Result<(), AppError> {
     if !state.persisted_state().diagnostics.local_logging_enabled {
         return Ok(());
     }
-    crate::diagnostics::logging::LogWriter::from_environment(state.paths().logs_dir()).append(
+    let known_secrets = known_secret_values(&secret_state);
+    crate::diagnostics::logging::LogWriter::from_storage_directory_with_secrets(
+        state.paths().logs_dir(),
+        &known_secrets,
+    )
+    .append(
         &request.level,
         &request.target,
         &request.message,
@@ -85,14 +106,23 @@ pub fn diagnostics_clear_logs(
 pub fn diagnostics_preview(
     request: DiagnosticsOptions,
     state: State<'_, AppState>,
+    secret_state: State<'_, std::sync::Arc<SecretState>>,
 ) -> Result<bundle::DiagnosticsPreview, AppError> {
-    bundle::preview(&state, request.include_logs)
+    let known_secrets = known_secret_values(&secret_state);
+    bundle::preview(&state, request.include_logs, &known_secrets)
 }
 
 #[tauri::command]
 pub fn diagnostics_export(
     request: DiagnosticsExportRequest,
     state: State<'_, AppState>,
+    secret_state: State<'_, std::sync::Arc<SecretState>>,
 ) -> Result<String, AppError> {
-    bundle::export(&state, &request.destination, request.include_logs)
+    let known_secrets = known_secret_values(&secret_state);
+    bundle::export(
+        &state,
+        &request.destination,
+        request.include_logs,
+        &known_secrets,
+    )
 }

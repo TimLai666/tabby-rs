@@ -37,7 +37,20 @@ impl Redactor {
     }
 
     pub fn from_storage_directory(directory: &std::path::Path) -> Self {
+        Self::from_storage_directory_with_secrets(directory, &[])
+    }
+
+    pub fn from_storage_directory_with_secrets(
+        directory: &std::path::Path,
+        known_secrets: &[String],
+    ) -> Self {
         let mut redactor = Self::from_environment();
+        redactor.context.known_secrets.extend(
+            known_secrets
+                .iter()
+                .filter(|value| !value.is_empty())
+                .cloned(),
+        );
         let Some(data_dir) = directory.parent() else {
             return redactor;
         };
@@ -654,5 +667,17 @@ mod tests {
         });
         let output = redactor.redact_text("a.example z.example a.example");
         assert_eq!(output.text, "<HOST:1> <HOST:2> <HOST:1>");
+    }
+
+    #[test]
+    fn redacts_known_secrets_loaded_from_the_vault() {
+        let temp = tempfile::tempdir().unwrap();
+        let redactor = Redactor::from_storage_directory_with_secrets(
+            &temp.path().join("logs"),
+            &["vault-token-123".into()],
+        );
+        let output = redactor.redact_text("token=vault-token-123");
+        assert_eq!(output.text, "token=<SECRET>");
+        assert!(output.redacted);
     }
 }

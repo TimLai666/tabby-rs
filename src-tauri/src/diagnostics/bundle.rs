@@ -71,8 +71,12 @@ struct BundleEntry {
     redacted: bool,
 }
 
-pub fn preview(state: &AppState, include_logs: bool) -> Result<DiagnosticsPreview, AppError> {
-    let entries = collect_entries(state, include_logs)?;
+pub fn preview(
+    state: &AppState,
+    include_logs: bool,
+    known_secrets: &[String],
+) -> Result<DiagnosticsPreview, AppError> {
+    let entries = collect_entries(state, include_logs, known_secrets)?;
     let mut remaining = MAX_PREVIEW_TOTAL_BYTES;
     let files = entries
         .into_iter()
@@ -95,14 +99,19 @@ pub fn preview(state: &AppState, include_logs: bool) -> Result<DiagnosticsPrevie
     })
 }
 
-pub fn export(state: &AppState, destination: &str, include_logs: bool) -> Result<String, AppError> {
+pub fn export(
+    state: &AppState,
+    destination: &str,
+    include_logs: bool,
+    known_secrets: &[String],
+) -> Result<String, AppError> {
     let destination = validate_destination(destination)?;
     if fs::symlink_metadata(&destination).is_ok() {
         return Err(AppError::Conflict(
             "diagnostic bundle destination already exists".into(),
         ));
     }
-    let entries = collect_entries(state, include_logs)?;
+    let entries = collect_entries(state, include_logs, known_secrets)?;
     let total = entries.iter().map(|entry| entry.data.len()).sum::<usize>();
     if total > MAX_BUNDLE_BYTES {
         return Err(AppError::InvalidData(
@@ -164,7 +173,11 @@ pub fn export(state: &AppState, destination: &str, include_logs: bool) -> Result
     result.map(|_| destination.to_string_lossy().into_owned())
 }
 
-fn collect_entries(state: &AppState, include_logs: bool) -> Result<Vec<BundleEntry>, AppError> {
+fn collect_entries(
+    state: &AppState,
+    include_logs: bool,
+    known_secrets: &[String],
+) -> Result<Vec<BundleEntry>, AppError> {
     let persisted_state = state.persisted_state();
     let mut entries = vec![
         BundleEntry {
@@ -193,7 +206,7 @@ fn collect_entries(state: &AppState, include_logs: bool) -> Result<Vec<BundleEnt
         },
     ];
     if include_logs {
-        for (name, data) in read_logs(state.paths().logs_dir())? {
+        for (name, data) in read_logs(state.paths().logs_dir(), known_secrets)? {
             entries.push(BundleEntry {
                 path: format!("logs/{name}"),
                 data,
@@ -276,7 +289,10 @@ fn plugin_diagnostic_status(
     }
 }
 
-fn read_logs(directory: &Path) -> Result<Vec<(String, Vec<u8>)>, AppError> {
+fn read_logs(
+    directory: &Path,
+    known_secrets: &[String],
+) -> Result<Vec<(String, Vec<u8>)>, AppError> {
     let Some(metadata) = fs::symlink_metadata(directory).ok() else {
         return Ok(Vec::new());
     };
@@ -285,7 +301,10 @@ fn read_logs(directory: &Path) -> Result<Vec<(String, Vec<u8>)>, AppError> {
             "diagnostic logs path is not a directory".into(),
         ));
     }
-    let redactor = crate::diagnostics::redaction::Redactor::from_storage_directory(directory);
+    let redactor = crate::diagnostics::redaction::Redactor::from_storage_directory_with_secrets(
+        directory,
+        known_secrets,
+    );
     let mut files = Vec::new();
     for entry in fs::read_dir(directory)? {
         let entry = entry?;
