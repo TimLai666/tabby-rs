@@ -762,6 +762,26 @@ mod tests {
     }
 
     #[test]
+    fn skips_malformed_config_lines_without_aborting_import() {
+        let directory = tempdir().unwrap();
+        let config = directory.path().join("config");
+        fs::write(
+            &config,
+            "Host good\n  HostName good.example\n  IdentityFile \"unterminated\n  Port not-a-port\n  malformed-only-key\nHost next\n  HostName next.example\n",
+        )
+        .unwrap();
+
+        let profiles = parse_config(&config).unwrap();
+        assert_eq!(profiles.len(), 2);
+        assert!(profiles
+            .iter()
+            .any(|profile| profile.host == "good.example"));
+        assert!(profiles
+            .iter()
+            .any(|profile| profile.host == "next.example"));
+    }
+
+    #[test]
     fn parses_supported_fields_and_include_without_commands() {
         let directory = tempdir().unwrap();
         fs::write(
