@@ -1,5 +1,6 @@
 mod commands;
 mod desktop;
+mod diagnostics;
 mod error;
 mod font;
 mod identity;
