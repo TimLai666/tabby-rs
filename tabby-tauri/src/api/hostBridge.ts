@@ -117,9 +117,10 @@ export interface DiagnosticsStatus {
 
 export interface DiagnosticsAppendRequest {
     level: string
-    source: string
+    target: string
     message: string
     fields?: Record<string, unknown>
+    correlationId?: string | null
 }
 
 export interface DiagnosticsOptions {

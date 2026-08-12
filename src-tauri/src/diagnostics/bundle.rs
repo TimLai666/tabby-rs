@@ -46,7 +46,15 @@ pub struct DiagnosticsPreview {
 struct BundleManifest {
     schema_version: u32,
     generated_at: String,
+    app: BundleApp,
     files: Vec<ManifestFile>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BundleApp {
+    version: String,
+    channel: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -105,6 +113,13 @@ pub fn export(state: &AppState, destination: &str, include_logs: bool) -> Result
     let manifest = BundleManifest {
         schema_version: 1,
         generated_at,
+        app: BundleApp {
+            version: env!("CARGO_PKG_VERSION").into(),
+            channel: match state.persisted_state().update_channel {
+                crate::storage::state_file::UpdateChannel::Stable => "stable".into(),
+                crate::storage::state_file::UpdateChannel::Nightly => "nightly".into(),
+            },
+        },
         files: entries
             .iter()
             .map(|entry| ManifestFile {
@@ -421,7 +436,10 @@ fn crc32(bytes: &[u8]) -> u32 {
 mod tests {
     use tempfile::tempdir;
 
-    use super::{crc32, plugin_diagnostic_status, validate_destination, write_zip, BundleEntry};
+    use super::{
+        crc32, plugin_diagnostic_status, validate_destination, write_zip, BundleApp, BundleEntry,
+        BundleManifest, ManifestFile,
+    };
     use crate::storage::state_file::SafeModeState;
 
     #[test]
@@ -466,5 +484,25 @@ mod tests {
             plugin_diagnostic_status(&state, "tabby-good"),
             ("installed", None)
         );
+    }
+
+    #[test]
+    fn manifest_carries_app_version_and_channel() {
+        let manifest = BundleManifest {
+            schema_version: 1,
+            generated_at: "2026-08-13T00:00:00Z".into(),
+            app: BundleApp {
+                version: "1.0.0".into(),
+                channel: "nightly".into(),
+            },
+            files: vec![ManifestFile {
+                path: "system.json".into(),
+                sha256: "a".repeat(64),
+                redacted: true,
+            }],
+        };
+        let value = serde_json::to_value(manifest).unwrap();
+        assert_eq!(value["app"]["version"], "1.0.0");
+        assert_eq!(value["app"]["channel"], "nightly");
     }
 }

@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use tauri::State;
 
 use crate::{
@@ -11,10 +13,13 @@ use crate::{
 #[serde(rename_all = "camelCase")]
 pub struct DiagnosticsAppendRequest {
     pub level: String,
-    pub source: String,
+    #[serde(alias = "source")]
+    pub target: String,
     pub message: String,
     #[serde(default)]
-    pub fields: serde_json::Value,
+    pub fields: BTreeMap<String, serde_json::Value>,
+    #[serde(default)]
+    pub correlation_id: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -46,9 +51,10 @@ pub fn diagnostics_append(
     }
     crate::diagnostics::logging::LogWriter::from_environment(state.paths().logs_dir()).append(
         &request.level,
-        &request.source,
+        &request.target,
         &request.message,
         &request.fields,
+        request.correlation_id.as_deref(),
     )
 }
 

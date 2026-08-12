@@ -1,12 +1,13 @@
 use std::{
+    collections::BTreeMap,
     fs::{self, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
     sync::Mutex,
 };
 
-use chrono::Utc;
-use serde::Serialize;
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
 
@@ -31,14 +32,49 @@ pub struct LogStatus {
     pub crash_marker_present: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LogLevel {
+    Debug,
+    Info,
+    Warn,
+    Error,
+    Log,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct LogEvent {
-    timestamp: String,
-    level: String,
-    source: String,
+    timestamp: DateTime<Utc>,
+    level: LogLevel,
+    target: String,
     message: String,
-    fields: serde_json::Value,
+    fields: BTreeMap<String, serde_json::Value>,
+    correlation_id: Option<String>,
+}
+
+fn parse_level(value: &str) -> Result<LogLevel, AppError> {
+    match value {
+        "debug" => Ok(LogLevel::Debug),
+        "info" => Ok(LogLevel::Info),
+        "warn" => Ok(LogLevel::Warn),
+        "error" => Ok(LogLevel::Error),
+        "log" => Ok(LogLevel::Log),
+        _ => Err(AppError::InvalidArgument(
+            "diagnostic log level is invalid".into(),
+        )),
+    }
+}
+
+fn redact_fields(
+    redactor: &Redactor,
+    fields: &BTreeMap<String, serde_json::Value>,
+) -> BTreeMap<String, serde_json::Value> {
+    let value = serde_json::Value::Object(fields.clone().into_iter().collect());
+    match redactor.redact_json(&value) {
+        serde_json::Value::Object(fields) => fields.into_iter().collect(),
+        _ => BTreeMap::new(),
+    }
 }
 
 #[derive(Debug)]
@@ -65,20 +101,22 @@ impl LogWriter {
     pub fn append(
         &self,
         level: &str,
-        source: &str,
+        target: &str,
         message: &str,
-        fields: &serde_json::Value,
+        fields: &BTreeMap<String, serde_json::Value>,
+        correlation_id: Option<&str>,
     ) -> Result<(), AppError> {
         let _guard = self
             .lock
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let event = LogEvent {
-            timestamp: Utc::now().to_rfc3339(),
-            level: level.to_owned(),
-            source: self.redactor.redact_text(source).text,
+            timestamp: Utc::now(),
+            level: parse_level(level)?,
+            target: self.redactor.redact_text(target).text,
             message: self.redactor.redact_text(message).text,
-            fields: self.redactor.redact_json(fields),
+            fields: redact_fields(&self.redactor, fields),
+            correlation_id: correlation_id.map(str::to_owned),
         };
         let mut bytes = serde_json::to_vec(&event)?;
         bytes.push(b'\n');
@@ -208,6 +246,8 @@ fn reject_symlink(path: &Path) -> Result<(), AppError> {
 mod tests {
     use tempfile::tempdir;
 
+    use std::collections::BTreeMap;
+
     use super::{LogWriter, MAX_LOG_FILES};
     use crate::diagnostics::crash::{clear, mark_startup};
     use crate::diagnostics::redaction::Redactor;
@@ -223,7 +263,7 @@ mod tests {
         let message = "x".repeat(64 * 1024);
         for _ in 0..(MAX_LOG_FILES * 9) {
             writer
-                .append("info", "test", &message, &serde_json::json!({}))
+                .append("info", "test", &message, &BTreeMap::new(), None)
                 .unwrap();
         }
         let status = writer.status(true).unwrap();
@@ -247,7 +287,11 @@ mod tests {
                 "error",
                 "test",
                 "token=top-secret",
-                &serde_json::json!({"password": "top-secret"}),
+                &BTreeMap::from([(
+                    "password".into(),
+                    serde_json::Value::String("top-secret".into()),
+                )]),
+                None,
             )
             .unwrap();
         let contents = std::fs::read_to_string(temp.path().join("tabby-rs.log")).unwrap();
@@ -283,7 +327,8 @@ mod tests {
                 "info",
                 "ssh-server.internal-22",
                 "connected",
-                &serde_json::json!({}),
+                &BTreeMap::new(),
+                None,
             )
             .unwrap();
         let contents = std::fs::read_to_string(temp.path().join("tabby-rs.log")).unwrap();
@@ -300,7 +345,8 @@ mod tests {
                 "info",
                 "test",
                 &"x".repeat(128 * 1024),
-                &serde_json::json!({}),
+                &BTreeMap::new(),
+                None,
             )
             .unwrap_err();
         assert!(error.to_string().contains("too large"));
@@ -314,9 +360,32 @@ mod tests {
         std::fs::write(&target, "private").unwrap();
         std::os::unix::fs::symlink(&target, temp.path().join("tabby-rs.log")).unwrap();
         let error = writer(temp.path())
-            .append("info", "test", "message", &serde_json::json!({}))
+            .append("info", "test", "message", &BTreeMap::new(), None)
             .unwrap_err();
         assert!(error.to_string().contains("regular file"));
         assert_eq!(std::fs::read_to_string(target).unwrap(), "private");
+    }
+
+    #[test]
+    fn writes_the_typed_log_event_contract() {
+        let temp = tempdir().unwrap();
+        let writer = writer(temp.path());
+        writer
+            .append(
+                "warn",
+                "ssh-session",
+                "disconnected",
+                &BTreeMap::from([("durationMs".into(), serde_json::json!(12))]),
+                Some("corr-1"),
+            )
+            .unwrap();
+        let line = std::fs::read_to_string(temp.path().join("tabby-rs.log")).unwrap();
+        let event: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+        assert!(event["timestamp"].as_str().is_some());
+        assert_eq!(event["level"], "warn");
+        assert_eq!(event["target"], "ssh-session");
+        assert_eq!(event["correlationId"], "corr-1");
+        assert_eq!(event["fields"]["durationMs"], 12);
+        assert!(event.get("source").is_none());
     }
 }

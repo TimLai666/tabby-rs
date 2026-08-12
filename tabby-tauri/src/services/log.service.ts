@@ -34,7 +34,7 @@ class TauriConsoleLogger extends ConsoleLogger {
         const message = formatMessage(args[0])
         const request: DiagnosticsAppendRequest = {
             level,
-            source: this.name,
+            target: this.name,
             message,
             fields: {
                 argumentCount: args.length,
