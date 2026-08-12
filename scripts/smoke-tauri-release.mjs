@@ -7,6 +7,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 
+import { auditBundle } from './check-tauri-bundle.mjs'
+
 const execFileAsync = promisify(execFile)
 
 const args = process.argv.slice(2)
@@ -114,6 +116,12 @@ function findFile (directory, predicate) {
     return null
 }
 
+function auditInstalledBundle (directory, label, operations) {
+    const report = auditBundle(directory)
+    assert.equal(report.passed, true, `${label} bundle audit failed: ${JSON.stringify(report.findings)}`)
+    operations.push({ action: 'audit', target: label, files: report.files.length })
+}
+
 function packageName (command, artifact, query) {
     return execFileAsync(command, query(artifact), { encoding: 'utf8' }).then(({ stdout }) => stdout.trim())
 }
@@ -129,6 +137,7 @@ async function smokeWindows () {
             const executable = findFile(installDirectory, file => path.basename(file).toLowerCase() === 'tabby-rs.exe')
             assert.ok(executable, `NSIS installer did not install tabby-rs.exe under ${installDirectory}`)
             await launchAndCheck(executable, path.dirname(executable), { APPDATA: path.join(root, 'appdata') })
+            auditInstalledBundle(installDirectory, 'windows-nsis-install', operations)
             const uninstaller = findFile(installDirectory, file => path.basename(file).toLowerCase() === 'uninstall.exe')
             assert.ok(uninstaller, 'NSIS installer did not install an uninstaller')
             operations.push({ action: 'launch', executable: path.relative(installDirectory, executable) })
@@ -163,6 +172,7 @@ async function smokeMacos () {
                 const executable = findFile(executableDirectory, () => true)
                 assert.ok(executable, `application bundle has no executable: ${installedApp}`)
                 await launchAndCheck(executable, installedApp, { HOME: path.join(root, 'home') })
+                auditInstalledBundle(installedApp, 'macos-dmg-app', operations)
                 operations.push({ action: 'launch', executable: path.relative(installedApp, executable) })
                 fs.rmSync(installedApp, { recursive: true, force: true })
                 assert.ok(!fs.existsSync(installedApp), 'DMG copy could not be removed')
@@ -188,6 +198,7 @@ async function smokeAppImage (artifact, root, operations) {
     assert.ok(fs.existsSync(executable), `AppImage extraction has no AppRun: ${extractDirectory}`)
     fs.chmodSync(executable, 0o755)
     await launchAndCheck(executable, extractDirectory, { XDG_CONFIG_HOME: path.join(root, 'config') })
+    auditInstalledBundle(extractDirectory, 'linux-appimage-extract', operations)
     operations.push({ action: 'launch', executable: 'AppImage/AppRun' })
 }
 
@@ -200,6 +211,7 @@ async function smokeDeb (artifact, root, operations) {
     await assertCommand('dpkg', [`--root=${packageRoot}`, `--admindir=${adminDirectory}`, `--instdir=${packageRoot}`, '--unpack', artifact], { cwd: root })
     const installed = findFile(packageRoot, file => path.basename(file) === 'tabby-rs')
     assert.ok(installed, `DEB installation did not place the application under ${packageRoot}`)
+    auditInstalledBundle(packageRoot, 'linux-deb-install', operations)
     await assertCommand('dpkg', [`--root=${packageRoot}`, `--admindir=${adminDirectory}`, `--instdir=${packageRoot}`, '--purge', name], { cwd: root })
     assert.ok(!fs.existsSync(installed), 'DEB purge left the application executable behind')
     operations.push({ action: 'install-uninstall', package: name, manager: 'dpkg' })
@@ -214,6 +226,7 @@ async function smokeRpm (artifact, root, operations) {
     await assertCommand('rpm', [`--root=${packageRoot}`, '--dbpath=/var/lib/rpm', '--install', artifact], { cwd: root })
     const installed = findFile(packageRoot, file => path.basename(file) === 'tabby-rs')
     assert.ok(installed, `RPM installation did not place the application under ${packageRoot}`)
+    auditInstalledBundle(packageRoot, 'linux-rpm-install', operations)
     await assertCommand('rpm', [`--root=${packageRoot}`, '--dbpath=/var/lib/rpm', '--erase', name], { cwd: root })
     assert.ok(!fs.existsSync(installed), 'RPM erase left the application executable behind')
     operations.push({ action: 'install-uninstall', package: name, manager: 'rpm' })
