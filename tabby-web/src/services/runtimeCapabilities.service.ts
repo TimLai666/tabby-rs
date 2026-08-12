@@ -1,6 +1,5 @@
 import { Injectable } from '@angular/core'
-import { RuntimeCapabilitiesService } from 'tabby-core'
-import type { RuntimeCapabilities } from 'tabby-core'
+import { RuntimeCapabilitiesService, type RuntimeCapabilities } from 'tabby-core'
 
 @Injectable()
 export class WebRuntimeCapabilitiesService extends RuntimeCapabilitiesService {

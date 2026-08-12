@@ -115,10 +115,7 @@ export class ElectronUpdaterService extends UpdaterService {
 
         if (!this.downloadPromise) {
             this.downloadPromise = new Promise<boolean>((resolve, reject) => {
-                const cleanup = () => {
-                    this.electron.ipcRenderer.off('updater:update-downloaded', onDownloaded)
-                    this.electron.ipcRenderer.off('updater:error', onError)
-                }
+                let cleanup: () => void = () => undefined
                 const onDownloaded = () => {
                     cleanup()
                     resolve(true)
@@ -126,6 +123,10 @@ export class ElectronUpdaterService extends UpdaterService {
                 const onError = err => {
                     cleanup()
                     reject(err)
+                }
+                cleanup = () => {
+                    this.electron.ipcRenderer.off('updater:update-downloaded', onDownloaded)
+                    this.electron.ipcRenderer.off('updater:error', onError)
                 }
                 this.electron.ipcRenderer.once('updater:update-downloaded', onDownloaded)
                 this.electron.ipcRenderer.once('updater:error', onError)

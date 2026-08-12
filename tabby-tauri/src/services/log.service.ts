@@ -4,6 +4,23 @@ import { ConsoleLogger, Logger, LogService } from 'tabby-core'
 import { DiagnosticsAppendRequest } from '../api/hostBridge'
 import { TauriHostBridge } from './tauriHostBridge.service'
 
+function formatMessage (value: unknown): string {
+    if (value instanceof Error) {
+        return `${value.name}: ${value.message}${value.stack ? `\n${value.stack}` : ''}`
+    }
+    if (typeof value === 'string') {
+        return value.slice(0, 120 * 1024)
+    }
+    if (value === undefined) {
+        return ''
+    }
+    try {
+        return String(JSON.stringify(value)).slice(0, 120 * 1024)
+    } catch {
+        return String(value).slice(0, 120 * 1024)
+    }
+}
+
 class TauriConsoleLogger extends ConsoleLogger {
     // ConsoleLogger exposes a protected constructor; this subclass intentionally
     // makes it public for the host LogService factory.
@@ -36,22 +53,5 @@ export class TauriLogService extends LogService {
 
     create (name: string): Logger {
         return new TauriConsoleLogger(name, this.bridge)
-    }
-}
-
-function formatMessage (value: unknown): string {
-    if (value instanceof Error) {
-        return `${value.name}: ${value.message}${value.stack ? `\n${value.stack}` : ''}`
-    }
-    if (typeof value === 'string') {
-        return value.slice(0, 120 * 1024)
-    }
-    if (value === undefined) {
-        return ''
-    }
-    try {
-        return (JSON.stringify(value) ?? String(value)).slice(0, 120 * 1024)
-    } catch {
-        return String(value).slice(0, 120 * 1024)
     }
 }

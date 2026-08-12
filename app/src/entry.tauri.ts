@@ -177,7 +177,9 @@ async function main (): Promise<void> {
         }).catch(journalError => console.warn('Could not journal plugin discovery failure:', journalError))
     }
     for (const failure of pluginResult.failures) {
-        if (failure.phase === 'discover') continue
+        if (failure.phase === 'discover') {
+            continue
+        }
         await bridge.invoke('plugins.bootstrapFailed', {
             packageName: failure.plugin.packageName,
             phase: failure.phase,

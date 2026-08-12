@@ -475,7 +475,7 @@ export class BaseTerminalTabComponent<P extends BaseTerminalProfile> extends Bas
         let items: MenuItemOptions[] = []
         const sections = await Promise.all(this.contextMenuProviders.map(async provider => {
             try {
-                return await provider.getItems(this)
+                return provider.getItems(this)
             } catch {
                 this.logger.warn('Terminal context menu provider failed')
                 return []
