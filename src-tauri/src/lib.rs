@@ -124,8 +124,8 @@ fn present_and_dispatch(app: &tauri::AppHandle, context: LaunchContext) {
         let _ = window.show();
         let _ = window.set_focus();
     }
-    if let Err(error) = app.emit("app.launch", context) {
-        eprintln!("failed to emit app.launch: {error}");
+    if let Err(error) = app.emit("app:launch", context) {
+        eprintln!("failed to emit app:launch: {error}");
     }
 }
 
@@ -133,26 +133,26 @@ pub(crate) fn register_desktop_window_events(window: &tauri::WebviewWindow) {
     let emitter = window.clone();
     window.clone().on_window_event(move |event| match event {
         tauri::WindowEvent::Focused(focused) => {
-            let _ = emitter.emit("desktop.windowFocused", *focused);
+            let _ = emitter.emit("desktop:windowFocused", *focused);
         }
         tauri::WindowEvent::Moved(position) => {
             let _ = emitter.emit(
-                "desktop.windowMoved",
+                "desktop:windowMoved",
                 serde_json::json!({ "x": position.x, "y": position.y }),
             );
         }
         tauri::WindowEvent::Resized(size) => {
             let _ = emitter.emit(
-                "desktop.windowResized",
+                "desktop:windowResized",
                 serde_json::json!({ "width": size.width, "height": size.height }),
             );
         }
         tauri::WindowEvent::CloseRequested { .. } => {
-            let _ = emitter.emit("desktop.windowCloseRequested", ());
+            let _ = emitter.emit("desktop:windowCloseRequested", ());
         }
         tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, position }) => {
             let _ = emitter.emit(
-                "desktop.fileDrop",
+                "desktop:fileDrop",
                 serde_json::json!({
                     "paths": paths
                         .iter()
@@ -169,10 +169,10 @@ pub(crate) fn register_desktop_window_events(window: &tauri::WebviewWindow) {
                 tauri::Theme::Light => "light",
                 _ => "system",
             };
-            let _ = emitter.emit("desktop.themeChanged", value);
+            let _ = emitter.emit("desktop:themeChanged", value);
         }
         tauri::WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
-            let _ = emitter.emit("desktop.displayMetricsChanged", *scale_factor);
+            let _ = emitter.emit("desktop:displayMetricsChanged", *scale_factor);
         }
         _ => {}
     });

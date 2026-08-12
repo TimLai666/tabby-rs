@@ -34,7 +34,7 @@ export class TauriSerialSession extends BaseSession {
             return
         }
         this.unlisteners.push(...await Promise.all([
-            this.bridge.listen('serial.output', event => {
+            this.bridge.listen('serial:output', event => {
                 if (event.connectionId === this.connectionId) {
                     if (!this.id) {
                         this.pendingOutput.push(event.data)
@@ -43,7 +43,7 @@ export class TauriSerialSession extends BaseSession {
                     }
                 }
             }),
-            this.bridge.listen('serial.connectionState', event => {
+            this.bridge.listen('serial:connectionState', event => {
                 if (event.connectionId === this.connectionId) {
                     if (!this.id) {
                         this.pendingState = event

@@ -34,7 +34,7 @@ pub struct UpdateChannelRequest {
 }
 
 fn emit_state(app: &AppHandle, state: &AppState) {
-    let _ = app.emit("update.state", state.update_manager().state());
+    let _ = app.emit("update:state", state.update_manager().state());
 }
 
 fn public_update_error(stage: UpdateStage) -> AppError {
@@ -131,7 +131,7 @@ pub async fn update_download(
             if download_exceeds_limit(downloaded, content_length) {
                 let _ = abort.send(true);
             }
-            let _ = progress_app.emit("update.state", manager.state());
+            let _ = progress_app.emit("update:state", manager.state());
         },
         || {},
     );

@@ -232,7 +232,7 @@ async fn run_connection(
                         for event in codec.feed(&buffer[..length]) {
                             match event {
                                 TelnetEvent::Data(data) if !data.is_empty() => {
-                                    let _ = app.emit("telnet.output", TelnetOutputEvent {
+                                    let _ = app.emit("telnet:output", TelnetOutputEvent {
                                         id: id.clone(), connection_id: connection_id.clone(), profile_id: profile_id.clone(), data,
                                     });
                                 }
@@ -305,7 +305,7 @@ fn encode_user_data(data: &[u8]) -> Vec<u8> {
 
 fn emit_echo(app: &AppHandle, id: &str, connection_id: &str, profile_id: &str, force_echo: bool) {
     let _ = app.emit(
-        "telnet.echo",
+        "telnet:echo",
         TelnetEchoEvent {
             id: id.into(),
             connection_id: connection_id.into(),
@@ -323,7 +323,7 @@ fn emit_message(
     message: String,
 ) -> tauri::Result<()> {
     app.emit(
-        "telnet.message",
+        "telnet:message",
         TelnetMessageEvent {
             id: id.into(),
             connection_id: connection_id.into(),
@@ -335,7 +335,7 @@ fn emit_message(
 
 fn emit_exit(app: &AppHandle, id: &str, connection_id: &str, profile_id: &str, reason: String) {
     let _ = app.emit(
-        "telnet.exit",
+        "telnet:exit",
         TelnetExitEvent {
             id: id.into(),
             connection_id: connection_id.into(),

@@ -75,7 +75,7 @@ pub fn window_new(
                     .unwrap_or_else(|poisoned| poisoned.into_inner())
                     .take();
                 if let Some(context) = context {
-                    let _ = window.emit("app.launch", context);
+                    let _ = window.emit("app:launch", context);
                 }
             })
             .build()
@@ -331,7 +331,7 @@ pub fn hotkey_replace(
                     }
                 }
                 let _ = app.emit(
-                    "desktop.hotkey",
+                    "desktop:hotkey",
                     GlobalHotkeyEvent {
                         id: id.clone(),
                         accelerator,

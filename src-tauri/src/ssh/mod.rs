@@ -640,7 +640,7 @@ impl SshManager {
                 .unwrap_or_else(|error| error.into_inner())
                 .remove(&task_id_for_task);
             let _ = task_app.emit(
-                "ssh.exit",
+                "ssh:exit",
                 SshExitEvent {
                     id: task_id_for_task.clone(),
                     connection_id: task_connection_id.clone(),
@@ -1187,7 +1187,7 @@ impl SshManager {
             .insert(request_id.clone(), sender);
         if app
             .emit(
-                "ssh.hostKeyPrompt",
+                "ssh:hostKeyPrompt",
                 HostKeyPrompt {
                     request_id: request_id.clone(),
                     connection_id: connection_id.into(),
@@ -1364,7 +1364,7 @@ impl SshManager {
             .lock()
             .unwrap_or_else(|error| error.into_inner())
             .insert(request_id.clone(), sender);
-        if app.emit("ssh.authPrompt", prompt).is_err() {
+        if app.emit("ssh:authPrompt", prompt).is_err() {
             self.auth_waiters
                 .lock()
                 .unwrap_or_else(|error| error.into_inner())
@@ -1814,7 +1814,7 @@ async fn connect_x11_display(display: &str) -> Result<X11Target, std::io::Error>
 }
 
 fn emit_forwarding(app: &AppHandle, info: &SshForwardingInfo) {
-    let _ = app.emit("ssh.forwardingChanged", info.clone());
+    let _ = app.emit("ssh:forwardingChanged", info.clone());
 }
 
 fn x11_cookie(display: &str) -> String {
@@ -1850,7 +1850,7 @@ fn emit_channel_message(
 ) -> bool {
     let event = match message {
         ChannelMsg::Data { data } => app.emit(
-            "ssh.output",
+            "ssh:output",
             SshOutputEvent {
                 id: id.into(),
                 connection_id: connection_id.into(),
@@ -1860,7 +1860,7 @@ fn emit_channel_message(
             },
         ),
         ChannelMsg::ExtendedData { data, .. } => app.emit(
-            "ssh.output",
+            "ssh:output",
             SshOutputEvent {
                 id: id.into(),
                 connection_id: connection_id.into(),
@@ -1870,7 +1870,7 @@ fn emit_channel_message(
             },
         ),
         ChannelMsg::ExitStatus { exit_status } => app.emit(
-            "ssh.exit",
+            "ssh:exit",
             SshExitEvent {
                 id: id.into(),
                 connection_id: connection_id.into(),
@@ -1880,7 +1880,7 @@ fn emit_channel_message(
             },
         ),
         ChannelMsg::ExitSignal { signal_name, .. } => app.emit(
-            "ssh.exit",
+            "ssh:exit",
             SshExitEvent {
                 id: id.into(),
                 connection_id: connection_id.into(),

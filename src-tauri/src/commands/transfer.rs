@@ -79,7 +79,7 @@ pub struct DirectoryEntry {
 }
 
 fn emit_progress(app: &tauri::AppHandle, descriptor: &TransferDescriptor) -> Result<(), AppError> {
-    app.emit("transfer.progress", descriptor)
+    app.emit("transfer:progress", descriptor)
         .map_err(|error| AppError::Io(error.to_string()))
 }
 

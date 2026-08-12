@@ -13,7 +13,7 @@ export class TauriUpdaterService extends UpdaterService {
         private translate: TranslateService,
     ) {
         super()
-        void this.bridge.listen('update.state', state => {
+        void this.bridge.listen('update:state', state => {
             this.updateState = state
         })
     }

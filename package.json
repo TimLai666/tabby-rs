@@ -109,6 +109,8 @@
     "build:typings": "node scripts/build-typings.mjs",
     "test:tauri": "npm run build:tauri:frontend && cargo test --manifest-path src-tauri/Cargo.toml",
     "test:plugin-runtime": "node scripts/test-plugin-runtime.mjs",
+    "test:translate-compiler": "node scripts/test-translate-compiler-compat.mjs",
+    "test:tauri-event-names": "node scripts/test-tauri-event-names.mjs",
     "test:plugin-search": "node scripts/test-plugin-search-contract.mjs",
     "test:plugin-npm-lifecycle": "node scripts/test-plugin-npm-lifecycle.mjs",
     "test:plugin-node-status": "node scripts/test-plugin-node-status-contract.mjs",

@@ -71,7 +71,7 @@ export class CustomMissingTranslationHandler extends MissingTranslationHandler {
         if (typeof v === 'string') {
             return v
         }
-        return v(params.interpolateParams)
+        return v(params.interpolateParams as Record<string, unknown> | unknown[] | undefined)
     }
 }
 

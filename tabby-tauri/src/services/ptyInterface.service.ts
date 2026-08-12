@@ -228,10 +228,10 @@ export class TauriPTYProxy extends PTYProxy {
 
     private async startListening (): Promise<void> {
         this.unlisteners.push(
-            await this.bridge.listen('pty.output', payload => this.onOutput(payload)),
-            await this.bridge.listen('pty.exit', payload => this.onExit(payload)),
-            await this.bridge.listen('pty.error', payload => this.onError(payload)),
-            await this.bridge.listen('sudo.prompt', payload => this.onSudoPrompt(payload)),
+            await this.bridge.listen('pty:output', payload => this.onOutput(payload)),
+            await this.bridge.listen('pty:exit', payload => this.onExit(payload)),
+            await this.bridge.listen('pty:error', payload => this.onError(payload)),
+            await this.bridge.listen('sudo:prompt', payload => this.onSudoPrompt(payload)),
         )
     }
 

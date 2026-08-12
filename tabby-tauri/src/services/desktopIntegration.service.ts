@@ -66,7 +66,7 @@ export class TauriDesktopIntegrationService {
         })
         this.app.activeTabChange$.subscribe(refreshProgress)
 
-        await this.bridge.listen('desktop.windowFocused', focused => {
+        await this.bridge.listen('desktop:windowFocused', focused => {
             if (focused) {
                 return
             }

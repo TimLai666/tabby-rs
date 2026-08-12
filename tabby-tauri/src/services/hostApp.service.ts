@@ -36,7 +36,7 @@ export class TauriHostAppService extends HostAppService {
         this.platform = mapPlatform(runtimeInfo.platform)
         this.configPlatform = this.platform
 
-        void this.bridge.listen('app.launch', context => this.enqueueLaunch(context)).catch(error => {
+        void this.bridge.listen('app:launch', context => this.enqueueLaunch(context)).catch(error => {
             this.logger.error('Failed to listen for launch requests:', error)
         })
         void this.bridge.invoke('app.initialLaunch', {}).then(context => {

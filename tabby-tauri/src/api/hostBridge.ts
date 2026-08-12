@@ -1202,31 +1202,31 @@ export interface HostRequestMap {
 }
 
 export interface HostEventMap {
-    'app.start': BootstrapData
-    'app.launch': LaunchContext
-    'update.state': UpdateStateDto
-    'desktop.hotkey': GlobalHotkeyEvent
-    'desktop.windowFocused': boolean
-    'desktop.windowMoved': { x: number; y: number }
-    'desktop.windowResized': { width: number; height: number }
-    'desktop.windowCloseRequested': null
-    'desktop.fileDrop': { paths: string[]; x: number; y: number }
-    'desktop.themeChanged': 'system' | 'light' | 'dark'
-    'desktop.displayMetricsChanged': number
-    'transfer.progress': TransferDescriptor
-    'ssh.hostKeyPrompt': SshHostKeyPrompt
-    'ssh.authPrompt': SshAuthPrompt
-    'ssh.output': SshOutputEvent
-    'ssh.exit': SshExitEvent
-    'ssh.forwardingChanged': SshForwardingInfo
-    'telnet.output': TelnetOutputEvent
-    'telnet.exit': TelnetExitEvent
-    'telnet.message': TelnetMessageEvent
-    'telnet.echo': TelnetEchoEvent
-    'serial.output': SerialOutputEvent
-    'serial.connectionState': SerialConnectionStateEvent
-    'serial.portsChanged': SerialPortInfo[]
-    'plugins.operation': PluginOperation
+    'app:start': BootstrapData
+    'app:launch': LaunchContext
+    'update:state': UpdateStateDto
+    'desktop:hotkey': GlobalHotkeyEvent
+    'desktop:windowFocused': boolean
+    'desktop:windowMoved': { x: number; y: number }
+    'desktop:windowResized': { width: number; height: number }
+    'desktop:windowCloseRequested': null
+    'desktop:fileDrop': { paths: string[]; x: number; y: number }
+    'desktop:themeChanged': 'system' | 'light' | 'dark'
+    'desktop:displayMetricsChanged': number
+    'transfer:progress': TransferDescriptor
+    'ssh:hostKeyPrompt': SshHostKeyPrompt
+    'ssh:authPrompt': SshAuthPrompt
+    'ssh:output': SshOutputEvent
+    'ssh:exit': SshExitEvent
+    'ssh:forwardingChanged': SshForwardingInfo
+    'telnet:output': TelnetOutputEvent
+    'telnet:exit': TelnetExitEvent
+    'telnet:message': TelnetMessageEvent
+    'telnet:echo': TelnetEchoEvent
+    'serial:output': SerialOutputEvent
+    'serial:connectionState': SerialConnectionStateEvent
+    'serial:portsChanged': SerialPortInfo[]
+    'plugins:operation': PluginOperation
 }
 
 export abstract class HostBridge {

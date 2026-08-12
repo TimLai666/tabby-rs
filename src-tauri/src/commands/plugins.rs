@@ -298,7 +298,7 @@ pub async fn plugins_install(
     };
     let cancel = state.plugin_operations().register(&request.operation_id)?;
     let operation = running_operation(&request.operation_id, &request.package_name, "install");
-    if let Err(error) = app.emit("plugins.operation", &operation) {
+    if let Err(error) = app.emit("plugins:operation", &operation) {
         state.plugin_operations().finish(&request.operation_id);
         return Err(AppError::Io(error.to_string()));
     }
@@ -334,7 +334,7 @@ pub async fn plugins_install(
                 Some(error.to_string()),
             ),
         };
-        let _ = app.emit("plugins.operation", operation);
+        let _ = app.emit("plugins:operation", operation);
     });
     Ok(operation)
 }
@@ -355,7 +355,7 @@ pub async fn plugins_uninstall(
     };
     let cancel = state.plugin_operations().register(&request.operation_id)?;
     let operation = running_operation(&request.operation_id, &request.package_name, "uninstall");
-    if let Err(error) = app.emit("plugins.operation", &operation) {
+    if let Err(error) = app.emit("plugins:operation", &operation) {
         state.plugin_operations().finish(&request.operation_id);
         return Err(AppError::Io(error.to_string()));
     }
@@ -389,7 +389,7 @@ pub async fn plugins_uninstall(
                 Some(error.to_string()),
             ),
         };
-        let _ = app.emit("plugins.operation", operation);
+        let _ = app.emit("plugins:operation", operation);
     });
     Ok(operation)
 }
@@ -466,7 +466,7 @@ fn operation_progress(
     let action = action.to_owned();
     Arc::new(move |message| {
         let _ = app.emit(
-            "plugins.operation",
+            "plugins:operation",
             completed_operation(
                 &operation_id,
                 &package_name,

@@ -64,7 +64,7 @@ export class TauriSshSession extends BaseSession {
             return
         }
         this.unlisteners.push(...await Promise.all([
-            this.bridge.listen('ssh.output', event => {
+            this.bridge.listen('ssh:output', event => {
                 if (event.connectionId === this.connectionId) {
                     if (!this.id) {
                         this.pendingOutput.push({ data: event.data, extended: event.extended })
@@ -73,7 +73,7 @@ export class TauriSshSession extends BaseSession {
                     this.emitOutput(Buffer.from(event.data))
                 }
             }),
-            this.bridge.listen('ssh.exit', event => {
+            this.bridge.listen('ssh:exit', event => {
                 if (event.connectionId === this.connectionId) {
                     if (!this.id) {
                         this.pendingExit = event
@@ -83,12 +83,12 @@ export class TauriSshSession extends BaseSession {
                     }
                 }
             }),
-            this.bridge.listen('ssh.hostKeyPrompt', prompt => {
+            this.bridge.listen('ssh:hostKeyPrompt', prompt => {
                 if (prompt.connectionId === this.connectionId) {
                     void this.handleHostKeyPrompt(prompt)
                 }
             }),
-            this.bridge.listen('ssh.authPrompt', prompt => {
+            this.bridge.listen('ssh:authPrompt', prompt => {
                 if (prompt.connectionId === this.connectionId) {
                     this.authPrompt.next(prompt)
                 }

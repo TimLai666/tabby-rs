@@ -290,7 +290,7 @@ export class TauriPlatformService extends PlatformService {
         const result = new Promise<PluginOperation>(resolve => {
             resolveResult = resolve
         })
-        const dispose = await this.bridge.listen('plugins.operation', operation => {
+        const dispose = await this.bridge.listen('plugins:operation', operation => {
             if (operation.id === id && operation.status !== 'running') {
                 resolveResult(operation)
             }
@@ -491,8 +491,8 @@ export class TauriPlatformService extends PlatformService {
 
     private async initializeDesktopEvents (): Promise<void> {
         await Promise.all([
-            this.bridge.listen('desktop.displayMetricsChanged', () => this.displayMetricsChanged.next()),
-            this.bridge.listen('desktop.themeChanged', theme => {
+            this.bridge.listen('desktop:displayMetricsChanged', () => this.displayMetricsChanged.next()),
+            this.bridge.listen('desktop:themeChanged', theme => {
                 const next = theme === 'system'
                     ? window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
                     : theme
