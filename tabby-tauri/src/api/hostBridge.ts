@@ -75,6 +75,46 @@ export interface ConfigWriteResult {
     path: string
 }
 
+export interface DiagnosticsStatus {
+    enabled: boolean
+    directory: string
+    fileCount: number
+    bytes: number
+    maxFileBytes: number
+    maxFiles: number
+    maxBytes: number
+    crashMarkerPresent: boolean
+}
+
+export interface DiagnosticsAppendRequest {
+    level: string
+    source: string
+    message: string
+    fields?: Record<string, unknown>
+}
+
+export interface DiagnosticsOptions {
+    includeLogs?: boolean
+}
+
+export interface DiagnosticsPreviewFile {
+    path: string
+    size: number
+    content: string
+    redacted: boolean
+}
+
+export interface DiagnosticsPreview {
+    schemaVersion: number
+    generatedAt: string
+    files: DiagnosticsPreviewFile[]
+    redactionWarning: string
+}
+
+export interface DiagnosticsExportRequest extends DiagnosticsOptions {
+    destination: string
+}
+
 export interface BackupFile {
     path: string
     sha256: string
@@ -625,6 +665,26 @@ export interface HostRequestMap {
             requireMissing?: boolean
         }
         response: ConfigWriteResult
+    }
+    'diagnostics.status': {
+        request: Record<string, never>
+        response: DiagnosticsStatus
+    }
+    'diagnostics.clearLogs': {
+        request: Record<string, never>
+        response: null
+    }
+    'diagnostics.append': {
+        request: DiagnosticsAppendRequest
+        response: null
+    }
+    'diagnostics.preview': {
+        request: DiagnosticsOptions
+        response: DiagnosticsPreview
+    }
+    'diagnostics.export': {
+        request: DiagnosticsExportRequest
+        response: string
     }
     'identity.get': {
         request: Record<string, never>

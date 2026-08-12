@@ -32,6 +32,10 @@ use commands::{
         window_get_state, window_list_screens, window_minimize, window_open_devtools,
         window_reload, window_set_docking, window_toggle_maximize, window_toggle_quake,
     },
+    diagnostics::{
+        diagnostics_append, diagnostics_clear_logs, diagnostics_export, diagnostics_preview,
+        diagnostics_status,
+    },
     font::{font_list, font_refresh},
     identity::{identity_alias_status, identity_get, identity_set_alias},
     keychain::{keychain_delete, keychain_get, keychain_put},
@@ -206,9 +210,12 @@ pub fn run() {
             }
 
             let paths = identity::AppPaths::detect(app.handle())?;
+            let logs_dir = paths.logs_dir().clone();
             let known_hosts_path = paths.data_dir().join("known_hosts");
             let storage_paths = StoragePaths::from_app_paths(&paths);
             storage_paths.ensure_layout()?;
+            let _ = crate::diagnostics::crash::mark_startup(&logs_dir);
+            crate::diagnostics::crash::install_panic_hook(logs_dir);
             let state_file_existed = std::fs::symlink_metadata(storage_paths.state_file()).is_ok();
             let persisted_state = load_state(storage_paths.state_file())?;
             if !state_file_existed {
@@ -258,6 +265,11 @@ pub fn run() {
             clipboard_write_text,
             config_read,
             config_write,
+            diagnostics_status,
+            diagnostics_clear_logs,
+            diagnostics_append,
+            diagnostics_preview,
+            diagnostics_export,
             desktop_open_external,
             desktop_open_path,
             font_list,

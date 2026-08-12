@@ -1,0 +1,21 @@
+h3 Diagnostics
+p.text-muted
+    | Local diagnostics never upload automatically. Review the preview before exporting.
+
+.form-line(*ngIf='status')
+    .header
+        .title Local logs
+        .description {{status.fileCount}} files, {{status.bytes}} bytes, bounded at {{status.maxBytes}} bytes.
+    .d-flex.gap-2
+        button.btn.btn-secondary((click)='loadPreview()', [disabled]='busy') Preview
+        button.btn.btn-primary((click)='exportBundle()', [disabled]='busy') Export ZIP
+        button.btn.btn-outline-danger((click)='clearLogs()', [disabled]='busy') Clear logs
+
+.alert.alert-warning(*ngIf='preview')
+    span {{preview.redactionWarning}}
+
+.mb-3(*ngFor='let file of preview?.files')
+    .fw-bold {{file.path}} ({{file.size}} bytes)
+    pre.border.rounded.p-2 {{file.content}}
+
+.alert.alert-info(*ngIf='message') {{message}}

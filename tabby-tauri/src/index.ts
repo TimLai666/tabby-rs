@@ -35,9 +35,14 @@ import {
     IdentitySettingsTabComponent,
     IdentitySettingsTabProvider,
 } from './components/identitySettingsTab.component'
+import {
+    TauriDiagnosticsSettingsTabComponent,
+    TauriDiagnosticsSettingsTabProvider,
+} from './components/diagnosticsSettingsTab.component'
 import { TauriConfigProvider } from './config'
 import { TauriHotkeyProvider } from './hotkeys'
 import { TauriDesktopIntegrationService } from './services/desktopIntegration.service'
+import { TauriDiagnosticsService } from './services/diagnostics.service'
 import { TauriDockingService } from './services/docking.service'
 import { TauriFileProvider } from './services/fileProvider.service'
 import { TauriHostAppService } from './services/hostApp.service'
@@ -99,6 +104,7 @@ function initializeDesktop (service: TauriDesktopIntegrationService): () => Prom
     imports: [CommonModule, FormsModule, NgbModule],
     declarations: [
         IdentitySettingsTabComponent,
+        TauriDiagnosticsSettingsTabComponent,
         TauriSshAuthPromptModalComponent,
         TauriSshHostKeyPromptModalComponent,
         TauriSshImportModalComponent,
@@ -129,7 +135,9 @@ function initializeDesktop (service: TauriDesktopIntegrationService): () => Prom
         { provide: TerminalContextMenuItemProvider, useClass: TauriSftpContextMenu, multi: true },
         { provide: FileProvider, useClass: TauriFileProvider, multi: true },
         TauriDesktopIntegrationService,
+        TauriDiagnosticsService,
         { provide: LogService, useClass: TauriLogService },
+        { provide: SettingsTabProvider, useClass: TauriDiagnosticsSettingsTabProvider, multi: true },
         { provide: UpdaterService, useClass: TauriUpdaterService },
         TauriVaultService,
         { provide: VaultService, useExisting: TauriVaultService },

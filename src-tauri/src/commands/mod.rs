@@ -2,6 +2,7 @@ pub mod app;
 pub mod backup;
 pub mod config;
 pub mod desktop;
+pub mod diagnostics;
 pub mod font;
 pub mod identity;
 pub mod keychain;

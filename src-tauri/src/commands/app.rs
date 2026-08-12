@@ -204,8 +204,13 @@ pub fn app_runtime_info(request: EmptyRequest) -> Result<RuntimeInfo, AppError> 
 }
 
 #[tauri::command]
-pub fn app_quit(request: EmptyRequest, app: AppHandle) -> Result<(), AppError> {
+pub fn app_quit(
+    request: EmptyRequest,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
     let _ = request;
+    let _ = crate::diagnostics::crash::clear(state.paths().logs_dir());
     app.exit(0);
     Ok(())
 }

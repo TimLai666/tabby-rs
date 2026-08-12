@@ -18,6 +18,51 @@ pub struct Redactor {
 }
 
 impl Redactor {
+    pub fn from_environment() -> Self {
+        Self::new(RedactionContext {
+            home_dir: std::env::var("HOME")
+                .ok()
+                .or_else(|| std::env::var("USERPROFILE").ok()),
+            usernames: std::env::var("USER")
+                .ok()
+                .into_iter()
+                .chain(std::env::var("USERNAME").ok())
+                .collect(),
+            ..RedactionContext::default()
+        })
+    }
+
+    pub fn from_storage_directory(directory: &std::path::Path) -> Self {
+        let mut redactor = Self::from_environment();
+        let Some(data_dir) = directory.parent() else {
+            return redactor;
+        };
+        if let Ok(bytes) = std::fs::read(data_dir.join("config.yaml")) {
+            if bytes.len() <= 16 * 1024 * 1024 {
+                if let Ok(value) = serde_yaml::from_slice::<serde_yaml::Value>(&bytes) {
+                    collect_config_identifiers(&value, &mut redactor.context);
+                }
+            }
+        }
+        if let Ok(contents) = std::fs::read_to_string(data_dir.join("known_hosts")) {
+            for line in contents.lines() {
+                let Some(hosts) = line.split_whitespace().next() else {
+                    continue;
+                };
+                if hosts.starts_with('|') {
+                    continue;
+                }
+                redactor.context.hosts.extend(
+                    hosts
+                        .split(',')
+                        .filter(|host| !host.is_empty())
+                        .map(ToOwned::to_owned),
+                );
+            }
+        }
+        redactor
+    }
+
     pub fn new(context: RedactionContext) -> Self {
         Self { context }
     }
@@ -49,7 +94,9 @@ impl Redactor {
         for host in self.context.hosts.iter().filter(|value| !value.is_empty()) {
             redacted |= replace_all(&mut text, host, "<HOST>");
         }
+        redacted |= redact_auth_headers(&mut text);
         redacted |= redact_emails(&mut text);
+        redacted |= redact_ipv6s(&mut text);
         redacted |= redact_ips(&mut text);
         RedactedText { text, redacted }
     }
@@ -75,6 +122,32 @@ impl Redactor {
             }
             value => value.clone(),
         }
+    }
+}
+
+fn collect_config_identifiers(value: &serde_yaml::Value, context: &mut RedactionContext) {
+    match value {
+        serde_yaml::Value::Mapping(mapping) => {
+            for (key, value) in mapping {
+                let key = key.as_str().unwrap_or_default().to_ascii_lowercase();
+                if matches!(key.as_str(), "host" | "hostname") {
+                    if let Some(value) = value.as_str() {
+                        context.hosts.push(value.to_owned());
+                    }
+                } else if matches!(key.as_str(), "user" | "username") {
+                    if let Some(value) = value.as_str() {
+                        context.usernames.push(value.to_owned());
+                    }
+                }
+                collect_config_identifiers(value, context);
+            }
+        }
+        serde_yaml::Value::Sequence(values) => {
+            for value in values {
+                collect_config_identifiers(value, context);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -157,6 +230,31 @@ fn redact_url_credentials(text: &mut String) -> bool {
     changed
 }
 
+fn redact_auth_headers(text: &mut String) -> bool {
+    let mut output = String::with_capacity(text.len());
+    let mut previous_was_auth = false;
+    let mut changed = false;
+    for token in text.split_inclusive(char::is_whitespace) {
+        let trimmed = token.trim_matches(char::is_whitespace);
+        if previous_was_auth && !trimmed.is_empty() {
+            let prefix_len = token.len() - token.trim_start_matches(char::is_whitespace).len();
+            let suffix_len = token.len() - token.trim_end_matches(char::is_whitespace).len();
+            output.push_str(&token[..prefix_len]);
+            output.push_str("<SECRET>");
+            output.push_str(&token[token.len() - suffix_len..]);
+            previous_was_auth = false;
+            changed = true;
+            continue;
+        }
+        output.push_str(token);
+        previous_was_auth = matches!(trimmed.to_ascii_lowercase().as_str(), "bearer" | "basic");
+    }
+    if changed {
+        *text = output;
+    }
+    changed
+}
+
 fn redact_emails(text: &mut String) -> bool {
     let mut changed = false;
     let tokens = text.split_inclusive(char::is_whitespace).map(|token| {
@@ -225,6 +323,46 @@ fn redact_ips(text: &mut String) -> bool {
     changed
 }
 
+fn redact_ipv6s(text: &mut String) -> bool {
+    let mut changed = false;
+    let mut output = String::with_capacity(text.len());
+    for token in text.split_inclusive(char::is_whitespace) {
+        let mut token_output = token.to_owned();
+        let mut start = None;
+        for (index, character) in token.char_indices() {
+            if character.is_ascii_hexdigit() || character == ':' {
+                start.get_or_insert(index);
+            } else if let Some(start_index) = start.take() {
+                if token[start_index..index]
+                    .parse::<std::net::Ipv6Addr>()
+                    .is_ok()
+                {
+                    token_output = format!("{}<IP>{}", &token[..start_index], &token[index..]);
+                    changed = true;
+                }
+                break;
+            }
+        }
+        if let Some(start_index) = start {
+            let candidate = token[start_index..]
+                .trim_matches(|character: char| ",.;()[]{} \t\r\n".contains(character));
+            if candidate.parse::<std::net::Ipv6Addr>().is_ok() {
+                token_output = format!(
+                    "{}<IP>{}",
+                    &token[..start_index],
+                    &token[start_index + candidate.len()..]
+                );
+                changed = true;
+            }
+        }
+        output.push_str(&token_output);
+    }
+    if changed {
+        *text = output;
+    }
+    changed
+}
+
 fn is_ipv4(value: &str) -> bool {
     let parts = value.split('.').collect::<Vec<_>>();
     parts.len() == 4 && parts.iter().all(|part| part.parse::<u8>().is_ok())
@@ -270,11 +408,43 @@ mod tests {
     }
 
     #[test]
+    fn redacts_ipv6_and_authorization_headers() {
+        let output = Redactor::default()
+            .redact_text("host=[2001:db8::1]:22 Authorization: Bearer abc.def Basic dGVzdA==");
+        assert!(output.redacted);
+        assert!(!output.text.contains("2001:db8::1"));
+        assert!(!output.text.contains("abc.def"));
+        assert!(!output.text.contains("dGVzdA=="));
+        assert!(output.text.contains("<IP>"));
+        assert!(output.text.contains("<SECRET>"));
+    }
+
+    #[test]
     fn redacts_sensitive_json_fields_recursively() {
         let value = serde_json::json!({"token": "abc123", "nested": {"host": "server.internal"}, "ok": "alice@example.com"});
         let output = redactor().redact_json(&value);
         assert_eq!(output["token"], "<REDACTED>");
         assert_eq!(output["nested"]["host"], "<HOST>");
         assert_eq!(output["ok"], "<EMAIL>");
+    }
+
+    #[test]
+    fn loads_hosts_and_users_only_as_redaction_context() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            temp.path().join("config.yaml"),
+            "profiles:\n  - host: private.example\n    username: bob\n",
+        )
+        .unwrap();
+        std::fs::write(
+            temp.path().join("known_hosts"),
+            "known.example ssh-ed25519 AAAA\n",
+        )
+        .unwrap();
+        let redactor = Redactor::from_storage_directory(&temp.path().join("logs"));
+        let output = redactor.redact_text("private.example known.example bob");
+        assert!(!output.text.contains("private.example"));
+        assert!(!output.text.contains("known.example"));
+        assert!(!output.text.contains("bob"));
     }
 }
