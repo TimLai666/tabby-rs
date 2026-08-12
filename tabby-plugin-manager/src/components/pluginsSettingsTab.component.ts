@@ -203,7 +203,12 @@ export class PluginsSettingsTabComponent {
     }
 
     isPluginEnabled (plugin: PluginInfo) {
-        return !this.config.store.pluginBlacklist.includes(plugin.name)
+        return !this.isPluginBlacklisted(plugin)
+    }
+
+    private isPluginBlacklisted (plugin: PluginInfo): boolean {
+        const blacklist = this.config.store.pluginBlacklist ?? []
+        return blacklist.includes(plugin.name) || blacklist.includes(plugin.packageName)
     }
 
     canDisablePlugin (plugin: PluginInfo) {
@@ -219,13 +224,17 @@ export class PluginsSettingsTabComponent {
     }
 
     enablePlugin (plugin: PluginInfo) {
-        this.config.store.pluginBlacklist = this.config.store.pluginBlacklist.filter(x => x !== plugin.name)
+        const blacklist = this.config.store.pluginBlacklist ?? []
+        this.config.store.pluginBlacklist = blacklist.filter(x => x !== plugin.name && x !== plugin.packageName)
         this.config.save()
         this.config.requestRestart()
     }
 
     disablePlugin (plugin: PluginInfo) {
-        this.config.store.pluginBlacklist = [...this.config.store.pluginBlacklist, plugin.name]
+        const blacklist = this.config.store.pluginBlacklist ?? []
+        if (!this.isPluginBlacklisted(plugin)) {
+            this.config.store.pluginBlacklist = [...blacklist, plugin.name]
+        }
         this.config.save()
         this.config.requestRestart()
     }

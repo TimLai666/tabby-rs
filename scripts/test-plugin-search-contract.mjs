@@ -69,6 +69,8 @@ assert.equal(
 assert.ok(service.toPluginInfo({ package: { ...basePackage, keywords: ['TABBY-PLUGIN'] } }, 'tabby-', 'tabby-plugin'))
 
 assert.match(componentSource, /catchError\(error => \{[\s\S]*availablePluginsReady = true[\s\S]*availablePluginsError/)
+assert.match(componentSource, /blacklist\.includes\(plugin\.name\) \|\| blacklist\.includes\(plugin\.packageName\)/)
+assert.match(componentSource, /filter\(x => x !== plugin\.name && x !== plugin\.packageName\)/)
 assert.match(templateSource, /availablePluginsError/)
 
 console.log('Plugin search keyword contract fixtures passed')
