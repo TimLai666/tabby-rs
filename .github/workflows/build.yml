@@ -109,6 +109,9 @@ jobs:
       - name: Verify tabby-web bundle boundary
         run: yarn audit:web
 
+      - name: Test tabby-web bundle audit
+        run: yarn test:web-output-audit
+
       - name: Test runtime capability providers
         run: yarn test:runtime-capabilities
 

@@ -101,6 +101,7 @@
     "build:electron": "npm run build",
     "build:tauri:frontend": "webpack --config app/webpack.config.tauri.mjs --progress --color",
     "audit:web": "node scripts/ci/assert-web-output.mjs",
+    "test:web-output-audit": "node scripts/test-web-output-audit.mjs",
     "build:tauri": "npm run build:tauri:frontend && cargo build --manifest-path src-tauri/Cargo.toml",
     "build:typings": "node scripts/build-typings.mjs",
     "test:tauri": "npm run build:tauri:frontend && cargo test --manifest-path src-tauri/Cargo.toml",
