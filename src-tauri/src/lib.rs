@@ -17,6 +17,7 @@ mod storage;
 mod sudo;
 mod telnet;
 mod transfer;
+mod update;
 mod windows_integration;
 
 use std::sync::Arc;
