@@ -144,6 +144,26 @@ export class WebPlatformService extends PlatformService {
         throw new UnsupportedCapabilityError('filesystem')
     }
 
+    showItemInFolder (_path: string): void {
+        throw new UnsupportedCapabilityError('filesystem')
+    }
+
+    async installPlugin (_name: string, _version: string): Promise<void> {
+        throw new UnsupportedCapabilityError('pluginInstall')
+    }
+
+    async uninstallPlugin (_name: string): Promise<void> {
+        throw new UnsupportedCapabilityError('pluginInstall')
+    }
+
+    async cancelPluginOperation (_id: string): Promise<void> {
+        throw new UnsupportedCapabilityError('pluginInstall')
+    }
+
+    getWinSCPPath (): string|null {
+        throw new UnsupportedCapabilityError('filesystem')
+    }
+
     setErrorHandler (handler: (_: any) => void): void {
         window.addEventListener('error', handler)
     }

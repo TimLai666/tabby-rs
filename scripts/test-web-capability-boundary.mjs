@@ -9,6 +9,11 @@ const pluginSettings = fs.readFileSync(path.join(root, 'tabby-plugin-manager/src
 
 assert.match(source, /supportsPluginManagement = false/)
 assert.match(source, /openPath \(_path: string\): void \{[\s\S]*?new UnsupportedCapabilityError\('filesystem'\)/)
+assert.match(source, /showItemInFolder \(_path: string\): void \{[\s\S]*?new UnsupportedCapabilityError\('filesystem'\)/)
+assert.match(source, /installPlugin \(_name: string, _version: string\): Promise<void> \{[\s\S]*?new UnsupportedCapabilityError\('pluginInstall'\)/)
+assert.match(source, /uninstallPlugin \(_name: string\): Promise<void> \{[\s\S]*?new UnsupportedCapabilityError\('pluginInstall'\)/)
+assert.match(source, /cancelPluginOperation \(_id: string\): Promise<void> \{[\s\S]*?new UnsupportedCapabilityError\('pluginInstall'\)/)
+assert.match(source, /getWinSCPPath \(\): string\|null \{[\s\S]*?new UnsupportedCapabilityError\('filesystem'\)/)
 assert.match(pluginSettings, /button\.btn\.btn-secondary\.btn-sm\.ms-auto\(\*ngIf='canManagePlugins\(\)'/)
 
 console.log('Web capability boundary contract passed')
