@@ -110,7 +110,7 @@ impl LogWriter {
             max_file_bytes: MAX_LOG_FILE_BYTES,
             max_files: MAX_LOG_FILES,
             max_bytes: MAX_LOG_BYTES,
-            crash_marker_present: false,
+            crash_marker_present: super::crash::exists(&self.directory),
         })
     }
 
@@ -209,6 +209,7 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{LogWriter, MAX_LOG_FILES};
+    use crate::diagnostics::crash::{clear, mark_startup};
     use crate::diagnostics::redaction::Redactor;
 
     fn writer(path: &std::path::Path) -> LogWriter {
@@ -253,6 +254,18 @@ mod tests {
         assert!(!contents.contains("top-secret"));
         assert!(contents.contains("<SECRET>"));
         assert!(contents.contains("<REDACTED>"));
+    }
+
+    #[test]
+    fn status_reports_crash_marker_state() {
+        let temp = tempdir().unwrap();
+        let writer = writer(temp.path());
+
+        assert!(!writer.status(true).unwrap().crash_marker_present);
+        mark_startup(temp.path()).unwrap();
+        assert!(writer.status(true).unwrap().crash_marker_present);
+        clear(temp.path()).unwrap();
+        assert!(!writer.status(true).unwrap().crash_marker_present);
     }
 
     #[test]
