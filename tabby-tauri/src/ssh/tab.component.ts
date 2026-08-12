@@ -18,6 +18,7 @@ export class TauriSshTabComponent extends ConnectableTerminalTabComponent<SSHPro
     declare session: TauriSshSession|null
     sftpPanelVisible = false
     sftpPath = '/'
+    private reconnectAttempts = 0
 
     constructor (
         injector: Injector,
@@ -42,10 +43,26 @@ export class TauriSshTabComponent extends ConnectableTerminalTabComponent<SSHPro
         try {
             await session.start()
             session.resize(this.size.columns, this.size.rows)
+            this.reconnectAttempts = 0
         } catch (error) {
             this.write(`\r\nSSH connection failed: ${String(error)}\r\n`)
             await session.destroy()
         }
+    }
+
+    protected onSessionDestroyed (): void {
+        if (this.frontend && this.profile.behaviorOnSessionEnd === 'reconnect' && !this.isDisconnectedByHand) {
+            if (this.reconnectAttempts < 5) {
+                const delay = Math.min(30_000, 1_000 * 2 ** this.reconnectAttempts)
+                this.reconnectAttempts++
+                this.write(`\r\nSSH reconnecting in ${Math.ceil(delay / 1000)}s (${this.reconnectAttempts}/5)\r\n`)
+                setTimeout(() => void this.reconnect(), delay)
+            } else {
+                this.offerReconnection()
+            }
+            return
+        }
+        super.onSessionDestroyed()
     }
 
     async openSFTP (): Promise<void> {
