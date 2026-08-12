@@ -1,7 +1,6 @@
 use std::sync::Mutex;
 use std::time::Duration;
 
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use minisign_verify::{PublicKey, Signature};
 use serde::Serialize;
 use tauri::{AppHandle, Runtime};
@@ -358,23 +357,12 @@ pub fn verify_download(bytes: &[u8], manifest: &UpdateManifest) -> Result<(), Ap
 
 pub fn verify_signature(
     bytes: &[u8],
-    encoded_signature: &str,
-    encoded_public_key: &str,
+    signature_text: &str,
+    public_key_text: &str,
 ) -> Result<(), AppError> {
-    let public_key = BASE64
-        .decode(encoded_public_key)
+    let public_key = PublicKey::decode(public_key_text)
         .map_err(|_| AppError::InvalidData("updater public key is invalid".into()))?;
-    let public_key = std::str::from_utf8(&public_key)
-        .map_err(|_| AppError::InvalidData("updater public key is invalid".into()))?;
-    let public_key = PublicKey::decode(public_key)
-        .map_err(|_| AppError::InvalidData("updater public key is invalid".into()))?;
-
-    let signature = BASE64
-        .decode(encoded_signature)
-        .map_err(|_| AppError::InvalidData("updater signature is invalid".into()))?;
-    let signature = std::str::from_utf8(&signature)
-        .map_err(|_| AppError::InvalidData("updater signature is invalid".into()))?;
-    let signature = Signature::decode(signature)
+    let signature = Signature::decode(signature_text)
         .map_err(|_| AppError::InvalidData("updater signature is invalid".into()))?;
 
     public_key
@@ -489,7 +477,6 @@ mod tests {
         UpdateManager, UpdateState,
     };
     use crate::{storage::state_file::UpdateChannel, update::manifest::UpdateManifest};
-    use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
     use tokio::sync::watch;
 
     fn manifest(hash: &str, size: Option<u64>) -> UpdateManifest {
@@ -522,20 +509,16 @@ mod tests {
 
     #[test]
     fn verifies_tauri_signature_against_artifact_and_public_key() {
-        let public_key = BASE64.encode(
-            "untrusted comment: minisign public key E7620F1842B4E81F\n\
-             RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3",
-        );
-        let signature = BASE64.encode(
-            "untrusted comment: signature from minisign secret key\n\
+        let public_key = "untrusted comment: minisign public key E7620F1842B4E81F\n\
+             RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3";
+        let signature = "untrusted comment: signature from minisign secret key\n\
              RWQf6LRCGA9i59SLOFxz6NxvASXDJeRtuZykwQepbDEGt87ig1BNpWaVWuNrm73YiIiJbq71Wi+dP9eKL8OC351vwIasSSbXxwA=\n\
              trusted comment: timestamp:1555779966\tfile:test\n\
-             QtKMXWyYcwdpZAlPF7tE2ENJkRd1ujvKjlj1m9RtHTBnZPa5WKU5uWRs5GoP5M/VqE81QFuMKI5k/SfNQUaOAA==",
-        );
+             QtKMXWyYcwdpZAlPF7tE2ENJkRd1ujvKjlj1m9RtHTBnZPa5WKU5uWRs5GoP5M/VqE81QFuMKI5k/SfNQUaOAA==";
 
         assert!(verify_signature(b"test", &signature, &public_key).is_ok());
         assert!(verify_signature(b"Test", &signature, &public_key).is_err());
-        assert!(verify_signature(b"test", &signature, &BASE64.encode("wrong")).is_err());
+        assert!(verify_signature(b"test", &signature, "wrong").is_err());
     }
 
     #[test]
