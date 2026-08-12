@@ -484,7 +484,7 @@ fn npm_command(
         let cli = npm_cli_path(_node_path, npm_path).ok_or_else(|| {
             AppError::Unsupported("npm CLI JavaScript entry was not found".into())
         })?;
-        let mut command = Command::new(node_path);
+        let mut command = Command::new(_node_path);
         command.arg(cli).arg(action).args(args);
         return Ok(command);
     }
