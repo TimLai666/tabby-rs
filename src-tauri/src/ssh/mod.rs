@@ -17,6 +17,8 @@ use std::{
 
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use rand::RngCore;
+#[cfg(windows)]
+use russh::keys::agent::client::AgentStream;
 use russh::{
     client::{self, AuthResult, Handler, KeyboardInteractiveAuthResponse, Prompt},
     keys::{agent::client::AgentClient, decode_secret_key, PrivateKeyWithHashAlg},
@@ -261,24 +263,15 @@ impl Handler for SshHandler {
     ) -> impl std::future::Future<Output = Result<(), Self::Error>> + Send {
         let socket = self.agent_socket.clone();
         let task = async move {
-            #[cfg(unix)]
-            {
-                let Some(socket) = socket.or_else(|| std::env::var("SSH_AUTH_SOCK").ok()) else {
-                    let _ = channel.close().await;
-                    return Ok::<(), russh::Error>(());
-                };
-                let Ok(mut agent) = tokio::net::UnixStream::connect(socket).await else {
-                    let _ = channel.close().await;
-                    return Ok::<(), russh::Error>(());
-                };
-                let mut ssh_stream = channel.into_stream();
-                let _ = copy_bidirectional(&mut agent, &mut ssh_stream).await;
-            }
-            #[cfg(not(unix))]
-            {
-                let _ = socket;
+            let Ok(mut agent) = connect_agent(socket)
+                .await
+                .map(|client| client.into_inner())
+            else {
                 let _ = channel.close().await;
-            }
+                return Ok::<(), russh::Error>(());
+            };
+            let mut ssh_stream = channel.into_stream();
+            let _ = copy_bidirectional(&mut agent, &mut ssh_stream).await;
             Ok::<(), russh::Error>(())
         };
         tokio::spawn(task);
@@ -1285,42 +1278,25 @@ impl SshManager {
                         .map_err(|_| SshError::AuthenticationRejected)?
                 }
                 AuthMethodRef::Agent { socket } => {
-                    #[cfg(unix)]
-                    {
-                        let mut agent = match socket {
-                            Some(path) => AgentClient::connect_uds(path)
-                                .await
-                                .map_err(|_| SshError::AuthenticationRejected)?,
-                            None => AgentClient::connect_env()
-                                .await
-                                .map_err(|_| SshError::AuthenticationRejected)?,
-                        };
-                        let identities = agent
-                            .request_identities()
+                    let mut agent = connect_agent(socket.clone()).await?;
+                    let identities = agent
+                        .request_identities()
+                        .await
+                        .map_err(|_| SshError::AuthenticationRejected)?;
+                    let mut result = AuthResult::Failure {
+                        remaining_methods: russh::MethodSet::empty(),
+                        partial_success: false,
+                    };
+                    for identity in identities {
+                        result = handle
+                            .authenticate_publickey_with(username, identity, None, &mut agent)
                             .await
                             .map_err(|_| SshError::AuthenticationRejected)?;
-                        let mut result = AuthResult::Failure {
-                            remaining_methods: russh::MethodSet::empty(),
-                            partial_success: false,
-                        };
-                        for identity in identities {
-                            result = handle
-                                .authenticate_publickey_with(username, identity, None, &mut agent)
-                                .await
-                                .map_err(|_| SshError::AuthenticationRejected)?;
-                            if matches!(result, AuthResult::Success) {
-                                break;
-                            }
+                        if matches!(result, AuthResult::Success) {
+                            break;
                         }
-                        result
                     }
-                    #[cfg(not(unix))]
-                    {
-                        let _ = socket;
-                        return Err(SshError::InvalidRequest(
-                            "SSH agent authentication is unavailable on this platform".into(),
-                        ));
-                    }
+                    result
                 }
                 AuthMethodRef::KeyboardInteractive => {
                     let mut response = handle
@@ -1925,6 +1901,45 @@ fn prompt_item(prompt: &Prompt) -> SshAuthPromptItem {
     SshAuthPromptItem {
         text: prompt.prompt.clone(),
         echo: prompt.echo,
+    }
+}
+
+#[cfg(unix)]
+type PlatformAgentClient = AgentClient<tokio::net::UnixStream>;
+
+#[cfg(windows)]
+type PlatformAgentClient = AgentClient<Box<dyn AgentStream + Send + Unpin + 'static>>;
+
+async fn connect_agent(socket: Option<String>) -> Result<PlatformAgentClient, SshError> {
+    #[cfg(unix)]
+    {
+        let client = match socket {
+            Some(path) => AgentClient::connect_uds(path).await,
+            None => AgentClient::connect_env().await,
+        }
+        .map_err(|_| SshError::AuthenticationRejected)?;
+        return Ok(client);
+    }
+
+    #[cfg(windows)]
+    {
+        let client = match socket {
+            Some(path) => AgentClient::connect_named_pipe(path).await,
+            None => match std::env::var_os("SSH_AUTH_SOCK") {
+                Some(path) => AgentClient::connect_named_pipe(path).await,
+                None => Ok(AgentClient::connect_pageant().await),
+            },
+        }
+        .map_err(|_| SshError::AuthenticationRejected)?;
+        return Ok(client.dynamic());
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = socket;
+        Err(SshError::InvalidRequest(
+            "SSH agent authentication is unavailable on this platform".into(),
+        ))
     }
 }
 
