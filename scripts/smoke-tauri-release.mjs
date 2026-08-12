@@ -197,9 +197,13 @@ async function smokeAppImage (artifact, root, operations) {
     const executable = path.join(extractDirectory, 'AppRun')
     assert.ok(fs.existsSync(executable), `AppImage extraction has no AppRun: ${extractDirectory}`)
     fs.chmodSync(executable, 0o755)
+    operations.push({ action: 'install', artifact: path.basename(artifact), target: 'AppImage/AppRun' })
     await launchAndCheck(executable, extractDirectory, { XDG_CONFIG_HOME: path.join(root, 'config') })
     auditInstalledBundle(extractDirectory, 'linux-appimage-extract', operations)
     operations.push({ action: 'launch', executable: 'AppImage/AppRun' })
+    fs.rmSync(extractDirectory, { recursive: true, force: true })
+    assert.ok(!fs.existsSync(extractDirectory), 'AppImage uninstall left the extracted application behind')
+    operations.push({ action: 'uninstall', target: 'AppImage/AppRun' })
 }
 
 async function smokeDeb (artifact, root, operations) {
@@ -211,10 +215,13 @@ async function smokeDeb (artifact, root, operations) {
     await assertCommand('dpkg', [`--root=${packageRoot}`, `--admindir=${adminDirectory}`, `--instdir=${packageRoot}`, '--unpack', artifact], { cwd: root })
     const installed = findFile(packageRoot, file => path.basename(file) === 'tabby-rs')
     assert.ok(installed, `DEB installation did not place the application under ${packageRoot}`)
+    operations.push({ action: 'install', artifact: path.basename(artifact), package: name, manager: 'dpkg' })
+    await launchAndCheck(installed, path.dirname(installed), { HOME: path.join(root, 'home') })
     auditInstalledBundle(packageRoot, 'linux-deb-install', operations)
+    operations.push({ action: 'launch', executable: path.relative(packageRoot, installed) })
     await assertCommand('dpkg', [`--root=${packageRoot}`, `--admindir=${adminDirectory}`, `--instdir=${packageRoot}`, '--purge', name], { cwd: root })
     assert.ok(!fs.existsSync(installed), 'DEB purge left the application executable behind')
-    operations.push({ action: 'install-uninstall', package: name, manager: 'dpkg' })
+    operations.push({ action: 'uninstall', package: name, manager: 'dpkg' })
 }
 
 async function smokeRpm (artifact, root, operations) {
@@ -226,10 +233,13 @@ async function smokeRpm (artifact, root, operations) {
     await assertCommand('rpm', [`--root=${packageRoot}`, '--dbpath=/var/lib/rpm', '--install', artifact], { cwd: root })
     const installed = findFile(packageRoot, file => path.basename(file) === 'tabby-rs')
     assert.ok(installed, `RPM installation did not place the application under ${packageRoot}`)
+    operations.push({ action: 'install', artifact: path.basename(artifact), package: name, manager: 'rpm' })
+    await launchAndCheck(installed, path.dirname(installed), { HOME: path.join(root, 'home') })
     auditInstalledBundle(packageRoot, 'linux-rpm-install', operations)
+    operations.push({ action: 'launch', executable: path.relative(packageRoot, installed) })
     await assertCommand('rpm', [`--root=${packageRoot}`, '--dbpath=/var/lib/rpm', '--erase', name], { cwd: root })
     assert.ok(!fs.existsSync(installed), 'RPM erase left the application executable behind')
-    operations.push({ action: 'install-uninstall', package: name, manager: 'rpm' })
+    operations.push({ action: 'uninstall', package: name, manager: 'rpm' })
 }
 
 async function smokeLinux () {

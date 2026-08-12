@@ -122,11 +122,29 @@ if (licenseReport && expectedRevision && licenseReport.sourceRevision !== expect
 }
 
 const installerSmoke = readJson(installerSmokePath, 'installer smoke report')
-if (installerSmoke && installerSmoke.passed !== true) {
-    failures.push('installer smoke did not pass')
-}
-if (installerSmoke && expectedPlatform && installerSmoke.platform !== expectedPlatform) {
-    failures.push(`installer smoke platform must match ${expectedPlatform}`)
+if (installerSmoke) {
+    if (installerSmoke.passed !== true) {
+        failures.push('installer smoke did not pass')
+    }
+    if (installerSmoke.planOnly === true) {
+        failures.push('installer smoke must execute install, launch, and uninstall operations')
+    }
+    if (expectedPlatform && installerSmoke.platform !== expectedPlatform) {
+        failures.push(`installer smoke platform must match ${expectedPlatform}`)
+    }
+    const smokePlatform = expectedPlatform || installerSmoke.platform
+    if (!['linux', 'macos', 'windows'].includes(smokePlatform)) {
+        failures.push(`installer smoke platform is invalid: ${smokePlatform || '<missing>'}`)
+    }
+    const requiredActions = smokePlatform === 'macos'
+        ? ['copy', 'launch', 'uninstall']
+        : ['install', 'launch', 'uninstall']
+    const actions = new Set(Array.isArray(installerSmoke.operations)
+        ? installerSmoke.operations.map(operation => operation?.action).filter(action => typeof action === 'string')
+        : [])
+    for (const action of requiredActions) {
+        if (!actions.has(action)) failures.push(`installer smoke is missing ${action} operation`)
+    }
 }
 
 if (bundleAudit) {
