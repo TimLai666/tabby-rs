@@ -38,16 +38,18 @@ fn public_update_error(stage: UpdateStage) -> AppError {
 }
 
 async fn check_update(app: &AppHandle, state: &AppState) -> Result<Option<UpdateInfo>, AppError> {
-    state.update_manager().begin_check()?;
+    let generation = state.update_manager().begin_check()?;
     emit_state(app, state);
     let channel = state.persisted_state().update_channel;
     let current_version = app.package_info().version.to_string();
     let updater = match build_updater(app, &channel) {
         Ok(updater) => updater,
         Err(error) => {
-            state
-                .update_manager()
-                .fail(UpdateStage::Configuration, "updater is not configured");
+            state.update_manager().fail_check(
+                generation,
+                UpdateStage::Configuration,
+                "updater is not configured",
+            );
             emit_state(app, state);
             return Err(error);
         }
@@ -55,31 +57,35 @@ async fn check_update(app: &AppHandle, state: &AppState) -> Result<Option<Update
     let remote = match updater.check().await {
         Ok(remote) => remote,
         Err(_) => {
-            state
-                .update_manager()
-                .fail(UpdateStage::Checking, "update check failed");
+            state.update_manager().fail_check(
+                generation,
+                UpdateStage::Checking,
+                "update check failed",
+            );
             emit_state(app, state);
             return Err(public_update_error(UpdateStage::Checking));
         }
     };
     let Some(remote) = remote else {
-        let result = state.update_manager().finish_check(None)?;
+        let result = state.update_manager().finish_check(generation, None)?;
         emit_state(app, state);
         return Ok(result);
     };
     let (manifest, info) = match update_info_from_remote(&remote, &channel, &current_version) {
         Ok(value) => value,
         Err(error) => {
-            state
-                .update_manager()
-                .fail(UpdateStage::Checking, "update metadata was rejected");
+            state.update_manager().fail_check(
+                generation,
+                UpdateStage::Checking,
+                "update metadata was rejected",
+            );
             emit_state(app, state);
             return Err(error);
         }
     };
     let result = state
         .update_manager()
-        .finish_check(Some((remote, manifest, info)))?;
+        .finish_check(generation, Some((remote, manifest, info)))?;
     emit_state(app, state);
     Ok(result)
 }
@@ -263,6 +269,7 @@ pub async fn update_set_channel(
         )
     }
     .map_err(|_| AppError::Io("channel switch backup could not be created".into()))?;
+    state.update_manager().cancel();
     state.update_persisted_state(|persisted| {
         if current_state.update_channel == UpdateChannel::Stable {
             persisted.last_stable_backup = Some(backup.backup_id.clone());

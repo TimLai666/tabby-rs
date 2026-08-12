@@ -91,6 +91,7 @@ struct ManagerState {
     state: UpdateState,
     pending: Option<PendingUpdate>,
     cancellation: Option<watch::Sender<bool>>,
+    check_generation: u64,
 }
 
 pub struct UpdateManager {
@@ -104,6 +105,7 @@ impl Default for UpdateManager {
                 state: UpdateState::Idle,
                 pending: None,
                 cancellation: None,
+                check_generation: 0,
             }),
         }
     }
@@ -118,7 +120,7 @@ impl UpdateManager {
             .clone()
     }
 
-    pub fn begin_check(&self) -> Result<(), AppError> {
+    pub fn begin_check(&self) -> Result<u64, AppError> {
         let mut state = self
             .state
             .lock()
@@ -128,21 +130,24 @@ impl UpdateManager {
                 "another update operation is already running".into(),
             ));
         }
+        state.check_generation = state.check_generation.wrapping_add(1);
+        let generation = state.check_generation;
         state.pending = None;
         state.cancellation = None;
         state.state = UpdateState::Checking;
-        Ok(())
+        Ok(generation)
     }
 
     pub fn finish_check(
         &self,
+        generation: u64,
         update: Option<(Update, UpdateManifest, UpdateInfo)>,
     ) -> Result<Option<UpdateInfo>, AppError> {
         let mut state = self
             .state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if !matches!(state.state, UpdateState::Checking) {
+        if state.check_generation != generation || !matches!(state.state, UpdateState::Checking) {
             return Err(AppError::Conflict("update check was cancelled".into()));
         }
         let Some((update, manifest, info)) = update else {
@@ -157,6 +162,22 @@ impl UpdateManager {
             bytes: None,
         });
         Ok(Some(info))
+    }
+
+    pub fn fail_check(&self, generation: u64, stage: UpdateStage, public_error: impl Into<String>) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if state.check_generation != generation || !matches!(state.state, UpdateState::Checking) {
+            return;
+        }
+        state.pending = None;
+        state.cancellation = None;
+        state.state = UpdateState::Failed {
+            stage,
+            public_error: public_error.into(),
+        };
     }
 
     pub fn begin_download(&self, version: &str) -> Result<DownloadHandle, AppError> {
@@ -334,6 +355,7 @@ impl UpdateManager {
         if let Some(sender) = state.cancellation.take() {
             let _ = sender.send(true);
         }
+        state.check_generation = state.check_generation.wrapping_add(1);
         state.pending = None;
         state.state = UpdateState::Idle;
     }
@@ -539,7 +561,7 @@ mod tests {
     #[test]
     fn manager_serializes_checks_and_cancellation() {
         let manager = UpdateManager::default();
-        manager.begin_check().unwrap();
+        let generation = manager.begin_check().unwrap();
         assert!(matches!(manager.state(), UpdateState::Checking));
         assert!(manager.begin_check().is_err());
         manager.cancel();
@@ -547,8 +569,12 @@ mod tests {
         manager.fail(super::UpdateStage::Checking, "late network failure");
         assert!(matches!(manager.state(), UpdateState::Idle));
 
-        manager.begin_check().unwrap();
-        assert!(manager.finish_check(None).unwrap().is_none());
+        let current_generation = manager.begin_check().unwrap();
+        assert!(manager.finish_check(generation, None).is_err());
+        assert!(manager
+            .finish_check(current_generation, None)
+            .unwrap()
+            .is_none());
         assert!(matches!(manager.state(), UpdateState::Idle));
     }
 }
