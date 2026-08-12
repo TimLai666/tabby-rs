@@ -93,6 +93,38 @@ function pluginBlacklist (config: Record<string, unknown>): string[] {
         : []
 }
 
+function percentile (values: number[], fraction: number): number {
+    const sorted = [...values].sort((left, right) => left - right)
+    return sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * fraction) - 1))]
+}
+
+async function reportBenchmarkFrames (bridge: InstanceType<typeof TauriHostBridge>): Promise<void> {
+    const frameTimes: number[] = []
+    let previous = performance.now()
+    let droppedFrameCount = 0
+    const expectedFrameTime = 1000 / 60
+    await new Promise<void>(resolve => {
+        const capture = (timestamp: number): void => {
+            const frameTime = timestamp - previous
+            previous = timestamp
+            frameTimes.push(frameTime)
+            droppedFrameCount += Math.max(0, Math.round(frameTime / expectedFrameTime) - 1)
+            if (frameTimes.length >= 120) {
+                resolve()
+            } else {
+                window.requestAnimationFrame(capture)
+            }
+        }
+        window.requestAnimationFrame(capture)
+    })
+    await bridge.invoke('app.benchmarkFrameReport', {
+        method: 'requestAnimationFrame trace',
+        samples: frameTimes.length,
+        p95FrameTimeMs: percentile(frameTimes, 0.95),
+        droppedFrameCount,
+    })
+}
+
 async function main (): Promise<void> {
     const bridge = new TauriHostBridge()
     window['retryPluginBootstrap'] = async () => {
@@ -110,7 +142,12 @@ async function main (): Promise<void> {
     window['__TABBY_ARCH__'] = runtimeInfo.arch
     if (runtimeInfo.benchmarkReadyFile) {
         window.addEventListener('tabby:terminal-ready', () => {
-            void bridge.invoke('app.benchmarkReady', {})
+            void (async () => {
+                if (runtimeInfo.benchmarkFrameReportFile) {
+                    await reportBenchmarkFrames(bridge)
+                }
+                await bridge.invoke('app.benchmarkReady', {})
+            })()
         }, { once: true })
     }
     updateProgress(40)

@@ -63,6 +63,14 @@ function environment () {
     }
 }
 
+function normalizedPlatform (value) {
+    return { win32: 'windows', darwin: 'macos', linux: 'linux' }[value] || value
+}
+
+function normalizedArch (value) {
+    return { x64: 'x86_64', arm64: 'aarch64' }[value] || value
+}
+
 async function waitForFile (filePath, timeoutMs) {
     const deadline = Date.now() + timeoutMs
     while (Date.now() < deadline) {
@@ -216,8 +224,8 @@ function baseReport (metric, options, samples, { fixtureSha256, artifactSha256, 
         schemaVersion: 1,
         metric,
         host: 'tauri',
-        platform: process.platform,
-        arch: process.arch,
+        platform: options.platform || normalizedPlatform(process.platform),
+        arch: options.arch || normalizedArch(process.arch),
         commit: gitRevision(),
         configFixture: options['config-fixture'] || 'default-no-plugins',
         fixtureSha256,

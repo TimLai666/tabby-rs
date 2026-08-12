@@ -174,8 +174,42 @@ jobs:
           export TABBY_RS_UPDATE_SIGNATURE="$update_artifact.sig"
           node scripts/create-tauri-update-manifest.mjs
 
+      - name: Snapshot release bundle for benchmarks
+        shell: bash
+        run: cp -R release-staging release-benchmark-bundle
+
       - name: Audit release bundle
         run: node scripts/check-tauri-bundle.mjs release-staging --release --output release-staging/bundle-audit.json
+
+      - name: Measure Tauri release
+        shell: bash
+        env:
+          TABBY_RS_BENCHMARK_FRAME_REPORT: ${{ github.workspace }}/release-staging/benchmarks/ui-frames.json
+          TABBY_RS_TOOLCHAIN: ${{ matrix.target }}
+        run: |
+          mkdir -p release-staging/benchmarks
+          binary="src-tauri/target/${{ matrix.target }}/release/tabby-rs"
+          if [ "${{ matrix.platform }}" = "windows" ]; then binary="${binary}.exe"; fi
+          benchmark_binary="$binary"
+          benchmark_args="[]"
+          if [ "${{ matrix.platform }}" = "linux" ]; then
+            benchmark_binary="xvfb-run"
+            benchmark_args="[\"-a\",\"$binary\"]"
+          fi
+          node scripts/run-benchmarks.mjs \
+            --output-dir release-staging/benchmarks \
+            --samples 20 \
+            --warmup-samples 1 \
+            --binary "$benchmark_binary" \
+            --binary-args "$benchmark_args" \
+            --platform "${{ matrix.platform }}" \
+            --arch "${{ matrix.arch }}" \
+            --output-command node \
+            --output-args '["scripts/fixtures/benchmark-process.mjs","--output","131072"]' \
+            --bundle release-benchmark-bundle \
+            --ui-frame-report release-staging/benchmarks/ui-frames.json \
+            --config-fixture-path scripts/fixtures/benchmark-config.json \
+            --config-fixture release-default
 
       - name: Enforce release gate
         run: node scripts/check-release-gate.mjs --bundle-audit release-staging/bundle-audit.json --license-report release-staging/license-report.json --benchmarks-dir release-staging/benchmarks --source-revision "${{ github.sha }}" --platform "${{ matrix.platform }}" --arch "${{ matrix.arch }}" --target "${{ matrix.target }}" --output release-staging/release-gate.json

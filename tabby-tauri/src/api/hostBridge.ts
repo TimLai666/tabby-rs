@@ -28,6 +28,14 @@ export interface RuntimeInfo {
     arch: string
     version: string
     benchmarkReadyFile: string | null
+    benchmarkFrameReportFile: string | null
+}
+
+export interface BenchmarkFrameReport {
+    method: string
+    samples: number
+    p95FrameTimeMs: number
+    droppedFrameCount: number
 }
 
 export interface AppIdentity {
@@ -652,6 +660,10 @@ export interface HostRequestMap {
     }
     'app.benchmarkReady': {
         request: Record<string, never>
+        response: null
+    }
+    'app.benchmarkFrameReport': {
+        request: BenchmarkFrameReport
         response: null
     }
     'app.initialLaunch': {

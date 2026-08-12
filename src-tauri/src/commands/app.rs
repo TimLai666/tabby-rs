@@ -25,6 +25,16 @@ pub struct RuntimeInfo {
     pub arch: String,
     pub version: String,
     pub benchmark_ready_file: Option<String>,
+    pub benchmark_frame_report_file: Option<String>,
+}
+
+#[derive(Debug, Default, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BenchmarkFrameReport {
+    pub method: String,
+    pub samples: u32,
+    pub p95_frame_time_ms: f64,
+    pub dropped_frame_count: u32,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -62,11 +72,19 @@ fn current_runtime_info() -> RuntimeInfo {
         version: env!("CARGO_PKG_VERSION").to_owned(),
         benchmark_ready_file: benchmark_ready_path()
             .map(|path| path.to_string_lossy().into_owned()),
+        benchmark_frame_report_file: benchmark_frame_report_path()
+            .map(|path| path.to_string_lossy().into_owned()),
     }
 }
 
 fn benchmark_ready_path() -> Option<PathBuf> {
     std::env::var_os("TABBY_RS_BENCHMARK_READY_FILE")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
+
+fn benchmark_frame_report_path() -> Option<PathBuf> {
+    std::env::var_os("TABBY_RS_BENCHMARK_FRAME_REPORT")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
 }
@@ -77,6 +95,34 @@ fn write_benchmark_ready(path: &Path) -> Result<(), AppError> {
     }
     let temporary = path.with_extension(format!("tmp-{}", std::process::id()));
     fs::write(&temporary, "ready\n")?;
+    fs::rename(temporary, path)?;
+    Ok(())
+}
+
+fn write_benchmark_frame_report(
+    path: &Path,
+    report: &BenchmarkFrameReport,
+) -> Result<(), AppError> {
+    if report.method.trim().is_empty()
+        || report.samples == 0
+        || !report.p95_frame_time_ms.is_finite()
+        || report.p95_frame_time_ms < 0.0
+    {
+        return Err(AppError::InvalidArgument(
+            "benchmark frame report is invalid".to_owned(),
+        ));
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let temporary = path.with_extension(format!("tmp-{}", std::process::id()));
+    let content = serde_json::to_vec_pretty(report)
+        .map_err(|_| AppError::InvalidData("benchmark frame report is invalid".into()))?;
+    fs::write(&temporary, content)?;
+    #[cfg(windows)]
+    if path.exists() {
+        fs::remove_file(path)?;
+    }
     fs::rename(temporary, path)?;
     Ok(())
 }
@@ -235,6 +281,13 @@ pub fn app_benchmark_ready(request: EmptyRequest) -> Result<(), AppError> {
 }
 
 #[tauri::command]
+pub fn app_benchmark_frame_report(request: BenchmarkFrameReport) -> Result<(), AppError> {
+    let path = benchmark_frame_report_path()
+        .ok_or_else(|| AppError::Unsupported("benchmark frame reporting is disabled".to_owned()))?;
+    write_benchmark_frame_report(&path, &request)
+}
+
+#[tauri::command]
 pub fn app_quit(
     request: EmptyRequest,
     app: AppHandle,
@@ -248,7 +301,10 @@ pub fn app_quit(
 
 #[cfg(test)]
 mod tests {
-    use super::{bootstrap_mode, current_runtime_info, write_benchmark_ready, BootstrapData};
+    use super::{
+        bootstrap_mode, current_runtime_info, write_benchmark_frame_report, write_benchmark_ready,
+        BenchmarkFrameReport, BootstrapData,
+    };
     use crate::storage::state_file::{load_state, save_state, TabbyRsState};
     use tempfile::tempdir;
 
@@ -269,6 +325,45 @@ mod tests {
         write_benchmark_ready(&marker).unwrap();
 
         assert_eq!(std::fs::read_to_string(marker).unwrap(), "ready\n");
+    }
+
+    #[test]
+    fn writes_benchmark_frame_report_replacing_existing_output() {
+        let directory = tempdir().unwrap();
+        let report_path = directory.path().join("nested").join("frames.json");
+        let report = BenchmarkFrameReport {
+            method: "requestAnimationFrame trace".into(),
+            samples: 120,
+            p95_frame_time_ms: 16.7,
+            dropped_frame_count: 0,
+        };
+
+        write_benchmark_frame_report(&report_path, &report).unwrap();
+        let updated_report = BenchmarkFrameReport {
+            p95_frame_time_ms: 18.2,
+            ..report
+        };
+        write_benchmark_frame_report(&report_path, &updated_report).unwrap();
+
+        let content: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(report_path).unwrap()).unwrap();
+        assert_eq!(content["p95FrameTimeMs"], 18.2);
+        assert_eq!(content["droppedFrameCount"], 0);
+    }
+
+    #[test]
+    fn rejects_invalid_benchmark_frame_report() {
+        let directory = tempdir().unwrap();
+        let report_path = directory.path().join("frames.json");
+        let report = BenchmarkFrameReport {
+            method: String::new(),
+            samples: 0,
+            p95_frame_time_ms: f64::NAN,
+            dropped_frame_count: 0,
+        };
+
+        assert!(write_benchmark_frame_report(&report_path, &report).is_err());
+        assert!(!report_path.exists());
     }
 
     #[test]

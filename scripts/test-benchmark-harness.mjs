@@ -39,6 +39,8 @@ await execFileAsync(process.execPath, [runner,
     '--ui-frame-report', frameReport,
     '--config-fixture-path', configFixture,
     '--config-fixture', 'benchmark-test',
+    '--platform', 'linux',
+    '--arch', 'x86_64',
 ], { cwd: root })
 
 const expected = {
@@ -53,6 +55,8 @@ for (const [name, metric] of Object.entries(expected)) {
     assert.equal(report.samples, name === 'bundle-size' ? 1 : 2)
     assert.equal(report.commit.length, 40)
     assert.equal(report.configFixture, 'benchmark-test')
+    assert.equal(report.platform, 'linux')
+    assert.equal(report.arch, 'x86_64')
 }
 
 const outputReport = JSON.parse(fs.readFileSync(path.join(outputDir, 'output.json'), 'utf8'))

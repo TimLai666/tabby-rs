@@ -23,7 +23,9 @@ mod windows_integration;
 use std::sync::Arc;
 
 use commands::{
-    app::{app_benchmark_ready, app_bootstrap, app_quit, app_runtime_info},
+    app::{
+        app_benchmark_frame_report, app_benchmark_ready, app_bootstrap, app_quit, app_runtime_info,
+    },
     backup::{backup_create, backup_list, backup_restore},
     config::{config_read, config_write},
     desktop::{
@@ -268,6 +270,7 @@ pub fn run() {
             app_bootstrap,
             app_runtime_info,
             app_benchmark_ready,
+            app_benchmark_frame_report,
             app_initial_launch,
             app_quit,
             backup_create,
