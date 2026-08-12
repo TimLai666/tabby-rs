@@ -33,10 +33,10 @@ pub struct LogStatus {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct LogEvent<'a> {
+struct LogEvent {
     timestamp: String,
-    level: &'a str,
-    source: &'a str,
+    level: String,
+    source: String,
     message: String,
     fields: serde_json::Value,
 }
@@ -75,8 +75,8 @@ impl LogWriter {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let event = LogEvent {
             timestamp: Utc::now().to_rfc3339(),
-            level,
-            source,
+            level: level.to_owned(),
+            source: self.redactor.redact_text(source).text,
             message: self.redactor.redact_text(message).text,
             fields: self.redactor.redact_json(fields),
         };
@@ -253,6 +253,29 @@ mod tests {
         assert!(!contents.contains("top-secret"));
         assert!(contents.contains("<SECRET>"));
         assert!(contents.contains("<REDACTED>"));
+    }
+
+    #[test]
+    fn redacts_source_before_writing() {
+        let temp = tempdir().unwrap();
+        let writer = LogWriter::new(
+            temp.path(),
+            Redactor::new(crate::diagnostics::redaction::RedactionContext {
+                hosts: vec!["server.internal".into()],
+                ..Default::default()
+            }),
+        );
+        writer
+            .append(
+                "info",
+                "ssh-server.internal-22",
+                "connected",
+                &serde_json::json!({}),
+            )
+            .unwrap();
+        let contents = std::fs::read_to_string(temp.path().join("tabby-rs.log")).unwrap();
+        assert!(!contents.contains("server.internal"));
+        assert!(contents.contains("ssh-<HOST>-22"));
     }
 
     #[test]

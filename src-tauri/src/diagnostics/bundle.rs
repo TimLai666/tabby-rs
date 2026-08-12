@@ -150,12 +150,17 @@ pub fn export(state: &AppState, destination: &str, include_logs: bool) -> Result
 }
 
 fn collect_entries(state: &AppState, include_logs: bool) -> Result<Vec<BundleEntry>, AppError> {
+    let persisted_state = state.persisted_state();
     let mut entries = vec![
         BundleEntry {
             path: "system.json".into(),
             data: serde_json::to_vec_pretty(&serde_json::json!({
                 "schemaVersion": 1,
                 "appVersion": env!("CARGO_PKG_VERSION"),
+                "channel": match persisted_state.update_channel {
+                    crate::storage::state_file::UpdateChannel::Stable => "stable",
+                    crate::storage::state_file::UpdateChannel::Nightly => "nightly",
+                },
                 "os": std::env::consts::OS,
                 "arch": std::env::consts::ARCH,
             }))?,

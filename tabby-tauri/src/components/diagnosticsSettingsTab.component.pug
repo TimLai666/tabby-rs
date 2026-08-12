@@ -11,6 +11,9 @@ p.text-muted
         button.btn.btn-primary((click)='exportBundle()', [disabled]='busy') Export ZIP
         button.btn.btn-outline-danger((click)='clearLogs()', [disabled]='busy') Clear logs
 
+.alert.alert-warning(*ngIf='status?.crashMarkerPresent')
+    | The previous session ended unexpectedly. Review the preview before exporting diagnostics.
+
 .alert.alert-warning(*ngIf='preview')
     span {{preview.redactionWarning}}
 
