@@ -5,8 +5,10 @@ import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const source = fs.readFileSync(path.join(root, 'tabby-web/src/platform.ts'), 'utf8')
+const pluginSettings = fs.readFileSync(path.join(root, 'tabby-plugin-manager/src/components/pluginsSettingsTab.component.pug'), 'utf8')
 
 assert.match(source, /supportsPluginManagement = false/)
 assert.match(source, /openPath \(_path: string\): void \{[\s\S]*?new UnsupportedCapabilityError\('filesystem'\)/)
+assert.match(pluginSettings, /button\.btn\.btn-secondary\.btn-sm\.ms-auto\(\*ngIf='canManagePlugins\(\)'/)
 
 console.log('Web capability boundary contract passed')

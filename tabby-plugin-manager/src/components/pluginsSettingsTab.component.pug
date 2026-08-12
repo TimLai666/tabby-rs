@@ -1,6 +1,6 @@
 .d-flex.mb-3
     h3(translate) Plugins
-    button.btn.btn-secondary.btn-sm.ms-auto((click)='openPluginsFolder()')
+    button.btn.btn-secondary.btn-sm.ms-auto(*ngIf='canManagePlugins()', (click)='openPluginsFolder()')
         i.fas.fa-folder
         span(translate) Plugins folder
 
