@@ -1224,12 +1224,9 @@ impl SshManager {
         let Ok(Ok(decision)) = decision else {
             return Err(SshError::Timeout);
         };
-        match (status, decision) {
-            (HostKeyStatus::Unknown, HostKeyDecision::Once) => Ok(true),
-            (_, HostKeyDecision::Save) => self.known_hosts.save(host, port, key).map(|_| true),
-            (HostKeyStatus::Changed, HostKeyDecision::Reject)
-            | (HostKeyStatus::Changed, HostKeyDecision::Once) => Err(SshError::HostKeyChanged),
-            (HostKeyStatus::Unknown, HostKeyDecision::Reject) => Err(SshError::HostKeyRejected),
+        match host_key_decision_action(status, decision)? {
+            HostKeyDecisionAction::AcceptOnce => Ok(true),
+            HostKeyDecisionAction::Save => self.known_hosts.save(host, port, key).map(|_| true),
         }
     }
 
@@ -1940,6 +1937,24 @@ fn prompt_item(prompt: &Prompt) -> SshAuthPromptItem {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum HostKeyDecisionAction {
+    AcceptOnce,
+    Save,
+}
+
+fn host_key_decision_action(
+    status: HostKeyStatus,
+    decision: HostKeyDecision,
+) -> Result<HostKeyDecisionAction, SshError> {
+    match (status, decision) {
+        (HostKeyStatus::Unknown, HostKeyDecision::Once) => Ok(HostKeyDecisionAction::AcceptOnce),
+        (HostKeyStatus::Unknown, HostKeyDecision::Save) => Ok(HostKeyDecisionAction::Save),
+        (HostKeyStatus::Changed, _) => Err(SshError::HostKeyChanged),
+        (HostKeyStatus::Unknown, HostKeyDecision::Reject) => Err(SshError::HostKeyRejected),
+    }
+}
+
 #[cfg(unix)]
 type PlatformAgentClient = AgentClient<tokio::net::UnixStream>;
 
@@ -2171,7 +2186,7 @@ impl From<SshError> for crate::error::AppError {
 
 #[cfg(test)]
 mod tests {
-    use super::{model::*, validate_request};
+    use super::{host_key_decision_action, model::*, validate_request, HostKeyDecisionAction};
     use std::collections::BTreeMap;
 
     fn request() -> SshConnectRequest {
@@ -2245,5 +2260,21 @@ mod tests {
             "password": "plaintext"
         }))
         .is_err());
+    }
+
+    #[test]
+    fn changed_host_keys_cannot_be_saved_or_accepted_once() {
+        assert!(matches!(
+            host_key_decision_action(HostKeyStatus::Changed, HostKeyDecision::Save),
+            Err(SshError::HostKeyChanged)
+        ));
+        assert!(matches!(
+            host_key_decision_action(HostKeyStatus::Changed, HostKeyDecision::Once),
+            Err(SshError::HostKeyChanged)
+        ));
+        assert!(matches!(
+            host_key_decision_action(HostKeyStatus::Unknown, HostKeyDecision::Save),
+            Ok(HostKeyDecisionAction::Save)
+        ));
     }
 }

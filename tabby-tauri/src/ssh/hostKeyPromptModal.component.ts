@@ -21,7 +21,7 @@ import { SshHostKeyPrompt } from '../api/hostBridge'
         <div class="modal-footer">
             <button class="btn btn-outline-secondary" type="button" (click)="close('reject')">Reject</button>
             <button class="btn btn-primary" type="button" *ngIf="prompt.status === 'unknown'" (click)="close('once')">Accept once</button>
-            <button class="btn btn-primary" type="button" (click)="close('save')">Save key</button>
+            <button class="btn btn-primary" type="button" *ngIf="prompt.status === 'unknown'" (click)="close('save')">Save key</button>
         </div>
     `,
 })
