@@ -40,6 +40,18 @@ function validateSummary (errors, report) {
     if (typeof report.median === 'number' && typeof report.p95 === 'number' && report.p95 < report.median) {
         errors.push('p95 must be greater than or equal to median')
     }
+    if (
+        Array.isArray(report.values)
+        && report.values.length === report.samples
+        && report.values.every(value => typeof value === 'number' && Number.isFinite(value) && value >= 0)
+        && typeof report.median === 'number'
+        && typeof report.p95 === 'number'
+    ) {
+        const sorted = [...report.values].sort((left, right) => left - right)
+        const percentile = fraction => sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * fraction) - 1))]
+        if (report.median !== percentile(0.5)) errors.push('median does not match values')
+        if (report.p95 !== percentile(0.95)) errors.push('p95 does not match values')
+    }
 }
 
 export function validateBenchmarkReport (report, expectedMetric) {
