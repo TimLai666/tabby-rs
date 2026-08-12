@@ -1,6 +1,8 @@
 use std::sync::Mutex;
 use std::time::Duration;
 
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use minisign_verify::{PublicKey, Signature};
 use serde::Serialize;
 use tauri::{AppHandle, Runtime};
 use tauri_plugin_updater::{Update, Updater, UpdaterExt};
@@ -216,6 +218,9 @@ impl UpdateManager {
     pub fn finish_download(&self, bytes: Vec<u8>) -> Result<(), AppError> {
         let manifest = self.ready_manifest()?;
         verify_download(&bytes, &manifest)?;
+        let public_key = configured_public_key()
+            .ok_or_else(|| AppError::Unsupported("updater public key is not configured".into()))?;
+        verify_signature(&bytes, &manifest.signature, public_key)?;
         let mut state = self
             .state
             .lock()
@@ -348,6 +353,32 @@ pub fn verify_download(bytes: &[u8], manifest: &UpdateManifest) -> Result<(), Ap
     Ok(())
 }
 
+pub fn verify_signature(
+    bytes: &[u8],
+    encoded_signature: &str,
+    encoded_public_key: &str,
+) -> Result<(), AppError> {
+    let public_key = BASE64
+        .decode(encoded_public_key)
+        .map_err(|_| AppError::InvalidData("updater public key is invalid".into()))?;
+    let public_key = std::str::from_utf8(&public_key)
+        .map_err(|_| AppError::InvalidData("updater public key is invalid".into()))?;
+    let public_key = PublicKey::decode(public_key)
+        .map_err(|_| AppError::InvalidData("updater public key is invalid".into()))?;
+
+    let signature = BASE64
+        .decode(encoded_signature)
+        .map_err(|_| AppError::InvalidData("updater signature is invalid".into()))?;
+    let signature = std::str::from_utf8(&signature)
+        .map_err(|_| AppError::InvalidData("updater signature is invalid".into()))?;
+    let signature = Signature::decode(signature)
+        .map_err(|_| AppError::InvalidData("updater signature is invalid".into()))?;
+
+    public_key
+        .verify(bytes, &signature, true)
+        .map_err(|_| AppError::InvalidData("updater signature does not match artifact".into()))
+}
+
 pub fn channel_name(channel: &UpdateChannel) -> &'static str {
     match channel {
         UpdateChannel::Stable => "stable",
@@ -451,10 +482,11 @@ pub fn is_cancelled(receiver: &watch::Receiver<bool>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        channel_name, configured_endpoint, is_cancelled, verify_download, UpdateManager,
-        UpdateState,
+        channel_name, configured_endpoint, is_cancelled, verify_download, verify_signature,
+        UpdateManager, UpdateState,
     };
     use crate::{storage::state_file::UpdateChannel, update::manifest::UpdateManifest};
+    use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
     use tokio::sync::watch;
 
     fn manifest(hash: &str, size: Option<u64>) -> UpdateManifest {
@@ -483,6 +515,24 @@ mod tests {
             verify_download(bytes, &manifest(&"0".repeat(64), Some(bytes.len() as u64))).is_err()
         );
         assert!(verify_download(bytes, &manifest(&hash, Some(1))).is_err());
+    }
+
+    #[test]
+    fn verifies_tauri_signature_against_artifact_and_public_key() {
+        let public_key = BASE64.encode(
+            "untrusted comment: minisign public key E7620F1842B4E81F\n\
+             RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3",
+        );
+        let signature = BASE64.encode(
+            "untrusted comment: signature from minisign secret key\n\
+             RWQf6LRCGA9i59SLOFxz6NxvASXDJeRtuZykwQepbDEGt87ig1BNpWaVWuNrm73YiIiJbq71Wi+dP9eKL8OC351vwIasSSbXxwA=\n\
+             trusted comment: timestamp:1555779966\tfile:test\n\
+             QtKMXWyYcwdpZAlPF7tE2ENJkRd1ujvKjlj1m9RtHTBnZPa5WKU5uWRs5GoP5M/VqE81QFuMKI5k/SfNQUaOAA==",
+        );
+
+        assert!(verify_signature(b"test", &signature, &public_key).is_ok());
+        assert!(verify_signature(b"Test", &signature, &public_key).is_err());
+        assert!(verify_signature(b"test", &signature, &BASE64.encode("wrong")).is_err());
     }
 
     #[test]

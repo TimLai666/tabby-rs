@@ -5310,6 +5310,7 @@ dependencies = [
  "hex",
  "keyring",
  "libc",
+ "minisign-verify",
  "pbkdf2",
  "portable-pty",
  "rand 0.8.7",
