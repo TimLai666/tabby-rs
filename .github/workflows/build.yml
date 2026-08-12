@@ -136,6 +136,9 @@ jobs:
       - name: Test Electron updater policy
         run: yarn test:electron-updater
 
+      - name: Test Tauri updater confirmation
+        run: yarn test:tauri-updater-confirmation
+
       - name: Build Tauri renderer
         run: yarn build:tauri:frontend
 

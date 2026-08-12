@@ -1,5 +1,5 @@
 import { Injectable } from '@angular/core'
-import { UpdateChannel, UpdateInfo, UpdaterService } from 'tabby-core'
+import { PlatformService, TranslateService, UpdateChannel, UpdateInfo, UpdaterService } from 'tabby-core'
 
 import { HostBridge, UpdateStateDto } from '../api/hostBridge'
 
@@ -7,7 +7,11 @@ import { HostBridge, UpdateStateDto } from '../api/hostBridge'
 export class TauriUpdaterService extends UpdaterService {
     private updateState: UpdateStateDto = { status: 'idle' }
 
-    constructor (private bridge: HostBridge) {
+    constructor (
+        private bridge: HostBridge,
+        private platform: PlatformService,
+        private translate: TranslateService,
+    ) {
         super()
         void this.bridge.listen('update.state', state => {
             this.updateState = state
@@ -24,6 +28,19 @@ export class TauriUpdaterService extends UpdaterService {
     }
 
     async install (info: UpdateInfo): Promise<void> {
+        const confirmation = await this.platform.showMessageBox({
+            type: 'warning',
+            message: this.translate.instant('Installing the update will close all tabs and restart Tabby RS.'),
+            buttons: [
+                this.translate.instant('Update'),
+                this.translate.instant('Cancel'),
+            ],
+            defaultId: 0,
+            cancelId: 1,
+        })
+        if (confirmation.response !== 0) {
+            return
+        }
         await this.bridge.invoke('update.install', { version: info.version })
     }
 
