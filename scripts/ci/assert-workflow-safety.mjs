@@ -4,6 +4,8 @@ import { readFile } from 'node:fs/promises'
 
 const workflowPath = new URL('../../.github/workflows/build.yml', import.meta.url)
 const workflow = await readFile(workflowPath, 'utf8')
+const releaseWorkflowPath = new URL('../../.github/workflows/release.yml', import.meta.url)
+const releaseWorkflow = await readFile(releaseWorkflowPath, 'utf8')
 
 const forbiddenPatterns = [
     [/\bsecrets\s*\./i, 'repository secrets'],
@@ -25,6 +27,17 @@ if (!/^\s*pull_request\s*:/m.test(workflow)) {
 
 if (!/^\s*permissions\s*:\s*$/m.test(workflow) || !/^\s*contents\s*:\s*read\s*$/m.test(workflow)) {
     violations.push('workflow permissions are not read-only')
+}
+
+const releaseTriggers = releaseWorkflow.match(/^on:\n([\s\S]*?)^permissions:/m)?.[1] ?? ''
+if (!releaseTriggers || /(^|\n)\s*pull_request\s*:/m.test(releaseTriggers)) {
+    violations.push('release workflow accepts pull_request events')
+}
+if (!/(^|\n)\s*push:\n[\s\S]*?^\s*tags:\s*$/m.test(releaseTriggers) || /(^|\n)\s*branches\s*:/m.test(releaseTriggers)) {
+    violations.push('release workflow push trigger is not tag-only')
+}
+if (!/(^|\n)\s*schedule:\s*$/m.test(releaseTriggers) || !/(^|\n)\s*workflow_dispatch:\s*$/m.test(releaseTriggers)) {
+    violations.push('release workflow is missing schedule or manual trigger')
 }
 
 if (violations.length > 0) {
