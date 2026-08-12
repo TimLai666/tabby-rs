@@ -73,6 +73,9 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Restore Tauri icons
+        run: node scripts/restore-tauri-icons.mjs
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
