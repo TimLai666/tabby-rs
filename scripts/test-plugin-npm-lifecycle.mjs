@@ -24,6 +24,13 @@ function commandPath (command) {
     return candidate
 }
 
+function runNpm (npmPath, args, options = {}) {
+    return execFileSync(npmPath, args, {
+        ...options,
+        shell: process.platform === 'win32',
+    })
+}
+
 for (const version of versions) {
     const directory = path.join(fixture, `package-${version}`)
     fs.mkdirSync(directory, { recursive: true })
@@ -34,8 +41,8 @@ for (const version of versions) {
         description: 'Tabby RS system npm lifecycle fixture',
     }, null, 2)}\n`)
     fs.writeFileSync(path.join(directory, 'index.js'), `module.exports = { version: '${version}' }\n`)
-    execFileSync(process.execPath, [
-        commandPath('npm'), 'pack', '--ignore-scripts', '--pack-destination', packageDirectory,
+    runNpm(commandPath('npm'), [
+        'pack', '--ignore-scripts', '--pack-destination', packageDirectory,
     ], { cwd: directory, stdio: 'pipe' })
     const tarball = path.join(packageDirectory, `${packageName}-${version}.tgz`)
     assert.ok(fs.existsSync(tarball), `npm pack did not create ${tarball}`)
