@@ -1,0 +1,25 @@
+platforms:
+  - id: windows-x64
+    runner: windows-2022
+    target: x86_64-pc-windows-msvc
+    requiredChecks: [local-shell, powershell, cmd, wsl, git-bash, clink, uac, ssh, serial, nsis, side-by-side]
+    status: pending
+    evidence: []
+  - id: macos-x64
+    runner: macos-13
+    target: x86_64-apple-darwin
+    requiredChecks: [local-shell, keychain, ssh, serial, dmg, side-by-side]
+    status: pending
+    evidence: []
+  - id: macos-arm64
+    runner: macos-14
+    target: aarch64-apple-darwin
+    requiredChecks: [local-shell, keychain, ssh, serial, dmg, side-by-side]
+    status: pending
+    evidence: []
+  - id: linux-x64
+    runner: ubuntu-22.04
+    target: x86_64-unknown-linux-gnu
+    requiredChecks: [local-shell, x11-or-wayland, webkitgtk, secret-service, ssh, serial, appimage, deb, rpm, side-by-side]
+    status: pending
+    evidence: []

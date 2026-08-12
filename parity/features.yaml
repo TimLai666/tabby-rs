@@ -1,0 +1,63 @@
+baseline:
+  repository: Eugeny/tabby
+  commit: 14e2d60b9b6dee84a53c37f05eefeb803787de04
+  version: 1.0.231-nightly.0
+
+# Every item must be changed to passed, or accepted-difference with evidence,
+# before the release gate can approve a public build.
+features:
+  - id: desktop.window-and-session
+    title: Tauri desktop window, tabs, splits, and session restore
+    issues: [1]
+    status: pending
+    evidence: []
+  - id: local-shell.profiles-and-pty
+    title: Local shell profiles, PTY I/O, resize, signals, and process lifecycle
+    issues: [1, 7]
+    status: pending
+    evidence: []
+  - id: terminal.renderer-and-output
+    title: Unicode terminal rendering, input, output flow, transfer, and recovery
+    issues: [1]
+    status: pending
+    evidence: []
+  - id: ssh.profiles-auth-host-key-session
+    title: SSH profiles, authentication, host keys, forwarding, SFTP, and recovery
+    issues: [15]
+    status: pending
+    evidence: []
+  - id: serial-and-telnet
+    title: Serial and Telnet profiles, codecs, reconnect, and terminal integration
+    issues: [1]
+    status: pending
+    evidence: []
+  - id: config-migration-and-vault-v1
+    title: One-way config migration, secrets, Vault v1, and rollback safety
+    issues: [1, 2, 4]
+    status: pending
+    evidence: []
+  - id: plugin-management-and-runtime
+    title: npm plugin management, runtime compatibility, and safe mode
+    issues: [21, 22]
+    status: pending
+    evidence: []
+  - id: diagnostics-and-privacy
+    title: Local logs, diagnostic bundles, redaction, and no telemetry
+    issues: [24]
+    status: pending
+    evidence: []
+  - id: updater-stable-nightly
+    title: Signed Stable/Nightly update checks, install confirmation, backup, and recovery
+    issues: [23]
+    status: pending
+    evidence: []
+  - id: web-provider-boundary
+    title: tabby-web build and runtime capability boundary
+    issues: [26]
+    status: pending
+    evidence: []
+  - id: release-bundles-and-side-by-side
+    title: Platform bundles, identity separation, license notices, and release metadata
+    issues: [25]
+    status: pending
+    evidence: []
