@@ -154,6 +154,9 @@ jobs:
           TABBY_RS_UPDATE_ARTIFACT_URL: ${{ vars.TABBY_RS_UPDATE_ARTIFACT_URL }}
           TABBY_RS_UPDATE_PLATFORM: ${{ matrix.platform }}
           TABBY_RS_UPDATE_ARCH: ${{ matrix.arch }}
+          TABBY_RS_RELEASE_TARGET: ${{ matrix.target }}
+          TABBY_RS_RELEASE_PLATFORM: ${{ matrix.platform }}
+          TABBY_RS_RELEASE_ARCH: ${{ matrix.arch }}
           TABBY_RS_BUNDLE_ROOT: src-tauri/target/${{ matrix.target }}/release/bundle
           TABBY_RS_RELEASE_STAGING: release-staging
         run: |
@@ -175,7 +178,7 @@ jobs:
         run: node scripts/check-tauri-bundle.mjs release-staging --release --output release-staging/bundle-audit.json
 
       - name: Enforce release gate
-        run: node scripts/check-release-gate.mjs --bundle-audit release-staging/bundle-audit.json --license-report release-staging/license-report.json --output release-staging/release-gate.json
+        run: node scripts/check-release-gate.mjs --bundle-audit release-staging/bundle-audit.json --license-report release-staging/license-report.json --benchmarks-dir release-staging/benchmarks --source-revision "${{ github.sha }}" --platform "${{ matrix.platform }}" --arch "${{ matrix.arch }}" --target "${{ matrix.target }}" --output release-staging/release-gate.json
 
       - name: Upload bundle
         uses: actions/upload-artifact@v4

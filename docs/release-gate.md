@@ -6,10 +6,10 @@ The gate also requires a passed bundle audit and a generated license report. Run
 
 ```text
 node scripts/create-license-report.mjs
-node scripts/check-release-gate.mjs --benchmarks-dir path/to/benchmarks --bundle-audit path/to/bundle-audit.json --license-report license-report.json
+node scripts/check-release-gate.mjs --benchmarks-dir path/to/benchmarks --bundle-audit path/to/bundle-audit.json --license-report license-report.json --source-revision "$GITHUB_SHA" --platform linux --arch x86_64 --target x86_64-unknown-linux-gnu
 ```
 
-The command always writes a machine-readable report. It exits non-zero when any feature, platform, bundle, or license evidence is missing or failed. It does not invent benchmark numbers or convert an unrun manual check into a pass.
+The command always writes a machine-readable report. It exits non-zero when any feature, platform, bundle, license, benchmark, or provenance evidence is missing or failed. It checks that benchmark reports, bundle metadata, and the license report refer to the same source revision and matrix target, and that all benchmark reports refer to the same fixture and artifact hash. It does not invent benchmark numbers or convert an unrun manual check into a pass.
 
 Generate the four benchmark reports with the real Tauri executable and an external frame trace:
 

@@ -15,6 +15,10 @@ const bundleAuditPath = path.resolve(argument('--bundle-audit') || path.join(roo
 const licenseReportPath = path.resolve(argument('--license-report') || path.join(root, 'license-report.json'))
 const benchmarksDirectory = path.resolve(argument('--benchmarks-dir') || path.join(root, 'benchmarks'))
 const outputPath = path.resolve(argument('--output') || path.join(root, 'release-gate.json'))
+const expectedRevision = argument('--source-revision') || process.env.GITHUB_SHA || null
+const expectedPlatform = argument('--platform') || null
+const expectedArch = argument('--arch') || null
+const expectedTarget = argument('--target') || null
 const failures = []
 const benchmarkFiles = Object.entries(BENCHMARK_METRICS).map(([name, metric]) => ({
     name,
@@ -84,9 +88,14 @@ for (const benchmark of benchmarkFiles) {
     }
     try {
         const report = JSON.parse(fs.readFileSync(benchmark.path, 'utf8'))
-        for (const error of validateBenchmarkReport(report, benchmark.metric)) {
+        const errors = validateBenchmarkReport(report, benchmark.metric)
+        if (expectedRevision && report.commit !== expectedRevision) errors.push(`commit must match ${expectedRevision}`)
+        if (expectedPlatform && report.platform !== expectedPlatform) errors.push(`platform must match ${expectedPlatform}`)
+        if (expectedArch && report.arch !== expectedArch) errors.push(`arch must match ${expectedArch}`)
+        for (const error of errors) {
             failures.push(`${benchmark.name}: ${error}`)
         }
+        benchmark.report = report
     } catch (error) {
         failures.push(`invalid benchmark report ${benchmark.path}: ${error.message}`)
     }
@@ -97,11 +106,48 @@ if (bundleAudit) {
     if (bundleAudit.passed !== true) {
         failures.push('bundle audit did not pass')
     }
+    if (expectedRevision && bundleAudit.sourceRevision !== expectedRevision) failures.push(`bundle audit sourceRevision must match ${expectedRevision}`)
+    if (expectedPlatform && bundleAudit.platform !== expectedPlatform) failures.push(`bundle audit platform must match ${expectedPlatform}`)
+    if (expectedArch && bundleAudit.arch !== expectedArch) failures.push(`bundle audit arch must match ${expectedArch}`)
+    if (expectedTarget && bundleAudit.target !== expectedTarget) failures.push(`bundle audit target must match ${expectedTarget}`)
 }
 
 const licenseReport = readJson(licenseReportPath, 'license report')
 if (licenseReport && licenseReport.passed !== true) {
     failures.push('license report did not pass')
+}
+if (licenseReport && expectedRevision && licenseReport.sourceRevision !== expectedRevision) {
+    failures.push(`license report sourceRevision must match ${expectedRevision}`)
+}
+
+if (bundleAudit) {
+    const metadataPath = path.join(path.dirname(bundleAuditPath), 'tabby-rs-metadata.json')
+    const metadata = readJson(metadataPath, 'release metadata')
+    if (metadata) {
+        if (!metadata.dependencyLocks || typeof metadata.dependencyLocks !== 'object') {
+            failures.push('release metadata has no dependency lock hashes')
+        } else {
+            for (const lockFile of ['yarn.lock', 'src-tauri/Cargo.lock']) {
+                if (!/^[0-9a-f]{64}$/i.test(metadata.dependencyLocks[lockFile] || '')) {
+                    failures.push(`release metadata dependency lock hash is invalid: ${lockFile}`)
+                }
+            }
+        }
+        if (!metadata.toolchain || typeof metadata.toolchain !== 'object') failures.push('release metadata has no toolchain versions')
+    }
+}
+
+const validBenchmarkReports = benchmarkFiles.map(benchmark => benchmark.report).filter(Boolean)
+if (validBenchmarkReports.length > 1) {
+    const fixtureSha256 = validBenchmarkReports[0].fixtureSha256
+    const artifactSha256 = validBenchmarkReports[0].artifactSha256
+    for (const report of validBenchmarkReports.slice(1)) {
+        if (report.fixtureSha256 !== fixtureSha256) failures.push('benchmark reports must use one config fixture')
+        if (report.artifactSha256 !== artifactSha256) failures.push('benchmark reports must use one bundle artifact')
+    }
+    if (bundleAudit?.artifactSha256 && artifactSha256 !== bundleAudit.artifactSha256) {
+        failures.push('benchmark reports must match bundle audit artifactSha256')
+    }
 }
 
 const report = {

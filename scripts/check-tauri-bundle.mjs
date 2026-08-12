@@ -99,11 +99,27 @@ export function auditBundle (bundlePath, { release = false } = {}) {
         }
     }
 
+    const sortedManifest = manifest.sort((left, right) => left.path.localeCompare(right.path))
+    const metadataFile = sortedManifest.find(file => path.basename(file.path).toLowerCase() === 'tabby-rs-metadata.json')
+    let metadata = null
+    if (metadataFile) {
+        try {
+            metadata = JSON.parse(fs.readFileSync(path.join(resolvedPath, metadataFile.path), 'utf8'))
+        } catch (error) {
+            findings.push({ rule: 'invalid-release-metadata', path: metadataFile.path, message: error.message })
+        }
+    }
     return {
         schemaVersion: 1,
         bundlePath: resolvedPath,
         release,
-        files: manifest.sort((left, right) => left.path.localeCompare(right.path)),
+        files: sortedManifest,
+        artifactSha256: crypto.createHash('sha256').update(JSON.stringify(sortedManifest)).digest('hex'),
+        sourceRevision: metadata?.revision || null,
+        target: metadata?.target || null,
+        platform: metadata?.platform || null,
+        arch: metadata?.arch || null,
+        dependencyLocks: metadata?.dependencyLocks || null,
         findings,
         missing,
         passed: findings.length === 0 && missing.length === 0,
