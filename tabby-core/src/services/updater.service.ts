@@ -17,6 +17,14 @@ export abstract class UpdaterService {
     abstract setChannel (channel: UpdateChannel): Promise<void>
     abstract getChannel (): Promise<UpdateChannel>
 
+    canCancel (): boolean {
+        return false
+    }
+
+    async cancel (): Promise<void> {
+        // Hosts without an explicit cancellation path leave the update flow unchanged.
+    }
+
     async update (info: UpdateInfo): Promise<void> {
         await this.download(info)
         await this.install(info)

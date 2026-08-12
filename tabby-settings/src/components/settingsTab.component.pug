@@ -26,11 +26,18 @@
                                     span(translate) Check for updates
 
                                 button.btn.btn-info.mt-3.mb-2(
-                                    *ngIf='updateAvailable',
+                                    *ngIf='updateAvailable && !updating',
                                     (click)='installUpdate()',
                                 )
                                     i.fas.fa-sync
                                     span(translate) Update
+
+                                button.btn.btn-warning.mt-3.mb-2(
+                                    *ngIf='updating && updater.canCancel()',
+                                    (click)='cancelUpdate()',
+                                )
+                                    i.fas.fa-ban
+                                    span.ms-2(translate) Cancel
 
                         .col-12.col-md-6
                             .list-group.list-group-light.mb-5

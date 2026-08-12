@@ -1,12 +1,17 @@
 import { Injectable } from '@angular/core'
 import { UpdateChannel, UpdateInfo, UpdaterService } from 'tabby-core'
 
-import { HostBridge } from '../api/hostBridge'
+import { HostBridge, UpdateStateDto } from '../api/hostBridge'
 
 @Injectable()
 export class TauriUpdaterService extends UpdaterService {
+    private updateState: UpdateStateDto = { status: 'idle' }
+
     constructor (private bridge: HostBridge) {
         super()
+        void this.bridge.listen('update.state', state => {
+            this.updateState = state
+        })
     }
 
     async check (): Promise<UpdateInfo|null> {
@@ -27,6 +32,16 @@ export class TauriUpdaterService extends UpdaterService {
     }
 
     async getChannel (): Promise<UpdateChannel> {
-        return await this.bridge.invoke('update.getChannel', {})
+        return this.bridge.invoke('update.getChannel', {})
+    }
+
+    override canCancel (): boolean {
+        return this.updateState.status === 'checking' || this.updateState.status === 'downloading'
+    }
+
+    override async cancel (): Promise<void> {
+        if (this.canCancel()) {
+            await this.bridge.invoke('update.cancel', {})
+        }
     }
 }

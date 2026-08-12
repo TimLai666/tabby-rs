@@ -40,6 +40,7 @@ export class SettingsTabComponent extends BaseTabComponent {
     configFileError: string|null = null
     isShellIntegrationInstalled = false
     checkingForUpdate = false
+    updating = false
     updateAvailable: UpdateInfo|null = null
     updateChannel: UpdateChannel = 'stable'
     showConfigDefaults = false
@@ -152,8 +153,19 @@ export class SettingsTabComponent extends BaseTabComponent {
     }
 
     async installUpdate () {
-        if (this.updateAvailable) {
-            await this.updater.update(this.updateAvailable)
+        if (this.updateAvailable && !this.updating) {
+            this.updating = true
+            try {
+                await this.updater.update(this.updateAvailable)
+            } finally {
+                this.updating = false
+            }
+        }
+    }
+
+    async cancelUpdate () {
+        if (this.updating && this.updater.canCancel()) {
+            await this.updater.cancel()
         }
     }
 
