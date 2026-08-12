@@ -206,7 +206,7 @@ async function main (): Promise<void> {
         ], bootstrapOptions)
     }
 
-    if (pluginResult.failures.length === 0 && (!fallbackUsed || bootstrapData.safeMode)) {
+    if (!fallbackUsed) {
         await bridge.invoke('plugins.bootstrapSucceeded', {})
     }
 
