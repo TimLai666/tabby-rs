@@ -95,10 +95,7 @@ use security::{CredentialState, SecretState};
 use serial::SerialManager;
 use ssh::SshManager;
 use state::AppState;
-use storage::{
-    paths::StoragePaths,
-    state_file::{load_state, save_state},
-};
+use storage::{paths::StoragePaths, state_file::save_state};
 use tauri::{Emitter, Manager};
 use telnet::TelnetManager;
 
@@ -226,9 +223,8 @@ pub fn run() {
             let _ = crate::diagnostics::crash::mark_startup(&logs_dir);
             crate::diagnostics::crash::install_panic_hook(logs_dir);
             let state_file_existed = std::fs::symlink_metadata(storage_paths.state_file()).is_ok();
-            let persisted_state = crate::update::rollback::recover_pending_update(
+            let persisted_state = crate::update::rollback::recover_pending_update_from_disk(
                 &storage_paths,
-                load_state(storage_paths.state_file())?,
                 &app.package_info().version.to_string(),
             )?;
             if !state_file_existed {

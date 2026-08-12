@@ -11,9 +11,12 @@ use crate::{
         paths::StoragePaths,
         state_file::{PendingUpdateState, UpdateChannel},
     },
-    update::service::{
-        build_updater, configured_endpoint, configured_public_key, download_exceeds_limit,
-        is_cancelled, update_info_from_remote, DownloadHandle, UpdateInfo, UpdateStage,
+    update::{
+        rollback::{clear_pending_update_journal, write_pending_update_journal},
+        service::{
+            build_updater, configured_endpoint, configured_public_key, download_exceeds_limit,
+            is_cancelled, update_info_from_remote, DownloadHandle, UpdateInfo, UpdateStage,
+        },
     },
 };
 
@@ -211,25 +214,33 @@ pub async fn update_install(
         }
     };
     let target_version = ready.info.version.clone();
+    let pending = PendingUpdateState {
+        target_version: target_version.clone(),
+        backup_id: backup.backup_id.clone(),
+        channel: current_state.update_channel.clone(),
+    };
+    if write_pending_update_journal(&paths, &pending).is_err() {
+        state.update_manager().restore_ready(ready);
+        emit_state(&app, &state);
+        return Err(AppError::Io("update journal could not be persisted".into()));
+    }
     if state
         .update_persisted_state(|persisted| {
             if current_state.update_channel == UpdateChannel::Stable {
                 persisted.last_stable_backup = Some(backup.backup_id.clone());
             }
-            persisted.pending_update = Some(PendingUpdateState {
-                target_version: target_version.clone(),
-                backup_id: backup.backup_id.clone(),
-                channel: current_state.update_channel.clone(),
-            });
+            persisted.pending_update = Some(pending.clone());
         })
         .is_err()
     {
+        let _ = clear_pending_update_journal(&paths);
         state.update_manager().restore_ready(ready);
         emit_state(&app, &state);
         return Err(AppError::Io("update state could not be persisted".into()));
     }
     if ready.update.install(&ready.bytes).is_err() {
         let _ = state.update_persisted_state(|persisted| persisted.pending_update = None);
+        let _ = clear_pending_update_journal(&paths);
         state.update_manager().restore_ready(ready);
         emit_state(&app, &state);
         return Err(public_update_error(UpdateStage::Installing));

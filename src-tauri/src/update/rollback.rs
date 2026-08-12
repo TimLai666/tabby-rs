@@ -3,12 +3,101 @@ use std::collections::BTreeMap;
 use crate::{
     error::AppError,
     storage::{
-        atomic_file::read_optional_regular_file,
+        atomic_file::{atomic_write, read_optional_regular_file},
         backup::restore_backup,
         paths::StoragePaths,
-        state_file::{save_state, TabbyRsState},
+        state_file::{load_state, save_state, PendingUpdateState, TabbyRsState},
     },
 };
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingUpdateJournal {
+    pub target_version: String,
+    pub backup_id: String,
+    pub channel: crate::storage::state_file::UpdateChannel,
+}
+
+pub fn write_pending_update_journal(
+    paths: &StoragePaths,
+    pending: &PendingUpdateState,
+) -> Result<(), AppError> {
+    let journal = PendingUpdateJournal {
+        target_version: pending.target_version.clone(),
+        backup_id: pending.backup_id.clone(),
+        channel: pending.channel.clone(),
+    };
+    let mut bytes = serde_json::to_vec_pretty(&journal)?;
+    bytes.push(b'\n');
+    atomic_write(paths.pending_update_file(), &bytes)
+}
+
+pub fn clear_pending_update_journal(paths: &StoragePaths) -> Result<(), AppError> {
+    match std::fs::symlink_metadata(paths.pending_update_file()) {
+        Ok(metadata) if metadata.file_type().is_symlink() => Err(AppError::PermissionDenied(
+            "refusing to remove a symbolic link from managed storage".into(),
+        )),
+        Ok(metadata) if !metadata.is_file() => Err(AppError::InvalidData(
+            "pending update journal is not a regular file".into(),
+        )),
+        Ok(_) => {
+            std::fs::remove_file(paths.pending_update_file())?;
+            Ok(())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+pub fn recover_pending_update_from_disk(
+    paths: &StoragePaths,
+    current_version: &str,
+) -> Result<TabbyRsState, AppError> {
+    let journal = read_optional_regular_file(paths.pending_update_file())?
+        .map(|bytes| serde_json::from_slice::<PendingUpdateJournal>(&bytes))
+        .transpose()?;
+    let state_result = load_state(paths.state_file());
+
+    let Some(journal) = journal else {
+        return recover_pending_update(paths, state_result?, current_version);
+    };
+
+    let state_is_corrupt = state_result.is_err();
+    let state = match state_result {
+        Ok(state) => state,
+        Err(_error) if journal.target_version == current_version => TabbyRsState::default(),
+        Err(error) => return Err(error),
+    };
+    let recovered = recover_journal(paths, state, &journal, current_version, state_is_corrupt)?;
+    clear_pending_update_journal(paths)?;
+    Ok(recovered)
+}
+
+fn recover_journal(
+    paths: &StoragePaths,
+    mut state: TabbyRsState,
+    journal: &PendingUpdateJournal,
+    current_version: &str,
+    state_is_corrupt: bool,
+) -> Result<TabbyRsState, AppError> {
+    if journal.target_version == current_version
+        && (state_is_corrupt || !config_is_readable(paths)?)
+    {
+        restore_backup(paths, &journal.backup_id)?;
+        state = load_state(paths.state_file())?;
+        state.extra.insert(
+            "lastUpdateRecovery".into(),
+            serde_json::json!({
+                "reason": if state_is_corrupt { "state-incompatible" } else { "config-incompatible" },
+                "backupId": journal.backup_id,
+                "targetVersion": journal.target_version,
+            }),
+        );
+    }
+    state.pending_update = None;
+    save_state(paths.state_file(), &state)?;
+    Ok(state)
+}
 
 pub fn recover_pending_update(
     paths: &StoragePaths,
@@ -32,7 +121,7 @@ pub fn recover_pending_update(
             pending.backup_id.clone()
         };
         restore_backup(paths, &backup_id)?;
-        state = crate::storage::state_file::load_state(paths.state_file())?;
+        state = load_state(paths.state_file())?;
         state.extra.insert(
             "lastUpdateRecovery".into(),
             serde_json::json!({
@@ -70,7 +159,9 @@ mod tests {
 
     use tempfile::tempdir;
 
-    use super::recover_pending_update;
+    use super::{
+        recover_pending_update, recover_pending_update_from_disk, write_pending_update_journal,
+    };
     use crate::storage::{
         atomic_file::atomic_write,
         backup::{create_backup, BackupRequest},
@@ -211,5 +302,98 @@ mod tests {
             recovered.extra["lastUpdateRecovery"]["backupId"],
             stable_backup.backup_id
         );
+    }
+
+    #[test]
+    fn journal_recovers_when_state_file_is_corrupt() {
+        let temp = tempdir().unwrap();
+        let paths = StoragePaths::from_data_dir(temp.path().join("data"));
+        paths.ensure_layout().unwrap();
+        atomic_write(paths.config_file(), b"version: 1\n").unwrap();
+        let backup = create_backup(
+            &paths,
+            &BackupRequest {
+                reason: "before-update".into(),
+                source_version: Some("1.0.231-tabbyrs.1".into()),
+                channel: Some(UpdateChannel::Stable),
+            },
+            "1.0.231-tabbyrs.1",
+        )
+        .unwrap();
+        atomic_write(paths.config_file(), b"invalid: [\n").unwrap();
+        atomic_write(paths.state_file(), b"{broken").unwrap();
+        write_pending_update_journal(
+            &paths,
+            &PendingUpdateState {
+                target_version: "1.0.231-tabbyrs.2".into(),
+                backup_id: backup.backup_id.clone(),
+                channel: UpdateChannel::Stable,
+            },
+        )
+        .unwrap();
+
+        let recovered = recover_pending_update_from_disk(&paths, "1.0.231-tabbyrs.2").unwrap();
+        assert!(recovered.pending_update.is_none());
+        assert_eq!(std::fs::read(paths.config_file()).unwrap(), b"version: 1\n");
+        assert!(!paths.pending_update_file().exists());
+        assert_eq!(
+            recovered.extra["lastUpdateRecovery"]["reason"],
+            "state-incompatible"
+        );
+    }
+
+    #[test]
+    fn journal_recovers_when_state_schema_is_newer() {
+        let temp = tempdir().unwrap();
+        let paths = StoragePaths::from_data_dir(temp.path().join("data"));
+        paths.ensure_layout().unwrap();
+        atomic_write(paths.config_file(), b"version: 1\n").unwrap();
+        let backup = create_backup(
+            &paths,
+            &BackupRequest {
+                reason: "before-update".into(),
+                source_version: Some("1.0.231-tabbyrs.1".into()),
+                channel: Some(UpdateChannel::Stable),
+            },
+            "1.0.231-tabbyrs.1",
+        )
+        .unwrap();
+        atomic_write(paths.config_file(), b"invalid: [\n").unwrap();
+        atomic_write(paths.state_file(), br#"{"schemaVersion":99}"#).unwrap();
+        write_pending_update_journal(
+            &paths,
+            &PendingUpdateState {
+                target_version: "1.0.231-tabbyrs.2".into(),
+                backup_id: backup.backup_id,
+                channel: UpdateChannel::Stable,
+            },
+        )
+        .unwrap();
+
+        let recovered = recover_pending_update_from_disk(&paths, "1.0.231-tabbyrs.2").unwrap();
+        assert!(recovered.pending_update.is_none());
+        assert!(!paths.pending_update_file().exists());
+    }
+
+    #[test]
+    fn journal_is_cleared_after_successful_restart() {
+        let temp = tempdir().unwrap();
+        let paths = StoragePaths::from_data_dir(temp.path().join("data"));
+        paths.ensure_layout().unwrap();
+        atomic_write(paths.config_file(), b"version: 2\n").unwrap();
+        save_state(paths.state_file(), &TabbyRsState::default()).unwrap();
+        write_pending_update_journal(
+            &paths,
+            &PendingUpdateState {
+                target_version: "1.0.231-tabbyrs.2".into(),
+                backup_id: "unused".into(),
+                channel: UpdateChannel::Stable,
+            },
+        )
+        .unwrap();
+
+        let recovered = recover_pending_update_from_disk(&paths, "1.0.231-tabbyrs.2").unwrap();
+        assert!(recovered.pending_update.is_none());
+        assert!(!paths.pending_update_file().exists());
     }
 }
