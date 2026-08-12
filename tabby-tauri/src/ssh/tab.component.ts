@@ -40,6 +40,7 @@ export class TauriSshTabComponent extends ConnectableTerminalTabComponent<SSHPro
         )
         this.setSession(session)
         this.attachSessionHandler(session.authPrompt$, prompt => void this.showAuthPrompt(prompt))
+        this.attachSessionHandler(session.serviceMessage$, message => this.write(`\r\n${message}\r\n`))
         try {
             await session.start()
             session.resize(this.size.columns, this.size.rows)
