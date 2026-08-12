@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/explicit-module-boundary-types */
 import { marker as _ } from '@biesbjerg/ngx-translate-extract-marker'
-import { BehaviorSubject, Observable, debounceTime, distinctUntilChanged, first, tap, switchMap, map } from 'rxjs'
+import { BehaviorSubject, Observable, debounceTime, distinctUntilChanged, first, tap, switchMap, map, catchError, of } from 'rxjs'
 import semverGt from 'semver/functions/gt'
 
 import { Component, HostBinding, Input } from '@angular/core'
@@ -37,6 +37,7 @@ export class PluginsSettingsTabComponent {
     nodeStatus: NodeToolchainStatus | null = null
     customNodePath = ''
     nodeStatusLoading = false
+    availablePluginsError: string | null = null
     cancellingPlugins = new Set<string>()
 
     constructor (
@@ -57,8 +58,13 @@ export class PluginsSettingsTabComponent {
                 distinctUntilChanged(),
                 switchMap(query => {
                     this.availablePluginsReady = false
+                    this.availablePluginsError = null
                     return this.pluginManager.listAvailable(query).pipe(tap(() => {
                         this.availablePluginsReady = true
+                    }), catchError(error => {
+                        this.availablePluginsReady = true
+                        this.availablePluginsError = error instanceof Error ? error.message : String(error)
+                        return of([])
                     }))
                 }),
             )

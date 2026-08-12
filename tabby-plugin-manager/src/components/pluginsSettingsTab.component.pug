@@ -53,6 +53,10 @@ ul.nav-tabs.mb-2(ngbNav, #nav='ngbNav')
                     [placeholder]='"Search plugins"|translate'
                 )
 
+            .alert.alert-danger(*ngIf='availablePluginsError')
+                strong(translate) Could not search plugins:
+                div {{availablePluginsError}}
+
             ngb-accordion.mb-4(*ngIf='availablePlugins$', [closeOthers]='true')
                 ng-container(*ngFor='let plugin of (availablePlugins$|async)')
                     ngb-panel(*ngIf='!isAlreadyInstalled(plugin)')

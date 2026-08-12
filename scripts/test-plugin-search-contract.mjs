@@ -8,6 +8,14 @@ import ts from 'typescript'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const sourcePath = path.join(root, 'tabby-plugin-manager/src/services/pluginManager.service.ts')
 const source = fs.readFileSync(sourcePath, 'utf8')
+const componentSource = fs.readFileSync(
+    path.join(root, 'tabby-plugin-manager/src/components/pluginsSettingsTab.component.ts'),
+    'utf8',
+)
+const templateSource = fs.readFileSync(
+    path.join(root, 'tabby-plugin-manager/src/components/pluginsSettingsTab.component.pug'),
+    'utf8',
+)
 const compiled = ts.transpileModule(source, {
     compilerOptions: {
         module: ts.ModuleKind.CommonJS,
@@ -59,5 +67,8 @@ assert.equal(
     null,
 )
 assert.ok(service.toPluginInfo({ package: { ...basePackage, keywords: ['TABBY-PLUGIN'] } }, 'tabby-', 'tabby-plugin'))
+
+assert.match(componentSource, /catchError\(error => \{[\s\S]*availablePluginsReady = true[\s\S]*availablePluginsError/)
+assert.match(templateSource, /availablePluginsError/)
 
 console.log('Plugin search keyword contract fixtures passed')
