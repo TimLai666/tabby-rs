@@ -26,6 +26,7 @@
 * [Latest Tabby RS release](https://github.com/TimLai666/tabby-rs/releases/latest)
 * [Release workflow and staged builds](https://github.com/TimLai666/tabby-rs/actions/workflows/release.yml)
 * Linux package formats and release prerequisites are documented in [docs/install.md](docs/install.md)
+* Migration details are documented in [docs/migration.md](docs/migration.md), and plugin limits in [docs/plugin-compatibility.md](docs/plugin-compatibility.md)
 
 <br/>
 <p align="center">

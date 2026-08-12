@@ -1,6 +1,19 @@
 import { readFile } from 'node:fs/promises';
 
 const readme = await readFile(new URL('../README.md', import.meta.url), 'utf8');
+const requiredDocuments = [
+  'CONTRIBUTING.md',
+  'SECURITY.md',
+  'docs/install.md',
+  'docs/migration.md',
+  'docs/plugin-compatibility.md',
+  'docs/release.md',
+  'docs/unsupported-signing.md',
+];
+
+for (const document of requiredDocuments) {
+  await readFile(new URL(`../${document}`, import.meta.url));
+}
 
 const requiredReadmeText = [
   'unofficial fork',
