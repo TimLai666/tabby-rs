@@ -46,7 +46,8 @@ use commands::{
         plugins_bootstrap_failed, plugins_bootstrap_plugin_completed,
         plugins_bootstrap_plugin_started, plugins_bootstrap_retry, plugins_bootstrap_succeeded,
         plugins_cancel_operation, plugins_discover, plugins_install, plugins_list_installed,
-        plugins_node_status, plugins_read_entry, plugins_remove, plugins_uninstall, plugins_update,
+        plugins_node_status, plugins_prepare_operation, plugins_read_entry, plugins_remove,
+        plugins_uninstall, plugins_update,
     },
     pty::{
         pty_ack, pty_attach, pty_detach, pty_exists, pty_get_children, pty_get_cwd, pty_get_pid,
@@ -308,6 +309,7 @@ pub fn run() {
             plugins_install,
             plugins_list_installed,
             plugins_node_status,
+            plugins_prepare_operation,
             plugins_read_entry,
             plugins_remove,
             plugins_uninstall,

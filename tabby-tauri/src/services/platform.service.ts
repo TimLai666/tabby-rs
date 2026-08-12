@@ -210,7 +210,7 @@ export class TauriPlatformService extends PlatformService {
     }
 
     async installPlugin (name: string, version: string): Promise<void> {
-        const operationId = this.beginPluginOperation(name)
+        const operationId = await this.beginPluginOperation(name)
         let watcher: { result: Promise<PluginOperation>; dispose: () => void }|null = null
         try {
             watcher = await this.watchPluginOperation(operationId)
@@ -230,7 +230,7 @@ export class TauriPlatformService extends PlatformService {
     }
 
     async uninstallPlugin (name: string): Promise<void> {
-        const operationId = this.beginPluginOperation(name)
+        const operationId = await this.beginPluginOperation(name)
         let watcher: { result: Promise<PluginOperation>; dispose: () => void }|null = null
         try {
             watcher = await this.watchPluginOperation(operationId)
@@ -260,13 +260,21 @@ export class TauriPlatformService extends PlatformService {
         return this.activePluginOperations.get(name) ?? null
     }
 
-    private beginPluginOperation (name: string): string {
+    private async beginPluginOperation (name: string): Promise<string> {
         if (this.activePluginOperations.has(name)) {
             throw new Error(`Plugin operation for ${name} is already running`)
         }
         const operationId = crypto.randomUUID()
         this.activePluginOperations.set(name, operationId)
-        return operationId
+        try {
+            await this.bridge.invoke('plugins.prepareOperation', { id: operationId })
+            return operationId
+        } catch (error) {
+            if (this.activePluginOperations.get(name) === operationId) {
+                this.activePluginOperations.delete(name)
+            }
+            throw error
+        }
     }
 
     private async watchPluginOperation (id: string): Promise<{

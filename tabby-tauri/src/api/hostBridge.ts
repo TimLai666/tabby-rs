@@ -762,6 +762,10 @@ export interface HostRequestMap {
         request: { customNodePath?: string | null }
         response: NodeToolchainStatus
     }
+    'plugins.prepareOperation': {
+        request: { id: string }
+        response: null
+    }
     'plugins.install': {
         request: { operationId: string; packageName: string; version: string; customNodePath?: string | null }
         response: PluginOperation

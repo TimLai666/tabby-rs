@@ -6,7 +6,10 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     process::Stdio,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     time::Duration,
 };
 
@@ -40,13 +43,18 @@ pub struct PluginOperation {
 
 #[derive(Clone, Default)]
 pub struct OperationManager {
-    cancellations: Arc<Mutex<HashMap<String, oneshot::Sender<()>>>>,
+    cancellations: Arc<Mutex<HashMap<String, OperationCancellation>>>,
+}
+
+struct OperationCancellation {
+    cancelled: Arc<AtomicBool>,
+    registered: bool,
+    sender: Option<oneshot::Sender<()>>,
 }
 
 impl OperationManager {
-    pub fn register(&self, id: &str) -> Result<oneshot::Receiver<()>, AppError> {
+    pub fn reserve(&self, id: &str) -> Result<(), AppError> {
         validate_operation_id(id)?;
-        let (sender, receiver) = oneshot::channel();
         let mut cancellations = self
             .cancellations
             .lock()
@@ -56,20 +64,65 @@ impl OperationManager {
                 "plugin operation ID is already active".into(),
             ));
         }
-        cancellations.insert(id.into(), sender);
+        cancellations.insert(
+            id.into(),
+            OperationCancellation {
+                cancelled: Arc::new(AtomicBool::new(false)),
+                registered: false,
+                sender: None,
+            },
+        );
+        Ok(())
+    }
+
+    pub fn register(&self, id: &str) -> Result<oneshot::Receiver<()>, AppError> {
+        validate_operation_id(id)?;
+        let mut cancellations = self
+            .cancellations
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if let Some(operation) = cancellations.get_mut(id) {
+            if operation.registered {
+                return Err(AppError::Conflict(
+                    "plugin operation ID is already active".into(),
+                ));
+            }
+            operation.registered = true;
+            let (sender, receiver) = oneshot::channel();
+            if operation.cancelled.load(Ordering::Acquire) {
+                drop(sender);
+            } else {
+                operation.sender = Some(sender);
+            }
+            return Ok(receiver);
+        }
+        let (sender, receiver) = oneshot::channel();
+        cancellations.insert(
+            id.into(),
+            OperationCancellation {
+                cancelled: Arc::new(AtomicBool::new(false)),
+                registered: true,
+                sender: Some(sender),
+            },
+        );
         Ok(receiver)
     }
 
     pub fn cancel(&self, id: &str) -> Result<(), AppError> {
-        let sender = self
+        let mut cancellations = self
             .cancellations
             .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .remove(id)
+            .unwrap_or_else(|error| error.into_inner());
+        let operation = cancellations
+            .get_mut(id)
             .ok_or_else(|| AppError::NotFound(format!("plugin operation {id} not found")))?;
-        sender
-            .send(())
-            .map_err(|_| AppError::NotFound(format!("plugin operation {id} is no longer active")))
+        if operation.cancelled.swap(true, Ordering::AcqRel) {
+            return Ok(());
+        }
+        if let Some(sender) = operation.sender.take() {
+            let _ = sender.send(());
+        }
+        Ok(())
     }
 
     pub fn finish(&self, id: &str) {
@@ -594,8 +647,31 @@ mod tests {
         let _cancel = manager.register("plugin-op-1").unwrap();
         assert!(manager.register("plugin-op-1").is_err());
         assert!(manager.cancel("plugin-op-1").is_ok());
-        assert!(manager.cancel("plugin-op-1").is_err());
+        assert!(manager.cancel("plugin-op-1").is_ok());
         assert!(validate_operation_id("bad id").is_err());
+    }
+
+    #[tokio::test]
+    async fn reserved_operation_can_be_cancelled_before_install_registers_it() {
+        let manager = OperationManager::default();
+        manager.reserve("plugin-op-2").unwrap();
+        manager.cancel("plugin-op-2").unwrap();
+
+        let cancel = manager.register("plugin-op-2").unwrap();
+        assert!(cancel.await.is_err());
+        manager.finish("plugin-op-2");
+    }
+
+    #[test]
+    fn cancellation_is_idempotent_until_operation_finishes() {
+        let manager = OperationManager::default();
+        let _cancel = manager.register("plugin-op-3").unwrap();
+
+        assert!(manager.cancel("plugin-op-3").is_ok());
+        assert!(manager.cancel("plugin-op-3").is_ok());
+        assert!(manager.register("plugin-op-3").is_err());
+        manager.finish("plugin-op-3");
+        assert!(manager.cancel("plugin-op-3").is_err());
     }
 
     #[test]

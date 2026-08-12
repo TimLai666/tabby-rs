@@ -276,7 +276,13 @@ pub async fn plugins_install(
     state: tauri::State<'_, AppState>,
 ) -> Result<npm::PluginOperation, AppError> {
     let root = state.paths().plugins_dir().clone();
-    let (node_path, npm_path) = npm_toolchain(request.custom_node_path).await?;
+    let (node_path, npm_path) = match npm_toolchain(request.custom_node_path).await {
+        Ok(toolchain) => toolchain,
+        Err(error) => {
+            state.plugin_operations().finish(&request.operation_id);
+            return Err(error);
+        }
+    };
     let cancel = state.plugin_operations().register(&request.operation_id)?;
     let operation = running_operation(&request.operation_id, &request.package_name, "install");
     if let Err(error) = app.emit("plugins.operation", &operation) {
@@ -327,7 +333,13 @@ pub async fn plugins_uninstall(
     state: tauri::State<'_, AppState>,
 ) -> Result<npm::PluginOperation, AppError> {
     let root = state.paths().plugins_dir().clone();
-    let (node_path, npm_path) = npm_toolchain(request.custom_node_path).await?;
+    let (node_path, npm_path) = match npm_toolchain(request.custom_node_path).await {
+        Ok(toolchain) => toolchain,
+        Err(error) => {
+            state.plugin_operations().finish(&request.operation_id);
+            return Err(error);
+        }
+    };
     let cancel = state.plugin_operations().register(&request.operation_id)?;
     let operation = running_operation(&request.operation_id, &request.package_name, "uninstall");
     if let Err(error) = app.emit("plugins.operation", &operation) {
@@ -391,6 +403,14 @@ pub async fn plugins_remove(
 #[serde(rename_all = "camelCase")]
 pub struct PluginOperationRequest {
     pub id: String,
+}
+
+#[tauri::command]
+pub fn plugins_prepare_operation(
+    request: PluginOperationRequest,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), AppError> {
+    state.plugin_operations().reserve(&request.id)
 }
 
 #[tauri::command]
