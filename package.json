@@ -132,6 +132,7 @@
     "test:tauri-updater-confirmation": "node scripts/test-tauri-updater-confirmation.mjs",
     "test:tauri-multi-window": "node scripts/test-tauri-multi-window.mjs",
     "test:updater-cancellation": "node scripts/test-updater-cancellation.mjs",
+    "test:updater-generation": "node scripts/test-updater-generation.mjs",
     "test:updater-startup": "node scripts/test-updater-startup.mjs",
     "test:tauri:update-manifest": "node scripts/test-tauri-update-manifest.mjs",
     "test:tauri:bundle": "node scripts/test-tauri-bundle-audit.mjs && node scripts/check-tauri-bundle.mjs",

@@ -75,6 +75,7 @@ struct PendingUpdate {
 }
 
 pub(crate) struct DownloadHandle {
+    pub generation: u64,
     pub update: Update,
     pub manifest: UpdateManifest,
     pub info: UpdateInfo,
@@ -94,6 +95,7 @@ struct ManagerState {
     pending: Option<PendingUpdate>,
     cancellation: Option<watch::Sender<bool>>,
     check_generation: u64,
+    download_generation: u64,
 }
 
 pub struct UpdateManager {
@@ -108,6 +110,7 @@ impl Default for UpdateManager {
                 pending: None,
                 cancellation: None,
                 check_generation: 0,
+                download_generation: 0,
             }),
         }
     }
@@ -133,6 +136,7 @@ impl UpdateManager {
             ));
         }
         state.check_generation = state.check_generation.wrapping_add(1);
+        state.download_generation = state.download_generation.wrapping_add(1);
         let generation = state.check_generation;
         state.pending = None;
         state.cancellation = None;
@@ -209,6 +213,8 @@ impl UpdateManager {
             ));
         }
         let (sender, receiver) = watch::channel(false);
+        state.download_generation = state.download_generation.wrapping_add(1);
+        let generation = state.download_generation;
         state.cancellation = Some(sender.clone());
         state.state = UpdateState::Downloading {
             version: info.version.clone(),
@@ -216,6 +222,7 @@ impl UpdateManager {
             total: manifest.size,
         };
         Ok(DownloadHandle {
+            generation,
             update,
             manifest,
             info,
@@ -224,12 +231,20 @@ impl UpdateManager {
         })
     }
 
-    pub fn set_download_progress(&self, version: &str, downloaded: u64, total: Option<u64>) {
+    pub fn set_download_progress(
+        &self,
+        generation: u64,
+        version: &str,
+        downloaded: u64,
+        total: Option<u64>,
+    ) {
         let mut state = self
             .state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if matches!(state.state, UpdateState::Downloading { .. }) {
+        if state.download_generation == generation
+            && matches!(state.state, UpdateState::Downloading { .. })
+        {
             state.state = UpdateState::Downloading {
                 version: version.into(),
                 downloaded,
@@ -238,8 +253,8 @@ impl UpdateManager {
         }
     }
 
-    pub fn finish_download(&self, bytes: Vec<u8>) -> Result<(), AppError> {
-        let manifest = self.ready_manifest()?;
+    pub fn finish_download(&self, generation: u64, bytes: Vec<u8>) -> Result<(), AppError> {
+        let manifest = self.ready_manifest(generation)?;
         verify_download(&bytes, &manifest)?;
         let public_key = configured_public_key()
             .ok_or_else(|| AppError::Unsupported("updater public key is not configured".into()))?;
@@ -248,7 +263,9 @@ impl UpdateManager {
             .state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if !matches!(state.state, UpdateState::Downloading { .. }) {
+        if state.download_generation != generation
+            || !matches!(state.state, UpdateState::Downloading { .. })
+        {
             return Err(AppError::Conflict("update download was cancelled".into()));
         }
         let pending = state
@@ -262,14 +279,64 @@ impl UpdateManager {
         Ok(())
     }
 
-    fn ready_manifest(&self) -> Result<UpdateManifest, AppError> {
-        self.state
+    fn ready_manifest(&self, generation: u64) -> Result<UpdateManifest, AppError> {
+        let state = self
+            .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if state.download_generation != generation
+            || !matches!(state.state, UpdateState::Downloading { .. })
+        {
+            return Err(AppError::Conflict("update download was cancelled".into()));
+        }
+        state
             .pending
             .as_ref()
             .map(|pending| pending.manifest.clone())
             .ok_or_else(|| AppError::Conflict("update download was cancelled".into()))
+    }
+
+    pub fn fail_download(
+        &self,
+        generation: u64,
+        stage: UpdateStage,
+        public_error: impl Into<String>,
+    ) -> bool {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if state.download_generation != generation
+            || !matches!(state.state, UpdateState::Downloading { .. })
+        {
+            return false;
+        }
+        state.pending = None;
+        state.cancellation = None;
+        state.state = UpdateState::Failed {
+            stage,
+            public_error: public_error.into(),
+        };
+        true
+    }
+
+    pub fn cancel_download(&self, generation: u64) -> bool {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if state.download_generation != generation
+            || !matches!(state.state, UpdateState::Downloading { .. })
+        {
+            return false;
+        }
+        if let Some(sender) = state.cancellation.take() {
+            let _ = sender.send(true);
+        }
+        state.download_generation = state.download_generation.wrapping_add(1);
+        state.pending = None;
+        state.state = UpdateState::Idle;
+        true
     }
 
     pub fn take_ready(&self, version: &str) -> Result<ReadyUpdate, AppError> {
@@ -359,6 +426,7 @@ impl UpdateManager {
             let _ = sender.send(true);
         }
         state.check_generation = state.check_generation.wrapping_add(1);
+        state.download_generation = state.download_generation.wrapping_add(1);
         state.pending = None;
         state.state = UpdateState::Idle;
     }

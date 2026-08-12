@@ -113,6 +113,7 @@ pub async fn update_download(
     let handle: DownloadHandle = state.update_manager().begin_download(&request.version)?;
     emit_state(&app, &state);
     let manager = Arc::clone(state.update_manager());
+    let download_generation = handle.generation;
     let progress_app = app.clone();
     let progress_version = handle.info.version.clone();
     let progress_total = handle.manifest.size;
@@ -124,6 +125,7 @@ pub async fn update_download(
         |chunk, content_length| {
             downloaded = downloaded.saturating_add(chunk as u64);
             manager.set_download_progress(
+                download_generation,
                 &progress_version,
                 downloaded,
                 progress_total.or(content_length),
@@ -146,26 +148,36 @@ pub async fn update_download(
         Ok(bytes) => bytes,
         Err(error) => {
             if is_cancelled(&cancellation) {
-                state.update_manager().cancel();
-            } else {
-                state
-                    .update_manager()
-                    .fail(UpdateStage::Downloading, "update download failed");
+                if state.update_manager().cancel_download(download_generation) {
+                    emit_state(&app, &state);
+                }
+            } else if state.update_manager().fail_download(
+                download_generation,
+                UpdateStage::Downloading,
+                "update download failed",
+            ) {
+                emit_state(&app, &state);
             }
-            emit_state(&app, &state);
             return Err(error);
         }
     };
     if is_cancelled(&cancellation) {
-        state.update_manager().cancel();
-        emit_state(&app, &state);
+        if state.update_manager().cancel_download(download_generation) {
+            emit_state(&app, &state);
+        }
         return Err(AppError::Conflict("update download cancelled".into()));
     }
-    if let Err(error) = state.update_manager().finish_download(bytes) {
-        state
-            .update_manager()
-            .fail(UpdateStage::Downloading, "download verification failed");
-        emit_state(&app, &state);
+    if let Err(error) = state
+        .update_manager()
+        .finish_download(download_generation, bytes)
+    {
+        if state.update_manager().fail_download(
+            download_generation,
+            UpdateStage::Downloading,
+            "download verification failed",
+        ) {
+            emit_state(&app, &state);
+        }
         return Err(error);
     }
     emit_state(&app, &state);
