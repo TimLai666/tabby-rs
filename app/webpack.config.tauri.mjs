@@ -13,7 +13,6 @@ const terminalNodeModules = path.resolve(__dirname, '../tabby-terminal/node_modu
 const rootNodeModules = path.resolve(__dirname, '../node_modules')
 const webNodeModules = path.resolve(__dirname, '../web/node_modules')
 const processBrowser = path.resolve(__dirname, 'src/shims/process.cjs')
-const mixpanelShim = path.resolve(__dirname, 'src/shims/mixpanel.cjs')
 const fsShim = path.resolve(__dirname, 'src/shims/fs.cjs')
 const mzFsShim = path.resolve(__dirname, 'src/shims/mz-fs.ts')
 const windowsRegistryShim = path.resolve(__dirname, 'src/shims/windows-native-registry.cjs')
@@ -55,7 +54,6 @@ export default () => ({
             '@ngx-translate/core': path.join(appNodeModules, '@ngx-translate/core'),
             'fs$': fsShim,
             'fs/promises$': fsShim,
-            'mixpanel': mixpanelShim,
             'mz/fs$': mzFsShim,
             'process/browser': processBrowser,
             'process': processBrowser,

@@ -81,15 +81,6 @@
 
                     .form-line(*ngIf='hostApp.platform !== Platform.Web')
                         .header
-                            .title(translate) Enable analytics
-                            .description(translate) We're only tracking your Tabby and OS versions.
-                        toggle(
-                            [(ngModel)]='config.store.enableAnalytics',
-                            (ngModelChange)='saveConfiguration(true)',
-                        )
-
-                    .form-line(*ngIf='hostApp.platform !== Platform.Web')
-                        .header
                             .title(translate) Automatic Updates
                             .description(translate) Enable automatic installation of updates when they become available.
                         toggle([(ngModel)]='config.store.enableAutomaticUpdates', (ngModelChange)='saveConfiguration()')

@@ -66,7 +66,6 @@ export class Window {
             minHeight: 300,
             webPreferences: {
                 nodeIntegration: true,
-                preload: path.join(__dirname, 'sentry.js'),
                 backgroundThrottling: false,
                 contextIsolation: false,
             },
