@@ -15,7 +15,7 @@
 .alert.alert-info(*ngIf='!canManagePlugins() && nodeStatus?.supported')
     span(translate) Node.js and npm were detected, but plugin installation is unavailable in this host.
 
-.input-group.mb-3(*ngIf='!canManagePlugins()')
+.input-group.mb-3(*ngIf='nodeStatus')
     span.input-group-text(translate) Node.js path
     input.form-control(
         type='text',
