@@ -11,6 +11,10 @@ const fixturesRoot = path.join(root, 'test/fixtures/plugin-runtime')
 const source = fs.readFileSync(sourcePath, 'utf8')
 const entrySource = fs.readFileSync(path.join(root, 'app/src/entry.tauri.ts'), 'utf8')
 assert.match(entrySource, /if \(!fallbackUsed\) \{[\s\S]*plugins\.bootstrapSucceeded/)
+assert.match(entrySource, /import \* as AngularLocalize from '@angular\/localize'/)
+assert.match(entrySource, /import \* as AngularLocalizeInit from '@angular\/localize\/init'/)
+assert.match(entrySource, /registry\.register\('@angular\/localize', AngularLocalize\)/)
+assert.match(entrySource, /registry\.register\('@angular\/localize\/init', AngularLocalizeInit\)/)
 const compiled = ts.transpileModule(source, {
     compilerOptions: {
         module: ts.ModuleKind.CommonJS,

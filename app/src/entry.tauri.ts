@@ -11,6 +11,8 @@ import * as AngularCommon from '@angular/common'
 import * as AngularCompiler from '@angular/compiler'
 import * as AngularCore from '@angular/core'
 import * as AngularForms from '@angular/forms'
+import * as AngularLocalize from '@angular/localize'
+import * as AngularLocalizeInit from '@angular/localize/init'
 import * as AngularPlatformBrowser from '@angular/platform-browser'
 import * as AngularPlatformBrowserAnimations from '@angular/platform-browser/animations'
 import * as AngularPlatformBrowserDynamic from '@angular/platform-browser-dynamic'
@@ -75,6 +77,8 @@ function createPluginRegistry (): PluginModuleRegistry {
     registry.register('@angular/compiler', AngularCompiler)
     registry.register('@angular/core', AngularCore)
     registry.register('@angular/forms', AngularForms)
+    registry.register('@angular/localize', AngularLocalize)
+    registry.register('@angular/localize/init', AngularLocalizeInit)
     registry.register('@angular/platform-browser', AngularPlatformBrowser)
     registry.register('@angular/platform-browser/animations', AngularPlatformBrowserAnimations)
     registry.register('@angular/platform-browser-dynamic', AngularPlatformBrowserDynamic)
