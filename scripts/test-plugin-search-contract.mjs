@@ -63,6 +63,10 @@ const basePackage = {
 
 assert.ok(service.toPluginInfo({ package: basePackage }, 'tabby-', 'tabby-plugin'))
 assert.equal(
+    service.toPluginInfo({ package: { ...basePackage, name: '@scope/plugin' } }, 'tabby-', 'tabby-plugin')?.name,
+    '@scope/plugin',
+)
+assert.equal(
     service.toPluginInfo({ package: { ...basePackage, keywords: ['other-keyword'] } }, 'tabby-', 'tabby-plugin'),
     null,
 )

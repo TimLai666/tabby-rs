@@ -151,7 +151,6 @@ export class PluginManagerService {
                 .map(item => this.toPluginInfo(item, namePrefix, keyword))
                 .filter((item): item is PluginInfo => item !== null),
             ),
-            map(plugins => plugins.filter(x => x.packageName.startsWith(namePrefix))),
             map(plugins => plugins.filter(x => !PLUGIN_BLACKLIST.includes(x.packageName))),
             map(plugins => {
                 const mapping: Record<string, PluginInfo[]> = {}
@@ -240,15 +239,17 @@ export class PluginManagerService {
 
     private toPluginInfo (item: RegistrySearchObject, namePrefix: string, keyword: string): PluginInfo|null {
         if (
-            !item.package.name.startsWith(namePrefix)
-            || !item.package.keywords.some(value => value.toLowerCase() === keyword.toLowerCase())
+            !item.package.keywords.some(value => value.toLowerCase() === keyword.toLowerCase())
             || item.package.keywords.includes('tabby-dummy-transition-plugin')
             || PLUGIN_BLACKLIST.includes(item.package.name)
         ) {
             return null
         }
+        const name = item.package.name.startsWith(namePrefix)
+            ? item.package.name.substring(namePrefix.length)
+            : item.package.name
         return {
-            name: item.package.name.substring(namePrefix.length),
+            name,
             packageName: item.package.name,
             isBuiltin: false,
             isLegacy: false,
