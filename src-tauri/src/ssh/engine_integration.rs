@@ -1,12 +1,18 @@
 use std::{borrow::Cow, sync::Arc, time::Duration};
 
+#[cfg(unix)]
+use std::{fs, process::Command};
+
 use russh::{
     client,
-    keys::{PrivateKey, PublicKey},
+    keys::{parse_public_key_base64, PrivateKey, PublicKey},
     server::{self, Auth, Handler as ServerHandler, Response, Server},
     SshId,
 };
 use secrecy::{ExposeSecret, SecretString};
+
+#[cfg(unix)]
+use tempfile::tempdir;
 
 use super::engine::{
     HostKeyVerifier, KeyboardInteractiveResponse, SshAuthContext, SshAuthenticator, SshEngine,
@@ -29,6 +35,7 @@ impl HostKeyVerifier for FixtureHostKeyVerifier {
 
 #[derive(Clone, Copy)]
 enum AuthFixtureKind {
+    Agent,
     Password,
     KeyboardInteractive,
     PrivateKey,
@@ -119,7 +126,10 @@ impl ServerHandler for AuthFixtureServer {
 
 impl AuthFixtureServer {
     fn public_key_matches(&self, public_key: &PublicKey) -> bool {
-        if !matches!(self.kind, AuthFixtureKind::PrivateKey) {
+        if !matches!(
+            self.kind,
+            AuthFixtureKind::Agent | AuthFixtureKind::PrivateKey
+        ) {
             return false;
         }
         let Ok(public_key) = public_key.to_openssh() else {
@@ -130,6 +140,7 @@ impl AuthFixtureServer {
 }
 
 struct AuthFixtureAuthenticator {
+    agent_socket: Option<String>,
     kind: AuthFixtureKind,
     expected: SecretString,
     private_key: Option<super::engine::PrivateKeyMaterial>,
@@ -167,6 +178,11 @@ impl SshAuthenticator for AuthFixtureAuthenticator {
         _methods: &[crate::ssh::AuthMethodRef],
     ) -> Result<bool, crate::ssh::SshError> {
         match self.kind {
+            AuthFixtureKind::Agent => {
+                context
+                    .authenticate_agent(username, self.agent_socket.as_deref())
+                    .await
+            }
             AuthFixtureKind::Password => {
                 context
                     .authenticate_password(username, &self.expected)
@@ -227,6 +243,7 @@ fn private_key_fixture(encrypted: bool) -> (super::engine::PrivateKeyMaterial, P
 }
 
 async fn run_russh_auth_fixture(
+    agent_socket: Option<String>,
     kind: AuthFixtureKind,
     host_key: russh::keys::PrivateKey,
     private_key: Option<super::engine::PrivateKeyMaterial>,
@@ -275,6 +292,7 @@ async fn run_russh_auth_fixture(
             },
             Arc::new(FixtureHostKeyVerifier),
             Arc::new(AuthFixtureAuthenticator {
+                agent_socket,
                 kind,
                 expected: SecretString::new(expected.into()),
                 private_key,
@@ -320,8 +338,16 @@ async fn runs_real_authentication_and_host_key_algorithm_matrix() {
         HostKeyAlgorithm::EcdsaP256,
     ] {
         let host_key = host_key_algorithm.generate();
-        run_russh_auth_fixture(AuthFixtureKind::Password, host_key.clone(), None, None).await;
         run_russh_auth_fixture(
+            None,
+            AuthFixtureKind::Password,
+            host_key.clone(),
+            None,
+            None,
+        )
+        .await;
+        run_russh_auth_fixture(
+            None,
             AuthFixtureKind::KeyboardInteractive,
             host_key.clone(),
             None,
@@ -331,6 +357,7 @@ async fn runs_real_authentication_and_host_key_algorithm_matrix() {
         for encrypted in [false, true] {
             let (private_key, public_key) = private_key_fixture(encrypted);
             run_russh_auth_fixture(
+                None,
                 AuthFixtureKind::PrivateKey,
                 host_key.clone(),
                 Some(private_key),
@@ -339,4 +366,132 @@ async fn runs_real_authentication_and_host_key_algorithm_matrix() {
             .await;
         }
     }
+}
+
+#[cfg(unix)]
+struct SshAgentGuard {
+    pid: String,
+    socket: String,
+}
+
+#[cfg(unix)]
+impl Drop for SshAgentGuard {
+    fn drop(&mut self) {
+        let _ = Command::new("ssh-agent")
+            .arg("-k")
+            .env("SSH_AGENT_PID", &self.pid)
+            .env("SSH_AUTH_SOCK", &self.socket)
+            .status();
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+#[ignore = "requires SSH authentication fixture; run yarn test:ssh-auth-integration"]
+async fn runs_real_ssh_agent_authentication() {
+    let directory = tempdir().expect("create SSH agent fixture directory");
+    let key_path = directory.path().join("id_ed25519");
+    let generated = Command::new("ssh-keygen")
+        .args(["-q", "-t", "ed25519", "-N", "", "-f"])
+        .arg(&key_path)
+        .status()
+        .expect("run ssh-keygen");
+    assert!(
+        generated.success(),
+        "ssh-keygen failed to create fixture key"
+    );
+    let public_key_text = fs::read_to_string(key_path.with_extension("pub"))
+        .expect("read SSH agent fixture public key");
+    let public_key = parse_public_key_base64(
+        public_key_text
+            .split_whitespace()
+            .nth(1)
+            .expect("SSH agent fixture public key is malformed"),
+    )
+    .expect("parse SSH agent fixture public key");
+
+    let output = Command::new("ssh-agent")
+        .arg("-s")
+        .output()
+        .expect("start ssh-agent");
+    assert!(output.status.success(), "ssh-agent failed to start");
+    let output = String::from_utf8(output.stdout).expect("ssh-agent output is UTF-8");
+    let socket = output
+        .lines()
+        .find_map(|line| line.strip_prefix("SSH_AUTH_SOCK=")?.split(';').next())
+        .map(str::to_owned)
+        .expect("ssh-agent did not report SSH_AUTH_SOCK");
+    let pid = output
+        .lines()
+        .find_map(|line| line.strip_prefix("SSH_AGENT_PID=")?.split(';').next())
+        .map(str::to_owned)
+        .expect("ssh-agent did not report SSH_AGENT_PID");
+    let _agent = SshAgentGuard {
+        pid,
+        socket: socket.clone(),
+    };
+    let added = Command::new("ssh-add")
+        .arg(&key_path)
+        .env("SSH_AUTH_SOCK", &socket)
+        .status()
+        .expect("run ssh-add");
+    assert!(added.success(), "ssh-add failed to load the fixture key");
+
+    run_russh_auth_fixture(
+        Some(socket),
+        AuthFixtureKind::Agent,
+        HostKeyAlgorithm::Ed25519.generate(),
+        None,
+        Some(public_key),
+    )
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "requires SSH authentication fixture; run yarn test:ssh-auth-integration"]
+async fn classifies_dns_and_tcp_faults_with_bounded_timeouts() {
+    let engine =
+        super::engine::RusshEngine::new(client::Config::default(), Duration::from_millis(150));
+    let verifier: Arc<dyn HostKeyVerifier> = Arc::new(FixtureHostKeyVerifier);
+    let authenticator: Arc<dyn SshAuthenticator> = Arc::new(AuthFixtureAuthenticator {
+        agent_socket: None,
+        kind: AuthFixtureKind::Password,
+        expected: SecretString::new("fixture-secret".into()),
+        private_key: None,
+    });
+
+    let dns_failure = engine
+        .connect(
+            SshTarget {
+                host: "ssh-fault.invalid".into(),
+                port: 22,
+                username: "fixture-user".into(),
+            },
+            Arc::clone(&verifier),
+            Arc::clone(&authenticator),
+        )
+        .await;
+    assert!(matches!(dns_failure, Err(crate::ssh::SshError::Connection)));
+
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = tokio::spawn(async move {
+        let (_socket, _) = listener.accept().await.unwrap();
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    });
+    let timeout = engine
+        .connect(
+            SshTarget {
+                host: "127.0.0.1".into(),
+                port,
+                username: "fixture-user".into(),
+            },
+            verifier,
+            authenticator,
+        )
+        .await;
+    assert!(matches!(timeout, Err(crate::ssh::SshError::Timeout)));
+    server.abort();
 }

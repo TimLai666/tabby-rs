@@ -325,7 +325,7 @@ async fn runs_real_ssh_shell_and_sftp_lifecycle() {
         .await
         .expect("engine shell channel failed");
     engine_shell
-        .write(b"printf 'tabby-rs-engine\\n'; exit\\n")
+        .write("printf 'tabby-rs-engine-✓-中文\\n'; exit 7\\n".as_bytes())
         .await
         .expect("engine shell write failed");
     let mut engine_output = Vec::new();
@@ -339,16 +339,13 @@ async fn runs_real_ssh_shell_and_sftp_lifecycle() {
             crate::ssh::engine::SshChannelMessage::Data(data)
             | crate::ssh::engine::SshChannelMessage::ExtendedData { data, .. } => {
                 engine_output.extend_from_slice(&data);
-                if String::from_utf8_lossy(&engine_output).contains("tabby-rs-engine") {
-                    break;
-                }
             }
             crate::ssh::engine::SshChannelMessage::Eof
             | crate::ssh::engine::SshChannelMessage::Close => break,
             _ => {}
         }
     }
-    assert!(String::from_utf8_lossy(&engine_output).contains("tabby-rs-engine"));
+    assert!(String::from_utf8_lossy(&engine_output).contains("tabby-rs-engine-✓-中文"));
     engine_shell
         .resize(100, 30, 0, 0)
         .await
@@ -415,7 +412,7 @@ async fn runs_real_ssh_shell_and_sftp_lifecycle() {
         .await
         .expect("request pty");
     shell
-        .exec(true, "printf 'tabby-rs-ssh\\n'")
+        .exec(true, "printf 'tabby-rs-ssh-✓-中文\\n'; exit 7")
         .await
         .expect("exec shell command");
     let mut shell_output = Vec::new();
@@ -436,9 +433,9 @@ async fn runs_real_ssh_shell_and_sftp_lifecycle() {
     }
     assert_eq!(
         String::from_utf8_lossy(&shell_output).trim(),
-        "tabby-rs-ssh"
+        "tabby-rs-ssh-✓-中文"
     );
-    assert_eq!(exit_status, Some(0));
+    assert_eq!(exit_status, Some(7));
 
     let channel = handle
         .channel_open_session()
