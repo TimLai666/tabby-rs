@@ -631,7 +631,7 @@ fn resolve_identity_path_with_home(value: &str, base: &Path, home: Option<&Path>
         .strip_prefix("~/")
         .or_else(|| value.strip_prefix("~\\"));
     if let (Some(rest), Some(home)) = (rest, home) {
-        return home.join(rest).to_string_lossy().into_owned();
+        return join_home_path(home, rest);
     }
     let path = Path::new(value);
     if path.is_absolute() {
@@ -641,11 +641,19 @@ fn resolve_identity_path_with_home(value: &str, base: &Path, home: Option<&Path>
     }
 }
 
+fn join_home_path(home: &Path, rest: &str) -> String {
+    let home = home.to_string_lossy();
+    let separator = if home.contains('\\') { '\\' } else { '/' };
+    let home = home.trim_end_matches(['/', '\\']);
+    let rest = rest.replace(['/', '\\'], &separator.to_string());
+    format!("{home}{separator}{rest}")
+}
+
 fn validate_source_path(path: &str) -> Result<PathBuf, AppError> {
     let rest = path.strip_prefix("~/").or_else(|| path.strip_prefix("~\\"));
     let expanded = if let Some(rest) = rest {
         home_directory()
-            .map(|home| home.join(rest))
+            .map(|home| PathBuf::from(join_home_path(&home, rest)))
             .unwrap_or_else(|| PathBuf::from(path))
     } else {
         PathBuf::from(path)
@@ -703,6 +711,17 @@ mod tests {
             PathBuf::from(resolved),
             home.join(".ssh").join("id_ed25519")
         );
+    }
+
+    #[test]
+    fn preserves_posix_home_separators_on_every_host() {
+        let resolved = resolve_identity_path_with_home(
+            "~/.ssh/id_ed25519",
+            Path::new("C:/tmp"),
+            Some(Path::new("/home/alice")),
+        );
+
+        assert_eq!(resolved, "/home/alice/.ssh/id_ed25519");
     }
 
     #[cfg(windows)]
