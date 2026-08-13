@@ -144,16 +144,6 @@ async function main (): Promise<void> {
 
     window['__TABBY_PLATFORM__'] = runtimeInfo.platform
     window['__TABBY_ARCH__'] = runtimeInfo.arch
-    if (runtimeInfo.benchmarkReadyFile) {
-        window.addEventListener('tabby:terminal-ready', () => {
-            void (async () => {
-                if (runtimeInfo.benchmarkFrameReportFile) {
-                    await reportBenchmarkFrames(bridge)
-                }
-                await bridge.invoke('app.benchmarkReady', {})
-            })()
-        }, { once: true })
-    }
     updateProgress(40)
 
     const pluginResult = await loadPluginModules({
@@ -257,6 +247,12 @@ async function main (): Promise<void> {
     }
 
     updateProgress(100)
+    if (runtimeInfo.benchmarkReadyFile) {
+        if (runtimeInfo.benchmarkFrameReportFile) {
+            await reportBenchmarkFrames(bridge)
+        }
+        await bridge.invoke('app.benchmarkReady', {})
+    }
     if (runtimeInfo.installerSmokeReadyFile) {
         await bridge.invoke('app.installerSmokeReady', {})
     }
