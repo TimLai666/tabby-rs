@@ -187,8 +187,9 @@ async fn run_russh_auth_fixture(kind: AuthFixtureKind, host_key: russh::keys::Pr
         },
         Duration::from_secs(20),
     );
-    let connection = engine
-        .connect(
+    let connection = match tokio::time::timeout(
+        Duration::from_secs(15),
+        engine.connect(
             SshTarget {
                 host: "127.0.0.1".into(),
                 port,
@@ -199,14 +200,36 @@ async fn run_russh_auth_fixture(kind: AuthFixtureKind, host_key: russh::keys::Pr
                 kind,
                 expected: SecretString::new(expected.into()),
             }),
-        )
-        .await
-        .expect("russh auth fixture connection failed");
-    connection
-        .disconnect()
-        .await
-        .expect("disconnect russh auth fixture");
-    server_task.await.expect("join russh auth fixture");
+        ),
+    )
+    .await
+    {
+        Ok(Ok(connection)) => connection,
+        Ok(Err(error)) => {
+            server_task.abort();
+            panic!("russh auth fixture connection failed: {error:?}");
+        }
+        Err(_) => {
+            server_task.abort();
+            panic!("russh auth fixture connection timed out");
+        }
+    };
+    match tokio::time::timeout(Duration::from_secs(5), connection.disconnect()).await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => {
+            server_task.abort();
+            panic!("disconnect russh auth fixture failed: {error:?}");
+        }
+        Err(_) => {
+            server_task.abort();
+            panic!("disconnect russh auth fixture timed out");
+        }
+    }
+    match tokio::time::timeout(Duration::from_secs(5), server_task).await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => panic!("join russh auth fixture failed: {error}"),
+        Err(_) => panic!("join russh auth fixture timed out"),
+    }
 }
 
 #[tokio::test]
