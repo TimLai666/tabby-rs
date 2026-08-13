@@ -17,7 +17,7 @@ interface CollapsableProfileGroup extends ProfileGroup {
     children: PartialProfileGroup<CollapsableProfileGroup>[]
 }
 
-type ProfileTab = {
+interface ProfileTab {
     getFocusedTab?: () => ProfileTab|null
     profile?: PartialProfile<Profile>
 }

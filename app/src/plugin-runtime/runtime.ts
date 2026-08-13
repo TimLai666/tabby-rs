@@ -247,7 +247,7 @@ export async function loadPluginModules (
                 throw new InvalidPluginExportError('Plugin has no valid default export')
             }
             const packageModule = (typeof evaluatedModule === 'function'
-                ? { default: evaluatedModule }
+                ? { 'default': evaluatedModule }
                 : evaluatedModule) as {
                 default?: unknown
                 bootstrap?: unknown
