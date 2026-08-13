@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/explicit-module-boundary-types */
 import { marker as _ } from '@biesbjerg/ngx-translate-extract-marker'
-import { BehaviorSubject, Observable, debounceTime, distinctUntilChanged, first, tap, switchMap, map, catchError, of } from 'rxjs'
+import { BehaviorSubject, Observable, debounceTime, distinctUntilChanged, tap, switchMap, catchError, of, shareReplay } from 'rxjs'
 import semverGt from 'semver/functions/gt'
 
 import { Component, HostBinding, Input } from '@angular/core'
@@ -67,15 +67,9 @@ export class PluginsSettingsTabComponent {
                         return of([])
                     }))
                 }),
+                tap(plugins => this.updateKnownUpgrades(plugins)),
+                shareReplay({ bufferSize: 1, refCount: true }),
             )
-        this.availablePlugins$.pipe(first(), map((plugins: PluginInfo[]) => {
-            plugins.sort((a, b) => a.name > b.name ? 1 : -1)
-            return plugins
-        })).subscribe(available => {
-            for (const plugin of this.pluginManager.installedPlugins) {
-                this.knownUpgrades[plugin.name] = available.find(x => x.name === plugin.name && semverGt(x.version, plugin.version)) ?? null
-            }
-        })
 
         this.installedPluginsQuery$
             .asObservable()
@@ -88,6 +82,13 @@ export class PluginsSettingsTabComponent {
             ).subscribe(plugin => {
                 this.installedPlugins$ = plugin
             })
+    }
+
+    private updateKnownUpgrades (plugins: PluginInfo[]): void {
+        plugins.sort((a, b) => a.name > b.name ? 1 : -1)
+        for (const plugin of this.pluginManager.installedPlugins) {
+            this.knownUpgrades[plugin.name] = plugins.find(x => x.name === plugin.name && semverGt(x.version, plugin.version)) ?? null
+        }
     }
 
     async refreshNodeStatus (): Promise<void> {

@@ -76,6 +76,67 @@ assert.doesNotMatch(source, /packageName\.startsWith\(namePrefix\)/)
 assert.match(componentSource, /catchError\(error => \{[\s\S]*availablePluginsReady = true[\s\S]*availablePluginsError/)
 assert.match(componentSource, /blacklist\.includes\(plugin\.name\) \|\| blacklist\.includes\(plugin\.packageName\)/)
 assert.match(componentSource, /filter\(x => x !== plugin\.name && x !== plugin\.packageName\)/)
+assert.match(componentSource, /tap\(plugins => this\.updateKnownUpgrades\(plugins\)\)/)
+assert.match(componentSource, /shareReplay\(\{ bufferSize: 1, refCount: true \}\)/)
+assert.doesNotMatch(componentSource, /availablePlugins\$\.pipe\(first\(\)/)
 assert.match(templateSource, /availablePluginsError/)
+
+const componentPath = path.join(root, 'tabby-plugin-manager/src/components/pluginsSettingsTab.component.ts')
+const componentCompiled = ts.transpileModule(componentSource, {
+    compilerOptions: {
+        module: ts.ModuleKind.CommonJS,
+        target: ts.ScriptTarget.ES2019,
+        experimentalDecorators: true,
+        esModuleInterop: true,
+    },
+    fileName: componentPath,
+}).outputText
+
+const originalComponentLoad = Module._load
+const propertyDecorator = () => () => undefined
+Module._load = function (request, parent, isMain) {
+    if (request === '@angular/core') {
+        return { Component: decorator, HostBinding: propertyDecorator, Input: propertyDecorator }
+    }
+    if (request === 'tabby-core') {
+        return {}
+    }
+    if (request.includes('../services/pluginManager.service')) {
+        return { PluginManagerService: class {} }
+    }
+    return originalComponentLoad.call(this, request, parent, isMain)
+}
+
+const componentModule = new Module(componentPath)
+componentModule.filename = componentPath
+componentModule.paths = Module._nodeModulePaths(root)
+try {
+    componentModule._compile(componentCompiled, componentPath)
+} finally {
+    Module._load = originalComponentLoad
+}
+
+const { PluginsSettingsTabComponent } = componentModule.exports
+const { of } = await import('rxjs')
+const pluginManager = {
+    installedPlugins: [{ name: 'demo', packageName: 'tabby-demo', version: '1.0.0' }],
+    listAvailable: query => of([{
+        name: 'demo',
+        packageName: 'tabby-demo',
+        version: query ? '1.1.0' : '1.0.0',
+    }]),
+    listInstalled: () => of([]),
+}
+const platform = { supportsPluginManagement: true }
+const config = { store: {}, requestRestart: () => undefined, save: () => undefined }
+const component = new PluginsSettingsTabComponent(config, platform, pluginManager)
+component.ngOnInit()
+const availableSubscription = component.availablePlugins$.subscribe()
+await new Promise(resolve => setTimeout(resolve, 260))
+assert.equal(component.knownUpgrades.demo, null)
+component.searchAvailable('upgrade')
+await new Promise(resolve => setTimeout(resolve, 260))
+assert.equal(component.knownUpgrades.demo.version, '1.1.0')
+availableSubscription.unsubscribe()
 
 console.log('Plugin search keyword contract fixtures passed')
