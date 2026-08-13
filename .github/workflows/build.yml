@@ -130,6 +130,9 @@ jobs:
       - name: Test web plugin loader
         run: yarn test:web-plugin-loader
 
+      - name: Test web gateway protocol
+        run: yarn test:web-gateway
+
       - name: Test web capability boundary
         run: yarn test:web-capability-boundary
 
