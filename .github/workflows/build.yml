@@ -116,6 +116,12 @@ jobs:
       - name: Verify tabby-web bundle boundary
         run: yarn audit:web
 
+      - name: Verify no built-in telemetry
+        run: yarn audit:telemetry
+
+      - name: Test built-in telemetry audit
+        run: yarn test:telemetry
+
       - name: Test tabby-web bundle audit
         run: yarn test:web-output-audit
 

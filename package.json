@@ -100,6 +100,8 @@
     "build": "npm run build:typings && node scripts/build-modules.mjs",
     "build:electron": "npm run build",
     "build:tauri:frontend": "webpack --config app/webpack.config.tauri.mjs --progress --color",
+    "audit:telemetry": "node scripts/ci/assert-no-built-in-telemetry.mjs",
+    "test:telemetry": "node scripts/test-no-built-in-telemetry.mjs",
     "audit:web": "node scripts/ci/assert-web-output.mjs",
     "test:web-output-audit": "node scripts/test-web-output-audit.mjs",
     "test:web-host-app": "node scripts/test-web-host-app-contract.mjs",
