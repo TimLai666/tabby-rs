@@ -12,6 +12,8 @@ use zeroize::Zeroize;
 
 use crate::ssh::{AuthMethodRef, SshError};
 
+const AUTH_TIMEOUT: Duration = Duration::from_secs(120);
+
 /// The host-key information exposed at the engine boundary.
 ///
 /// The OpenSSH representation is retained so a policy implementation can
@@ -229,20 +231,34 @@ impl RusshEngine {
                     .unwrap_or(SshError::Connection))
             }
         };
-        let authenticated =
-            match authenticate_handle(&mut handle, &target.username, authenticator).await {
-                Ok(authenticated) => authenticated,
-                Err(error) => {
-                    let _ = handle
-                        .disconnect(
-                            russh::Disconnect::AuthCancelledByUser,
-                            "authentication failed",
-                            "",
-                        )
-                        .await;
-                    return Err(error);
-                }
-            };
+        let authenticated = match tokio::time::timeout(
+            AUTH_TIMEOUT,
+            authenticate_handle(&mut handle, &target.username, authenticator),
+        )
+        .await
+        {
+            Err(_) => {
+                let _ = handle
+                    .disconnect(
+                        russh::Disconnect::AuthCancelledByUser,
+                        "authentication timed out",
+                        "",
+                    )
+                    .await;
+                return Err(SshError::Timeout);
+            }
+            Ok(Ok(authenticated)) => authenticated,
+            Ok(Err(error)) => {
+                let _ = handle
+                    .disconnect(
+                        russh::Disconnect::AuthCancelledByUser,
+                        "authentication failed",
+                        "",
+                    )
+                    .await;
+                return Err(error);
+            }
+        };
         if !authenticated {
             let _ = handle
                 .disconnect(
