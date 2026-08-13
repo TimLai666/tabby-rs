@@ -12,8 +12,8 @@ const platforms = path.join(work, 'platforms.yaml')
 const output = path.join(work, 'parity-report.json')
 const htmlOutput = path.join(work, 'parity-report.html')
 
-fs.writeFileSync(features, `baseline:\n  repository: 'example/<script>'\n  commit: abc123\n  version: 1.0.0\nfeatures:\n  - id: shell\n    title: Local shell\n    status: pending\n`)
-fs.writeFileSync(platforms, `platforms:\n  - id: linux\n    runner: ubuntu\n    target: x86_64-unknown-linux-gnu\n    status: pending\n`)
+fs.writeFileSync(features, `baseline:\n  repository: 'example/<script>'\n  commit: abc123\n  version: 1.0.0\nfeatures:\n  - id: shell\n    title: Local shell\n    issues: [7]\n    platforms: [linux]\n    tests:\n      automated: [fixture-test]\n    status: pending\n`)
+fs.writeFileSync(platforms, `platforms:\n  - id: linux\n    runner: ubuntu\n    target: x86_64-unknown-linux-gnu\n    requiredChecks: [local-shell]\n    status: pending\n`)
 
 const pending = spawnSync(process.execPath, [
     path.join(root, 'scripts/compare-parity.mjs'),
@@ -42,8 +42,8 @@ assert.match(pendingHtml, /<title>Tabby RS parity report<\/title>/)
 assert.match(pendingHtml, /feature shell is pending/)
 assert.match(pendingHtml, /example\/&lt;script&gt;/)
 
-fs.writeFileSync(features, `baseline:\n  repository: example/tabby\n  commit: abc123\n  version: 1.0.0\nfeatures:\n  - id: shell\n    title: Local shell\n    status: passed\n    evidence: [fixture-test]\n`)
-fs.writeFileSync(platforms, `platforms:\n  - id: linux\n    runner: ubuntu\n    target: x86_64-unknown-linux-gnu\n    status: passed\n    evidence: [fixture-test]\n`)
+fs.writeFileSync(features, `baseline:\n  repository: example/tabby\n  commit: abc123\n  version: 1.0.0\nfeatures:\n  - id: shell\n    title: Local shell\n    issues: [7]\n    platforms: [linux]\n    tests:\n      automated: [fixture-test]\n    status: passed\n    evidence: [fixture-test]\n`)
+fs.writeFileSync(platforms, `platforms:\n  - id: linux\n    runner: ubuntu\n    target: x86_64-unknown-linux-gnu\n    requiredChecks: [local-shell]\n    status: passed\n    evidence: [fixture-test]\n`)
 
 const passed = execFileSync(process.execPath, [
     path.join(root, 'scripts/compare-parity.mjs'),

@@ -6,58 +6,327 @@ baseline:
 # Every item must be changed to passed, or accepted-difference with evidence,
 # before the release gate can approve a public build.
 features:
-  - id: desktop.window-and-session
-    title: Tauri desktop window, tabs, splits, and session restore
+  - id: desktop.window-tabs-splits
+    title: Tauri desktop window, tabs, and nested split panes
     issues: [1]
+    platforms: [windows, macos, linux]
+    tests:
+      automated: [tauri-multi-window]
+      manual: [desktop-window-tabs-splits]
+    status: pending
+    evidence: []
+  - id: desktop.appearance-and-integration
+    title: Window appearance, global hotkey, Quake or Dock mode, notifications, clipboard, and file dialogs
+    issues: [1]
+    platforms: [windows, macos, linux]
+    tests:
+      automated: [runtime-capabilities]
+      manual: [desktop-appearance-integration]
+    status: pending
+    evidence: []
+  - id: desktop.cli-url-portable
+    title: CLI arguments, tabby-rs URL scheme, and portable mode
+    issues: [1]
+    platforms: [windows, macos, linux]
+    tests:
+      automated: [release-documentation]
+      manual: [desktop-cli-url-portable]
+    status: pending
+    evidence: []
+  - id: workspace.session-restore
+    title: Workspace persistence, tab recovery, profile state, and side-by-side identity
+    issues: [1, 12]
+    platforms: [windows, macos, linux]
+    tests:
+      automated: [workspace-model]
+      manual: [workspace-session-restore]
     status: pending
     evidence: []
   - id: local-shell.profiles-and-pty
-    title: Local shell profiles, PTY I/O, resize, signals, and process lifecycle
+    title: Local shell profiles, PTY I/O, resize, signals, process lifecycle, and output backpressure
     issues: [1, 7]
+    platforms: [windows, macos, linux]
+    tests:
+      automated: [rust-host, terminal-renderer]
+      manual: [local-shell-pty]
     status: pending
     evidence: []
-  - id: terminal.renderer-and-output
-    title: Unicode terminal rendering, input, output flow, transfer, and recovery
-    issues: [1]
+  - id: local-shell.platform-shells
+    title: PowerShell, PowerShell Core, CMD, WSL, Git Bash, Cygwin, MSYS2, Cmder, and POSIX shells
+    issues: [1, 7]
+    platforms: [windows, macos, linux]
+    tests:
+      automated: [rust-host]
+      manual: [platform-shell-matrix]
     status: pending
     evidence: []
-  - id: ssh.profiles-auth-host-key-session
-    title: SSH profiles, authentication, host keys, forwarding, SFTP, and recovery
+  - id: local-shell.windows-conpty-clink-uac
+    title: Windows ConPTY, Clink integration, and UAC sessions
+    issues: [1, 7]
+    platforms: [windows]
+    tests:
+      automated: [windows-build]
+      manual: [windows-conpty-clink-uac]
+    status: pending
+    evidence: []
+  - id: local-shell.sudo
+    title: Automatic sudo prompt detection and one-shot password handling
+    issues: [1, 14]
+    platforms: [windows, macos, linux]
+    tests:
+      automated: [auto-sudo]
+      manual: [local-shell-sudo]
+    status: pending
+    evidence: []
+  - id: terminal.renderer-unicode-flow
+    title: xterm Unicode, double-width characters, ligatures, fast output, and renderer recovery
+    issues: [1, 10, 11]
+    platforms: [windows, macos, linux]
+    tests:
+      automated: [terminal-renderer, terminal-renderer-browser]
+      manual: [terminal-renderer-unicode-flow]
+    status: pending
+    evidence: []
+  - id: terminal.workspace-interactions
+    title: Copy, paste, selection, bracketed paste, search, bell, context menus, and hotkeys
+    issues: [1, 10]
+    platforms: [windows, macos, linux]
+    tests:
+      automated: [paste-policy, uri-policy]
+      manual: [terminal-workspace-interactions]
+    status: pending
+    evidence: []
+  - id: terminal.progress-transfer-uri
+    title: Progress detection, completion notifications, Zmodem transfer, output export, URL, IP, and path actions
+    issues: [1, 10, 11]
+    platforms: [windows, macos, linux]
+    tests:
+      automated: [progress-detector, transfer-policy]
+      manual: [terminal-progress-transfer-uri]
+    status: pending
+    evidence: []
+  - id: ssh.profiles-and-import
+    title: SSH profile lifecycle, OpenSSH config preview, conflict handling, and private-key discovery
     issues: [15]
+    platforms: [windows, macos, linux]
+    tests:
+      automated: [ssh-config-parser, ssh-import]
+      manual: [ssh-profile-import]
     status: pending
     evidence: []
-  - id: serial-and-telnet
-    title: Serial and Telnet profiles, codecs, reconnect, and terminal integration
-    issues: [1]
+  - id: ssh.authentication
+    title: Password, unencrypted or encrypted private key, SSH agent, Pageant, and keyboard-interactive authentication
+    issues: [15]
+    platforms: [windows, macos, linux]
+    tests:
+      automated: [ssh-manager-auth, ssh-auth-integration]
+      manual: [ssh-authentication]
     status: pending
     evidence: []
-  - id: config-migration-and-vault-v1
-    title: One-way config migration, secrets, Vault v1, and rollback safety
-    issues: [1, 2, 4]
+  - id: ssh.host-key-policy
+    title: Unknown, matching, hashed, custom-port, and changed host-key verification
+    issues: [15]
+    platforms: [windows, macos, linux]
+    tests:
+      automated: [ssh-known-hosts]
+      manual: [ssh-host-key-policy]
     status: pending
     evidence: []
-  - id: plugin-management-and-runtime
-    title: npm plugin management, runtime compatibility, and safe mode
-    issues: [21, 22]
+  - id: ssh.shell-session
+    title: SSH interactive shell, Unicode, PTY resize, environment, exit status, keepalive, and cleanup
+    issues: [15]
+    platforms: [windows, macos, linux]
+    tests:
+      automated: [ssh-session, ssh-auth-integration]
+      manual: [ssh-shell-session]
     status: pending
     evidence: []
-  - id: diagnostics-and-privacy
-    title: Local logs, diagnostic bundles, redaction, and no telemetry
+  - id: ssh.reconnect-and-restore
+    title: Bounded reconnect prompts and session recovery without restoring plaintext secrets
+    issues: [12, 15]
+    platforms: [windows, macos, linux]
+    tests:
+      automated: [ssh-reconnect, workspace-model]
+      manual: [ssh-reconnect-restore]
+    status: pending
+    evidence: []
+  - id: ssh.forwarding
+    title: Local, remote, dynamic, X11, and agent forwarding
+    issues: [16]
+    platforms: [windows, macos, linux]
+    tests:
+      automated: [ssh-forwarding]
+      manual: [ssh-forwarding]
+    status: pending
+    evidence: []
+  - id: ssh.sftp
+    title: SFTP browse, upload, download, rename, delete, mkdir, and cancellation
+    issues: [17]
+    platforms: [windows, macos, linux]
+    tests:
+      automated: [ssh-integration]
+      manual: [ssh-sftp]
+    status: pending
+    evidence: []
+  - id: serial.profile-and-session
+    title: Serial profiles, connection lifecycle, readline, hexdump, and newline conversion
+    issues: [18]
+    platforms: [windows, macos, linux]
+    tests:
+      automated: [rust-host]
+      manual: [serial-session]
+    status: pending
+    evidence: []
+  - id: telnet.profile-and-session
+    title: Telnet profiles, option negotiation, NAWS, reconnect, and terminal integration
+    issues: [19]
+    platforms: [windows, macos, linux]
+    tests:
+      automated: [rust-host]
+      manual: [telnet-session]
+    status: pending
+    evidence: []
+  - id: config.migration-and-vault-v1
+    title: One-way config migration, Vault v1 compatibility, keychain fallback, and rollback safety
+    issues: [2, 4, 5, 6]
+    platforms: [windows, macos, linux]
+    tests:
+      automated: [rust-host, vault-v1]
+      manual: [config-vault-migration]
+    status: pending
+    evidence: []
+  - id: config.first-run-import
+    title: First-run import preview, secret authorization, retry, and preservation of original data
+    issues: [2, 4, 5, 6]
+    platforms: [windows, macos, linux]
+    tests:
+      automated: [rust-host]
+      manual: [config-first-run-import]
+    status: pending
+    evidence: []
+  - id: config.vault-v1-and-keychain
+    title: Vault v1 read or write compatibility and operating-system keychain fallback
+    issues: [4, 5, 6]
+    platforms: [windows, macos, linux]
+    tests:
+      automated: [rust-host]
+      manual: [config-vault-keychain]
+    status: pending
+    evidence: []
+  - id: settings.themes-and-hotkeys
+    title: Existing settings pages, themes, fonts, profile editors, and multi-chord shortcuts
+    issues: [1, 20]
+    platforms: [windows, macos, linux]
+    tests:
+      automated: [runtime-capabilities]
+      manual: [settings-themes-hotkeys]
+    status: pending
+    evidence: []
+  - id: plugin.npm-management
+    title: npm plugin search, install, update, remove, cancellation, and system Node or npm detection
+    issues: [21]
+    platforms: [windows, macos, linux]
+    tests:
+      automated: [plugin-node-status, plugin-search, plugin-npm-lifecycle]
+      manual: [plugin-npm-management]
+    status: pending
+    evidence: []
+  - id: plugin.runtime-compatibility
+    title: Public Angular or Tabby API module mapping, CommonJS loading, and unsupported runtime diagnostics
+    issues: [22]
+    platforms: [windows, macos, linux]
+    tests:
+      automated: [plugin-runtime, official-plugin-runtime]
+      manual: [plugin-runtime-compatibility]
+    status: pending
+    evidence: []
+  - id: plugin.public-api-contract
+    title: Compatibility with the existing Angular and Tabby public plugin API
+    issues: [20, 22]
+    platforms: [windows, macos, linux]
+    tests:
+      automated: [official-plugin-runtime]
+      manual: [plugin-public-api]
+    status: pending
+    evidence: []
+  - id: plugin.safe-mode-recovery
+    title: Startup failure isolation, safe mode, retry, disable, and remove actions
+    issues: [22]
+    platforms: [windows, macos, linux]
+    tests:
+      automated: [safe-mode-plugin-actions]
+      manual: [plugin-safe-mode-recovery]
+    status: pending
+    evidence: []
+  - id: diagnostics.local-privacy
+    title: Bounded local logs, crash marker, redaction, preview, export, and no built-in telemetry
     issues: [24]
+    platforms: [windows, macos, linux]
+    tests:
+      automated: [rust-host, bundle-audit]
+      manual: [diagnostics-privacy]
     status: pending
     evidence: []
-  - id: updater-stable-nightly
-    title: Signed Stable/Nightly update checks, install confirmation, backup, and recovery
+  - id: updater.stable-nightly
+    title: Startup checks, Stable or Nightly channels, confirmation, cancellation, signed downloads, backup, and rollback
     issues: [23]
+    platforms: [windows, macos, linux]
+    tests:
+      automated: [updater-startup, updater-confirmation, updater-cancellation, updater-generation]
+      manual: [updater-stable-nightly]
     status: pending
     evidence: []
-  - id: web-provider-boundary
-    title: tabby-web build and runtime capability boundary
+  - id: web.provider-boundary
+    title: tabby-web production build, browser providers, capability errors, and desktop import isolation
     issues: [26]
+    platforms: [web]
+    tests:
+      automated: [web-output-audit, web-host-app, web-capability-boundary]
+      manual: [web-smoke]
     status: pending
     evidence: []
-  - id: release-bundles-and-side-by-side
-    title: Platform bundles, identity separation, license notices, and release metadata
-    issues: [25]
+  - id: web.ssh-sftp-telnet
+    title: Browser SSH, SFTP, and Telnet workflows remain on web providers
+    issues: [26]
+    platforms: [web]
+    tests:
+      automated: [web-host-app, web-capability-boundary]
+      manual: [web-ssh-sftp-telnet]
+    status: pending
+    evidence: []
+  - id: release.bundle-audit
+    title: Windows NSIS, macOS DMG, Linux AppImage, DEB, and RPM bundle formats without Electron or Node runtime
+    issues: [25, 27]
+    platforms: [windows, macos, linux]
+    tests:
+      automated: [tauri-release-artifacts, tauri-bundle-audit]
+      manual: [release-bundle-matrix]
+    status: pending
+    evidence: []
+  - id: release.install-and-side-by-side
+    title: Installer launch, uninstall, independent identity, and original Tabby side-by-side operation
+    issues: [25, 27]
+    platforms: [windows, macos, linux]
+    tests:
+      automated: [tauri-release-smoke]
+      manual: [side-by-side-install]
+    status: pending
+    evidence: []
+  - id: release.provenance-signature-and-docs
+    title: Checksums, updater signatures, version provenance, license notices, fork identity, and unsigned-platform warnings
+    issues: [23, 25, 27]
+    platforms: [windows, macos, linux]
+    tests:
+      automated: [release-checksums, license-report, release-documentation]
+      manual: [release-provenance-docs]
+    status: pending
+    evidence: []
+  - id: release.performance-reports
+    title: Reproducible cold-start, idle memory, large-output, and bundle-size reports
+    issues: [27]
+    platforms: [windows, macos, linux]
+    tests:
+      automated: [benchmark-harness]
+      manual: [release-performance-review]
     status: pending
     evidence: []

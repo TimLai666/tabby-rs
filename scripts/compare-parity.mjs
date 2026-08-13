@@ -62,6 +62,15 @@ export function compareParity ({ featuresPath = defaultFeaturesPath, platformsPa
         if (feature?.status === 'accepted-difference' && !feature.reason) {
             failures.push(`feature ${feature.id} accepted-difference has no reason`)
         }
+        if (!Array.isArray(feature?.issues) || feature.issues.length === 0) {
+            failures.push(`feature ${feature?.id || '<unnamed>'} has no issue ownership`)
+        }
+        if (!Array.isArray(feature?.platforms) || feature.platforms.length === 0) {
+            failures.push(`feature ${feature?.id || '<unnamed>'} has no platform scope`)
+        }
+        if (!feature?.tests || (!feature.tests.automated?.length && !feature.tests.manual?.length)) {
+            failures.push(`feature ${feature?.id || '<unnamed>'} has no automated or manual test`)
+        }
     }
     for (const platform of platforms) {
         if (!platform?.id) failures.push('platform is missing id')
@@ -75,6 +84,9 @@ export function compareParity ({ featuresPath = defaultFeaturesPath, platformsPa
         }
         if (platform?.status === 'passed' && !platform.evidence?.length) {
             failures.push(`platform ${platform.id} has no evidence for passed`)
+        }
+        if (!Array.isArray(platform?.requiredChecks) || platform.requiredChecks.length === 0) {
+            failures.push(`platform ${platform?.id || '<unnamed>'} has no required checks`)
         }
     }
 

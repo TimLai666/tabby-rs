@@ -179,6 +179,9 @@ jobs:
       - name: Test SSH authentication fixture
         run: yarn test:ssh-auth-integration
 
+      - name: Test SSH session routing contract
+        run: yarn test:ssh-session
+
       - name: Build Tauri host
         run: cargo build --manifest-path src-tauri/Cargo.toml
 
@@ -278,6 +281,9 @@ jobs:
 
       - name: Test SSH authentication fixture
         run: yarn test:ssh-auth-integration
+
+      - name: Test SSH session routing contract
+        run: yarn test:ssh-session
 
       - name: Build Tauri host
         run: cargo build --manifest-path src-tauri/Cargo.toml
