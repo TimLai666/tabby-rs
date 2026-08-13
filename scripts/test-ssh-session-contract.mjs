@@ -13,6 +13,8 @@ assert.match(session, /get serviceMessage\$ \(\): Observable<string>/)
 assert.match(session, /event\.exitCode !== null[\s\S]*event\.signal !== null/)
 assert.match(session, /this\.serviceMessage\.complete\(\)/)
 assert.match(session, /const account = options\.user \|\| 'root'/)
+assert.match(session, /keepalive: options\.keepaliveInterval > 0[\s\S]*intervalMs: options\.keepaliveInterval[\s\S]*maxCount: options\.keepaliveCountMax/)
+assert.match(session, /environment: options\.environment/)
 assert.match(tab, /attachSessionHandler\(session\.serviceMessage\$/)
 
 const rust = fs.readFileSync(path.join(root, 'src-tauri/src/ssh/mod.rs'), 'utf8')
@@ -25,6 +27,7 @@ assert.match(rust, /bytes\.zeroize\(\)/)
 assert.match(rust, /text\.zeroize\(\)/)
 assert.match(rust, /async fn disconnect_jump_handles\(/)
 assert.match(rust, /async fn disconnect_connection\(/)
+assert.match(rust, /\*max_count == 0/)
 
 const connectMethod = rust.match(
     /pub async fn connect\([\s\S]*?\n    \}\n\n    pub async fn host_key_decision/,

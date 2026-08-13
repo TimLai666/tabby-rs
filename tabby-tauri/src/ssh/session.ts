@@ -227,7 +227,7 @@ export class TauriSshSession extends BaseSession {
                 intervalMs: options.keepaliveInterval,
                 maxCount: options.keepaliveCountMax,
             } : null,
-            environment: {},
+            environment: options.environment ?? {},
             x11: !!options.x11,
             x11Display: null,
             agentForward: !!options.agentForward,

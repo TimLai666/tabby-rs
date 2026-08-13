@@ -2413,7 +2413,7 @@ fn validate_request(request: &SshConnectRequest) -> Result<(), SshError> {
         max_count,
     }) = request.keepalive.as_ref()
     {
-        if *interval_ms < 100 || *interval_ms > 86_400_000 || *max_count > 100 {
+        if *interval_ms < 100 || *interval_ms > 86_400_000 || *max_count == 0 || *max_count > 100 {
             return Err(SshError::InvalidRequest(
                 "SSH keepalive options are invalid".into(),
             ));
@@ -2727,6 +2727,16 @@ mod tests {
         assert!(validate_request(&value).is_err());
         let mut value = request();
         value.host = "example\n.test".into();
+        assert!(validate_request(&value).is_err());
+    }
+
+    #[test]
+    fn rejects_zero_keepalive_max_count() {
+        let mut value = request();
+        value.keepalive = Some(KeepaliveOptions {
+            interval_ms: 5_000,
+            max_count: 0,
+        });
         assert!(validate_request(&value).is_err());
     }
 
