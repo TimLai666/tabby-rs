@@ -55,6 +55,12 @@ if (!/^\s+run: yarn audit:tauri:dependencies --output release-staging\/dependenc
 if (!/--dependency-audit release-staging\/dependency-audit\.json/.test(releaseWorkflow)) {
     violations.push('release gate does not consume the Tauri dependency metadata audit')
 }
+if (!/run: cargo fmt --manifest-path src-tauri\/Cargo\.toml -- --check/.test(releaseWorkflow)) {
+    violations.push('release workflow is missing the Rust formatting check')
+}
+if (!/run: cargo clippy --manifest-path src-tauri\/Cargo\.toml --lib/.test(releaseWorkflow)) {
+    violations.push('release workflow is missing the Rust clippy check')
+}
 if (!/^  publish:[\s\S]*?^    permissions:\n\s+contents:\s+write\s*$/m.test(releaseWorkflow)) {
     violations.push('release publish job does not explicitly grant contents write')
 }

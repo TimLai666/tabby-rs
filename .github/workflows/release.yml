@@ -168,6 +168,12 @@ jobs:
       - name: Verify no built-in telemetry
         run: yarn audit:telemetry
 
+      - name: Check Rust formatting
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+
+      - name: Run Rust clippy
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --lib
+
       - name: Test Rust host
         run: cargo test --manifest-path src-tauri/Cargo.toml --lib
 
