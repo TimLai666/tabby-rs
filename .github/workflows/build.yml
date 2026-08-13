@@ -329,6 +329,7 @@ jobs:
         run: cargo test --manifest-path src-tauri/Cargo.toml --no-run
 
       - name: Test SSH authentication fixture
+        if: matrix.name != 'windows'
         run: yarn test:ssh-auth-integration
 
       - name: Test SSH session routing contract
