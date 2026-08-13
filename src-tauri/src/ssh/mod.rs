@@ -27,6 +27,8 @@ use russh::{
     ChannelMsg, Disconnect,
 };
 use secrecy::ExposeSecret;
+use serde_json::{Map, Value};
+use sha2::{Digest, Sha512};
 use tauri::{AppHandle, Emitter};
 use tokio::{
     io::{copy_bidirectional, AsyncWriteExt},
@@ -64,6 +66,7 @@ pub use model::*;
 const HOST_KEY_TIMEOUT: Duration = Duration::from_secs(60);
 const AUTH_PROMPT_TIMEOUT: Duration = Duration::from_secs(120);
 const MAX_BUFFER: usize = 16 * 1024 * 1024;
+const VAULT_SECRET_TYPE_PASSPHRASE: &str = "ssh:key-passphrase";
 
 type HostKeySender = oneshot::Sender<HostKeyDecision>;
 type AuthSender = oneshot::Sender<Vec<String>>;
@@ -1801,9 +1804,10 @@ impl SshManager {
         credentials: &CredentialState,
     ) -> Result<PrivateKeyMaterial, SshError> {
         let openssh = self.load_private_key_bytes(file_ref, secrets).await?;
-        let passphrase = passphrase_ref
-            .map(|reference| resolve_secret_ref(reference, secrets, credentials))
-            .transpose()?;
+        let passphrase = match passphrase_ref {
+            Some(reference) => Some(resolve_secret_ref(reference, secrets, credentials)?),
+            None => resolve_saved_private_key_passphrase(&openssh, secrets, credentials),
+        };
         Ok(PrivateKeyMaterial {
             openssh,
             passphrase,
@@ -2519,6 +2523,35 @@ fn resolve_secret_ref(
     Ok(value)
 }
 
+fn resolve_saved_private_key_passphrase(
+    openssh: &[u8],
+    secrets: &SecretState,
+    credentials: &CredentialState,
+) -> Option<secrecy::SecretString> {
+    let hash = hex::encode(Sha512::digest(openssh));
+    let mut key = Map::new();
+    key.insert("hash".into(), Value::String(hash.clone()));
+    let selector = VaultSecretSelector {
+        r#type: VAULT_SECRET_TYPE_PASSPHRASE.into(),
+        key,
+    };
+    if let Ok(Some(value)) = secrets.get_secret(&selector) {
+        return Some(secrecy::SecretString::new(value));
+    }
+
+    credentials
+        .store()
+        .get(
+            CredentialNamespace::TabbyRs,
+            &CredentialAddress {
+                service: format!("ssh-private-key:{hash}"),
+                account: "user".into(),
+            },
+        )
+        .ok()
+        .flatten()
+}
+
 impl From<SshError> for crate::error::AppError {
     fn from(error: SshError) -> Self {
         match error {
@@ -2546,15 +2579,17 @@ mod tests {
         },
         host_key_decision_action,
         model::*,
-        validate_request, HostKeyDecisionAction, ManagerAuthenticator, SshManager,
+        resolve_saved_private_key_passphrase, validate_request, HostKeyDecisionAction,
+        ManagerAuthenticator, SshManager, VAULT_SECRET_TYPE_PASSPHRASE,
     };
     use crate::security::{
         CredentialAddress, CredentialError, CredentialNamespace, CredentialState, CredentialStore,
-        SecretState,
+        SecretState, VaultSnapshot, VaultSnapshotSecret,
     };
     use async_trait::async_trait;
     use secrecy::{ExposeSecret, SecretString};
-    use std::{collections::BTreeMap, sync::Arc};
+    use sha2::{Digest, Sha512};
+    use std::{collections::BTreeMap, sync::Arc, time::Duration};
     use tempfile::tempdir;
 
     #[derive(Default)]
@@ -2601,6 +2636,7 @@ mod tests {
     struct RecordingAuthContext {
         calls: Vec<String>,
         password_valid: bool,
+        private_key_passphrase: Option<String>,
     }
 
     #[async_trait]
@@ -2627,6 +2663,10 @@ mod tests {
         ) -> Result<bool, SshError> {
             self.calls
                 .push(format!("private-key:{}", key.openssh.len()));
+            self.private_key_passphrase = key
+                .passphrase
+                .as_ref()
+                .map(|value| value.expose_secret().to_owned());
             Ok(true)
         }
 
@@ -2774,6 +2814,7 @@ mod tests {
         let mut context = RecordingAuthContext {
             calls: Vec::new(),
             password_valid: false,
+            private_key_passphrase: None,
         };
 
         assert!(authenticator
@@ -2782,6 +2823,78 @@ mod tests {
             .unwrap());
         assert!(context.password_valid);
         assert_eq!(context.calls, ["password", "private-key:16"]);
+    }
+
+    #[tokio::test]
+    async fn manager_authenticator_reuses_saved_private_key_passphrase() {
+        let private_key_bytes = b"test-private-key";
+        let hash = hex::encode(Sha512::digest(private_key_bytes));
+        let mut credentials = TestCredentialStore::default();
+        credentials.value = Some((
+            format!("ssh-private-key:{hash}"),
+            "user".into(),
+            "fixture-passphrase".into(),
+        ));
+        let credentials = CredentialState::with_store(Arc::new(credentials));
+        let secrets = SecretState::default();
+        let directory = tempdir().unwrap();
+        let private_key = directory.path().join("id_ed25519");
+        std::fs::write(&private_key, private_key_bytes).unwrap();
+        let mut value = request();
+        value.auth = vec![AuthMethodRef::PrivateKey {
+            file_ref: private_key.to_string_lossy().into_owned(),
+            passphrase_ref: None,
+        }];
+        let authenticator = ManagerAuthenticator {
+            manager: SshManager::new(directory.path().join("known_hosts")),
+            app: None,
+            request: value,
+            secrets: &secrets,
+            credentials: &credentials,
+        };
+        let mut context = RecordingAuthContext {
+            calls: Vec::new(),
+            password_valid: false,
+            private_key_passphrase: None,
+        };
+
+        assert!(authenticator
+            .authenticate(&mut context, "alice", &[])
+            .await
+            .unwrap());
+        assert_eq!(
+            context.private_key_passphrase.as_deref(),
+            Some("fixture-passphrase")
+        );
+    }
+
+    #[test]
+    fn resolves_saved_private_key_passphrase_from_vault() {
+        let private_key_bytes = b"test-private-key";
+        let hash = hex::encode(Sha512::digest(private_key_bytes));
+        let mut key = serde_json::Map::new();
+        key.insert("hash".into(), serde_json::Value::String(hash));
+        let secrets = SecretState::default();
+        secrets
+            .replace(
+                VaultSnapshot {
+                    config: serde_json::Value::Null,
+                    secrets: vec![VaultSnapshotSecret {
+                        r#type: VAULT_SECRET_TYPE_PASSPHRASE.into(),
+                        key,
+                        value: "fixture-passphrase".into(),
+                    }],
+                },
+                SecretString::new("vault-passphrase".into()),
+                Duration::from_secs(60),
+            )
+            .unwrap();
+
+        let credentials = CredentialState::default();
+        let passphrase =
+            resolve_saved_private_key_passphrase(private_key_bytes, &secrets, &credentials)
+                .expect("vault passphrase should resolve");
+        assert_eq!(passphrase.expose_secret(), "fixture-passphrase");
     }
 
     #[tokio::test]
@@ -2803,6 +2916,7 @@ mod tests {
         let mut context = RecordingAuthContext {
             calls: Vec::new(),
             password_valid: false,
+            private_key_passphrase: None,
         };
         assert!(authenticator
             .authenticate(&mut context, "alice", &[])
@@ -2822,6 +2936,7 @@ mod tests {
         let mut context = RecordingAuthContext {
             calls: Vec::new(),
             password_valid: false,
+            private_key_passphrase: None,
         };
         assert!(authenticator
             .authenticate(&mut context, "alice", &[])
