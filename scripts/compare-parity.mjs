@@ -27,6 +27,14 @@ function duplicateValues (items, key) {
     return [...duplicates]
 }
 
+function nonEmptyStringArray (value) {
+    return Array.isArray(value) && value.length > 0 && value.every(item => typeof item === 'string' && item.trim().length > 0)
+}
+
+function issueNumberArray (value) {
+    return Array.isArray(value) && value.length > 0 && value.every(item => Number.isInteger(item) && item > 0)
+}
+
 export function compareParity ({ featuresPath = defaultFeaturesPath, platformsPath = defaultPlatformsPath } = {}) {
     const featuresDocument = readYaml(featuresPath)
     const platformsDocument = readYaml(platformsPath)
@@ -56,19 +64,23 @@ export function compareParity ({ featuresPath = defaultFeaturesPath, platformsPa
         if (feature?.status === 'pending' || feature?.status === 'failed') {
             failures.push(`feature ${feature.id} is ${feature.status}`)
         }
-        if ((feature?.status === 'passed' || feature?.status === 'accepted-difference') && !feature.evidence?.length) {
+        if ((feature?.status === 'passed' || feature?.status === 'accepted-difference') && !nonEmptyStringArray(feature.evidence)) {
             failures.push(`feature ${feature.id} has no evidence for ${feature.status}`)
         }
-        if (feature?.status === 'accepted-difference' && !feature.reason) {
+        if (feature?.status === 'accepted-difference' && (typeof feature.reason !== 'string' || !feature.reason.trim())) {
             failures.push(`feature ${feature.id} accepted-difference has no reason`)
         }
-        if (!Array.isArray(feature?.issues) || feature.issues.length === 0) {
+        if (!issueNumberArray(feature?.issues)) {
             failures.push(`feature ${feature?.id || '<unnamed>'} has no issue ownership`)
         }
-        if (!Array.isArray(feature?.platforms) || feature.platforms.length === 0) {
+        if (!nonEmptyStringArray(feature?.platforms)) {
             failures.push(`feature ${feature?.id || '<unnamed>'} has no platform scope`)
         }
-        if (!feature?.tests || (!feature.tests.automated?.length && !feature.tests.manual?.length)) {
+        const automatedTests = feature?.tests?.automated
+        const manualTests = feature?.tests?.manual
+        if ((automatedTests !== undefined && !nonEmptyStringArray(automatedTests)) || (manualTests !== undefined && !nonEmptyStringArray(manualTests))) {
+            failures.push(`feature ${feature?.id || '<unnamed>'} has invalid automated or manual test list`)
+        } else if (!nonEmptyStringArray(automatedTests) && !nonEmptyStringArray(manualTests)) {
             failures.push(`feature ${feature?.id || '<unnamed>'} has no automated or manual test`)
         }
     }
@@ -82,10 +94,13 @@ export function compareParity ({ featuresPath = defaultFeaturesPath, platformsPa
         if (platform?.status === 'pending' || platform?.status === 'failed') {
             failures.push(`platform ${platform.id} is ${platform.status}`)
         }
-        if (platform?.status === 'passed' && !platform.evidence?.length) {
-            failures.push(`platform ${platform.id} has no evidence for passed`)
+        if ((platform?.status === 'passed' || platform?.status === 'accepted-difference') && !nonEmptyStringArray(platform.evidence)) {
+            failures.push(`platform ${platform.id} has no evidence for ${platform.status}`)
         }
-        if (!Array.isArray(platform?.requiredChecks) || platform.requiredChecks.length === 0) {
+        if (platform?.status === 'accepted-difference' && (typeof platform.reason !== 'string' || !platform.reason.trim())) {
+            failures.push(`platform ${platform.id} accepted-difference has no reason`)
+        }
+        if (!nonEmptyStringArray(platform?.requiredChecks)) {
             failures.push(`platform ${platform?.id || '<unnamed>'} has no required checks`)
         }
     }
