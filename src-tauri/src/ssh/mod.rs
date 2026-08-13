@@ -608,10 +608,11 @@ impl SshAuthenticator for ManagerAuthenticator<'_> {
                                         },
                                     )
                                     .await?;
-                                response = context
+                                let result = context
                                     .authenticate_keyboard_interactive_respond(responses.clone())
-                                    .await?;
+                                    .await;
                                 responses.zeroize();
+                                response = result?;
                             }
                         }
                     }
