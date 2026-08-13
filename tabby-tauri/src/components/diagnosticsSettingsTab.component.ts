@@ -49,9 +49,7 @@ export class TauriDiagnosticsSettingsTabComponent {
         this.message = null
         try {
             if (!this.preview) {
-                await this.loadPreview()
-            }
-            if (!this.preview) {
+                this.message = 'Preview diagnostics before exporting.'
                 return
             }
             const exported = await this.diagnostics.exportBundle()

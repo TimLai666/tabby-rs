@@ -113,6 +113,7 @@
     "test:web-capability-boundary": "node scripts/test-web-capability-boundary.mjs",
     "test:parity-links": "node scripts/test-parity-links.mjs",
     "test:release-documentation": "node scripts/test-release-documentation.mjs",
+    "test:diagnostics-ui": "node scripts/test-diagnostics-ui-contract.mjs",
     "test:tabby-rs-branding": "node scripts/test-tabby-rs-branding.mjs",
     "test:parity-report": "node scripts/test-parity-report.mjs",
     "build:tauri": "npm run build:tauri:frontend && cargo build --manifest-path src-tauri/Cargo.toml",

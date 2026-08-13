@@ -148,6 +148,9 @@ jobs:
       - name: Test web capability boundary
         run: yarn test:web-capability-boundary
 
+      - name: Test diagnostics preview gate
+        run: yarn test:diagnostics-ui
+
       - name: Test release documentation contract
         run: yarn test:release-documentation
 
