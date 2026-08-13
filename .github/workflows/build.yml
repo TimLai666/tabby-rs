@@ -248,6 +248,9 @@ jobs:
       - name: Audit Tauri renderer bundle
         run: yarn test:tauri:bundle
 
+      - name: Test public plugin runtime fixtures
+        run: yarn test:official-plugin-runtime
+
       - name: Test system npm plugin lifecycle
         run: yarn test:plugin-npm-lifecycle
 
