@@ -19,7 +19,7 @@ const trackedProductionPath = file => (
 
 const forbiddenPatterns = [
     { id: 'sentry-sdk-or-endpoint', pattern: /@sentry[\\/]|sentry\.io|SENTRY_(?:DSN|AUTH_TOKEN|ORG|PROJECT)/i },
-    { id: 'mixpanel-sdk-or-endpoint', pattern: /mixpanel(?:-browser)?(?:[\\/]|")|mixpanel\.com|MIXPANEL_[A-Z0-9_]+/i },
+    { id: 'mixpanel-sdk-or-endpoint', pattern: /mixpanel(?:-browser)?(?:[\\/"']|$)|mixpanel\.com|MIXPANEL_[A-Z0-9_]+/i },
 ]
 
 function trackedProductionFiles () {

@@ -10,6 +10,10 @@ assert.deepEqual(
     findTelemetryViolations('import mixpanel from "mixpanel-browser"', 'fixture.js'),
     [{ rule: 'mixpanel-sdk-or-endpoint', path: 'fixture.js' }],
 )
+assert.deepEqual(
+    findTelemetryViolations("import mixpanel from 'mixpanel-browser'", 'fixture.js'),
+    [{ rule: 'mixpanel-sdk-or-endpoint', path: 'fixture.js' }],
+)
 assert.deepEqual(findTelemetryViolations('class Sentry { consume () {} }', 'zmodem.ts'), [])
 assert.deepEqual(scanProductionFiles(), [])
 
