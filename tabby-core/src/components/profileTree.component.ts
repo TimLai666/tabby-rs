@@ -17,6 +17,11 @@ interface CollapsableProfileGroup extends ProfileGroup {
     children: PartialProfileGroup<CollapsableProfileGroup>[]
 }
 
+type ProfileTab = {
+    getFocusedTab?: () => ProfileTab|null
+    profile?: PartialProfile<Profile>
+}
+
 /** @hidden */
 @Component({
     selector: 'profile-tree',
@@ -26,6 +31,7 @@ interface CollapsableProfileGroup extends ProfileGroup {
 export class ProfileTreeComponent extends BaseComponent {
     profileGroups: PartialProfileGroup<ProfileGroup>[] = []
     rootGroups: PartialProfileGroup<ProfileGroup>[] = []
+    activeProfileId: string|null = null
 
     filteredProfiles: PartialProfile<Profile>[] = []
     @Input() filter = ''
@@ -52,8 +58,9 @@ export class ProfileTreeComponent extends BaseComponent {
     async ngOnInit (): Promise<void> {
         await this.loadTreeItems()
         this.subscribeUntilDestroyed(this.config.changed$, () => this.loadTreeItems())
-        this.app.tabsChanged$.subscribe(() => this.tabStateChanged())
-        this.app.activeTabChange$.subscribe(() => this.tabStateChanged())
+        this.subscribeUntilDestroyed(this.app.tabsChanged$, () => this.tabStateChanged())
+        this.subscribeUntilDestroyed(this.app.activeTabChange$, () => this.tabStateChanged())
+        this.tabStateChanged()
     }
 
 
@@ -191,8 +198,12 @@ export class ProfileTreeComponent extends BaseComponent {
         ], event)
     }
 
-    private async tabStateChanged (): Promise<void> {
-        // TODO: show active tab in the side panel with eye icon
+    private tabStateChanged (): void {
+        let activeTab = this.app.activeTab as ProfileTab|null
+        if (activeTab?.getFocusedTab) {
+            activeTab = activeTab.getFocusedTab()
+        }
+        this.activeProfileId = activeTab?.profile?.id ?? null
     }
 
     async launchProfile<P extends Profile> (profile: PartialProfile<P>): Promise<any> {
