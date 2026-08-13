@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 
@@ -57,7 +58,37 @@ const primaryPatterns = {
 const primary = files.filter(primaryPatterns[platform])
 assert.equal(primary.length, 1, `release must contain exactly one ${platform} updater artifact`)
 const primaryPath = primary[0]
-assert.ok(fs.existsSync(`${primaryPath}.sig`), `updater signature is missing for ${path.basename(primaryPath)}`)
+const signaturePath = `${primaryPath}.sig`
+assert.ok(fs.existsSync(signaturePath), `updater signature is missing for ${path.basename(primaryPath)}`)
+
+function readJsonIfPresent (filePath, label) {
+    if (!fs.existsSync(filePath)) return null
+    try {
+        return JSON.parse(fs.readFileSync(filePath, 'utf8'))
+    } catch (error) {
+        assert.fail(`${label} is invalid: ${error.message}`)
+    }
+}
+
+const metadata = readJsonIfPresent(path.join(staging, 'tabby-rs-metadata.json'), 'release metadata')
+if (metadata) {
+    assert.ok(typeof metadata.version === 'string' && metadata.version.length > 0, 'release metadata version is missing')
+    assert.ok(path.basename(primaryPath).includes(metadata.version), `updater artifact name does not contain release version ${metadata.version}`)
+    assert.equal(metadata.platform, platform, 'release metadata platform does not match artifact platform')
+}
+
+const manifest = readJsonIfPresent(path.join(staging, 'update-manifest.json'), 'update manifest')
+if (manifest) {
+    assert.ok(metadata, 'update manifest requires release metadata')
+    assert.equal(manifest.version, metadata.version, 'update manifest version does not match release metadata')
+    assert.equal(manifest.platform, metadata.platform, 'update manifest platform does not match release metadata')
+    assert.equal(manifest.arch, metadata.arch, 'update manifest arch does not match release metadata')
+    const manifestArtifact = path.basename(decodeURIComponent(new URL(manifest.url).pathname))
+    assert.equal(manifestArtifact, path.basename(primaryPath), 'update manifest URL does not point to primary artifact')
+    assert.equal(manifest.sha256, crypto.createHash('sha256').update(fs.readFileSync(primaryPath)).digest('hex'), 'update manifest hash does not match primary artifact')
+    assert.equal(manifest.size, fs.statSync(primaryPath).size, 'update manifest size does not match primary artifact')
+    assert.equal(manifest.signature, fs.readFileSync(signaturePath, 'utf8').trim(), 'update manifest signature does not match artifact signature')
+}
 
 const output = argument('--output')
 if (output) {
@@ -66,6 +97,7 @@ if (output) {
         platform,
         bundles,
         primaryUpdaterArtifact: path.relative(staging, primaryPath).split(path.sep).join('/'),
+        version: metadata?.version || null,
         files: basenames.sort(),
     }
     fs.writeFileSync(path.resolve(output), `${JSON.stringify(report, null, 2)}\n`)

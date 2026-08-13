@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -20,12 +21,40 @@ function run (staging, platform, bundles, environmentOnly = false) {
 }
 
 const linux = fs.mkdtempSync(path.join(os.tmpdir(), 'tabby-rs-linux-release-'))
-fs.writeFileSync(path.join(linux, 'tabby-rs.AppImage'), 'appimage')
-fs.writeFileSync(path.join(linux, 'tabby-rs.AppImage.sig'), 'signature')
+const linuxArtifact = path.join(linux, 'tabby-rs_1.0.231-tabbyrs.1_amd64.AppImage')
+const linuxSignature = `${linuxArtifact}.sig`
+fs.writeFileSync(linuxArtifact, 'appimage')
+fs.writeFileSync(linuxSignature, 'signature')
 fs.writeFileSync(path.join(linux, 'tabby-rs.deb'), 'deb')
 fs.writeFileSync(path.join(linux, 'tabby-rs.rpm'), 'rpm')
-assert.equal(run(linux, 'linux', 'appimage,deb,rpm'), path.join(linux, 'tabby-rs.AppImage'))
-assert.equal(run(linux, 'linux', 'appimage,deb,rpm', true), path.join(linux, 'tabby-rs.AppImage'))
+fs.writeFileSync(path.join(linux, 'tabby-rs-metadata.json'), JSON.stringify({
+    version: '1.0.231-tabbyrs.1',
+    platform: 'linux',
+    arch: 'x86_64',
+}))
+assert.equal(run(linux, 'linux', 'appimage,deb,rpm'), linuxArtifact)
+assert.equal(run(linux, 'linux', 'appimage,deb,rpm', true), linuxArtifact)
+fs.writeFileSync(path.join(linux, 'update-manifest.json'), JSON.stringify({
+    version: '1.0.231-tabbyrs.1',
+    platform: 'linux',
+    arch: 'x86_64',
+    url: `https://updates.example.test/${path.basename(linuxArtifact)}`,
+    sha256: crypto.createHash('sha256').update(fs.readFileSync(linuxArtifact)).digest('hex'),
+    size: fs.statSync(linuxArtifact).size,
+    signature: 'signature',
+}))
+assert.equal(run(linux, 'linux', 'appimage,deb,rpm'), linuxArtifact)
+const manifest = JSON.parse(fs.readFileSync(path.join(linux, 'update-manifest.json'), 'utf8'))
+manifest.size++
+fs.writeFileSync(path.join(linux, 'update-manifest.json'), JSON.stringify(manifest))
+assert.throws(() => run(linux, 'linux', 'appimage,deb,rpm'), /size does not match primary artifact/)
+fs.rmSync(path.join(linux, 'update-manifest.json'))
+fs.rmSync(linuxArtifact)
+fs.rmSync(linuxSignature)
+fs.writeFileSync(path.join(linux, 'tabby-rs.AppImage'), 'appimage')
+fs.writeFileSync(path.join(linux, 'tabby-rs.AppImage.sig'), 'signature')
+assert.throws(() => run(linux, 'linux', 'appimage,deb,rpm'), /does not contain release version/)
+fs.rmSync(path.join(linux, 'tabby-rs-metadata.json'))
 fs.rmSync(path.join(linux, 'tabby-rs.rpm'))
 assert.throws(() => run(linux, 'linux', 'appimage,deb,rpm'), /missing rpm artifact/)
 
