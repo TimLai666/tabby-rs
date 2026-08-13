@@ -477,32 +477,12 @@ fn redact_ips(text: &mut String) -> bool {
     let mut changed = false;
     let mut output = String::with_capacity(text.len());
     for token in text.split_inclusive(char::is_whitespace) {
-        let mut token_output = token.to_owned();
-        let mut start = None;
-        for (index, character) in token.char_indices() {
-            if character.is_ascii_digit() || character == '.' {
-                start.get_or_insert(index);
-            } else if let Some(start_index) = start.take() {
-                let candidate = &token[start_index..index];
-                if is_ipv4(candidate) {
-                    token_output = format!("{}<IP>{}", &token[..start_index], &token[index..]);
-                    changed = true;
-                }
-                break;
-            }
-        }
-        if let Some(start_index) = start {
-            let candidate = token[start_index..]
-                .trim_matches(|character: char| ",.;()[]{} \t\r\n".contains(character));
-            if is_ipv4(candidate) {
-                token_output = format!(
-                    "{}<IP>{}",
-                    &token[..start_index],
-                    &token[start_index + candidate.len()..]
-                );
-                changed = true;
-            }
-        }
+        let (token_output, token_changed) = redact_candidates(
+            token,
+            |character| character.is_ascii_digit() || character == '.',
+            is_ipv4,
+        );
+        changed |= token_changed;
         output.push_str(&token_output);
     }
     if changed {
@@ -515,40 +495,53 @@ fn redact_ipv6s(text: &mut String) -> bool {
     let mut changed = false;
     let mut output = String::with_capacity(text.len());
     for token in text.split_inclusive(char::is_whitespace) {
-        let mut token_output = token.to_owned();
-        let mut start = None;
-        for (index, character) in token.char_indices() {
-            if character.is_ascii_hexdigit() || character == ':' {
-                start.get_or_insert(index);
-            } else if let Some(start_index) = start.take() {
-                if token[start_index..index]
-                    .parse::<std::net::Ipv6Addr>()
-                    .is_ok()
-                {
-                    token_output = format!("{}<IP>{}", &token[..start_index], &token[index..]);
-                    changed = true;
-                }
-                break;
-            }
-        }
-        if let Some(start_index) = start {
-            let candidate = token[start_index..]
-                .trim_matches(|character: char| ",.;()[]{} \t\r\n".contains(character));
-            if candidate.parse::<std::net::Ipv6Addr>().is_ok() {
-                token_output = format!(
-                    "{}<IP>{}",
-                    &token[..start_index],
-                    &token[start_index + candidate.len()..]
-                );
-                changed = true;
-            }
-        }
+        let (token_output, token_changed) = redact_candidates(
+            token,
+            |character| character.is_ascii_hexdigit() || character == ':',
+            |candidate| candidate.parse::<std::net::Ipv6Addr>().is_ok(),
+        );
+        changed |= token_changed;
         output.push_str(&token_output);
     }
     if changed {
         *text = output;
     }
     changed
+}
+
+fn redact_candidates<F>(
+    token: &str,
+    is_candidate_character: fn(char) -> bool,
+    is_value: F,
+) -> (String, bool)
+where
+    F: Fn(&str) -> bool,
+{
+    let mut output = String::with_capacity(token.len());
+    let mut last = 0;
+    let mut start = None;
+    let mut changed = false;
+    for (index, character) in token
+        .char_indices()
+        .chain(std::iter::once((token.len(), '\0')))
+    {
+        if is_candidate_character(character) {
+            start.get_or_insert(index);
+        } else if let Some(start_index) = start.take() {
+            let candidate = &token[start_index..index];
+            if is_value(candidate) {
+                output.push_str(&token[last..start_index]);
+                output.push_str("<IP>");
+                last = index;
+                changed = true;
+            }
+        }
+    }
+    if !changed {
+        return (token.to_owned(), false);
+    }
+    output.push_str(&token[last..]);
+    (output, true)
 }
 
 fn is_ipv4(value: &str) -> bool {
@@ -594,6 +587,14 @@ mod tests {
         assert!(!output.text.contains("alice"));
         assert!(!output.text.contains("192.0.2.10"));
         assert!(output.text.contains("<USER>@<IP>"));
+    }
+
+    #[test]
+    fn redacts_all_ipv4_and_ipv6_addresses_in_one_token() {
+        let output = Redactor::default()
+            .redact_text("addresses=192.0.2.1,198.51.100.2 [2001:db8::1],[2001:db8::2]");
+
+        assert_eq!(output.text, "addresses=<IP>,<IP> [<IP>],[<IP>]");
     }
 
     #[test]
