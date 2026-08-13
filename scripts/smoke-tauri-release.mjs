@@ -62,7 +62,13 @@ function assertCommand (command, argsList, options = {}) {
 async function waitForFile (filePath, timeoutMs = 60000) {
     const deadline = Date.now() + timeoutMs
     while (Date.now() < deadline) {
-        if (fs.existsSync(filePath)) return
+        if (fs.existsSync(filePath)) {
+            const report = JSON.parse(fs.readFileSync(filePath, 'utf8'))
+            assert.equal(report.schemaVersion, 1, 'installer smoke marker schema is unsupported')
+            assert.equal(report.ready, true, 'installer smoke marker is not ready')
+            assert.ok(report.identity && typeof report.identity === 'object', 'installer smoke marker has no identity')
+            return report
+        }
         await new Promise(resolve => setTimeout(resolve, 250))
     }
     throw new Error(`installed application did not write ready marker within ${timeoutMs}ms: ${filePath}`)
@@ -99,10 +105,24 @@ async function launchAndCheck (executable, cwd, environment) {
         windowsHide: true,
     })
     try {
-        await Promise.race([
+        const readyReport = await Promise.race([
             waitForFile(marker),
             new Promise((resolve, reject) => child.once('error', reject)),
         ])
+        const identity = readyReport.identity
+        assert.equal(identity.productName, 'Tabby RS')
+        assert.equal(identity.appIdentifier, 'io.tabbyrs.app')
+        assert.equal(identity.cliName, 'tabby-rs')
+        assert.equal(identity.urlScheme, 'tabby-rs')
+        assert.equal(identity.dataDirName, 'tabby-rs')
+        assert.equal(path.resolve(identity.dataDir), path.resolve(dataDirectory), 'installer smoke used an unexpected data directory')
+        assert.match(path.basename(identity.executable).toLowerCase(), /^tabby-rs(?:\.exe)?$/)
+        return {
+            appIdentifier: identity.appIdentifier,
+            cliName: identity.cliName,
+            dataDirectory: identity.dataDir,
+            urlScheme: identity.urlScheme,
+        }
     } finally {
         await terminate(child)
         fs.rmSync(markerDirectory, { recursive: true, force: true })
@@ -142,11 +162,11 @@ async function smokeWindows () {
             await assertCommand(installer, ['/S', `/D=${installDirectory}`])
             const executable = findFile(installDirectory, file => path.basename(file).toLowerCase() === 'tabby-rs.exe')
             assert.ok(executable, `NSIS installer did not install tabby-rs.exe under ${installDirectory}`)
-            await launchAndCheck(executable, path.dirname(executable), { APPDATA: path.join(root, 'appdata') })
+            const identity = await launchAndCheck(executable, path.dirname(executable), { APPDATA: path.join(root, 'appdata') })
             auditInstalledBundle(installDirectory, 'windows-nsis-install', operations)
             const uninstaller = findFile(installDirectory, file => path.basename(file).toLowerCase() === 'uninstall.exe')
             assert.ok(uninstaller, 'NSIS installer did not install an uninstaller')
-            operations.push({ action: 'launch', executable: path.relative(installDirectory, executable) })
+            operations.push({ action: 'launch', executable: path.relative(installDirectory, executable), identity })
             await assertCommand(uninstaller, ['/S'])
             assert.ok(!fs.existsSync(executable), 'NSIS uninstaller left the application executable behind')
             operations.push({ action: 'uninstall', executable: path.relative(installDirectory, uninstaller) })
@@ -177,9 +197,9 @@ async function smokeMacos () {
                 const executableDirectory = path.join(installedApp, 'Contents', 'MacOS')
                 const executable = findFile(executableDirectory, file => path.basename(file) === 'tabby-rs')
                 assert.ok(executable, `application bundle has no executable: ${installedApp}`)
-                await launchAndCheck(executable, installedApp, { HOME: path.join(root, 'home') })
+                const identity = await launchAndCheck(executable, installedApp, { HOME: path.join(root, 'home') })
                 auditInstalledBundle(installedApp, 'macos-dmg-app', operations)
-                operations.push({ action: 'launch', executable: path.relative(installedApp, executable) })
+                operations.push({ action: 'launch', executable: path.relative(installedApp, executable), identity })
                 fs.rmSync(installedApp, { recursive: true, force: true })
                 assert.ok(!fs.existsSync(installedApp), 'DMG copy could not be removed')
                 operations.push({ action: 'uninstall', executable: path.relative(installDirectory, installedApp) })
@@ -204,9 +224,9 @@ async function smokeAppImage (artifact, root, operations) {
     assert.ok(fs.existsSync(executable), `AppImage extraction has no AppRun: ${extractDirectory}`)
     fs.chmodSync(executable, 0o755)
     operations.push({ action: 'install', artifact: path.basename(artifact), target: 'AppImage/AppRun' })
-    await launchAndCheck(executable, extractDirectory, { XDG_CONFIG_HOME: path.join(root, 'config') })
+    const identity = await launchAndCheck(executable, extractDirectory, { XDG_CONFIG_HOME: path.join(root, 'config') })
     auditInstalledBundle(extractDirectory, 'linux-appimage-extract', operations)
-    operations.push({ action: 'launch', executable: 'AppImage/AppRun' })
+    operations.push({ action: 'launch', executable: 'AppImage/AppRun', identity })
     fs.rmSync(extractDirectory, { recursive: true, force: true })
     assert.ok(!fs.existsSync(extractDirectory), 'AppImage uninstall left the extracted application behind')
     operations.push({ action: 'uninstall', target: 'AppImage/AppRun' })
@@ -222,9 +242,9 @@ async function smokeDeb (artifact, root, operations) {
     const installed = findFile(packageRoot, file => path.basename(file) === 'tabby-rs')
     assert.ok(installed, `DEB installation did not place the application under ${packageRoot}`)
     operations.push({ action: 'install', artifact: path.basename(artifact), package: name, manager: 'dpkg' })
-    await launchAndCheck(installed, path.dirname(installed), { HOME: path.join(root, 'home') })
+    const identity = await launchAndCheck(installed, path.dirname(installed), { HOME: path.join(root, 'home') })
     auditInstalledBundle(packageRoot, 'linux-deb-install', operations)
-    operations.push({ action: 'launch', executable: path.relative(packageRoot, installed) })
+    operations.push({ action: 'launch', executable: path.relative(packageRoot, installed), identity })
     await assertCommand('dpkg', [`--root=${packageRoot}`, `--admindir=${adminDirectory}`, `--instdir=${packageRoot}`, '--purge', name], { cwd: root })
     assert.ok(!fs.existsSync(installed), 'DEB purge left the application executable behind')
     operations.push({ action: 'uninstall', package: name, manager: 'dpkg' })
@@ -240,9 +260,9 @@ async function smokeRpm (artifact, root, operations) {
     const installed = findFile(packageRoot, file => path.basename(file) === 'tabby-rs')
     assert.ok(installed, `RPM installation did not place the application under ${packageRoot}`)
     operations.push({ action: 'install', artifact: path.basename(artifact), package: name, manager: 'rpm' })
-    await launchAndCheck(installed, path.dirname(installed), { HOME: path.join(root, 'home') })
+    const identity = await launchAndCheck(installed, path.dirname(installed), { HOME: path.join(root, 'home') })
     auditInstalledBundle(packageRoot, 'linux-rpm-install', operations)
-    operations.push({ action: 'launch', executable: path.relative(packageRoot, installed) })
+    operations.push({ action: 'launch', executable: path.relative(packageRoot, installed), identity })
     await assertCommand('rpm', [`--root=${packageRoot}`, '--dbpath=/var/lib/rpm', '--erase', name], { cwd: root })
     assert.ok(!fs.existsSync(installed), 'RPM erase left the application executable behind')
     operations.push({ action: 'uninstall', package: name, manager: 'rpm' })

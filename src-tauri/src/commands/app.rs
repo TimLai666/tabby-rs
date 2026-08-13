@@ -9,6 +9,7 @@ use tauri::{AppHandle, State, WebviewWindow};
 
 use crate::{
     error::AppError,
+    identity::AppIdentity,
     plugins::manifest,
     state::AppState,
     storage::{
@@ -108,8 +109,19 @@ fn write_benchmark_ready(path: &Path) -> Result<(), AppError> {
     write_ready_marker(path)
 }
 
-fn write_installer_smoke_ready(path: &Path) -> Result<(), AppError> {
-    write_ready_marker(path)
+fn write_installer_smoke_ready(path: &Path, identity: &AppIdentity) -> Result<(), AppError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let temporary = path.with_extension(format!("tmp-{}", std::process::id()));
+    let content = serde_json::json!({
+        "schemaVersion": 1,
+        "ready": true,
+        "identity": identity,
+    });
+    fs::write(&temporary, serde_json::to_vec_pretty(&content)?)?;
+    fs::rename(temporary, path)?;
+    Ok(())
 }
 
 fn write_ready_marker(path: &Path) -> Result<(), AppError> {
@@ -323,12 +335,16 @@ pub fn app_benchmark_ready(request: EmptyRequest) -> Result<(), AppError> {
 }
 
 #[tauri::command]
-pub fn app_installer_smoke_ready(request: EmptyRequest) -> Result<(), AppError> {
+pub fn app_installer_smoke_ready(
+    request: EmptyRequest,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
     let _ = request;
     let path = installer_smoke_ready_path().ok_or_else(|| {
         AppError::Unsupported("installer smoke ready marker is disabled".to_owned())
     })?;
-    write_installer_smoke_ready(&path)
+    let identity = state.paths().identity();
+    write_installer_smoke_ready(&path, &identity)
 }
 
 #[tauri::command]
@@ -356,6 +372,7 @@ mod tests {
         bootstrap_mode, current_runtime_info, ensure_config_file, write_benchmark_frame_report,
         write_benchmark_ready, write_installer_smoke_ready, BenchmarkFrameReport, BootstrapData,
     };
+    use crate::identity::AppIdentity;
     use crate::storage::state_file::{load_state, save_state, TabbyRsState};
     use tempfile::tempdir;
 
@@ -382,10 +399,37 @@ mod tests {
     fn writes_installer_smoke_ready_marker_atomically() {
         let directory = tempdir().unwrap();
         let marker = directory.path().join("nested").join("ready.marker");
+        let identity = AppIdentity {
+            product_name: "Tabby RS".into(),
+            app_identifier: "io.tabbyrs.app".into(),
+            cli_name: "tabby-rs".into(),
+            url_scheme: "tabby-rs".into(),
+            data_dir_name: "tabby-rs".into(),
+            credential_service: "tabby-rs".into(),
+            executable: "/tmp/tabby-rs".into(),
+            data_dir: directory.path().join("data").to_string_lossy().into_owned(),
+            plugins_dir: directory
+                .path()
+                .join("data/plugins")
+                .to_string_lossy()
+                .into_owned(),
+            logs_dir: directory
+                .path()
+                .join("data/logs")
+                .to_string_lossy()
+                .into_owned(),
+            portable: false,
+            portable_root: None,
+        };
 
-        write_installer_smoke_ready(&marker).unwrap();
+        write_installer_smoke_ready(&marker, &identity).unwrap();
 
-        assert_eq!(std::fs::read_to_string(marker).unwrap(), "ready\n");
+        let report: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(marker).unwrap()).unwrap();
+        assert_eq!(report["schemaVersion"], 1);
+        assert_eq!(report["ready"], true);
+        assert_eq!(report["identity"]["appIdentifier"], "io.tabbyrs.app");
+        assert_eq!(report["identity"]["dataDirName"], "tabby-rs");
     }
 
     #[test]
