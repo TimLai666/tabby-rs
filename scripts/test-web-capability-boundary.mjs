@@ -8,6 +8,7 @@ const source = fs.readFileSync(path.join(root, 'tabby-web/src/platform.ts'), 'ut
 const pluginSettings = fs.readFileSync(path.join(root, 'tabby-plugin-manager/src/components/pluginsSettingsTab.component.pug'), 'utf8')
 
 assert.match(source, /supportsPluginManagement = false/)
+assert.match(source, /async readClipboardText \(\): Promise<string> \{[\s\S]*navigator\.clipboard[\s\S]*readText\(\)/)
 assert.match(source, /openPath \(_path: string\): void \{[\s\S]*?new UnsupportedCapabilityError\('filesystem'\)/)
 assert.match(source, /showItemInFolder \(_path: string\): void \{[\s\S]*?new UnsupportedCapabilityError\('filesystem'\)/)
 assert.match(source, /installPlugin \(_name: string, _version: string\): Promise<void> \{[\s\S]*?new UnsupportedCapabilityError\('pluginInstall'\)/)

@@ -40,6 +40,17 @@ export class WebPlatformService extends PlatformService {
         return ''
     }
 
+    async readClipboardText (): Promise<string> {
+        if (!navigator.clipboard?.readText) {
+            return ''
+        }
+        try {
+            return await navigator.clipboard.readText()
+        } catch {
+            return ''
+        }
+    }
+
     setClipboard (content: ClipboardContent): void {
         copyToClipboard(content.text)
     }
