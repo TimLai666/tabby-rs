@@ -124,6 +124,8 @@ jobs:
 
       - name: Test web connector transport contract
         run: yarn test:web-connector
+      - name: Test web connector runtime contract
+        run: yarn test:web-connector-runtime
 
       - name: Test web capability boundary
         run: yarn test:web-capability-boundary
