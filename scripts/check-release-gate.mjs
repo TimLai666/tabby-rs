@@ -122,6 +122,7 @@ if (bundleAudit) {
 const dependencyAudit = readJson(dependencyAuditPath, 'Tauri dependency audit')
 if (dependencyAudit) {
     if (dependencyAudit.schemaVersion !== 1) failures.push('Tauri dependency audit schema version is invalid')
+    if (dependencyAudit.policy !== 'tauri-release') failures.push('Tauri dependency audit policy must be tauri-release')
     if (!Array.isArray(dependencyAudit.manifests)) {
         failures.push('Tauri dependency audit has no manifest list')
     } else {

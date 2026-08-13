@@ -20,6 +20,7 @@ const expectedRevision = '0123456789abcdef0123456789abcdef01234567'
 fs.writeFileSync(bundleAudit, '{ broken')
 fs.writeFileSync(dependencyAudit, JSON.stringify({
     schemaVersion: 1,
+    policy: 'tauri-release',
     manifests: ['package.json', 'app/package.json'],
     passed: true,
     findings: [],
@@ -98,6 +99,7 @@ fs.writeFileSync(passingBundleAudit, JSON.stringify({
 }))
 fs.writeFileSync(failingDependencyAudit, JSON.stringify({
     schemaVersion: 1,
+    policy: 'tauri-release',
     manifests: ['package.json', 'app/package.json'],
     passed: false,
     findings: [{ rule: 'electron-runtime-dependency' }],
@@ -132,7 +134,31 @@ await assert.rejects(
 )
 const malformedDependencyReport = JSON.parse(fs.readFileSync(malformedDependencyOutput, 'utf8'))
 assert.ok(malformedDependencyReport.failures.includes('Tauri dependency audit schema version is invalid'))
+assert.ok(malformedDependencyReport.failures.includes('Tauri dependency audit policy must be tauri-release'))
 assert.ok(malformedDependencyReport.failures.includes('Tauri dependency audit has no manifest list'))
+
+const strictPolicyAudit = path.join(work, 'strict-policy-dependency-audit.json')
+const strictPolicyOutput = path.join(work, 'strict-policy-release-gate.json')
+fs.writeFileSync(strictPolicyAudit, JSON.stringify({
+    schemaVersion: 1,
+    policy: 'strict',
+    manifests: ['package.json', 'app/package.json'],
+    passed: true,
+    findings: [],
+}))
+await assert.rejects(
+    execFileAsync(process.execPath, [gate,
+        '--bundle-audit', passingBundleAudit,
+        '--dependency-audit', strictPolicyAudit,
+        '--license-report', licenseReport,
+        '--installer-smoke', installerSmoke,
+        '--platform', 'windows',
+        '--source-revision', expectedRevision,
+        '--output', strictPolicyOutput,
+    ], { cwd: root }),
+)
+const strictPolicyReport = JSON.parse(fs.readFileSync(strictPolicyOutput, 'utf8'))
+assert.ok(strictPolicyReport.failures.includes('Tauri dependency audit policy must be tauri-release'))
 
 const mismatchOutput = path.join(work, 'mismatch-release-gate.json')
 await assert.rejects(
