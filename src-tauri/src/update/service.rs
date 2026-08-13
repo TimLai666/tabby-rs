@@ -21,6 +21,10 @@ use super::{
 
 const UPDATE_TIMEOUT: Duration = Duration::from_secs(30);
 
+fn configure_updater_client(client: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
+    client.redirect(reqwest::redirect::Policy::none())
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateInfo {
@@ -531,6 +535,7 @@ pub fn build_updater<R: Runtime>(
         .map_err(|_| AppError::InvalidData("updater endpoint is invalid".into()))?;
     builder
         .timeout(UPDATE_TIMEOUT)
+        .configure_client(configure_updater_client)
         .version_comparator(move |current, remote| {
             let Ok(current) = Version::parse(&current.to_string()) else {
                 return false;
@@ -587,8 +592,9 @@ pub fn is_cancelled(receiver: &watch::Receiver<bool>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        channel_name, configured_endpoint, download_exceeds_limit, is_cancelled,
-        persist_download_artifact, verify_download, verify_signature, UpdateManager, UpdateState,
+        channel_name, configure_updater_client, configured_endpoint, download_exceeds_limit,
+        is_cancelled, persist_download_artifact, verify_download, verify_signature, UpdateManager,
+        UpdateState,
     };
     use crate::{
         storage::state_file::UpdateChannel,
@@ -670,6 +676,11 @@ mod tests {
         assert_eq!(channel_name(&UpdateChannel::Stable), "stable");
         assert_eq!(channel_name(&UpdateChannel::Nightly), "nightly");
         assert!(configured_endpoint(&UpdateChannel::Stable).is_none());
+    }
+
+    #[test]
+    fn updater_client_is_configured_without_redirects() {
+        let _ = configure_updater_client(reqwest::Client::builder());
     }
 
     #[test]
