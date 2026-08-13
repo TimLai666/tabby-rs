@@ -48,6 +48,9 @@ jobs:
       - name: Verify workflow safety
         run: node scripts/ci/assert-workflow-safety.mjs
 
+      - name: Test Docs workflow credential guard
+        run: yarn test:docs-workflow
+
       - name: Test Stable child issue gate contract
         run: yarn test:stable-issue-state
 

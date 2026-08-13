@@ -4,6 +4,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     if: ${{ github.actor != 'dependabot[bot]' }}
+    env:
+      FIREBASE_SERVICE_ACCOUNT_TABBY_DOCS: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_TABBY_DOCS }}
 
     steps:
     - name: Checkout
@@ -34,10 +36,11 @@ jobs:
       env:
         DOCS_PRIVATE_KEY: ${{ secrets.DOCS_PRIVATE_KEY }}
 
-    - if: ${{ github.ref == 'refs/heads/master' }}
+    - name: Deploy documentation
+      if: ${{ github.ref == 'refs/heads/master' && env.FIREBASE_SERVICE_ACCOUNT_TABBY_DOCS != '' }}
       uses: FirebaseExtended/action-hosting-deploy@e2eda2e106cfa35cdbcf4ac9ddaf6c4756df2c8c # v0
       with:
         repoToken: '${{ secrets.GITHUB_TOKEN }}'
-        firebaseServiceAccount: '${{ secrets.FIREBASE_SERVICE_ACCOUNT_TABBY_DOCS }}'
+        firebaseServiceAccount: '${{ env.FIREBASE_SERVICE_ACCOUNT_TABBY_DOCS }}'
         channelId: live
         projectId: tabby-docs
