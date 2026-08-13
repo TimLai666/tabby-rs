@@ -188,6 +188,9 @@ jobs:
       - name: Build Tauri renderer
         run: yarn build:tauri:frontend
 
+      - name: Test Tabby RS identity contract
+        run: yarn test:tabby-rs-branding
+
       - name: Verify no built-in telemetry
         run: yarn audit:telemetry
 
