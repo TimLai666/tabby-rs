@@ -103,6 +103,7 @@
     "audit:web": "node scripts/ci/assert-web-output.mjs",
     "test:web-output-audit": "node scripts/test-web-output-audit.mjs",
     "test:web-host-app": "node scripts/test-web-host-app-contract.mjs",
+    "test:web-connector": "node scripts/test-web-connector-contract.mjs",
     "test:web-capability-boundary": "node scripts/test-web-capability-boundary.mjs",
     "test:release-documentation": "node scripts/test-release-documentation.mjs",
     "test:tabby-rs-branding": "node scripts/test-tabby-rs-branding.mjs",

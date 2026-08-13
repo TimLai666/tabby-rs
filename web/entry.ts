@@ -24,6 +24,9 @@ interface BootstrapOptions {
 
 window['bootstrapTabby'] = async function bootstrap (options: BootstrapOptions): Promise<NgModuleRef<any>> {
     window.parent.postMessage('request-connector', '*')
+    // The browser socket shim is consumed by the shared SSH/SFTP/Telnet
+    // providers, which resolve their transport through this web connector.
+    window['__connector__'] = options.connector
 
     const pluginModules = []
     for (const packageModule of options.packageModules) {

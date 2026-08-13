@@ -122,6 +122,9 @@ jobs:
       - name: Test web host-app contract
         run: yarn test:web-host-app
 
+      - name: Test web connector transport contract
+        run: yarn test:web-connector
+
       - name: Test web capability boundary
         run: yarn test:web-capability-boundary
 
