@@ -9,7 +9,7 @@ const result = spawnSync('cargo', [
     '--manifest-path',
     'src-tauri/Cargo.toml',
     '--lib',
-    'ssh::sftp::integration::runs_real_ssh_shell_and_sftp_lifecycle',
+    'ssh::sftp::integration',
     '--',
     '--ignored',
     '--nocapture',
@@ -21,4 +21,4 @@ const result = spawnSync('cargo', [
 if (result.error) throw result.error
 if (result.status !== 0) process.exit(result.status ?? 1)
 
-console.log('OpenSSH shell and SFTP integration passed')
+console.log('SSH authentication, shell, and SFTP integration passed')

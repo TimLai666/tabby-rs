@@ -1,5 +1,7 @@
 use std::{
+    borrow::Cow,
     fs,
+    io::Write,
     net::TcpListener,
     path::PathBuf,
     process::{Command as ProcessCommand, Stdio},
@@ -10,8 +12,10 @@ use std::{
 use russh::{
     client::{self, AuthResult, Handler},
     keys::{decode_secret_key, PrivateKeyWithHashAlg},
-    ChannelMsg, Disconnect,
+    server::{self, Auth, Handler as ServerHandler, Response, Server},
+    ChannelMsg, Disconnect, SshId,
 };
+use secrecy::{ExposeSecret, SecretString};
 use tempfile::TempDir;
 use tokio::{
     io::AsyncReadExt,
@@ -47,6 +51,7 @@ struct OpenSshFixture {
     port: u16,
     username: String,
     private_key: PathBuf,
+    encrypted_private_key: PathBuf,
 }
 
 impl Drop for OpenSshFixture {
@@ -82,13 +87,28 @@ impl OpenSshFixture {
         let directory = tempfile::tempdir().map_err(|error| format!("tempdir: {error}"))?;
         let host_key = directory.path().join("host_key");
         let private_key = directory.path().join("client_key");
+        let encrypted_private_key = directory.path().join("encrypted_client_key");
         generate_key(&keygen, &host_key)?;
         generate_key(&keygen, &private_key)?;
+        generate_key_with_passphrase(&keygen, &encrypted_private_key, "fixture-passphrase")?;
 
         let public_key = private_key.with_extension("pub");
         let authorized_keys = directory.path().join("authorized_keys");
         fs::copy(&public_key, &authorized_keys)
             .map_err(|error| format!("copy authorized_keys: {error}"))?;
+        let encrypted_public_key = encrypted_private_key.with_extension("pub");
+        let mut authorized = fs::OpenOptions::new()
+            .append(true)
+            .open(&authorized_keys)
+            .map_err(|error| format!("open authorized_keys for encrypted key: {error}"))?;
+        writeln!(authorized)
+            .map_err(|error| format!("separate authorized key entries: {error}"))?;
+        authorized
+            .write_all(
+                &fs::read(&encrypted_public_key)
+                    .map_err(|error| format!("read encrypted public key: {error}"))?,
+            )
+            .map_err(|error| format!("append encrypted public key: {error}"))?;
 
         let port = TcpListener::bind(("127.0.0.1", 0))
             .map_err(|error| format!("reserve TCP port: {error}"))?
@@ -161,6 +181,7 @@ impl OpenSshFixture {
             port,
             username,
             private_key,
+            encrypted_private_key,
         })
     }
 }
@@ -181,8 +202,16 @@ fn command_output<const N: usize>(program: &str, args: [&str; N]) -> Result<Stri
 }
 
 fn generate_key(program: &std::ffi::OsStr, path: &std::path::Path) -> Result<(), String> {
+    generate_key_with_passphrase(program, path, "")
+}
+
+fn generate_key_with_passphrase(
+    program: &std::ffi::OsStr,
+    path: &std::path::Path,
+    passphrase: &str,
+) -> Result<(), String> {
     let output = ProcessCommand::new(program)
-        .args(["-q", "-t", "ed25519", "-N", ""])
+        .args(["-q", "-t", "ed25519", "-N", passphrase])
         .arg("-f")
         .arg(path)
         .output()
@@ -215,6 +244,7 @@ impl HostKeyVerifier for FixtureHostKeyVerifier {
 
 struct FixtureAuthenticator {
     private_key: Vec<u8>,
+    passphrase: Option<SecretString>,
 }
 
 #[async_trait::async_trait]
@@ -230,11 +260,185 @@ impl SshAuthenticator for FixtureAuthenticator {
                 username,
                 PrivateKeyMaterial {
                     openssh: self.private_key.clone(),
-                    passphrase: None,
+                    passphrase: self.passphrase.clone(),
                 },
             )
             .await
     }
+}
+
+#[derive(Clone, Copy)]
+enum AuthFixtureKind {
+    Password,
+    KeyboardInteractive,
+}
+
+struct AuthFixtureServer {
+    kind: AuthFixtureKind,
+    expected: String,
+}
+
+impl Server for AuthFixtureServer {
+    type Handler = Self;
+
+    fn new_client(&mut self, _peer_addr: Option<std::net::SocketAddr>) -> Self {
+        Self {
+            kind: self.kind,
+            expected: self.expected.clone(),
+        }
+    }
+}
+
+impl ServerHandler for AuthFixtureServer {
+    type Error = russh::Error;
+
+    async fn auth_password(&mut self, _user: &str, password: &str) -> Result<Auth, Self::Error> {
+        if matches!(self.kind, AuthFixtureKind::Password) && password == self.expected {
+            Ok(Auth::Accept)
+        } else {
+            Ok(Auth::reject())
+        }
+    }
+
+    async fn auth_keyboard_interactive<'a>(
+        &'a mut self,
+        _user: &str,
+        _submethods: &str,
+        response: Option<Response<'a>>,
+    ) -> Result<Auth, Self::Error> {
+        if !matches!(self.kind, AuthFixtureKind::KeyboardInteractive) {
+            return Ok(Auth::reject());
+        }
+
+        match response {
+            None => Ok(Auth::Partial {
+                name: Cow::Borrowed("tabby-rs fixture"),
+                instructions: Cow::Borrowed("enter the fixture secret"),
+                prompts: Cow::Owned(vec![(Cow::Borrowed("Secret: "), false)]),
+            }),
+            Some(mut response) => {
+                let received = response
+                    .next()
+                    .map(|value| String::from_utf8_lossy(&value).into_owned());
+                if received.as_deref() == Some(self.expected.as_str()) {
+                    Ok(Auth::Accept)
+                } else {
+                    Ok(Auth::reject())
+                }
+            }
+        }
+    }
+}
+
+struct AuthFixtureAuthenticator {
+    kind: AuthFixtureKind,
+    expected: SecretString,
+}
+
+#[async_trait::async_trait]
+impl SshAuthenticator for AuthFixtureAuthenticator {
+    async fn authenticate(
+        &self,
+        context: &mut dyn SshAuthContext,
+        username: &str,
+        _methods: &[crate::ssh::AuthMethodRef],
+    ) -> Result<bool, crate::ssh::SshError> {
+        match self.kind {
+            AuthFixtureKind::Password => {
+                context
+                    .authenticate_password(username, &self.expected)
+                    .await
+            }
+            AuthFixtureKind::KeyboardInteractive => {
+                let mut response = context
+                    .authenticate_keyboard_interactive_start(username)
+                    .await?;
+                loop {
+                    match response {
+                        crate::ssh::engine::KeyboardInteractiveResponse::Success => {
+                            return Ok(true)
+                        }
+                        crate::ssh::engine::KeyboardInteractiveResponse::Failure => {
+                            return Ok(false)
+                        }
+                        crate::ssh::engine::KeyboardInteractiveResponse::Prompt(prompt) => {
+                            assert_eq!(prompt.prompts.len(), 1);
+                            response = context
+                                .authenticate_keyboard_interactive_respond(vec![self
+                                    .expected
+                                    .expose_secret()
+                                    .to_owned()])
+                                .await?;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+async fn run_russh_auth_fixture(kind: AuthFixtureKind) {
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .expect("bind russh auth fixture");
+    let port = listener
+        .local_addr()
+        .expect("read russh fixture address")
+        .port();
+    let mut config = server::Config::default();
+    config.server_id = SshId::Standard("SSH-2.0-tabby-rs-auth-fixture".into());
+    config.keys.push(
+        russh::keys::PrivateKey::random(&mut rand::rngs::OsRng, russh::keys::Algorithm::Ed25519)
+            .expect("generate russh fixture host key"),
+    );
+    let config = Arc::new(config);
+    let expected = "fixture-secret";
+    let mut server = AuthFixtureServer {
+        kind,
+        expected: expected.into(),
+    };
+    let server_task = tokio::spawn(async move {
+        let (socket, _) = listener.accept().await.expect("accept russh fixture");
+        let session = server::run_stream(config, socket, server.new_client(None))
+            .await
+            .expect("start russh fixture session");
+        session.await.expect("run russh fixture session")
+    });
+
+    let engine = crate::ssh::engine::RusshEngine::new(
+        client::Config {
+            inactivity_timeout: Some(Duration::from_secs(30)),
+            ..Default::default()
+        },
+        Duration::from_secs(20),
+    );
+    let connection = engine
+        .connect(
+            SshTarget {
+                host: "127.0.0.1".into(),
+                port,
+                username: "fixture-user".into(),
+            },
+            Arc::new(FixtureHostKeyVerifier { accept: true }),
+            Arc::new(AuthFixtureAuthenticator {
+                kind,
+                expected: SecretString::new(expected.into()),
+            }),
+        )
+        .await
+        .expect("russh auth fixture connection failed");
+    connection
+        .disconnect()
+        .await
+        .expect("disconnect russh auth fixture");
+    server_task.await.expect("join russh auth fixture");
+}
+
+#[tokio::test]
+#[ignore = "requires SSH integration fixture; run yarn test:ssh-integration"]
+async fn runs_real_password_and_keyboard_interactive_auth_matrix() {
+    run_russh_auth_fixture(AuthFixtureKind::Password).await;
+    run_russh_auth_fixture(AuthFixtureKind::KeyboardInteractive).await;
 }
 
 #[tokio::test]
@@ -261,6 +465,7 @@ async fn runs_real_ssh_shell_and_sftp_lifecycle() {
             Arc::new(FixtureHostKeyVerifier { accept: false }),
             Arc::new(FixtureAuthenticator {
                 private_key: fs::read(&fixture.private_key).expect("read rejected client key"),
+                passphrase: None,
             }),
         )
         .await;
@@ -279,6 +484,7 @@ async fn runs_real_ssh_shell_and_sftp_lifecycle() {
             Arc::new(FixtureHostKeyVerifier { accept: true }),
             Arc::new(FixtureAuthenticator {
                 private_key: fs::read(&fixture.private_key).expect("read engine client key"),
+                passphrase: None,
             }),
         )
         .await
@@ -327,6 +533,27 @@ async fn runs_real_ssh_shell_and_sftp_lifecycle() {
         .disconnect()
         .await
         .expect("engine disconnect failed");
+
+    let encrypted_connection = engine
+        .connect(
+            SshTarget {
+                host: "127.0.0.1".into(),
+                port: fixture.port,
+                username: fixture.username.clone(),
+            },
+            Arc::new(FixtureHostKeyVerifier { accept: true }),
+            Arc::new(FixtureAuthenticator {
+                private_key: fs::read(&fixture.encrypted_private_key)
+                    .expect("read encrypted engine client key"),
+                passphrase: Some(SecretString::new("fixture-passphrase".into())),
+            }),
+        )
+        .await
+        .expect("encrypted-key SSH connection failed");
+    encrypted_connection
+        .disconnect()
+        .await
+        .expect("encrypted-key disconnect failed");
 
     let config = Arc::new(client::Config {
         inactivity_timeout: Some(Duration::from_secs(30)),
