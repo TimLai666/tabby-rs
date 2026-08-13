@@ -628,6 +628,24 @@ impl SshAuthenticator for ManagerAuthenticator<'_> {
     }
 }
 
+async fn disconnect_jump_handles(handles: &mut Vec<client::Handle<SshHandler>>) {
+    for handle in handles.drain(..) {
+        let _ = handle
+            .disconnect(Disconnect::ByApplication, "connection setup failed", "")
+            .await;
+    }
+}
+
+async fn disconnect_connection(
+    handle: &mut client::Handle<SshHandler>,
+    jump_handles: &mut Vec<client::Handle<SshHandler>>,
+    reason: Disconnect,
+    description: &'static str,
+) {
+    let _ = handle.disconnect(reason, description, "").await;
+    disconnect_jump_handles(jump_handles).await;
+}
+
 impl SshManager {
     pub fn new(known_hosts_path: std::path::PathBuf) -> Self {
         Self {
@@ -823,7 +841,7 @@ impl SshManager {
                 .connect_direct(Arc::clone(&config), &app, &first, &connection_id)
                 .await?;
             let first_username = first.username.clone().unwrap_or_else(|| "root".into());
-            if !self
+            let first_authenticated = match self
                 .authenticate(
                     &app,
                     &mut handle,
@@ -832,29 +850,61 @@ impl SshManager {
                     &secrets,
                     &credentials,
                 )
-                .await?
+                .await
             {
-                let _ = handle
-                    .disconnect(
-                        Disconnect::AuthCancelledByUser,
-                        "authentication rejected",
-                        "",
+                Ok(authenticated) => authenticated,
+                Err(error) => {
+                    disconnect_connection(
+                        &mut handle,
+                        &mut jump_handles,
+                        Disconnect::ByApplication,
+                        "authentication failed",
                     )
                     .await;
+                    return Err(error);
+                }
+            };
+            if !first_authenticated {
+                disconnect_connection(
+                    &mut handle,
+                    &mut jump_handles,
+                    Disconnect::AuthCancelledByUser,
+                    "authentication rejected",
+                )
+                .await;
                 return Err(SshError::AuthenticationRejected);
             }
             for (index, hop) in request.jump_chain.iter().enumerate().skip(1) {
                 let next = jump_request(&request, hop, &connection_id, index);
-                let channel = handle
+                let channel = match handle
                     .channel_open_direct_tcpip(&next.host, u32::from(next.port), "127.0.0.1", 0)
                     .await
-                    .map_err(|_| SshError::ChannelOpen)?;
+                {
+                    Ok(channel) => channel,
+                    Err(_) => {
+                        disconnect_connection(
+                            &mut handle,
+                            &mut jump_handles,
+                            Disconnect::ByApplication,
+                            "jump channel open failed",
+                        )
+                        .await;
+                        return Err(SshError::ChannelOpen);
+                    }
+                };
                 jump_handles.push(handle);
-                handle = self
+                handle = match self
                     .connect_over_channel(Arc::clone(&config), &app, &next, &connection_id, channel)
-                    .await?;
+                    .await
+                {
+                    Ok(handle) => handle,
+                    Err(error) => {
+                        disconnect_jump_handles(&mut jump_handles).await;
+                        return Err(error);
+                    }
+                };
                 let next_username = next.username.clone().unwrap_or_else(|| "root".into());
-                if !self
+                let next_authenticated = match self
                     .authenticate(
                         &app,
                         &mut handle,
@@ -863,20 +913,59 @@ impl SshManager {
                         &secrets,
                         &credentials,
                     )
-                    .await?
+                    .await
                 {
+                    Ok(authenticated) => authenticated,
+                    Err(error) => {
+                        disconnect_connection(
+                            &mut handle,
+                            &mut jump_handles,
+                            Disconnect::ByApplication,
+                            "authentication failed",
+                        )
+                        .await;
+                        return Err(error);
+                    }
+                };
+                if !next_authenticated {
+                    disconnect_connection(
+                        &mut handle,
+                        &mut jump_handles,
+                        Disconnect::AuthCancelledByUser,
+                        "authentication rejected",
+                    )
+                    .await;
                     return Err(SshError::AuthenticationRejected);
                 }
             }
-            let channel = handle
+            let channel = match handle
                 .channel_open_direct_tcpip(&request.host, u32::from(request.port), "127.0.0.1", 0)
                 .await
-                .map_err(|_| SshError::ChannelOpen)?;
+            {
+                Ok(channel) => channel,
+                Err(_) => {
+                    disconnect_connection(
+                        &mut handle,
+                        &mut jump_handles,
+                        Disconnect::ByApplication,
+                        "target channel open failed",
+                    )
+                    .await;
+                    return Err(SshError::ChannelOpen);
+                }
+            };
             jump_handles.push(handle);
-            handle = self
+            handle = match self
                 .connect_over_channel(Arc::clone(&config), &app, &request, &connection_id, channel)
-                .await?;
-            if !self
+                .await
+            {
+                Ok(handle) => handle,
+                Err(error) => {
+                    disconnect_jump_handles(&mut jump_handles).await;
+                    return Err(error);
+                }
+            };
+            let target_authenticated = match self
                 .authenticate(
                     &app,
                     &mut handle,
@@ -885,25 +974,47 @@ impl SshManager {
                     &secrets,
                     &credentials,
                 )
-                .await?
+                .await
             {
-                let _ = handle
-                    .disconnect(
-                        Disconnect::AuthCancelledByUser,
-                        "authentication rejected",
-                        "",
+                Ok(authenticated) => authenticated,
+                Err(error) => {
+                    disconnect_connection(
+                        &mut handle,
+                        &mut jump_handles,
+                        Disconnect::ByApplication,
+                        "authentication failed",
                     )
                     .await;
+                    return Err(error);
+                }
+            };
+            if !target_authenticated {
+                disconnect_connection(
+                    &mut handle,
+                    &mut jump_handles,
+                    Disconnect::AuthCancelledByUser,
+                    "authentication rejected",
+                )
+                .await;
                 return Err(SshError::AuthenticationRejected);
             }
         }
 
-        let channel = handle
-            .channel_open_session()
-            .await
-            .map_err(|_| SshError::ChannelOpen)?;
+        let channel = match handle.channel_open_session().await {
+            Ok(channel) => channel,
+            Err(_) => {
+                disconnect_connection(
+                    &mut handle,
+                    &mut jump_handles,
+                    Disconnect::ByApplication,
+                    "session channel open failed",
+                )
+                .await;
+                return Err(SshError::ChannelOpen);
+            }
+        };
         let terminal = &request.terminal;
-        channel
+        if channel
             .request_pty(
                 true,
                 &terminal.term,
@@ -914,18 +1025,40 @@ impl SshManager {
                 &[],
             )
             .await
-            .map_err(|_| SshError::ChannelOpen)?;
+            .is_err()
+        {
+            disconnect_connection(
+                &mut handle,
+                &mut jump_handles,
+                Disconnect::ByApplication,
+                "PTY request failed",
+            )
+            .await;
+            return Err(SshError::ChannelOpen);
+        }
         for (name, value) in &request.environment {
-            channel
-                .set_env(true, name, value)
-                .await
-                .map_err(|_| SshError::ChannelOpen)?;
+            if channel.set_env(true, name, value).await.is_err() {
+                disconnect_connection(
+                    &mut handle,
+                    &mut jump_handles,
+                    Disconnect::ByApplication,
+                    "environment setup failed",
+                )
+                .await;
+                return Err(SshError::ChannelOpen);
+            }
         }
         if request.agent_forward {
-            channel
-                .agent_forward(true)
-                .await
-                .map_err(|_| SshError::ChannelOpen)?;
+            if channel.agent_forward(true).await.is_err() {
+                disconnect_connection(
+                    &mut handle,
+                    &mut jump_handles,
+                    Disconnect::ByApplication,
+                    "agent forwarding setup failed",
+                )
+                .await;
+                return Err(SshError::ChannelOpen);
+            }
         }
         if request.x11 {
             let display = request
@@ -934,15 +1067,31 @@ impl SshManager {
                 .or_else(|| std::env::var("DISPLAY").ok())
                 .unwrap_or_else(|| ":0".into());
             let cookie = x11_cookie(&display);
-            channel
+            if channel
                 .request_x11(true, false, "MIT-MAGIC-COOKIE-1", cookie, 0)
                 .await
-                .map_err(|_| SshError::ChannelOpen)?;
+                .is_err()
+            {
+                disconnect_connection(
+                    &mut handle,
+                    &mut jump_handles,
+                    Disconnect::ByApplication,
+                    "X11 forwarding setup failed",
+                )
+                .await;
+                return Err(SshError::ChannelOpen);
+            }
         }
-        channel
-            .request_shell(true)
-            .await
-            .map_err(|_| SshError::ChannelOpen)?;
+        if channel.request_shell(true).await.is_err() {
+            disconnect_connection(
+                &mut handle,
+                &mut jump_handles,
+                Disconnect::ByApplication,
+                "shell request failed",
+            )
+            .await;
+            return Err(SshError::ChannelOpen);
+        }
 
         let id = self.new_id("session");
         let (mut reader, writer) = channel.split();

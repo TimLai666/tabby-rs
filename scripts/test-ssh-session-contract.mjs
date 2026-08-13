@@ -24,17 +24,22 @@ assert.match(rust, /use zeroize::Zeroize/)
 assert.match(rust, /bytes\.zeroize\(\)/)
 assert.match(rust, /text\.zeroize\(\)/)
 
-const directConnectBranch = rust.match(
+const connectMethod = rust.match(
+    /pub async fn connect\([\s\S]*?\n    \}\n\n    pub async fn host_key_decision/,
+)
+assert.ok(connectMethod, 'SSH connect method contract is missing')
+const directConnectBranch = connectMethod[0].match(
     /if request\.jump_chain\.is_empty\(\) \{([\s\S]*?)\n        \} else \{/,
 )
 assert.ok(directConnectBranch, 'SSH connect branch contract is missing')
 assert.match(directConnectBranch[1], /connect_direct_engine\(/)
 assert.doesNotMatch(directConnectBranch[1], /\.authenticate\(/)
-const jumpConnectBranch = rust.match(
+const jumpConnectBranch = connectMethod[0].match(
     /\} else \{([\s\S]*?)\n        \}\n\n        let channel/,
 )
 assert.ok(jumpConnectBranch, 'SSH jump branch contract is missing')
 assert.match(jumpConnectBranch[1], /connect_over_channel\(/)
-assert.match(jumpConnectBranch[1], /if !self\s*\.\s*authenticate\(/)
+assert.match(jumpConnectBranch[1], /for \(index, hop\) in request\.jump_chain\.iter\(\)\.enumerate\(\)\.skip\(1\)\s*\{/)
+assert.ok((jumpConnectBranch[1].match(/\.authenticate\(/g) || []).length >= 3, 'SSH jump branch must authenticate first hop, intermediate hops, and target')
 
 console.log('SSH session exit contract passed')
