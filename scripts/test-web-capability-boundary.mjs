@@ -14,6 +14,7 @@ assert.match(source, /installPlugin \(_name: string, _version: string\): Promise
 assert.match(source, /uninstallPlugin \(_name: string\): Promise<void> \{[\s\S]*?new UnsupportedCapabilityError\('pluginInstall'\)/)
 assert.match(source, /cancelPluginOperation \(_id: string\): Promise<void> \{[\s\S]*?new UnsupportedCapabilityError\('pluginInstall'\)/)
 assert.match(source, /getWinSCPPath \(\): string\|null \{[\s\S]*?new UnsupportedCapabilityError\('filesystem'\)/)
+assert.match(source, /async exec \(_app: string, _argv: string\[\]\): Promise<void> \{[\s\S]*?new UnsupportedCapabilityError\('localPty'\)/)
 assert.match(pluginSettings, /button\.btn\.btn-secondary\.btn-sm\.ms-auto\(\*ngIf='canManagePlugins\(\)'/)
 
 console.log('Web capability boundary contract passed')

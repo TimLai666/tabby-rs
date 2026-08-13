@@ -164,6 +164,10 @@ export class WebPlatformService extends PlatformService {
         throw new UnsupportedCapabilityError('filesystem')
     }
 
+    async exec (_app: string, _argv: string[]): Promise<void> {
+        throw new UnsupportedCapabilityError('localPty')
+    }
+
     setErrorHandler (handler: (_: any) => void): void {
         window.addEventListener('error', handler)
     }
