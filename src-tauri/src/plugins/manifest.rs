@@ -100,9 +100,7 @@ pub fn discover(root: &Path) -> Result<Vec<PluginDescriptor>, AppError> {
 }
 
 pub fn read_entry(root: &Path, package_name: &str) -> Result<PluginSource, AppError> {
-    if npm::validate_package_name(package_name).is_err()
-        || (!package_name.starts_with("tabby-") && !package_name.starts_with("terminus-"))
-    {
+    if npm::validate_package_name(package_name).is_err() {
         return Err(AppError::InvalidArgument(
             "plugin package name is invalid".into(),
         ));
@@ -220,9 +218,7 @@ fn read_package_manifest(
     path: &Path,
     package_name: &str,
 ) -> Result<Option<(PackageManifest, serde_json::Value)>, AppError> {
-    if npm::validate_package_name(package_name).is_err()
-        || (!package_name.starts_with("tabby-") && !package_name.starts_with("terminus-"))
-    {
+    if npm::validate_package_name(package_name).is_err() {
         return Ok(None);
     }
     let manifest_path = path.join("package.json");
@@ -407,6 +403,25 @@ mod tests {
         let source = read_entry(temp.path(), "tabby-demo").unwrap();
         assert_eq!(source.package_name, "tabby-demo");
         assert!(source.code.contains("module.exports"));
+    }
+
+    #[test]
+    fn discovers_and_reads_scoped_plugin_manifests_by_keyword() {
+        let temp = tempfile::tempdir().unwrap();
+        let plugin = temp.path().join("node_modules/@scope/plugin");
+        fs::create_dir_all(&plugin).unwrap();
+        fs::write(
+            plugin.join("package.json"),
+            r#"{"name":"@scope/plugin","version":"1.2.3","main":"index.js","keywords":["tabby-plugin"]}"#,
+        )
+        .unwrap();
+        fs::write(plugin.join("index.js"), "module.exports = { default: {} }").unwrap();
+
+        let descriptors = discover(temp.path()).unwrap();
+        assert_eq!(descriptors.len(), 1);
+        assert_eq!(descriptors[0].package_name, "@scope/plugin");
+        let source = read_entry(temp.path(), "@scope/plugin").unwrap();
+        assert_eq!(source.package_name, "@scope/plugin");
     }
 
     #[test]
