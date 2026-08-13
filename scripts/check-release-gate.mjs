@@ -1,4 +1,5 @@
 import fs from 'node:fs'
+import crypto from 'node:crypto'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import yaml from 'js-yaml'
@@ -52,6 +53,10 @@ function readJson (filePath, label) {
         failures.push(`invalid ${label} ${filePath}: ${error.message}`)
         return null
     }
+}
+
+function sha256 (filePath) {
+    return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex')
 }
 
 const featuresDocument = readYaml('parity/features.yaml')
@@ -155,8 +160,18 @@ if (bundleAudit) {
             failures.push('release metadata has no dependency lock hashes')
         } else {
             for (const lockFile of ['yarn.lock', 'src-tauri/Cargo.lock']) {
-                if (!/^[0-9a-f]{64}$/i.test(metadata.dependencyLocks[lockFile] || '')) {
+                const expectedHash = metadata.dependencyLocks[lockFile]
+                if (!/^[0-9a-f]{64}$/i.test(expectedHash || '')) {
                     failures.push(`release metadata dependency lock hash is invalid: ${lockFile}`)
+                    continue
+                }
+                const lockPath = path.join(root, lockFile)
+                if (!fs.existsSync(lockPath)) {
+                    failures.push(`release metadata dependency lock file is missing: ${lockFile}`)
+                    continue
+                }
+                if (sha256(lockPath) !== expectedHash.toLowerCase()) {
+                    failures.push(`release metadata dependency lock hash does not match checkout: ${lockFile}`)
                 }
             }
         }

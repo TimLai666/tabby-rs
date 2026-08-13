@@ -13,6 +13,7 @@ const output = path.join(work, 'release-gate.json')
 const bundleAudit = path.join(work, 'bundle-audit.json')
 const licenseReport = path.join(work, 'license-report.json')
 const installerSmoke = path.join(work, 'installer-smoke.json')
+const metadata = path.join(work, 'tabby-rs-metadata.json')
 const expectedRevision = '0123456789abcdef0123456789abcdef01234567'
 
 fs.writeFileSync(bundleAudit, '{ broken')
@@ -22,6 +23,13 @@ fs.writeFileSync(installerSmoke, JSON.stringify({
     platform: 'windows',
     planOnly: true,
     operations: [{ action: 'install' }],
+}))
+fs.writeFileSync(metadata, JSON.stringify({
+    dependencyLocks: {
+        'yarn.lock': '0'.repeat(64),
+        'src-tauri/Cargo.lock': '1'.repeat(64),
+    },
+    toolchain: {},
 }))
 
 await assert.rejects(
@@ -43,5 +51,28 @@ assert.ok(report.failures.includes(`license report sourceRevision must match ${e
 assert.ok(report.failures.includes('installer smoke must execute install, launch, and uninstall operations'))
 assert.ok(report.failures.includes('installer smoke is missing launch operation'))
 assert.ok(report.failures.includes('installer smoke is missing uninstall operation'))
+
+const passingBundleAudit = path.join(work, 'passing-bundle-audit.json')
+const passingOutput = path.join(work, 'passing-release-gate.json')
+fs.writeFileSync(passingBundleAudit, JSON.stringify({
+    passed: true,
+    sourceRevision: expectedRevision,
+    platform: 'windows',
+    arch: 'x86_64',
+    target: 'x86_64-pc-windows-msvc',
+}))
+await assert.rejects(
+    execFileAsync(process.execPath, [gate,
+        '--bundle-audit', passingBundleAudit,
+        '--license-report', licenseReport,
+        '--installer-smoke', installerSmoke,
+        '--platform', 'windows',
+        '--source-revision', expectedRevision,
+        '--output', passingOutput,
+    ], { cwd: root }),
+)
+const mismatchReport = JSON.parse(fs.readFileSync(passingOutput, 'utf8'))
+assert.ok(mismatchReport.failures.includes('release metadata dependency lock hash does not match checkout: yarn.lock'))
+assert.ok(mismatchReport.failures.includes('release metadata dependency lock hash does not match checkout: src-tauri/Cargo.lock'))
 
 console.log('Release gate contract fixtures passed')
