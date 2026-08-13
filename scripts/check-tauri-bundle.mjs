@@ -20,10 +20,13 @@ const forbiddenContentRules = [
         pattern: /(?:\b(?:from|require|import)\s*(?:\(\s*)?["'](?:electron|@electron\/remote)(?:[\\/'"]|$)|\belectron-updater\b)/i,
     },
     { id: 'electron-runtime-binary', binaryOnly: true, pattern: /electron(?:\.asar|\.exe| helper)/i },
-    { id: 'node-runtime-binary', binaryOnly: true, pattern: /node(?:\.exe|-runtime)/i },
+    { id: 'node-runtime-binary', binaryOnly: true, pattern: /\bnode(?:\.exe|-runtime)(?:$|[^\w-])/i },
     { id: 'sentry-sdk-or-endpoint', pattern: /(?:@sentry\/|sentry\.io|SENTRY_DSN)/i },
     { id: 'mixpanel-sdk-or-endpoint', pattern: /(?:mixpanel(?:-browser)?|mixpanel\.com)/i },
-    { id: 'private-key-material', pattern: /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----|TAURI_SIGNING_PRIVATE_KEY(?:_PASSWORD)?|TABBY_RS_UPDATE_PRIVATE_KEY/i },
+    {
+        id: 'private-key-material',
+        pattern: /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----\s*(?:[A-Z0-9+/]{20,}=?\s*)+-----END [A-Z0-9 ]*PRIVATE KEY-----|TAURI_SIGNING_PRIVATE_KEY(?:_PASSWORD)?|TABBY_RS_UPDATE_PRIVATE_KEY/i,
+    },
 ]
 
 const requiredFiles = [
@@ -57,10 +60,7 @@ function sha256 (filePath) {
     return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex')
 }
 
-function readAuditContent (filePath, size) {
-    if (size > 16 * 1024 * 1024) {
-        return null
-    }
+function readAuditContent (filePath) {
     const bytes = fs.readFileSync(filePath)
     if (bytes.includes(0)) {
         const strings = []
@@ -99,7 +99,7 @@ export function auditBundle (bundlePath, { release = false } = {}) {
                 findings.push({ rule: rule.id, path: file.relativePath })
             }
         }
-        const content = readAuditContent(file.absolutePath, size)
+        const content = readAuditContent(file.absolutePath)
         if (content !== null) {
             for (const rule of forbiddenContentRules) {
                 if (rule.binaryOnly && !content.binary) continue

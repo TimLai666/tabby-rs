@@ -35,7 +35,10 @@ fs.writeFileSync(path.join(forbiddenFixture, 'node.exe'), 'node')
 fs.writeFileSync(path.join(forbiddenFixture, 'bundle.js'), 'https://example.sentry.io/123')
 fs.writeFileSync(path.join(forbiddenFixture, 'electron-import.js'), "const { ipcRenderer } = require('electron')\n")
 fs.writeFileSync(path.join(forbiddenFixture, 'signing-private-key.pem'), 'private key')
-fs.writeFileSync(path.join(forbiddenFixture, 'secret.txt'), '-----BEGIN PRIVATE KEY-----\nsecret\n-----END PRIVATE KEY-----')
+fs.writeFileSync(
+    path.join(forbiddenFixture, 'secret.txt'),
+    '-----BEGIN PRIVATE KEY-----\n' + 'A'.repeat(32) + '\n-----END PRIVATE KEY-----',
+)
 const forbiddenReport = auditBundle(forbiddenFixture, { release: true })
 assert.equal(forbiddenReport.passed, false)
 assert.ok(forbiddenReport.findings.some(finding => finding.rule === 'node-runtime'))
@@ -45,10 +48,22 @@ assert.ok(forbiddenReport.findings.some(finding => finding.rule === 'private-key
 assert.ok(forbiddenReport.findings.some(finding => finding.rule === 'private-key-material'))
 
 const binaryFixture = createReleaseFixture()
-fs.writeFileSync(path.join(binaryFixture, 'runtime.bin'), Buffer.from([0, ...Buffer.from('electron.asar'), 0]))
+fs.writeFileSync(
+    path.join(binaryFixture, 'runtime.bin'),
+    Buffer.from([0, ...Buffer.from('electron.asar'), 0, ...Buffer.from('node-runtime-required'), 0]),
+)
 const binaryReport = auditBundle(binaryFixture, { release: true })
 assert.equal(binaryReport.passed, false)
 assert.ok(binaryReport.findings.some(finding => finding.rule === 'electron-runtime-binary'))
+assert.equal(binaryReport.findings.some(finding => finding.rule === 'node-runtime-binary'), false)
+
+const largeBinaryFixture = createReleaseFixture()
+const largeBinary = Buffer.alloc(16 * 1024 * 1024 + 1)
+Buffer.from('electron.asar').copy(largeBinary, 16 * 1024 * 1024 - 16)
+fs.writeFileSync(path.join(largeBinaryFixture, 'large-runtime.bin'), largeBinary)
+const largeBinaryReport = auditBundle(largeBinaryFixture, { release: true })
+assert.equal(largeBinaryReport.passed, false)
+assert.ok(largeBinaryReport.findings.some(finding => finding.rule === 'electron-runtime-binary'))
 
 const incompleteFixture = fs.mkdtempSync(path.join(os.tmpdir(), 'tabby-rs-bundle-audit-incomplete-'))
 fs.writeFileSync(path.join(incompleteFixture, 'bundle.js'), 'renderer')
