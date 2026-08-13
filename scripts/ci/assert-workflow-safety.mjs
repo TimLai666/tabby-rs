@@ -43,6 +43,12 @@ if (!/(^|\n)\s*schedule:\s*$/m.test(releaseTriggers) || !/(^|\n)\s*workflow_disp
 if (!/^permissions:\n\s+contents:\s+read\s*$/m.test(releaseWorkflow)) {
     violations.push('release workflow top-level permissions are not read-only')
 }
+if (!/^\s+run: yarn audit:tauri:dependencies --output release-staging\/dependency-audit\.json\s*$/m.test(releaseWorkflow)) {
+    violations.push('release workflow is missing the Tauri dependency metadata audit')
+}
+if (!/--dependency-audit release-staging\/dependency-audit\.json/.test(releaseWorkflow)) {
+    violations.push('release gate does not consume the Tauri dependency metadata audit')
+}
 if (!/^  publish:[\s\S]*?^    permissions:\n\s+contents:\s+write\s*$/m.test(releaseWorkflow)) {
     violations.push('release publish job does not explicitly grant contents write')
 }

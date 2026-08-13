@@ -1,0 +1,142 @@
+#!/usr/bin/env node
+
+import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
+
+const dependencySections = [
+    'dependencies',
+    'optionalDependencies',
+    'peerDependencies',
+    'devDependencies',
+]
+
+const forbiddenDependencies = [
+    {
+        id: 'electron-runtime-dependency',
+        packages: new Set([
+            '@electron/notarize',
+            '@electron/rebuild',
+            '@electron/remote',
+            '@types/electron-debug',
+            'electron',
+            'electron-builder',
+            'electron-config',
+            'electron-debug',
+            'electron-download',
+            'electron-installer-snap',
+            'electron-promise-ipc',
+            'electron-updater',
+            'tabby-electron',
+        ]),
+    },
+    {
+        id: 'node-native-dependency',
+        packages: new Set([
+            '@tabby-gang/windows-blurbehind',
+            '@tabby-gang/windows-process-tree',
+            'fontmanager-redux',
+            'glasstron',
+            'keytar',
+            'macos-native-processlist',
+            'native-process-working-directory',
+            'node-pty',
+            'serialport',
+            'serialport-binding-webserialapi',
+            'windows-native-registry',
+        ]),
+    },
+]
+
+function defaultManifestPaths () {
+    return [
+        path.join(root, 'package.json'),
+        path.join(root, 'app/package.json'),
+    ]
+}
+
+function readManifest (manifestPath) {
+    const absolutePath = path.resolve(manifestPath)
+    let manifest
+    try {
+        manifest = JSON.parse(fs.readFileSync(absolutePath, 'utf8'))
+    } catch (error) {
+        return {
+            path: path.relative(root, absolutePath).split(path.sep).join('/'),
+            findings: [{
+                rule: 'invalid-package-manifest',
+                path: path.relative(root, absolutePath).split(path.sep).join('/'),
+                message: error.message,
+            }],
+        }
+    }
+
+    const relativePath = path.relative(root, absolutePath).split(path.sep).join('/')
+    if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) {
+        return {
+            path: relativePath,
+            findings: [{ rule: 'invalid-package-manifest', path: relativePath, message: 'manifest must be an object' }],
+        }
+    }
+
+    const findings = []
+    for (const section of dependencySections) {
+        const dependencies = manifest[section]
+        if (dependencies === undefined) continue
+        if (!dependencies || typeof dependencies !== 'object' || Array.isArray(dependencies)) {
+            findings.push({
+                rule: 'invalid-dependency-section',
+                path: relativePath,
+                section,
+                message: 'dependency section must be an object',
+            })
+            continue
+        }
+        for (const packageName of Object.keys(dependencies)) {
+            const rule = forbiddenDependencies.find(candidate => candidate.packages.has(packageName))
+            if (!rule) continue
+            findings.push({
+                rule: rule.id,
+                path: relativePath,
+                section,
+                package: packageName,
+                version: dependencies[packageName],
+            })
+        }
+    }
+
+    return { path: relativePath, findings }
+}
+
+export function auditDependencyMetadata (manifestPaths = defaultManifestPaths()) {
+    const manifests = manifestPaths.map(readManifest)
+    const findings = manifests.flatMap(manifest => manifest.findings)
+    return {
+        schemaVersion: 1,
+        manifests: manifests.map(manifest => manifest.path),
+        findings,
+        passed: findings.length === 0,
+    }
+}
+
+function parseArguments (argv) {
+    const args = [...argv]
+    const outputIndex = args.indexOf('--output')
+    const outputPath = outputIndex === -1 ? null : args[outputIndex + 1]
+    assert.ok(!outputPath || outputPath.length > 0, '--output requires a path')
+    return { outputPath }
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+    const { outputPath } = parseArguments(process.argv.slice(2))
+    const report = auditDependencyMetadata()
+    if (outputPath) {
+        fs.mkdirSync(path.dirname(path.resolve(outputPath)), { recursive: true })
+        fs.writeFileSync(path.resolve(outputPath), `${JSON.stringify(report, null, 2)}\n`)
+    }
+    console.log(JSON.stringify(report, null, 2))
+    if (!report.passed) process.exitCode = 1
+}

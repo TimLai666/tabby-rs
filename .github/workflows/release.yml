@@ -102,6 +102,9 @@ jobs:
       - name: Install dependencies
         run: yarn install --frozen-lockfile --network-timeout ${{ env.YARN_NETWORK_TIMEOUT }}
 
+      - name: Audit Tauri dependency metadata
+        run: yarn audit:tauri:dependencies --output release-staging/dependency-audit.json
+
       - name: Build Tauri renderer
         run: yarn build:tauri:frontend
 
@@ -175,6 +178,18 @@ jobs:
           node scripts/generate-third-party-notices.mjs --output release-staging/THIRD_PARTY_NOTICES.md
           TABBY_RS_LICENSE_PATH=LICENSE TABBY_RS_NOTICES_PATH=release-staging/THIRD_PARTY_NOTICES.md TABBY_RS_LICENSE_REPORT=release-staging/license-report.json node scripts/create-license-report.mjs
           node scripts/create-tauri-release-metadata.mjs
+
+      - name: Stage release artifacts
+        shell: bash
+        env:
+          TABBY_RS_RELEASE_CHANNEL: ${{ steps.channel.outputs.name }}
+          TABBY_RS_RELEASE_VERSION: ${{ steps.channel.outputs.version }}
+          TABBY_RS_UPDATE_ARTIFACT_URL: ${{ vars.TABBY_RS_UPDATE_ARTIFACT_URL }}
+          TABBY_RS_UPDATE_PLATFORM: ${{ matrix.platform }}
+          TABBY_RS_UPDATE_ARCH: ${{ matrix.arch }}
+          TABBY_RS_BUNDLE_ROOT: src-tauri/target/${{ matrix.target }}/release/bundle
+          TABBY_RS_RELEASE_STAGING: release-staging
+        run: |
           node scripts/stage-tauri-release.mjs
           update_artifact=$(node scripts/assert-tauri-release-artifacts.mjs release-staging --platform "${{ matrix.platform }}" --bundles "${{ matrix.bundles }}" --output release-staging/artifact-contract.json)
           export TABBY_RS_UPDATE_ARTIFACT="$update_artifact"
@@ -234,7 +249,7 @@ jobs:
             --config-fixture release-default
 
       - name: Enforce release gate
-        run: node scripts/check-release-gate.mjs --bundle-audit release-staging/bundle-audit.json --license-report release-staging/license-report.json --installer-smoke release-staging/installer-smoke.json --benchmarks-dir release-staging/benchmarks --source-revision "${{ github.sha }}" --platform "${{ matrix.platform }}" --arch "${{ matrix.arch }}" --target "${{ matrix.target }}" --output release-staging/release-gate.json
+        run: node scripts/check-release-gate.mjs --bundle-audit release-staging/bundle-audit.json --dependency-audit release-staging/dependency-audit.json --license-report release-staging/license-report.json --installer-smoke release-staging/installer-smoke.json --benchmarks-dir release-staging/benchmarks --source-revision "${{ github.sha }}" --platform "${{ matrix.platform }}" --arch "${{ matrix.arch }}" --target "${{ matrix.target }}" --output release-staging/release-gate.json
 
       - name: Create release checksums
         run: node scripts/create-release-checksums.mjs release-staging

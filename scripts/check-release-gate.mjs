@@ -13,6 +13,7 @@ const argument = name => {
     return index === -1 ? null : args[index + 1]
 }
 const bundleAuditPath = path.resolve(argument('--bundle-audit') || path.join(root, 'bundle-audit.json'))
+const dependencyAuditPath = path.resolve(argument('--dependency-audit') || path.join(root, 'dependency-audit.json'))
 const licenseReportPath = path.resolve(argument('--license-report') || path.join(root, 'license-report.json'))
 const benchmarksDirectory = path.resolve(argument('--benchmarks-dir') || path.join(root, 'benchmarks'))
 const installerSmokePath = path.resolve(argument('--installer-smoke') || path.join(root, 'installer-smoke.json'))
@@ -116,6 +117,22 @@ if (bundleAudit) {
     if (expectedPlatform && bundleAudit.platform !== expectedPlatform) failures.push(`bundle audit platform must match ${expectedPlatform}`)
     if (expectedArch && bundleAudit.arch !== expectedArch) failures.push(`bundle audit arch must match ${expectedArch}`)
     if (expectedTarget && bundleAudit.target !== expectedTarget) failures.push(`bundle audit target must match ${expectedTarget}`)
+}
+
+const dependencyAudit = readJson(dependencyAuditPath, 'Tauri dependency audit')
+if (dependencyAudit) {
+    if (dependencyAudit.schemaVersion !== 1) failures.push('Tauri dependency audit schema version is invalid')
+    if (!Array.isArray(dependencyAudit.manifests)) {
+        failures.push('Tauri dependency audit has no manifest list')
+    } else {
+        for (const manifest of ['package.json', 'app/package.json']) {
+            if (!dependencyAudit.manifests.includes(manifest)) {
+                failures.push(`Tauri dependency audit is missing manifest: ${manifest}`)
+            }
+        }
+    }
+    if (!Array.isArray(dependencyAudit.findings)) failures.push('Tauri dependency audit has no findings list')
+    if (dependencyAudit.passed !== true) failures.push('Tauri dependency audit did not pass')
 }
 
 const licenseReport = readJson(licenseReportPath, 'license report')

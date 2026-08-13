@@ -11,12 +11,19 @@ const gate = path.join(root, 'scripts', 'check-release-gate.mjs')
 const work = fs.mkdtempSync(path.join(os.tmpdir(), 'tabby-rs-release-gate-test-'))
 const output = path.join(work, 'release-gate.json')
 const bundleAudit = path.join(work, 'bundle-audit.json')
+const dependencyAudit = path.join(work, 'dependency-audit.json')
 const licenseReport = path.join(work, 'license-report.json')
 const installerSmoke = path.join(work, 'installer-smoke.json')
 const metadata = path.join(work, 'tabby-rs-metadata.json')
 const expectedRevision = '0123456789abcdef0123456789abcdef01234567'
 
 fs.writeFileSync(bundleAudit, '{ broken')
+fs.writeFileSync(dependencyAudit, JSON.stringify({
+    schemaVersion: 1,
+    manifests: ['package.json', 'app/package.json'],
+    passed: true,
+    findings: [],
+}))
 fs.writeFileSync(licenseReport, JSON.stringify({ passed: true, sourceRevision: 'fedcba9876543210fedcba9876543210fedcba98' }))
 fs.writeFileSync(installerSmoke, JSON.stringify({
     passed: true,
@@ -35,6 +42,7 @@ fs.writeFileSync(metadata, JSON.stringify({
 await assert.rejects(
     execFileAsync(process.execPath, [gate,
         '--bundle-audit', bundleAudit,
+        '--dependency-audit', dependencyAudit,
         '--license-report', licenseReport,
         '--installer-smoke', installerSmoke,
         '--platform', 'windows',
@@ -53,7 +61,8 @@ assert.ok(report.failures.includes('installer smoke is missing launch operation'
 assert.ok(report.failures.includes('installer smoke is missing uninstall operation'))
 
 const passingBundleAudit = path.join(work, 'passing-bundle-audit.json')
-const passingOutput = path.join(work, 'passing-release-gate.json')
+const failingDependencyAudit = path.join(work, 'failing-dependency-audit.json')
+const dependencyFailureOutput = path.join(work, 'dependency-failure-release-gate.json')
 fs.writeFileSync(passingBundleAudit, JSON.stringify({
     passed: true,
     sourceRevision: expectedRevision,
@@ -61,17 +70,57 @@ fs.writeFileSync(passingBundleAudit, JSON.stringify({
     arch: 'x86_64',
     target: 'x86_64-pc-windows-msvc',
 }))
+fs.writeFileSync(failingDependencyAudit, JSON.stringify({
+    schemaVersion: 1,
+    manifests: ['package.json', 'app/package.json'],
+    passed: false,
+    findings: [{ rule: 'electron-runtime-dependency' }],
+}))
 await assert.rejects(
     execFileAsync(process.execPath, [gate,
         '--bundle-audit', passingBundleAudit,
+        '--dependency-audit', failingDependencyAudit,
         '--license-report', licenseReport,
         '--installer-smoke', installerSmoke,
         '--platform', 'windows',
         '--source-revision', expectedRevision,
-        '--output', passingOutput,
+        '--output', dependencyFailureOutput,
     ], { cwd: root }),
 )
-const mismatchReport = JSON.parse(fs.readFileSync(passingOutput, 'utf8'))
+const dependencyFailureReport = JSON.parse(fs.readFileSync(dependencyFailureOutput, 'utf8'))
+assert.ok(dependencyFailureReport.failures.includes('Tauri dependency audit did not pass'))
+
+const malformedDependencyAudit = path.join(work, 'malformed-dependency-audit.json')
+const malformedDependencyOutput = path.join(work, 'malformed-dependency-release-gate.json')
+fs.writeFileSync(malformedDependencyAudit, JSON.stringify({ passed: true, findings: [] }))
+await assert.rejects(
+    execFileAsync(process.execPath, [gate,
+        '--bundle-audit', passingBundleAudit,
+        '--dependency-audit', malformedDependencyAudit,
+        '--license-report', licenseReport,
+        '--installer-smoke', installerSmoke,
+        '--platform', 'windows',
+        '--source-revision', expectedRevision,
+        '--output', malformedDependencyOutput,
+    ], { cwd: root }),
+)
+const malformedDependencyReport = JSON.parse(fs.readFileSync(malformedDependencyOutput, 'utf8'))
+assert.ok(malformedDependencyReport.failures.includes('Tauri dependency audit schema version is invalid'))
+assert.ok(malformedDependencyReport.failures.includes('Tauri dependency audit has no manifest list'))
+
+const mismatchOutput = path.join(work, 'mismatch-release-gate.json')
+await assert.rejects(
+    execFileAsync(process.execPath, [gate,
+        '--bundle-audit', passingBundleAudit,
+        '--dependency-audit', dependencyAudit,
+        '--license-report', licenseReport,
+        '--installer-smoke', installerSmoke,
+        '--platform', 'windows',
+        '--source-revision', expectedRevision,
+        '--output', mismatchOutput,
+    ], { cwd: root }),
+)
+const mismatchReport = JSON.parse(fs.readFileSync(mismatchOutput, 'utf8'))
 assert.ok(mismatchReport.failures.includes('release metadata dependency lock hash does not match checkout: yarn.lock'))
 assert.ok(mismatchReport.failures.includes('release metadata dependency lock hash does not match checkout: src-tauri/Cargo.lock'))
 
