@@ -95,13 +95,19 @@ async function terminate (child) {
     })
 }
 
-async function readySample (command, args, timeoutMs) {
+async function readySample (command, args, timeoutMs, configFixturePath) {
     const markerDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'tabby-rs-ready-'))
     const marker = path.join(markerDirectory, 'ready.marker')
+    const dataDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'tabby-rs-benchmark-data-'))
+    fs.copyFileSync(configFixturePath, path.join(dataDirectory, 'config.yaml'))
     const started = process.hrtime.bigint()
     const child = spawn(command, args, {
         cwd: root,
-        env: { ...process.env, TABBY_RS_BENCHMARK_READY_FILE: marker },
+        env: {
+            ...process.env,
+            TABBY_RS_BENCHMARK_READY_FILE: marker,
+            TABBY_RS_BENCHMARK_DATA_DIR: dataDirectory,
+        },
         stdio: 'ignore',
     })
     try {
@@ -110,6 +116,7 @@ async function readySample (command, args, timeoutMs) {
     } finally {
         await terminate(child)
         fs.rmSync(markerDirectory, { recursive: true, force: true })
+        fs.rmSync(dataDirectory, { recursive: true, force: true })
     }
 }
 
@@ -143,12 +150,18 @@ function processTreeRssBytes (pid) {
     return (totalKb + (own?.[2] || 0)) * 1024
 }
 
-async function memorySample (command, args, waitMs, timeoutMs) {
+async function memorySample (command, args, waitMs, timeoutMs, configFixturePath) {
     const markerDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'tabby-rs-memory-'))
     const marker = path.join(markerDirectory, 'ready.marker')
+    const dataDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'tabby-rs-benchmark-data-'))
+    fs.copyFileSync(configFixturePath, path.join(dataDirectory, 'config.yaml'))
     const child = spawn(command, args, {
         cwd: root,
-        env: { ...process.env, TABBY_RS_BENCHMARK_READY_FILE: marker },
+        env: {
+            ...process.env,
+            TABBY_RS_BENCHMARK_READY_FILE: marker,
+            TABBY_RS_BENCHMARK_DATA_DIR: dataDirectory,
+        },
         stdio: 'ignore',
     })
     try {
@@ -158,6 +171,7 @@ async function memorySample (command, args, waitMs, timeoutMs) {
     } finally {
         await terminate(child)
         fs.rmSync(markerDirectory, { recursive: true, force: true })
+        fs.rmSync(dataDirectory, { recursive: true, force: true })
     }
 }
 
@@ -263,9 +277,9 @@ async function run (options) {
     const fixtureSha256 = sha256(fs.readFileSync(configFixturePath))
     const bundle = bundleStats(required(options, 'bundle'))
     const commonEvidence = { fixtureSha256, artifactSha256: bundle.artifactSha256 }
-    for (let index = 0; index < warmups; index++) await readySample(binary, binaryArgs, readyTimeoutMs)
+    for (let index = 0; index < warmups; index++) await readySample(binary, binaryArgs, readyTimeoutMs, configFixturePath)
     const startupValues = []
-    for (let index = 0; index < samples; index++) startupValues.push(await readySample(binary, binaryArgs, readyTimeoutMs))
+    for (let index = 0; index < samples; index++) startupValues.push(await readySample(binary, binaryArgs, readyTimeoutMs, configFixturePath))
     const startup = baseReport(BENCHMARK_METRICS.startup, { ...options, 'config-fixture': configFixture }, startupValues, {
         ...commonEvidence,
         unit: 'ms',
@@ -274,9 +288,9 @@ async function run (options) {
     })
 
     const waitMs = Number(options['memory-wait-ms'] || 30000)
-    for (let index = 0; index < warmups; index++) await memorySample(binary, binaryArgs, waitMs, readyTimeoutMs)
+    for (let index = 0; index < warmups; index++) await memorySample(binary, binaryArgs, waitMs, readyTimeoutMs, configFixturePath)
     const memoryValues = []
-    for (let index = 0; index < samples; index++) memoryValues.push(await memorySample(binary, binaryArgs, waitMs, readyTimeoutMs))
+    for (let index = 0; index < samples; index++) memoryValues.push(await memorySample(binary, binaryArgs, waitMs, readyTimeoutMs, configFixturePath))
     const memory = baseReport(BENCHMARK_METRICS.memory, { ...options, 'config-fixture': configFixture }, memoryValues, {
         ...commonEvidence,
         unit: 'bytes',

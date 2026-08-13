@@ -41,13 +41,15 @@ impl AppPaths {
         } else {
             None
         };
-        let data_dir = match portable_root.as_ref() {
-            Some(root) => root.join("data"),
-            None => app
-                .path()
+        let data_dir = if let Some(root) = portable_root.as_ref() {
+            root.join("data")
+        } else if let Some(root) = benchmark_data_dir() {
+            root
+        } else {
+            app.path()
                 .data_dir()
                 .map_err(|error| AppError::Io(error.to_string()))?
-                .join(DATA_DIR_NAME),
+                .join(DATA_DIR_NAME)
         };
 
         Ok(Self {
@@ -192,6 +194,18 @@ impl AppPaths {
         #[cfg(not(windows))]
         return Some(matching_dir.join("tabby"));
     }
+}
+
+/// Release benchmarks must not read or mutate a developer's real profile.
+/// Requiring the ready-marker variable keeps this override limited to the
+/// benchmark process rather than turning it into a general data-directory
+/// override.
+fn benchmark_data_dir() -> Option<PathBuf> {
+    env::var_os("TABBY_RS_BENCHMARK_READY_FILE")
+        .filter(|value| !value.is_empty())
+        .and_then(|_| env::var_os("TABBY_RS_BENCHMARK_DATA_DIR"))
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
