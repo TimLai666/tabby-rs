@@ -456,8 +456,8 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{
-        crc32, plugin_diagnostic_status, validate_destination, write_zip, BundleApp, BundleEntry,
-        BundleManifest, ManifestFile,
+        crc32, plugin_diagnostic_status, read_logs, validate_destination, write_zip, BundleApp,
+        BundleEntry, BundleManifest, ManifestFile,
     };
     use crate::storage::state_file::SafeModeState;
 
@@ -477,6 +477,34 @@ mod tests {
         let bytes = std::fs::read(path).unwrap();
         assert_eq!(&bytes[..4], b"PK\x03\x04");
         assert_eq!(crc32(br#"{"ok":true}"#), 0xa7d4_5f90);
+    }
+
+    #[test]
+    fn redacted_logs_remain_redacted_in_exported_zip() {
+        let temp = tempdir().unwrap();
+        std::fs::write(
+            temp.path().join("tabby-rs.log"),
+            "token=vault-token\n-----BEGIN PRIVATE KEY-----\nsecret\n-----END PRIVATE KEY-----\n",
+        )
+        .unwrap();
+        let entries = read_logs(temp.path(), &["vault-token".into()])
+            .unwrap()
+            .into_iter()
+            .map(|(path, data)| BundleEntry {
+                path: format!("logs/{path}"),
+                data,
+                redacted: true,
+            })
+            .collect::<Vec<_>>();
+        let archive = temp.path().join("diagnostics.zip");
+        write_zip(&archive, &entries).unwrap();
+        let bytes = std::fs::read(archive).unwrap();
+        assert!(!bytes
+            .windows("vault-token".len())
+            .any(|window| window == b"vault-token"));
+        assert!(!bytes
+            .windows("BEGIN PRIVATE KEY".len())
+            .any(|window| window == b"BEGIN PRIVATE KEY"));
     }
 
     #[test]
