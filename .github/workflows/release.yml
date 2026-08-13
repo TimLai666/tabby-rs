@@ -65,7 +65,7 @@ jobs:
         run: yarn install --frozen-lockfile --network-timeout ${{ env.YARN_NETWORK_TIMEOUT }}
 
       - name: Build web container
-        run: npx webpack --config web/webpack.config.mjs --mode production
+        run: yarn build:web
 
       - name: Enforce Stable child issue gate
         env:

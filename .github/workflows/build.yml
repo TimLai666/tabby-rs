@@ -117,7 +117,7 @@ jobs:
         run: node scripts/ci/assert-build-output.mjs
 
       - name: Build web container
-        run: npx webpack --config web/webpack.config.mjs --mode production
+        run: yarn build:web
 
       - name: Verify tabby-web bundle boundary
         run: yarn audit:web
