@@ -24,4 +24,17 @@ assert.match(rust, /use zeroize::Zeroize/)
 assert.match(rust, /bytes\.zeroize\(\)/)
 assert.match(rust, /text\.zeroize\(\)/)
 
+const directConnectBranch = rust.match(
+    /if request\.jump_chain\.is_empty\(\) \{([\s\S]*?)\n        \} else \{/,
+)
+assert.ok(directConnectBranch, 'SSH connect branch contract is missing')
+assert.match(directConnectBranch[1], /connect_direct_engine\(/)
+assert.doesNotMatch(directConnectBranch[1], /\.authenticate\(/)
+const jumpConnectBranch = rust.match(
+    /\} else \{([\s\S]*?)\n        \}\n\n        let channel/,
+)
+assert.ok(jumpConnectBranch, 'SSH jump branch contract is missing')
+assert.match(jumpConnectBranch[1], /connect_over_channel\(/)
+assert.match(jumpConnectBranch[1], /if !self\s*\.\s*authenticate\(/)
+
 console.log('SSH session exit contract passed')

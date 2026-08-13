@@ -876,27 +876,26 @@ impl SshManager {
             handle = self
                 .connect_over_channel(Arc::clone(&config), &app, &request, &connection_id, channel)
                 .await?;
-        }
-
-        if !self
-            .authenticate(
-                &app,
-                &mut handle,
-                &request,
-                &username,
-                &secrets,
-                &credentials,
-            )
-            .await?
-        {
-            let _ = handle
-                .disconnect(
-                    Disconnect::AuthCancelledByUser,
-                    "authentication rejected",
-                    "",
+            if !self
+                .authenticate(
+                    &app,
+                    &mut handle,
+                    &request,
+                    &username,
+                    &secrets,
+                    &credentials,
                 )
-                .await;
-            return Err(SshError::AuthenticationRejected);
+                .await?
+            {
+                let _ = handle
+                    .disconnect(
+                        Disconnect::AuthCancelledByUser,
+                        "authentication rejected",
+                        "",
+                    )
+                    .await;
+                return Err(SshError::AuthenticationRejected);
+            }
         }
 
         let channel = handle
