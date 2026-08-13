@@ -24,9 +24,11 @@ pub struct Redactor {
 impl Redactor {
     pub fn from_environment() -> Self {
         Self::new(RedactionContext {
-            home_dir: std::env::var("HOME")
-                .ok()
-                .or_else(|| std::env::var("USERPROFILE").ok()),
+            home_dir: select_home_directory(
+                std::env::var("HOME").ok(),
+                std::env::var("USERPROFILE").ok(),
+                cfg!(windows),
+            ),
             usernames: std::env::var("USER")
                 .ok()
                 .into_iter()
@@ -142,6 +144,18 @@ impl Redactor {
             }
             value => value.clone(),
         }
+    }
+}
+
+fn select_home_directory(
+    home: Option<String>,
+    userprofile: Option<String>,
+    is_windows: bool,
+) -> Option<String> {
+    if is_windows {
+        userprofile.or(home)
+    } else {
+        home.or(userprofile)
     }
 }
 
@@ -551,7 +565,27 @@ fn is_ipv4(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{RedactionContext, Redactor};
+    use super::{select_home_directory, RedactionContext, Redactor};
+
+    #[test]
+    fn prefers_native_home_variable_for_each_platform() {
+        assert_eq!(
+            select_home_directory(
+                Some("/msys/home/alice".into()),
+                Some(r"C:\Users\alice".into()),
+                true,
+            ),
+            Some(r"C:\Users\alice".into()),
+        );
+        assert_eq!(
+            select_home_directory(
+                Some("/home/alice".into()),
+                Some(r"C:\Users\alice".into()),
+                false,
+            ),
+            Some("/home/alice".into()),
+        );
+    }
 
     fn redactor() -> Redactor {
         Redactor::new(RedactionContext {
