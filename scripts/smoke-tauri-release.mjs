@@ -88,7 +88,7 @@ async function launchAndCheck (executable, cwd, environment) {
     const marker = path.join(markerDirectory, 'ready.marker')
     const child = spawn(executable, [], {
         cwd,
-        env: { ...process.env, ...environment, TABBY_RS_BENCHMARK_READY_FILE: marker },
+        env: { ...process.env, ...environment, TABBY_RS_INSTALLER_SMOKE_READY_FILE: marker },
         stdio: 'ignore',
         windowsHide: true,
     })

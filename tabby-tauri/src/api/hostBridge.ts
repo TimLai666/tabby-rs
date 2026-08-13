@@ -29,6 +29,7 @@ export interface RuntimeInfo {
     version: string
     benchmarkReadyFile: string | null
     benchmarkFrameReportFile: string | null
+    installerSmokeReadyFile: string | null
 }
 
 export interface BenchmarkFrameReport {
@@ -666,6 +667,10 @@ export interface HostRequestMap {
     }
     'app.benchmarkFrameReport': {
         request: BenchmarkFrameReport
+        response: null
+    }
+    'app.installerSmokeReady': {
+        request: Record<string, never>
         response: null
     }
     'app.initialLaunch': {

@@ -253,6 +253,9 @@ async function main (): Promise<void> {
     }
 
     updateProgress(100)
+    if (runtimeInfo.installerSmokeReadyFile) {
+        await bridge.invoke('app.installerSmokeReady', {})
+    }
 }
 
 void main().catch(showBootstrapError)

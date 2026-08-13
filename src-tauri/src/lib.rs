@@ -24,7 +24,8 @@ use std::sync::Arc;
 
 use commands::{
     app::{
-        app_benchmark_frame_report, app_benchmark_ready, app_bootstrap, app_quit, app_runtime_info,
+        app_benchmark_frame_report, app_benchmark_ready, app_bootstrap, app_installer_smoke_ready,
+        app_quit, app_runtime_info,
     },
     backup::{backup_create, backup_list, backup_restore},
     config::{config_read, config_write},
@@ -266,6 +267,7 @@ pub fn run() {
             app_runtime_info,
             app_benchmark_ready,
             app_benchmark_frame_report,
+            app_installer_smoke_ready,
             app_initial_launch,
             app_quit,
             backup_create,

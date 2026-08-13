@@ -26,6 +26,7 @@ pub struct RuntimeInfo {
     pub version: String,
     pub benchmark_ready_file: Option<String>,
     pub benchmark_frame_report_file: Option<String>,
+    pub installer_smoke_ready_file: Option<String>,
 }
 
 #[derive(Debug, Default, serde::Deserialize, serde::Serialize)]
@@ -74,6 +75,8 @@ fn current_runtime_info() -> RuntimeInfo {
             .map(|path| path.to_string_lossy().into_owned()),
         benchmark_frame_report_file: benchmark_frame_report_path()
             .map(|path| path.to_string_lossy().into_owned()),
+        installer_smoke_ready_file: installer_smoke_ready_path()
+            .map(|path| path.to_string_lossy().into_owned()),
     }
 }
 
@@ -89,7 +92,21 @@ fn benchmark_frame_report_path() -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
+fn installer_smoke_ready_path() -> Option<PathBuf> {
+    std::env::var_os("TABBY_RS_INSTALLER_SMOKE_READY_FILE")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
+
 fn write_benchmark_ready(path: &Path) -> Result<(), AppError> {
+    write_ready_marker(path)
+}
+
+fn write_installer_smoke_ready(path: &Path) -> Result<(), AppError> {
+    write_ready_marker(path)
+}
+
+fn write_ready_marker(path: &Path) -> Result<(), AppError> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -283,6 +300,15 @@ pub fn app_benchmark_ready(request: EmptyRequest) -> Result<(), AppError> {
 }
 
 #[tauri::command]
+pub fn app_installer_smoke_ready(request: EmptyRequest) -> Result<(), AppError> {
+    let _ = request;
+    let path = installer_smoke_ready_path().ok_or_else(|| {
+        AppError::Unsupported("installer smoke ready marker is disabled".to_owned())
+    })?;
+    write_installer_smoke_ready(&path)
+}
+
+#[tauri::command]
 pub fn app_benchmark_frame_report(request: BenchmarkFrameReport) -> Result<(), AppError> {
     let path = benchmark_frame_report_path()
         .ok_or_else(|| AppError::Unsupported("benchmark frame reporting is disabled".to_owned()))?;
@@ -305,7 +331,7 @@ pub fn app_quit(
 mod tests {
     use super::{
         bootstrap_mode, current_runtime_info, write_benchmark_frame_report, write_benchmark_ready,
-        BenchmarkFrameReport, BootstrapData,
+        write_installer_smoke_ready, BenchmarkFrameReport, BootstrapData,
     };
     use crate::storage::state_file::{load_state, save_state, TabbyRsState};
     use tempfile::tempdir;
@@ -325,6 +351,16 @@ mod tests {
         let marker = directory.path().join("nested").join("ready.marker");
 
         write_benchmark_ready(&marker).unwrap();
+
+        assert_eq!(std::fs::read_to_string(marker).unwrap(), "ready\n");
+    }
+
+    #[test]
+    fn writes_installer_smoke_ready_marker_atomically() {
+        let directory = tempdir().unwrap();
+        let marker = directory.path().join("nested").join("ready.marker");
+
+        write_installer_smoke_ready(&marker).unwrap();
 
         assert_eq!(std::fs::read_to_string(marker).unwrap(), "ready\n");
     }

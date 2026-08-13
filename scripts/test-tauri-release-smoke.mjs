@@ -10,6 +10,9 @@ const smoke = path.join(root, 'scripts', 'smoke-tauri-release.mjs')
 const work = fs.mkdtempSync(path.join(os.tmpdir(), 'tabby-rs-release-smoke-test-'))
 const staging = path.join(work, 'release-staging')
 fs.mkdirSync(staging)
+const smokeSource = fs.readFileSync(smoke, 'utf8')
+assert.match(smokeSource, /TABBY_RS_INSTALLER_SMOKE_READY_FILE/)
+assert.doesNotMatch(smokeSource, /TABBY_RS_BENCHMARK_READY_FILE/)
 
 for (const fixture of [
     'tabby-rs-setup.exe',
