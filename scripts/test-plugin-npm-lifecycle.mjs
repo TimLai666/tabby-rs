@@ -110,8 +110,8 @@ const env = {
 
 try {
     const cargo = spawn('cargo', [
-        'test', '--manifest-path', 'src-tauri/Cargo.toml', '--lib',
-        'plugins::npm::tests::system_npm_plugin_lifecycle', '--', '--ignored', '--nocapture',
+        'test', '--manifest-path', 'src-tauri/Cargo.toml', '--test', 'npm_lifecycle',
+        'npm::tests::system_npm_plugin_lifecycle', '--', '--ignored', '--nocapture',
     ], { cwd: root, env, stdio: 'inherit' })
     const result = await new Promise((resolve, reject) => {
         cargo.once('error', reject)
