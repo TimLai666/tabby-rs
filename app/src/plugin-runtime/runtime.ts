@@ -252,7 +252,8 @@ export async function loadPluginModules (
                 default?: unknown
                 bootstrap?: unknown
             }
-            const exported = packageModule.default ?? packageModule
+            const hasDefaultExport = Object.prototype.hasOwnProperty.call(packageModule, 'default')
+            const exported = hasDefaultExport ? packageModule.default : packageModule
             if (!isObject(exported) && typeof exported !== 'function') {
                 throw new InvalidPluginExportError('Plugin has no valid default export')
             }

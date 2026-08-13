@@ -75,6 +75,7 @@ const fixtureDirectories = [
     'tabby-fixture-for-root',
     'tabby-fixture-class',
     'tabby-fixture-invalid-export',
+    'tabby-fixture-null-default',
     'tabby-fixture-missing-module',
     'tabby-fixture-native',
     'tabby-fixture-pure',
@@ -118,6 +119,7 @@ assert.deepEqual(result.failures.map(failure => [failure.plugin.name, failure.co
     ['fixture-missing-module', 'missing-module'],
     ['fixture-electron', 'node-runtime-required'],
     ['fixture-invalid-export', 'invalid-export'],
+    ['fixture-null-default', 'invalid-export'],
     ['fixture-native', 'node-runtime-required'],
     ['fixture-throw', 'exception'],
 ].sort())
