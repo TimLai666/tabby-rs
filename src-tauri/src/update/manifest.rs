@@ -113,6 +113,7 @@ impl UpdateManifest {
             || self.published_at.is_empty()
             || self.published_at.len() > MAX_PUBLISHED_AT_BYTES
             || self.published_at.chars().any(char::is_control)
+            || chrono::DateTime::parse_from_rfc3339(&self.published_at).is_err()
         {
             return Err(AppError::InvalidData(
                 "update manifest notes or publication time is invalid".into(),
@@ -192,6 +193,13 @@ mod tests {
         assert!(value.validate("stable", "1.0.231-tabbyrs.1").is_err());
         let mut value = manifest();
         value.published_at = "x".repeat(MAX_PUBLISHED_AT_BYTES + 1);
+        assert!(value.validate("stable", "1.0.231-tabbyrs.1").is_err());
+    }
+
+    #[test]
+    fn rejects_malformed_publication_time() {
+        let mut value = manifest();
+        value.published_at = "not-a-date".into();
         assert!(value.validate("stable", "1.0.231-tabbyrs.1").is_err());
     }
 }
