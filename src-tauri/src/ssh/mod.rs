@@ -389,10 +389,11 @@ impl SshAuthContext for RawSshAuthContext<'_> {
         username: &str,
         key: PrivateKeyMaterial,
     ) -> Result<bool, SshError> {
-        let text = std::str::from_utf8(&key.openssh).map_err(|_| SshError::KeyParse)?;
+        let mut text = String::from_utf8(key.openssh.clone()).map_err(|_| SshError::KeyParse)?;
         let passphrase = key.passphrase.as_ref().map(|value| value.expose_secret());
-        let private_key = decode_secret_key(text, passphrase.map(|value| value.as_str()))
-            .map_err(|_| SshError::KeyParse)?;
+        let private_key = decode_secret_key(&text, passphrase.map(|value| value.as_str()));
+        text.zeroize();
+        let private_key = private_key.map_err(|_| SshError::KeyParse)?;
         Ok(matches!(
             self.handle
                 .authenticate_publickey(
