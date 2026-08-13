@@ -113,7 +113,10 @@ export function auditBundle (bundlePath, { release = false } = {}) {
     const missing = []
     if (release) {
         for (const rule of requiredFiles) {
-            if (!manifest.some(file => file.path.indexOf('/') === -1 && rule.pattern.test(file.path))) {
+            const present = rule.id === 'updater-signature'
+                ? manifest.some(file => rule.pattern.test(path.basename(file.path)))
+                : manifest.some(file => file.path.indexOf('/') === -1 && rule.pattern.test(file.path))
+            if (!present) {
                 missing.push(rule.id)
             }
         }

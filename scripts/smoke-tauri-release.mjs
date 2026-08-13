@@ -30,13 +30,22 @@ assert.ok(['linux', 'macos', 'windows'].includes(platform), `unsupported platfor
 assert.ok(fs.existsSync(staging), `release staging directory does not exist: ${staging}`)
 
 function filesWithExtension (extension) {
-    return fs.readdirSync(staging).filter(file => file.toLowerCase().endsWith(extension.toLowerCase()))
+    const matches = []
+    const visit = directory => {
+        for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+            const filePath = path.join(directory, entry.name)
+            if (entry.isDirectory()) visit(filePath)
+            else if (entry.isFile() && entry.name.toLowerCase().endsWith(extension.toLowerCase())) matches.push(filePath)
+        }
+    }
+    visit(staging)
+    return matches
 }
 
 function oneArtifact (extension) {
     const files = filesWithExtension(extension)
     assert.equal(files.length, 1, `expected exactly one ${extension} artifact, found ${files.length}`)
-    return path.join(staging, files[0])
+    return files[0]
 }
 
 function writeReport (operations) {

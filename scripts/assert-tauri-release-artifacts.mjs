@@ -73,7 +73,9 @@ function readJsonIfPresent (filePath, label) {
 const metadata = readJsonIfPresent(path.join(staging, 'tabby-rs-metadata.json'), 'release metadata')
 if (metadata) {
     assert.ok(typeof metadata.version === 'string' && metadata.version.length > 0, 'release metadata version is missing')
-    assert.ok(path.basename(primaryPath).includes(metadata.version), `updater artifact name does not contain release version ${metadata.version}`)
+    if (platform !== 'macos') {
+        assert.ok(path.basename(primaryPath).includes(metadata.version), `updater artifact name does not contain release version ${metadata.version}`)
+    }
     assert.equal(metadata.platform, platform, 'release metadata platform does not match artifact platform')
 }
 

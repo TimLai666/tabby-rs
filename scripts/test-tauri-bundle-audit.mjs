@@ -14,7 +14,7 @@ function createReleaseFixture () {
         ['tabby-rs-icon.png', 'icon'],
         ['updater-public-key.txt', 'public-key'],
         ['update-manifest.json', '{}'],
-        ['Tabby-RS.AppImage.sig', 'signature'],
+        ['macos/Tabby RS.app.tar.gz.sig', 'signature'],
         ['bundle/tabby-rs.exe', 'native app'],
     ]) {
         const filePath = path.join(directory, name)
