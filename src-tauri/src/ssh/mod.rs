@@ -1,4 +1,6 @@
 pub mod engine;
+#[cfg(test)]
+mod engine_integration;
 mod forwarding;
 mod import;
 mod known_hosts;

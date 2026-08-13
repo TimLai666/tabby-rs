@@ -176,6 +176,9 @@ jobs:
       - name: Test real SSH and SFTP fixture
         run: yarn test:ssh-integration
 
+      - name: Test SSH authentication fixture
+        run: yarn test:ssh-auth-integration
+
       - name: Build Tauri host
         run: cargo build --manifest-path src-tauri/Cargo.toml
 
@@ -272,6 +275,9 @@ jobs:
 
       - name: Test Rust host
         run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Test SSH authentication fixture
+        run: yarn test:ssh-auth-integration
 
       - name: Build Tauri host
         run: cargo build --manifest-path src-tauri/Cargo.toml

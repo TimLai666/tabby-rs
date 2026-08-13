@@ -131,6 +131,7 @@
     "test:runtime-capabilities": "node scripts/test-runtime-capabilities.mjs",
     "test:ssh-reconnect": "node scripts/test-ssh-reconnect-contract.mjs",
     "test:ssh-session": "node scripts/test-ssh-session-contract.mjs",
+    "test:ssh-auth-integration": "node scripts/test-ssh-auth-integration.mjs",
     "test:ssh-integration": "node scripts/test-ssh-integration.mjs",
     "test:electron-updater": "node scripts/test-electron-updater-policy.mjs",
     "test:tauri-updater-confirmation": "node scripts/test-tauri-updater-confirmation.mjs",
