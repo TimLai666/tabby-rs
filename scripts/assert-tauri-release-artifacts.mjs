@@ -2,6 +2,9 @@ import assert from 'node:assert/strict'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
 const args = process.argv.slice(2)
 const argument = name => {
@@ -49,6 +52,36 @@ for (const bundle of bundles) {
         )
     }
 }
+
+function sha256 (filePath) {
+    return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex')
+}
+
+function findApplicationBundles (directory) {
+    return fs.readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
+        if (!entry.isDirectory()) return []
+        const entryPath = path.join(directory, entry.name)
+        if (entry.name.endsWith('.app')) return [entryPath]
+        return findApplicationBundles(entryPath)
+    })
+}
+
+function assertMacosApplicationIcon () {
+    const applications = findApplicationBundles(staging)
+    assert.equal(applications.length, 1, 'macOS release must contain exactly one application bundle')
+
+    const iconPath = path.join(applications[0], 'Contents', 'Resources', 'icon.icns')
+    const sourceIconPath = path.join(root, 'build/mac/icon.icns')
+    assert.ok(fs.existsSync(iconPath), `macOS application icon is missing: ${iconPath}`)
+    assert.ok(fs.existsSync(sourceIconPath), `source macOS application icon is missing: ${sourceIconPath}`)
+    assert.equal(
+        sha256(iconPath),
+        sha256(sourceIconPath),
+        'macOS application icon does not match build/mac/icon.icns',
+    )
+}
+
+if (platform === 'macos') assertMacosApplicationIcon()
 
 const primaryPatterns = {
     linux: file => file.endsWith('.AppImage'),

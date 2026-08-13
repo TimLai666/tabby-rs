@@ -68,12 +68,17 @@ const macos = fs.mkdtempSync(path.join(os.tmpdir(), 'tabby-rs-macos-release-'))
 fs.writeFileSync(path.join(macos, 'tabby-rs.dmg'), 'dmg')
 fs.writeFileSync(path.join(macos, 'tabby-rs.app.tar.gz'), 'updater')
 fs.writeFileSync(path.join(macos, 'tabby-rs.app.tar.gz.sig'), 'signature')
+const macosIcon = path.join(macos, 'Tabby RS.app', 'Contents', 'Resources', 'icon.icns')
+fs.mkdirSync(path.dirname(macosIcon), { recursive: true })
+fs.copyFileSync(path.join(root, 'build/mac/icon.icns'), macosIcon)
 fs.writeFileSync(path.join(macos, 'tabby-rs-metadata.json'), JSON.stringify({
     version: '1.0.231-tabbyrs.1',
     platform: 'macos',
     arch: 'aarch64',
 }))
 assert.equal(run(macos, 'macos', 'dmg'), path.join(macos, 'tabby-rs.app.tar.gz'))
+fs.writeFileSync(macosIcon, 'stale icon')
+assert.throws(() => run(macos, 'macos', 'dmg'), /does not match build\/mac\/icon\.icns/)
 
 const bundle = fs.mkdtempSync(path.join(os.tmpdir(), 'tabby-rs-bundle-'))
 const bundleDmg = path.join(bundle, 'dmg')
