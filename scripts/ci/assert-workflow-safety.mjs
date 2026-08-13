@@ -55,7 +55,7 @@ if (!/assert-stable-issue-state\.mjs --repo \"\$GITHUB_REPOSITORY\" --issues \"2
 if (!/^  build:\n\s+name: bundle \(\$\{\{ matrix\.name \}\}\)\n\s+needs: web-gate/m.test(releaseWorkflow)) {
     violations.push('release bundle job does not depend on the web gate')
 }
-if (!/^\s+run: yarn audit:tauri:dependencies --output release-staging\/dependency-audit\.json\s*$/m.test(releaseWorkflow)) {
+if (!/^\s+run: yarn audit:tauri:dependencies --tauri-release --output release-staging\/dependency-audit\.json\s*$/m.test(releaseWorkflow)) {
     violations.push('release workflow is missing the Tauri dependency metadata audit')
 }
 if (!/--dependency-audit release-staging\/dependency-audit\.json/.test(releaseWorkflow)) {

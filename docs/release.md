@@ -8,6 +8,8 @@ Each matrix job must receive the environment variable `TABBY_RS_UPDATE_ARTIFACT_
 
 Before generating the manifest, the workflow checks every bundle type declared by the platform matrix. It also requires exactly one platform-specific primary updater artifact and its adjacent `.sig`, so a Linux release cannot pass with AppImage alone when DEB or RPM was requested.
 
+The Tauri release dependency audit records its policy and explicit exclusions. Root development or peer dependencies and the legacy Electron/native entries in `app/package.json` are not shipped by the Tauri entry; the generated bundle audit remains authoritative for the installed renderer and fails on forbidden runtime content.
+
 The updater public key is compiled into the release configuration. The private key is read only from the release environment secret used by the Tauri signing step. It must never be committed, printed, uploaded, or copied into an application bundle.
 
 Update recovery is crash-safe at the application-data boundary: the updater writes an atomic `pending-update.json` journal beside `tabby-rs.json` after creating the pre-update backup. The next startup uses that journal to restore the recorded backup when the newly installed configuration or state cannot be read, then removes the journal after recovery or a successful startup. The current Tauri updater transport buffers the complete response during download; after verification, Tabby RS keeps the artifact in a private temporary file until installation and aborts downloads that exceed the configured limit. Resumable or streamed transport remains outside this release contract.

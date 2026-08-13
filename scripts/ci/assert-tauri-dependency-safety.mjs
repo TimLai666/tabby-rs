@@ -58,7 +58,18 @@ function defaultManifestPaths () {
     ]
 }
 
-function readManifest (manifestPath) {
+function isTauriReleaseExemption (relativePath, section, tauriRelease) {
+    if (!tauriRelease) return null
+    if (section === 'devDependencies' || section === 'peerDependencies') {
+        return 'development-or-peer-dependency-does-not-ship'
+    }
+    if (relativePath === 'app/package.json' && (section === 'dependencies' || section === 'optionalDependencies')) {
+        return 'legacy-electron-manifest-dependency-not-used-by-tauri-entry'
+    }
+    return null
+}
+
+function readManifest (manifestPath, { tauriRelease = false } = {}) {
     const absolutePath = path.resolve(manifestPath)
     let manifest
     try {
@@ -71,6 +82,7 @@ function readManifest (manifestPath) {
                 path: path.relative(root, absolutePath).split(path.sep).join('/'),
                 message: error.message,
             }],
+            excluded: [],
         }
     }
 
@@ -79,10 +91,12 @@ function readManifest (manifestPath) {
         return {
             path: relativePath,
             findings: [{ rule: 'invalid-package-manifest', path: relativePath, message: 'manifest must be an object' }],
+            excluded: [],
         }
     }
 
     const findings = []
+    const excluded = []
     for (const section of dependencySections) {
         const dependencies = manifest[section]
         if (dependencies === undefined) continue
@@ -98,26 +112,35 @@ function readManifest (manifestPath) {
         for (const packageName of Object.keys(dependencies)) {
             const rule = forbiddenDependencies.find(candidate => candidate.packages.has(packageName))
             if (!rule) continue
-            findings.push({
+            const finding = {
                 rule: rule.id,
                 path: relativePath,
                 section,
                 package: packageName,
                 version: dependencies[packageName],
-            })
+            }
+            const exemption = isTauriReleaseExemption(relativePath, section, tauriRelease)
+            if (exemption) {
+                excluded.push({ ...finding, reason: exemption })
+            } else {
+                findings.push(finding)
+            }
         }
     }
 
-    return { path: relativePath, findings }
+    return { path: relativePath, findings, excluded }
 }
 
-export function auditDependencyMetadata (manifestPaths = defaultManifestPaths()) {
-    const manifests = manifestPaths.map(readManifest)
+export function auditDependencyMetadata (manifestPaths = defaultManifestPaths(), { tauriRelease = false } = {}) {
+    const manifests = manifestPaths.map(manifestPath => readManifest(manifestPath, { tauriRelease }))
     const findings = manifests.flatMap(manifest => manifest.findings)
+    const excluded = manifests.flatMap(manifest => manifest.excluded)
     return {
         schemaVersion: 1,
+        policy: tauriRelease ? 'tauri-release' : 'strict',
         manifests: manifests.map(manifest => manifest.path),
         findings,
+        excluded,
         passed: findings.length === 0,
     }
 }
@@ -127,12 +150,12 @@ function parseArguments (argv) {
     const outputIndex = args.indexOf('--output')
     const outputPath = outputIndex === -1 ? null : args[outputIndex + 1]
     assert.ok(!outputPath || outputPath.length > 0, '--output requires a path')
-    return { outputPath }
+    return { outputPath, tauriRelease: args.includes('--tauri-release') }
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-    const { outputPath } = parseArguments(process.argv.slice(2))
-    const report = auditDependencyMetadata()
+    const { outputPath, tauriRelease } = parseArguments(process.argv.slice(2))
+    const report = auditDependencyMetadata(undefined, { tauriRelease })
     if (outputPath) {
         fs.mkdirSync(path.dirname(path.resolve(outputPath)), { recursive: true })
         fs.writeFileSync(path.resolve(outputPath), `${JSON.stringify(report, null, 2)}\n`)

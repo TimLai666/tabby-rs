@@ -48,4 +48,10 @@ const invalidReport = auditDependencyMetadata([invalidManifest])
 assert.equal(invalidReport.passed, false)
 assert.equal(invalidReport.findings[0].rule, 'invalid-package-manifest')
 
+const tauriReleaseReport = auditDependencyMetadata(undefined, { tauriRelease: true })
+assert.equal(tauriReleaseReport.passed, true)
+assert.equal(tauriReleaseReport.policy, 'tauri-release')
+assert.ok(tauriReleaseReport.excluded.length > 0)
+assert.ok(tauriReleaseReport.excluded.every(finding => finding.reason))
+
 console.log('Tauri dependency metadata audit fixtures passed')

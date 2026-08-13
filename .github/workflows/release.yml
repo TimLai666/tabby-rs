@@ -189,7 +189,7 @@ jobs:
         run: yarn install --frozen-lockfile --network-timeout ${{ env.YARN_NETWORK_TIMEOUT }}
 
       - name: Audit Tauri dependency metadata
-        run: yarn audit:tauri:dependencies --output release-staging/dependency-audit.json
+        run: yarn audit:tauri:dependencies --tauri-release --output release-staging/dependency-audit.json
 
       - name: Build Tauri renderer
         run: yarn build:tauri:frontend
