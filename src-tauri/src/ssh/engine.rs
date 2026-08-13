@@ -188,6 +188,73 @@ impl RusshEngine {
             connect_timeout,
         }
     }
+
+    pub(crate) fn from_shared_config(
+        config: Arc<russh::client::Config>,
+        connect_timeout: Duration,
+    ) -> Self {
+        Self {
+            config,
+            connect_timeout,
+        }
+    }
+
+    pub(crate) async fn connect_with_handler<H>(
+        &self,
+        target: &SshTarget,
+        handler: H,
+        host_key_error: Arc<Mutex<Option<SshError>>>,
+        authenticator: &dyn SshAuthenticator,
+    ) -> Result<russh::client::Handle<H>, SshError>
+    where
+        H: russh::client::Handler<Error = russh::Error> + Send + 'static,
+    {
+        let mut handle = match tokio::time::timeout(
+            self.connect_timeout,
+            russh::client::connect(
+                Arc::clone(&self.config),
+                (target.host.clone(), target.port),
+                handler,
+            ),
+        )
+        .await
+        {
+            Err(_) => return Err(SshError::Timeout),
+            Ok(Ok(handle)) => handle,
+            Ok(Err(_)) => {
+                return Err(host_key_error
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .take()
+                    .unwrap_or(SshError::Connection))
+            }
+        };
+        let authenticated =
+            match authenticate_handle(&mut handle, &target.username, authenticator).await {
+                Ok(authenticated) => authenticated,
+                Err(error) => {
+                    let _ = handle
+                        .disconnect(
+                            russh::Disconnect::AuthCancelledByUser,
+                            "authentication failed",
+                            "",
+                        )
+                        .await;
+                    return Err(error);
+                }
+            };
+        if !authenticated {
+            let _ = handle
+                .disconnect(
+                    russh::Disconnect::AuthCancelledByUser,
+                    "authentication rejected",
+                    "",
+                )
+                .await;
+            return Err(SshError::AuthenticationRejected);
+        }
+        Ok(handle)
+    }
 }
 
 struct RusshHandler {
@@ -234,12 +301,15 @@ impl russh::client::Handler for RusshHandler {
     }
 }
 
-struct RusshAuthContext<'a> {
-    handle: &'a mut russh::client::Handle<RusshHandler>,
+struct RusshAuthContext<'a, H: russh::client::Handler> {
+    handle: &'a mut russh::client::Handle<H>,
 }
 
 #[async_trait::async_trait]
-impl SshAuthContext for RusshAuthContext<'_> {
+impl<H> SshAuthContext for RusshAuthContext<'_, H>
+where
+    H: russh::client::Handler<Error = russh::Error> + Send,
+{
     async fn authenticate_none(&mut self, username: &str) -> Result<bool, SshError> {
         Ok(matches!(
             self.handle
@@ -269,13 +339,14 @@ impl SshAuthContext for RusshAuthContext<'_> {
         username: &str,
         key: PrivateKeyMaterial,
     ) -> Result<bool, SshError> {
-        let text = std::str::from_utf8(&key.openssh).map_err(|_| SshError::KeyParse)?;
+        let mut text = String::from_utf8(key.openssh.clone()).map_err(|_| SshError::KeyParse)?;
         let passphrase = key
             .passphrase
             .as_ref()
             .map(|value| secrecy::ExposeSecret::expose_secret(value).as_str());
-        let private_key =
-            russh::keys::decode_secret_key(text, passphrase).map_err(|_| SshError::KeyParse)?;
+        let private_key = russh::keys::decode_secret_key(&text, passphrase);
+        text.zeroize();
+        let private_key = private_key.map_err(|_| SshError::KeyParse)?;
         Ok(matches!(
             self.handle
                 .authenticate_publickey(
@@ -389,6 +460,20 @@ fn map_keyboard_interactive(
     })
 }
 
+async fn authenticate_handle<H>(
+    handle: &mut russh::client::Handle<H>,
+    username: &str,
+    authenticator: &dyn SshAuthenticator,
+) -> Result<bool, SshError>
+where
+    H: russh::client::Handler<Error = russh::Error> + Send,
+{
+    let mut context = RusshAuthContext { handle };
+    authenticator
+        .authenticate(&mut context, username, &[])
+        .await
+}
+
 #[async_trait::async_trait]
 impl SshEngine for RusshEngine {
     async fn connect(
@@ -404,56 +489,9 @@ impl SshEngine for RusshEngine {
             port: target.port,
             host_key_error: Arc::clone(&host_key_error),
         };
-        let mut handle = match tokio::time::timeout(
-            self.connect_timeout,
-            russh::client::connect(
-                Arc::clone(&self.config),
-                (target.host.clone(), target.port),
-                handler,
-            ),
-        )
-        .await
-        {
-            Err(_) => return Err(SshError::Timeout),
-            Ok(Ok(handle)) => handle,
-            Ok(Err(_)) => {
-                return Err(host_key_error
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner())
-                    .take()
-                    .unwrap_or(SshError::Connection))
-            }
-        };
-
-        let mut context = RusshAuthContext {
-            handle: &mut handle,
-        };
-        let authenticated = match authenticator
-            .authenticate(&mut context, &target.username, &[])
-            .await
-        {
-            Ok(authenticated) => authenticated,
-            Err(error) => {
-                let _ = handle
-                    .disconnect(
-                        russh::Disconnect::AuthCancelledByUser,
-                        "authentication failed",
-                        "",
-                    )
-                    .await;
-                return Err(error);
-            }
-        };
-        if !authenticated {
-            let _ = handle
-                .disconnect(
-                    russh::Disconnect::AuthCancelledByUser,
-                    "authentication rejected",
-                    "",
-                )
-                .await;
-            return Err(SshError::AuthenticationRejected);
-        }
+        let handle = self
+            .connect_with_handler(&target, handler, host_key_error, authenticator.as_ref())
+            .await?;
 
         Ok(Box::new(RusshConnection {
             handle: AsyncMutex::new(Some(handle)),

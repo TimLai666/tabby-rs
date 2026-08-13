@@ -40,8 +40,8 @@ use crate::{
     },
     ssh::{
         engine::{
-            HostKeyVerifier, KeyboardInteractiveResponse, PrivateKeyMaterial, SshAuthContext,
-            SshAuthenticator, SshHostKey,
+            HostKeyVerifier, KeyboardInteractiveResponse, PrivateKeyMaterial, RusshEngine,
+            SshAuthContext, SshAuthenticator, SshHostKey, SshTarget,
         },
         known_hosts::fingerprint,
         model::{
@@ -696,6 +696,46 @@ impl SshManager {
         }
     }
 
+    async fn connect_direct_engine(
+        &self,
+        config: Arc<client::Config>,
+        app: &AppHandle,
+        request: &SshConnectRequest,
+        connection_id: &str,
+        secrets: &SecretState,
+        credentials: &CredentialState,
+    ) -> Result<client::Handle<SshHandler>, SshError> {
+        let host_key_error = Arc::new(Mutex::new(None));
+        let handler = self.handler(
+            app,
+            request,
+            request.host.clone(),
+            request.port,
+            connection_id,
+            Arc::clone(&host_key_error),
+        );
+        let authenticator = Arc::new(ManagerAuthenticator {
+            manager: self.clone(),
+            app: app.clone(),
+            request: request.clone(),
+            secrets,
+            credentials,
+        });
+        let engine = RusshEngine::from_shared_config(config, Duration::from_secs(30));
+        engine
+            .connect_with_handler(
+                &SshTarget {
+                    host: request.host.clone(),
+                    port: request.port,
+                    username: request.username.clone().unwrap_or_else(|| "root".into()),
+                },
+                handler,
+                host_key_error,
+                authenticator.as_ref(),
+            )
+            .await
+    }
+
     async fn connect_over_channel(
         &self,
         config: Arc<client::Config>,
@@ -766,7 +806,14 @@ impl SshManager {
         let mut handle;
         if request.jump_chain.is_empty() {
             handle = self
-                .connect_direct(Arc::clone(&config), &app, &request, &connection_id)
+                .connect_direct_engine(
+                    Arc::clone(&config),
+                    &app,
+                    &request,
+                    &connection_id,
+                    &secrets,
+                    &credentials,
+                )
                 .await?;
         } else {
             let first = jump_request(&request, &request.jump_chain[0], &connection_id, 0);
