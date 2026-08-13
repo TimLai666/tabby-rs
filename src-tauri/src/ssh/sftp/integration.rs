@@ -338,7 +338,10 @@ async fn runs_real_ssh_shell_and_sftp_lifecycle() {
         match message {
             crate::ssh::engine::SshChannelMessage::Data(data)
             | crate::ssh::engine::SshChannelMessage::ExtendedData { data, .. } => {
-                engine_output.extend_from_slice(&data)
+                engine_output.extend_from_slice(&data);
+                if String::from_utf8_lossy(&engine_output).contains("tabby-rs-engine") {
+                    break;
+                }
             }
             crate::ssh::engine::SshChannelMessage::Eof
             | crate::ssh::engine::SshChannelMessage::Close => break,

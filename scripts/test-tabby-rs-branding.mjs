@@ -9,6 +9,7 @@ const tauriConfig = JSON.parse(await read('src-tauri/tauri.conf.json'))
 assert.equal(tauriConfig.productName, 'Tabby RS')
 assert.equal(tauriConfig.identifier, 'io.tabbyrs.app')
 assert.equal(tauriConfig.app.windows[0].title, 'Tabby RS')
+assert.ok(tauriConfig.bundle.icon.includes('../build/mac/icon.icns'))
 assert.deepEqual(tauriConfig.plugins['deep-link'].desktop.schemes, ['tabby-rs'])
 
 const homeBase = await read('tabby-core/src/services/homeBase.service.ts')

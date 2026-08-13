@@ -8,7 +8,7 @@ pub mod model;
 pub mod sftp;
 
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, VecDeque},
     fs,
     future::Future,
     pin::Pin,
@@ -1020,6 +1020,7 @@ impl SshManager {
             }
         };
         let mut channel = channel;
+        let mut pending = VecDeque::new();
         let terminal = &request.terminal;
         if channel
             .request_pty(
@@ -1043,6 +1044,19 @@ impl SshManager {
             .await;
             return Err(SshError::ChannelOpen);
         }
+        match wait_for_channel_confirmation(&mut channel).await {
+            Ok(messages) => pending.extend(messages),
+            Err(_) => {
+                disconnect_connection(
+                    &mut handle,
+                    &mut jump_handles,
+                    Disconnect::ByApplication,
+                    "PTY request confirmation failed",
+                )
+                .await;
+                return Err(SshError::ChannelOpen);
+            }
+        }
         for (name, value) in &request.environment {
             if channel.set_env(true, name, value).await.is_err() {
                 disconnect_connection(
@@ -1053,6 +1067,19 @@ impl SshManager {
                 )
                 .await;
                 return Err(SshError::ChannelOpen);
+            }
+            match wait_for_channel_confirmation(&mut channel).await {
+                Ok(messages) => pending.extend(messages),
+                Err(_) => {
+                    disconnect_connection(
+                        &mut handle,
+                        &mut jump_handles,
+                        Disconnect::ByApplication,
+                        "environment setup confirmation failed",
+                    )
+                    .await;
+                    return Err(SshError::ChannelOpen);
+                }
             }
         }
         if request.agent_forward {
@@ -1065,6 +1092,19 @@ impl SshManager {
                 )
                 .await;
                 return Err(SshError::ChannelOpen);
+            }
+            match wait_for_channel_confirmation(&mut channel).await {
+                Ok(messages) => pending.extend(messages),
+                Err(_) => {
+                    disconnect_connection(
+                        &mut handle,
+                        &mut jump_handles,
+                        Disconnect::ByApplication,
+                        "agent forwarding confirmation failed",
+                    )
+                    .await;
+                    return Err(SshError::ChannelOpen);
+                }
             }
         }
         if request.x11 {
@@ -1088,6 +1128,19 @@ impl SshManager {
                 .await;
                 return Err(SshError::ChannelOpen);
             }
+            match wait_for_channel_confirmation(&mut channel).await {
+                Ok(messages) => pending.extend(messages),
+                Err(_) => {
+                    disconnect_connection(
+                        &mut handle,
+                        &mut jump_handles,
+                        Disconnect::ByApplication,
+                        "X11 forwarding confirmation failed",
+                    )
+                    .await;
+                    return Err(SshError::ChannelOpen);
+                }
+            }
         }
         if channel.request_shell(true).await.is_err() {
             disconnect_connection(
@@ -1100,22 +1153,18 @@ impl SshManager {
             return Err(SshError::ChannelOpen);
         }
 
-        let request_count = 2
-            + request.environment.len()
-            + usize::from(request.agent_forward)
-            + usize::from(request.x11);
-        if wait_for_channel_confirmations(&mut channel, request_count)
-            .await
-            .is_err()
-        {
-            disconnect_connection(
-                &mut handle,
-                &mut jump_handles,
-                Disconnect::ByApplication,
-                "shell request confirmation failed",
-            )
-            .await;
-            return Err(SshError::ChannelOpen);
+        match wait_for_channel_confirmation(&mut channel).await {
+            Ok(messages) => pending.extend(messages),
+            Err(_) => {
+                disconnect_connection(
+                    &mut handle,
+                    &mut jump_handles,
+                    Disconnect::ByApplication,
+                    "shell request confirmation failed",
+                )
+                .await;
+                return Err(SshError::ChannelOpen);
+            }
         }
 
         let id = self.new_id("session");
@@ -1130,11 +1179,18 @@ impl SshManager {
         let mut jump_handles = jump_handles;
         let task_id_for_task = task_id.clone();
         tauri::async_runtime::spawn(async move {
+            let mut pending = pending;
             let mut sftp = None;
             let mut exit_event_emitted = false;
             loop {
                 tokio::select! {
-                    message = reader.wait() => {
+                    message = async {
+                        if let Some(message) = pending.pop_front() {
+                            Some(message)
+                        } else {
+                            reader.wait().await
+                        }
+                    } => {
                         let Some(message) = message else { break };
                         let is_exit_message = matches!(
                             &message,
@@ -2350,26 +2406,24 @@ fn authenticate_publickey_with_agent<'a>(
     Box::pin(handle.authenticate_publickey_with(username.to_owned(), identity, None, agent))
 }
 
-async fn wait_for_channel_confirmations(
+async fn wait_for_channel_confirmation(
     channel: &mut russh::Channel<client::Msg>,
-    expected: usize,
-) -> Result<(), SshError> {
-    let mut remaining = expected;
-    while remaining > 0 {
+) -> Result<Vec<ChannelMsg>, SshError> {
+    let mut pending = Vec::new();
+    loop {
         let message = tokio::time::timeout(CHANNEL_REQUEST_TIMEOUT, channel.wait())
             .await
             .map_err(|_| SshError::ChannelOpen)?
             .ok_or(SshError::ChannelOpen)?;
         match message {
-            ChannelMsg::Success => remaining -= 1,
+            ChannelMsg::Success => return Ok(pending),
             ChannelMsg::Failure
             | ChannelMsg::Eof
             | ChannelMsg::Close
             | ChannelMsg::OpenFailure(_) => return Err(SshError::ChannelOpen),
-            _ => {}
+            message => pending.push(message),
         }
     }
-    Ok(())
 }
 
 async fn connect_agent(socket: Option<String>) -> Result<PlatformAgentClient, SshError> {

@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, VecDeque},
     fmt,
     io::Cursor,
     sync::{Arc, Mutex},
@@ -527,7 +527,7 @@ impl SshConnection for RusshConnection {
     ) -> Result<Box<dyn SshChannel>, SshError> {
         let handle = self.handle.lock().await;
         let handle = handle.as_ref().ok_or(SshError::Closed)?;
-        let environment_count = request.environment.len();
+        let mut pending = VecDeque::new();
         let mut channel = handle
             .channel_open_session()
             .await
@@ -544,21 +544,24 @@ impl SshConnection for RusshConnection {
             )
             .await
             .map_err(|_| SshError::ChannelOpen)?;
+        pending.extend(super::wait_for_channel_confirmation(&mut channel).await?);
         for (name, value) in request.environment {
             channel
                 .set_env(true, name, value)
                 .await
                 .map_err(|_| SshError::ChannelOpen)?;
+            pending.extend(super::wait_for_channel_confirmation(&mut channel).await?);
         }
         channel
             .request_shell(true)
             .await
             .map_err(|_| SshError::ChannelOpen)?;
-        super::wait_for_channel_confirmations(&mut channel, environment_count + 2).await?;
+        pending.extend(super::wait_for_channel_confirmation(&mut channel).await?);
         let (reader, writer) = channel.split();
         Ok(Box::new(RusshChannel {
             reader: AsyncMutex::new(reader),
             writer: AsyncMutex::new(writer),
+            pending: AsyncMutex::new(pending),
         }))
     }
 
@@ -577,35 +580,43 @@ impl SshConnection for RusshConnection {
 struct RusshChannel {
     reader: AsyncMutex<russh::ChannelReadHalf>,
     writer: AsyncMutex<russh::ChannelWriteHalf<russh::client::Msg>>,
+    pending: AsyncMutex<VecDeque<russh::ChannelMsg>>,
+}
+
+fn map_channel_message(message: russh::ChannelMsg) -> Option<SshChannelMessage> {
+    match message {
+        russh::ChannelMsg::Data { data } => Some(SshChannelMessage::Data(data.to_vec())),
+        russh::ChannelMsg::ExtendedData { ext, data } => Some(SshChannelMessage::ExtendedData {
+            ext,
+            data: data.to_vec(),
+        }),
+        russh::ChannelMsg::ExitStatus { exit_status } => {
+            Some(SshChannelMessage::ExitStatus(exit_status))
+        }
+        russh::ChannelMsg::ExitSignal { signal_name, .. } => Some(SshChannelMessage::ExitSignal {
+            signal: format!("{signal_name:?}"),
+        }),
+        russh::ChannelMsg::Eof => Some(SshChannelMessage::Eof),
+        russh::ChannelMsg::Close => Some(SshChannelMessage::Close),
+        _ => None,
+    }
 }
 
 #[async_trait::async_trait]
 impl SshChannel for RusshChannel {
     async fn read(&self) -> Result<Option<SshChannelMessage>, SshError> {
         loop {
-            let message = self.reader.lock().await.wait().await;
+            let message = self.pending.lock().await.pop_front();
+            let message = match message {
+                Some(message) => Some(message),
+                None => self.reader.lock().await.wait().await,
+            };
             let Some(message) = message else {
                 return Ok(None);
             };
-            let message = match message {
-                russh::ChannelMsg::Data { data } => SshChannelMessage::Data(data.to_vec()),
-                russh::ChannelMsg::ExtendedData { ext, data } => SshChannelMessage::ExtendedData {
-                    ext,
-                    data: data.to_vec(),
-                },
-                russh::ChannelMsg::ExitStatus { exit_status } => {
-                    SshChannelMessage::ExitStatus(exit_status)
-                }
-                russh::ChannelMsg::ExitSignal { signal_name, .. } => {
-                    SshChannelMessage::ExitSignal {
-                        signal: format!("{signal_name:?}"),
-                    }
-                }
-                russh::ChannelMsg::Eof => SshChannelMessage::Eof,
-                russh::ChannelMsg::Close => SshChannelMessage::Close,
-                _ => continue,
-            };
-            return Ok(Some(message));
+            if let Some(message) = map_channel_message(message) {
+                return Ok(Some(message));
+            }
         }
     }
 
