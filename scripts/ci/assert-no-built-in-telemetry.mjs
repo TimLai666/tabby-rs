@@ -9,6 +9,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 
 const trackedProductionPath = file => (
     file.startsWith('app/src/')
+    || file.startsWith('app/lib/')
     || file.startsWith('src-tauri/src/')
     || file.startsWith('tabby-') && file.includes('/src/')
     || file.startsWith('web/')

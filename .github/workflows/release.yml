@@ -105,6 +105,9 @@ jobs:
       - name: Build Tauri renderer
         run: yarn build:tauri:frontend
 
+      - name: Verify no built-in telemetry
+        run: yarn audit:telemetry
+
       - name: Test Rust host
         run: cargo test --manifest-path src-tauri/Cargo.toml --lib
 
