@@ -19,7 +19,10 @@ function commandPath (command) {
     const lookup = process.platform === 'win32' ? 'where.exe' : 'which'
     const result = spawnSync(lookup, [command], { encoding: 'utf8' })
     assert.equal(result.status, 0, `${command} must be installed on the CI runner`)
-    const candidate = result.stdout.split(/\r?\n/).map(value => value.trim()).find(Boolean)
+    const candidates = result.stdout.split(/\r?\n/).map(value => value.trim()).filter(Boolean)
+    const candidate = process.platform === 'win32'
+        ? candidates.find(value => value.toLowerCase().endsWith('.cmd')) || candidates[0]
+        : candidates[0]
     assert.ok(candidate, `${command} must resolve to an executable path`)
     return candidate
 }
