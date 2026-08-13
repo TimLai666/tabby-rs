@@ -94,6 +94,29 @@ struct AuthFixtureAuthenticator {
     expected: SecretString,
 }
 
+#[derive(Clone, Copy)]
+enum HostKeyAlgorithm {
+    Ed25519,
+    RsaSha256,
+    EcdsaP256,
+}
+
+impl HostKeyAlgorithm {
+    fn generate(self) -> russh::keys::PrivateKey {
+        let algorithm = match self {
+            Self::Ed25519 => russh::keys::Algorithm::Ed25519,
+            Self::RsaSha256 => russh::keys::Algorithm::Rsa {
+                hash: Some(russh::keys::HashAlg::Sha256),
+            },
+            Self::EcdsaP256 => russh::keys::Algorithm::Ecdsa {
+                curve: russh::keys::EcdsaCurve::NistP256,
+            },
+        };
+        russh::keys::PrivateKey::random(&mut rand::rngs::OsRng, algorithm)
+            .expect("generate russh fixture host key")
+    }
+}
+
 #[async_trait::async_trait]
 impl SshAuthenticator for AuthFixtureAuthenticator {
     async fn authenticate(
@@ -132,7 +155,7 @@ impl SshAuthenticator for AuthFixtureAuthenticator {
     }
 }
 
-async fn run_russh_auth_fixture(kind: AuthFixtureKind) {
+async fn run_russh_auth_fixture(kind: AuthFixtureKind, host_key: russh::keys::PrivateKey) {
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
         .await
         .expect("bind russh auth fixture");
@@ -142,10 +165,7 @@ async fn run_russh_auth_fixture(kind: AuthFixtureKind) {
         .port();
     let mut config = server::Config::default();
     config.server_id = SshId::Standard("SSH-2.0-tabby-rs-auth-fixture".into());
-    config.keys.push(
-        russh::keys::PrivateKey::random(&mut rand::rngs::OsRng, russh::keys::Algorithm::Ed25519)
-            .expect("generate russh fixture host key"),
-    );
+    config.keys.push(host_key);
     let config = Arc::new(config);
     let expected = "fixture-secret";
     let mut server = AuthFixtureServer {
@@ -190,8 +210,15 @@ async fn run_russh_auth_fixture(kind: AuthFixtureKind) {
 }
 
 #[tokio::test]
-#[ignore = "requires SSH integration fixture; run yarn test:ssh-integration"]
-async fn runs_real_password_and_keyboard_interactive_auth_matrix() {
-    run_russh_auth_fixture(AuthFixtureKind::Password).await;
-    run_russh_auth_fixture(AuthFixtureKind::KeyboardInteractive).await;
+#[ignore = "requires SSH authentication fixture; run yarn test:ssh-auth-integration"]
+async fn runs_real_authentication_and_host_key_algorithm_matrix() {
+    for host_key_algorithm in [
+        HostKeyAlgorithm::Ed25519,
+        HostKeyAlgorithm::RsaSha256,
+        HostKeyAlgorithm::EcdsaP256,
+    ] {
+        let host_key = host_key_algorithm.generate();
+        run_russh_auth_fixture(AuthFixtureKind::Password, host_key.clone()).await;
+        run_russh_auth_fixture(AuthFixtureKind::KeyboardInteractive, host_key).await;
+    }
 }
