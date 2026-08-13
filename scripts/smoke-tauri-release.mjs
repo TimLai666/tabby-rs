@@ -89,10 +89,12 @@ async function terminate (child) {
     })
 }
 
-async function launchAndCheck (executable, cwd, environment) {
+async function launchAndCheck (executable, cwd, environment, { preserveUserData = false } = {}) {
     const markerDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'tabby-rs-installer-smoke-ready-'))
     const marker = path.join(markerDirectory, 'ready.marker')
     const dataDirectory = path.join(markerDirectory, 'data')
+    const userDataSentinel = path.join(dataDirectory, 'user-data-preservation-sentinel.txt')
+    let keepMarkerDirectory = false
     const child = spawn(executable, [], {
         cwd,
         env: {
@@ -117,16 +119,44 @@ async function launchAndCheck (executable, cwd, environment) {
         assert.equal(identity.dataDirName, 'tabby-rs')
         assert.equal(path.resolve(identity.dataDir), path.resolve(dataDirectory), 'installer smoke used an unexpected data directory')
         assert.match(path.basename(identity.executable).toLowerCase(), /^tabby-rs(?:\.exe)?$/)
+        await terminate(child)
+        if (preserveUserData) {
+            fs.mkdirSync(dataDirectory, { recursive: true })
+            fs.writeFileSync(userDataSentinel, 'preserve-user-data\n')
+            keepMarkerDirectory = true
+        }
         return {
             appIdentifier: identity.appIdentifier,
             cliName: identity.cliName,
             dataDirectory: identity.dataDir,
             urlScheme: identity.urlScheme,
+            userDataSentinel: preserveUserData ? userDataSentinel : null,
+            cleanupDirectory: preserveUserData ? markerDirectory : null,
         }
     } finally {
         await terminate(child)
-        fs.rmSync(markerDirectory, { recursive: true, force: true })
+        if (!keepMarkerDirectory) {
+            fs.rmSync(markerDirectory, { recursive: true, force: true })
+        }
     }
+}
+
+function reportIdentity (identity) {
+    return {
+        appIdentifier: identity.appIdentifier,
+        cliName: identity.cliName,
+        dataDirectory: identity.dataDirectory,
+        userDataPreserved: identity.userDataPreserved === true,
+        urlScheme: identity.urlScheme,
+    }
+}
+
+function assertUserDataPreserved (identity) {
+    assert.ok(identity.userDataSentinel, 'installer smoke did not create a user-data sentinel')
+    assert.ok(fs.existsSync(identity.userDataSentinel), 'uninstall removed user data')
+    assert.equal(fs.readFileSync(identity.userDataSentinel, 'utf8'), 'preserve-user-data\n', 'uninstall changed user data')
+    identity.userDataPreserved = true
+    fs.rmSync(identity.cleanupDirectory, { recursive: true, force: true })
 }
 
 function findFile (directory, predicate) {
@@ -162,13 +192,14 @@ async function smokeWindows () {
             await assertCommand(installer, ['/S', `/D=${installDirectory}`])
             const executable = findFile(installDirectory, file => path.basename(file).toLowerCase() === 'tabby-rs.exe')
             assert.ok(executable, `NSIS installer did not install tabby-rs.exe under ${installDirectory}`)
-            const identity = await launchAndCheck(executable, path.dirname(executable), { APPDATA: path.join(root, 'appdata') })
+            const identity = await launchAndCheck(executable, path.dirname(executable), { APPDATA: path.join(root, 'appdata') }, { preserveUserData: true })
             auditInstalledBundle(installDirectory, 'windows-nsis-install', operations)
             const uninstaller = findFile(installDirectory, file => path.basename(file).toLowerCase() === 'uninstall.exe')
             assert.ok(uninstaller, 'NSIS installer did not install an uninstaller')
-            operations.push({ action: 'launch', executable: path.relative(installDirectory, executable), identity })
             await assertCommand(uninstaller, ['/S'])
             assert.ok(!fs.existsSync(executable), 'NSIS uninstaller left the application executable behind')
+            assertUserDataPreserved(identity)
+            operations.push({ action: 'launch', executable: path.relative(installDirectory, executable), identity: reportIdentity(identity) })
             operations.push({ action: 'uninstall', executable: path.relative(installDirectory, uninstaller) })
         }
         writeReport(operations)
@@ -197,11 +228,12 @@ async function smokeMacos () {
                 const executableDirectory = path.join(installedApp, 'Contents', 'MacOS')
                 const executable = findFile(executableDirectory, file => path.basename(file) === 'tabby-rs')
                 assert.ok(executable, `application bundle has no executable: ${installedApp}`)
-                const identity = await launchAndCheck(executable, installedApp, { HOME: path.join(root, 'home') })
+                const identity = await launchAndCheck(executable, installedApp, { HOME: path.join(root, 'home') }, { preserveUserData: true })
                 auditInstalledBundle(installedApp, 'macos-dmg-app', operations)
-                operations.push({ action: 'launch', executable: path.relative(installedApp, executable), identity })
                 fs.rmSync(installedApp, { recursive: true, force: true })
                 assert.ok(!fs.existsSync(installedApp), 'DMG copy could not be removed')
+                assertUserDataPreserved(identity)
+                operations.push({ action: 'launch', executable: path.relative(installedApp, executable), identity: reportIdentity(identity) })
                 operations.push({ action: 'uninstall', executable: path.relative(installDirectory, installedApp) })
             } finally {
                 await assertCommand('hdiutil', ['detach', mount, '-force'])
@@ -224,11 +256,12 @@ async function smokeAppImage (artifact, root, operations) {
     assert.ok(fs.existsSync(executable), `AppImage extraction has no AppRun: ${extractDirectory}`)
     fs.chmodSync(executable, 0o755)
     operations.push({ action: 'install', artifact: path.basename(artifact), target: 'AppImage/AppRun' })
-    const identity = await launchAndCheck(executable, extractDirectory, { XDG_CONFIG_HOME: path.join(root, 'config') })
+    const identity = await launchAndCheck(executable, extractDirectory, { XDG_CONFIG_HOME: path.join(root, 'config') }, { preserveUserData: true })
     auditInstalledBundle(extractDirectory, 'linux-appimage-extract', operations)
-    operations.push({ action: 'launch', executable: 'AppImage/AppRun', identity })
     fs.rmSync(extractDirectory, { recursive: true, force: true })
     assert.ok(!fs.existsSync(extractDirectory), 'AppImage uninstall left the extracted application behind')
+    assertUserDataPreserved(identity)
+    operations.push({ action: 'launch', executable: 'AppImage/AppRun', identity: reportIdentity(identity) })
     operations.push({ action: 'uninstall', target: 'AppImage/AppRun' })
 }
 
@@ -242,11 +275,12 @@ async function smokeDeb (artifact, root, operations) {
     const installed = findFile(packageRoot, file => path.basename(file) === 'tabby-rs')
     assert.ok(installed, `DEB installation did not place the application under ${packageRoot}`)
     operations.push({ action: 'install', artifact: path.basename(artifact), package: name, manager: 'dpkg' })
-    const identity = await launchAndCheck(installed, path.dirname(installed), { HOME: path.join(root, 'home') })
+    const identity = await launchAndCheck(installed, path.dirname(installed), { HOME: path.join(root, 'home') }, { preserveUserData: true })
     auditInstalledBundle(packageRoot, 'linux-deb-install', operations)
-    operations.push({ action: 'launch', executable: path.relative(packageRoot, installed), identity })
     await assertCommand('dpkg', [`--root=${packageRoot}`, `--admindir=${adminDirectory}`, `--instdir=${packageRoot}`, '--purge', name], { cwd: root })
     assert.ok(!fs.existsSync(installed), 'DEB purge left the application executable behind')
+    assertUserDataPreserved(identity)
+    operations.push({ action: 'launch', executable: path.relative(packageRoot, installed), identity: reportIdentity(identity) })
     operations.push({ action: 'uninstall', package: name, manager: 'dpkg' })
 }
 
@@ -260,11 +294,12 @@ async function smokeRpm (artifact, root, operations) {
     const installed = findFile(packageRoot, file => path.basename(file) === 'tabby-rs')
     assert.ok(installed, `RPM installation did not place the application under ${packageRoot}`)
     operations.push({ action: 'install', artifact: path.basename(artifact), package: name, manager: 'rpm' })
-    const identity = await launchAndCheck(installed, path.dirname(installed), { HOME: path.join(root, 'home') })
+    const identity = await launchAndCheck(installed, path.dirname(installed), { HOME: path.join(root, 'home') }, { preserveUserData: true })
     auditInstalledBundle(packageRoot, 'linux-rpm-install', operations)
-    operations.push({ action: 'launch', executable: path.relative(packageRoot, installed), identity })
     await assertCommand('rpm', [`--root=${packageRoot}`, '--dbpath=/var/lib/rpm', '--erase', name], { cwd: root })
     assert.ok(!fs.existsSync(installed), 'RPM erase left the application executable behind')
+    assertUserDataPreserved(identity)
+    operations.push({ action: 'launch', executable: path.relative(packageRoot, installed), identity: reportIdentity(identity) })
     operations.push({ action: 'uninstall', package: name, manager: 'rpm' })
 }
 

@@ -60,6 +60,32 @@ assert.ok(report.failures.includes('installer smoke must execute install, launch
 assert.ok(report.failures.includes('installer smoke is missing launch operation'))
 assert.ok(report.failures.includes('installer smoke is missing uninstall operation'))
 
+const missingUserDataEvidenceSmoke = path.join(work, 'missing-user-data-evidence-smoke.json')
+const missingUserDataEvidenceOutput = path.join(work, 'missing-user-data-evidence-release-gate.json')
+fs.writeFileSync(missingUserDataEvidenceSmoke, JSON.stringify({
+    passed: true,
+    platform: 'windows',
+    planOnly: false,
+    operations: [
+        { action: 'install' },
+        { action: 'launch', identity: { userDataPreserved: false } },
+        { action: 'uninstall' },
+    ],
+}))
+await assert.rejects(
+    execFileAsync(process.execPath, [gate,
+        '--bundle-audit', bundleAudit,
+        '--dependency-audit', dependencyAudit,
+        '--license-report', licenseReport,
+        '--installer-smoke', missingUserDataEvidenceSmoke,
+        '--platform', 'windows',
+        '--source-revision', expectedRevision,
+        '--output', missingUserDataEvidenceOutput,
+    ], { cwd: root }),
+)
+const missingUserDataEvidenceReport = JSON.parse(fs.readFileSync(missingUserDataEvidenceOutput, 'utf8'))
+assert.ok(missingUserDataEvidenceReport.failures.includes('installer smoke launch did not verify user data preservation'))
+
 const passingBundleAudit = path.join(work, 'passing-bundle-audit.json')
 const failingDependencyAudit = path.join(work, 'failing-dependency-audit.json')
 const dependencyFailureOutput = path.join(work, 'dependency-failure-release-gate.json')

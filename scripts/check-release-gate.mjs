@@ -167,6 +167,12 @@ if (installerSmoke) {
     for (const action of requiredActions) {
         if (!actions.has(action)) failures.push(`installer smoke is missing ${action} operation`)
     }
+    const launchOperations = Array.isArray(installerSmoke.operations)
+        ? installerSmoke.operations.filter(operation => operation?.action === 'launch')
+        : []
+    if (launchOperations.length > 0 && launchOperations.some(operation => operation.identity?.userDataPreserved !== true)) {
+        failures.push('installer smoke launch did not verify user data preservation')
+    }
 }
 
 if (bundleAudit) {
