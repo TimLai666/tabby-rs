@@ -86,9 +86,15 @@ async function terminate (child) {
 async function launchAndCheck (executable, cwd, environment) {
     const markerDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'tabby-rs-installer-smoke-ready-'))
     const marker = path.join(markerDirectory, 'ready.marker')
+    const dataDirectory = path.join(markerDirectory, 'data')
     const child = spawn(executable, [], {
         cwd,
-        env: { ...process.env, ...environment, TABBY_RS_INSTALLER_SMOKE_READY_FILE: marker },
+        env: {
+            ...process.env,
+            ...environment,
+            TABBY_RS_INSTALLER_SMOKE_READY_FILE: marker,
+            TABBY_RS_INSTALLER_SMOKE_DATA_DIR: dataDirectory,
+        },
         stdio: 'ignore',
         windowsHide: true,
     })
@@ -169,7 +175,7 @@ async function smokeMacos () {
                 const installedApp = path.join(installDirectory, app)
                 fs.cpSync(sourceApp, installedApp, { recursive: true })
                 const executableDirectory = path.join(installedApp, 'Contents', 'MacOS')
-                const executable = findFile(executableDirectory, () => true)
+                const executable = findFile(executableDirectory, file => path.basename(file) === 'tabby-rs')
                 assert.ok(executable, `application bundle has no executable: ${installedApp}`)
                 await launchAndCheck(executable, installedApp, { HOME: path.join(root, 'home') })
                 auditInstalledBundle(installedApp, 'macos-dmg-app', operations)

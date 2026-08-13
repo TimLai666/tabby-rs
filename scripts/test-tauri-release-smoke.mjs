@@ -12,6 +12,8 @@ const staging = path.join(work, 'release-staging')
 fs.mkdirSync(staging)
 const smokeSource = fs.readFileSync(smoke, 'utf8')
 assert.match(smokeSource, /TABBY_RS_INSTALLER_SMOKE_READY_FILE/)
+assert.match(smokeSource, /TABBY_RS_INSTALLER_SMOKE_DATA_DIR/)
+assert.match(smokeSource, /path\.basename\(file\) === 'tabby-rs'/)
 assert.doesNotMatch(smokeSource, /TABBY_RS_BENCHMARK_READY_FILE/)
 
 for (const fixture of [

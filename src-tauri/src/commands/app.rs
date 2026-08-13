@@ -11,8 +11,14 @@ use crate::{
     error::AppError,
     plugins::manifest,
     state::AppState,
-    storage::{config_file::read_config, paths::StoragePaths, state_file::TabbyRsState},
+    storage::{
+        config_file::{read_config, write_config, ConfigWriteRequest},
+        paths::StoragePaths,
+        state_file::TabbyRsState,
+    },
 };
+
+const INITIAL_CONFIG_YAML: &str = "version: 1\n";
 
 #[derive(Debug, Default, serde::Deserialize)]
 pub struct EmptyRequest {}
@@ -178,8 +184,25 @@ fn bootstrap_attempt_id() -> String {
 
 fn bootstrap_config(state: &AppState) -> Result<BTreeMap<String, serde_json::Value>, AppError> {
     let paths = StoragePaths::from_app_paths(state.paths());
-    let config = read_config(paths.config_file())?;
-    parse_bootstrap_config(&config.yaml)
+    parse_bootstrap_config(&ensure_config_file(paths.config_file())?)
+}
+
+fn ensure_config_file(path: &Path) -> Result<String, AppError> {
+    let config = read_config(path)?;
+    if config.revision.is_some() {
+        return Ok(config.yaml);
+    }
+
+    let request = ConfigWriteRequest {
+        yaml: INITIAL_CONFIG_YAML.to_owned(),
+        expected_revision: None,
+        require_missing: true,
+    };
+    match write_config(path, &request) {
+        Ok(_) => Ok(request.yaml),
+        Err(AppError::Conflict(_)) => Ok(read_config(path)?.yaml),
+        Err(error) => Err(error),
+    }
 }
 
 fn parse_bootstrap_config(yaml: &str) -> Result<BTreeMap<String, serde_json::Value>, AppError> {
@@ -330,8 +353,8 @@ pub fn app_quit(
 #[cfg(test)]
 mod tests {
     use super::{
-        bootstrap_mode, current_runtime_info, write_benchmark_frame_report, write_benchmark_ready,
-        write_installer_smoke_ready, BenchmarkFrameReport, BootstrapData,
+        bootstrap_mode, current_runtime_info, ensure_config_file, write_benchmark_frame_report,
+        write_benchmark_ready, write_installer_smoke_ready, BenchmarkFrameReport, BootstrapData,
     };
     use crate::storage::state_file::{load_state, save_state, TabbyRsState};
     use tempfile::tempdir;
@@ -363,6 +386,21 @@ mod tests {
         write_installer_smoke_ready(&marker).unwrap();
 
         assert_eq!(std::fs::read_to_string(marker).unwrap(), "ready\n");
+    }
+
+    #[test]
+    fn creates_initial_config_without_overwriting_existing_config() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("config.yaml");
+
+        assert_eq!(ensure_config_file(&path).unwrap(), "version: 1\n");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "version: 1\n");
+
+        std::fs::write(&path, "version: 1\ncustom: true\n").unwrap();
+        assert_eq!(
+            ensure_config_file(&path).unwrap(),
+            "version: 1\ncustom: true\n"
+        );
     }
 
     #[test]
