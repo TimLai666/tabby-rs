@@ -41,6 +41,19 @@ fn public_update_error(stage: UpdateStage) -> AppError {
     AppError::Io(format!("update {stage:?} failed"))
 }
 
+fn abort_cancelled_install(
+    state: &AppState,
+    paths: &StoragePaths,
+    generation: u64,
+) -> Result<(), AppError> {
+    if state.update_manager().install_is_current(generation) {
+        return Ok(());
+    }
+    let _ = state.update_persisted_state(|persisted| persisted.pending_update = None);
+    let _ = clear_pending_update_journal(paths);
+    Err(AppError::Conflict("update installation cancelled".into()))
+}
+
 async fn check_update(app: &AppHandle, state: &AppState) -> Result<Option<UpdateInfo>, AppError> {
     let generation = state.update_manager().begin_check()?;
     emit_state(app, state);
@@ -203,6 +216,7 @@ pub async fn update_install(
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
     let ready = state.update_manager().take_ready(&request.version)?;
+    let install_generation = ready.generation;
     emit_state(&app, &state);
     let bytes = match read_ready_artifact(&ready) {
         Ok(bytes) => bytes,
@@ -214,6 +228,12 @@ pub async fn update_install(
     };
     let current_state = state.persisted_state();
     let paths = StoragePaths::from_app_paths(state.paths());
+    if !state
+        .update_manager()
+        .install_is_current(install_generation)
+    {
+        return Err(AppError::Conflict("update installation cancelled".into()));
+    }
     let backup = {
         let _guard = state.lock_storage();
         create_backup(
@@ -234,6 +254,7 @@ pub async fn update_install(
             return Err(AppError::Io("update backup could not be created".into()));
         }
     };
+    abort_cancelled_install(&state, &paths, install_generation)?;
     let target_version = ready.info.version.clone();
     let pending = PendingUpdateState {
         target_version: target_version.clone(),
@@ -259,6 +280,7 @@ pub async fn update_install(
         emit_state(&app, &state);
         return Err(AppError::Io("update state could not be persisted".into()));
     }
+    abort_cancelled_install(&state, &paths, install_generation)?;
     if ready.update.install(&bytes).is_err() {
         let _ = state.update_persisted_state(|persisted| persisted.pending_update = None);
         let _ = clear_pending_update_journal(&paths);
@@ -266,7 +288,7 @@ pub async fn update_install(
         emit_state(&app, &state);
         return Err(public_update_error(UpdateStage::Installing));
     }
-    state.update_manager().finish_install();
+    state.update_manager().finish_install(install_generation);
     emit_state(&app, &state);
     app.request_restart();
     Ok(())

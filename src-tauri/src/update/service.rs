@@ -88,6 +88,7 @@ pub(crate) struct DownloadHandle {
 }
 
 pub(crate) struct ReadyUpdate {
+    pub generation: u64,
     pub update: Update,
     pub manifest: UpdateManifest,
     pub info: UpdateInfo,
@@ -372,6 +373,7 @@ impl UpdateManager {
             version: version.into(),
         };
         Ok(ReadyUpdate {
+            generation: state.download_generation,
             update: pending.update,
             manifest: pending.manifest,
             info: pending.info,
@@ -379,11 +381,25 @@ impl UpdateManager {
         })
     }
 
+    pub fn install_is_current(&self, generation: u64) -> bool {
+        let state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        state.download_generation == generation
+            && matches!(state.state, UpdateState::Installing { .. })
+    }
+
     pub fn restore_ready(&self, ready: ReadyUpdate) {
         let mut state = self
             .state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if state.download_generation != ready.generation
+            || !matches!(state.state, UpdateState::Installing { .. })
+        {
+            return;
+        }
         state.state = UpdateState::ReadyToInstall {
             version: ready.info.version.clone(),
         };
@@ -395,11 +411,16 @@ impl UpdateManager {
         });
     }
 
-    pub fn finish_install(&self) {
+    pub fn finish_install(&self, generation: u64) {
         let mut state = self
             .state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if state.download_generation != generation
+            || !matches!(state.state, UpdateState::Installing { .. })
+        {
+            return;
+        }
         state.pending = None;
         state.cancellation = None;
         state.state = UpdateState::Idle;
@@ -734,5 +755,25 @@ mod tests {
         assert!(!manager.cancel_download(1));
         assert!(manager.finish_download(1, Vec::new()).is_err());
         assert!(matches!(manager.state(), UpdateState::Downloading { .. }));
+    }
+
+    #[test]
+    fn cancellation_invalidates_an_install_before_it_starts() {
+        let manager = UpdateManager::default();
+        {
+            let mut state = manager
+                .state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            state.download_generation = 4;
+            state.state = UpdateState::Installing {
+                version: "1.0.231-tabbyrs.2".into(),
+            };
+        }
+
+        assert!(manager.install_is_current(4));
+        manager.cancel();
+        assert!(!manager.install_is_current(4));
+        assert!(matches!(manager.state(), UpdateState::Idle));
     }
 }
