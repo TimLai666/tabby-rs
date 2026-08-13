@@ -93,6 +93,9 @@ jobs:
           yarn test:web-plugin-loader
           yarn test:web-capability-boundary
 
+      - name: Test diagnostics preview gate
+        run: yarn test:diagnostics-ui
+
   build:
     name: bundle (${{ matrix.name }})
     needs: web-gate
