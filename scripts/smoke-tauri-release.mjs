@@ -94,6 +94,9 @@ async function launchAndCheck (executable, cwd, environment, { preserveUserData 
     const marker = path.join(markerDirectory, 'ready.marker')
     const dataDirectory = path.join(markerDirectory, 'data')
     const userDataSentinel = path.join(dataDirectory, 'user-data-preservation-sentinel.txt')
+    if (environment.HOME) {
+        fs.mkdirSync(environment.HOME, { recursive: true })
+    }
     let keepMarkerDirectory = false
     const child = spawn(executable, [], {
         cwd,
