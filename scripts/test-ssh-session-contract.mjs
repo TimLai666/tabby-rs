@@ -23,6 +23,8 @@ assert.match(rust, /if !exit_event_emitted \{[\s\S]*exit_code: None[\s\S]*signal
 assert.match(rust, /use zeroize::Zeroize/)
 assert.match(rust, /bytes\.zeroize\(\)/)
 assert.match(rust, /text\.zeroize\(\)/)
+assert.match(rust, /async fn disconnect_jump_handles\(/)
+assert.match(rust, /async fn disconnect_connection\(/)
 
 const connectMethod = rust.match(
     /pub async fn connect\([\s\S]*?\n    \}\n\n    pub async fn host_key_decision/,
@@ -41,5 +43,7 @@ assert.ok(jumpConnectBranch, 'SSH jump branch contract is missing')
 assert.match(jumpConnectBranch[1], /connect_over_channel\(/)
 assert.match(jumpConnectBranch[1], /for \(index, hop\) in request\.jump_chain\.iter\(\)\.enumerate\(\)\.skip\(1\)\s*\{/)
 assert.ok((jumpConnectBranch[1].match(/\.authenticate\(/g) || []).length >= 3, 'SSH jump branch must authenticate first hop, intermediate hops, and target')
+assert.match(jumpConnectBranch[1], /disconnect_jump_handles\(/)
+assert.match(jumpConnectBranch[1], /disconnect_connection\(/)
 
 console.log('SSH session exit contract passed')
