@@ -108,6 +108,7 @@ function argument (args, name) {
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
     const args = process.argv.slice(2)
+    const reportOnly = args.includes('--report-only')
     const report = compareParity({
         featuresPath: path.resolve(argument(args, '--features') || defaultFeaturesPath),
         platformsPath: path.resolve(argument(args, '--platforms') || defaultPlatformsPath),
@@ -115,5 +116,5 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     const outputPath = argument(args, '--output')
     if (outputPath) fs.writeFileSync(path.resolve(outputPath), `${JSON.stringify(report, null, 2)}\n`)
     console.log(JSON.stringify(report, null, 2))
-    if (!report.passed) process.exitCode = 1
+    if (!report.passed && !reportOnly) process.exitCode = 1
 }

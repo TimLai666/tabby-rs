@@ -190,6 +190,9 @@ jobs:
         shell: bash
         run: node scripts/smoke-tauri-release.mjs --staging release-staging --platform "${{ matrix.platform }}" --output release-staging/installer-smoke.json
 
+      - name: Generate parity report
+        run: node scripts/compare-parity.mjs --report-only --output release-staging/parity-report.json
+
       - name: Measure Tauri release
         shell: bash
         env:
