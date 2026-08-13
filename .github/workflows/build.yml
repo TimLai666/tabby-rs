@@ -154,6 +154,9 @@ jobs:
       - name: Test diagnostics preview gate
         run: yarn test:diagnostics-ui
 
+      - name: Test diagnostics privacy and rotation
+        run: yarn test:diagnostics-privacy
+
       - name: Test release documentation contract
         run: yarn test:release-documentation
 
