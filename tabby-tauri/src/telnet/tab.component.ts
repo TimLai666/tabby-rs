@@ -17,6 +17,7 @@ export class TauriTelnetTabComponent extends ConnectableTerminalTabComponent<Tau
     Platform = Platform
     session: TauriTelnetSession|null = null
     private reconnectAttempts = 0
+    private reconnectTimer: ReturnType<typeof setTimeout>|null = null
 
     constructor (injector: Injector, private bridge: HostBridge) {
         super(injector)
@@ -33,6 +34,7 @@ export class TauriTelnetTabComponent extends ConnectableTerminalTabComponent<Tau
     }
 
     async initializeSession (): Promise<void> {
+        this.cancelReconnectTimer()
         await super.initializeSession()
         const session = new TauriTelnetSession(this.injector, this.bridge, this.profile)
         this.setSession(session)
@@ -45,6 +47,7 @@ export class TauriTelnetTabComponent extends ConnectableTerminalTabComponent<Tau
             await session.start()
             session.resize(this.size.columns, this.size.rows)
             this.reconnectAttempts = 0
+            this.cancelReconnectTimer()
             this.stopSpinner()
             this.write('\r\n TELNET  Unencrypted connection\r\n')
         } catch (error) {
@@ -60,13 +63,36 @@ export class TauriTelnetTabComponent extends ConnectableTerminalTabComponent<Tau
                 const delay = Math.min(30_000, 1_000 * 2 ** this.reconnectAttempts)
                 this.reconnectAttempts++
                 this.write(`\r\nTelnet reconnecting in ${Math.ceil(delay / 1000)}s (${this.reconnectAttempts}/5)\r\n`)
-                setTimeout(() => void this.reconnect(), delay)
+                this.reconnectTimer = setTimeout(() => {
+                    this.reconnectTimer = null
+                    if (this.isDisconnectedByHand || !this.frontend) {
+                        return
+                    }
+                    void this.reconnect()
+                }, delay)
             } else {
                 this.offerReconnection()
             }
             return
         }
         super.onSessionDestroyed()
+    }
+
+    async disconnect (): Promise<void> {
+        this.cancelReconnectTimer()
+        await super.disconnect()
+    }
+
+    ngOnDestroy (): void {
+        this.cancelReconnectTimer()
+        super.ngOnDestroy()
+    }
+
+    private cancelReconnectTimer (): void {
+        if (this.reconnectTimer !== null) {
+            clearTimeout(this.reconnectTimer)
+            this.reconnectTimer = null
+        }
     }
 
     protected isSessionExplicitlyTerminated (): boolean {

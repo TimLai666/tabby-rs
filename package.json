@@ -149,6 +149,7 @@
     "test:benchmark": "node scripts/test-benchmark-harness.mjs",
     "test:runtime-capabilities": "node scripts/test-runtime-capabilities.mjs",
     "test:ssh-reconnect": "node scripts/test-ssh-reconnect-contract.mjs",
+    "test:device-reconnect": "node scripts/test-device-reconnect-contract.mjs",
     "test:ssh-session": "node scripts/test-ssh-session-contract.mjs",
     "test:ssh-config-parser": "cargo test --manifest-path src-tauri/Cargo.toml --lib ssh::import::tests::parses_",
     "test:ssh-import": "cargo test --manifest-path src-tauri/Cargo.toml --lib ssh::import::tests::imports_",
