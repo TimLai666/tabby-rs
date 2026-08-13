@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm'
 const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'tabby-rs-official-plugin-'))
 const publicFixtures = [
     { name: 'tabby-clippy', version: '1.0.0' },
@@ -16,8 +17,9 @@ const publicFixtures = [
 ]
 
 const packages = publicFixtures.map(({ name, version }) => {
-    execFileSync('npm', ['pack', `${name}@${version}`, '--pack-destination', fixture], {
+    execFileSync(npmCommand, ['pack', `${name}@${version}`, '--pack-destination', fixture], {
         cwd: root,
+        shell: process.platform === 'win32',
         stdio: 'ignore',
     })
     const archive = fs.readdirSync(fixture).find(file => file === `${name}-${version}.tgz`)

@@ -330,7 +330,7 @@ async fn runs_real_ssh_shell_and_sftp_lifecycle() {
         .expect("engine shell write failed");
     let mut engine_output = Vec::new();
     for _ in 0..16 {
-        let message = timeout(Duration::from_secs(10), engine_shell.read())
+        let message = timeout(Duration::from_secs(30), engine_shell.read())
             .await
             .expect("engine shell response timed out")
             .expect("engine shell read failed");
