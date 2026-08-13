@@ -105,6 +105,7 @@
     "test:telemetry": "node scripts/test-no-built-in-telemetry.mjs",
     "audit:web": "node scripts/ci/assert-web-output.mjs",
     "test:web-output-audit": "node scripts/test-web-output-audit.mjs",
+    "test:web-source-boundary": "node scripts/ci/assert-web-source-boundary.mjs",
     "test:web-host-app": "node scripts/test-web-host-app-contract.mjs",
     "test:web-connector": "node scripts/test-web-connector-contract.mjs",
     "test:web-connector-runtime": "node scripts/test-web-connector-runtime.mjs",

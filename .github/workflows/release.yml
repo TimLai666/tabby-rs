@@ -76,6 +76,9 @@ jobs:
       - name: Verify tabby-web bundle boundary
         run: yarn audit:web
 
+      - name: Verify tabby-web source boundary
+        run: yarn test:web-source-boundary
+
       - name: Test web output audit
         run: yarn test:web-output-audit
 
