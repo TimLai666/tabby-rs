@@ -46,6 +46,12 @@ if (!/^permissions:\n\s+contents:\s+read\s*$/m.test(releaseWorkflow)) {
 if (!/^  web-gate:\n[\s\S]*?^      - name: Build web container\n/m.test(releaseWorkflow)) {
     violations.push('release workflow is missing the web gate job')
 }
+if (!/^  web-gate:\n[\s\S]*?^      - name: Enforce Stable child issue gate\n/m.test(releaseWorkflow)) {
+    violations.push('release workflow is missing the Stable child issue gate')
+}
+if (!/assert-stable-issue-state\.mjs --repo \"\$GITHUB_REPOSITORY\" --issues \"2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27\"/.test(releaseWorkflow)) {
+    violations.push('Stable child issue gate does not cover all Epic #1 child issues')
+}
 if (!/^  build:\n\s+name: bundle \(\$\{\{ matrix\.name \}\}\)\n\s+needs: web-gate/m.test(releaseWorkflow)) {
     violations.push('release bundle job does not depend on the web gate')
 }

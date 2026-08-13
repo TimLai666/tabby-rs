@@ -31,3 +31,5 @@ node scripts/run-benchmarks.mjs \
 ```
 
 The runner hashes the configuration fixture and installed bundle into every report. It fails when the Tauri process does not write `TABBY_RS_BENCHMARK_READY_FILE`, when output samples differ, when output exceeds `--max-output-bytes`, or when the frame trace is missing. Fixture tests use a separate child process and are not release evidence.
+
+Stable releases also run a read-only GitHub issue-state gate before the bundle job's release environment approval. It requires Epic #1 child issues `#2` through `#27` to be closed. Nightly releases skip this gate. An open child issue must remain a release blocker until the issue is actually closed.
