@@ -16,7 +16,7 @@ export class TauriPathDropDecorator extends TerminalDecorator {
         const subscription = new Subscription()
         this.subscribeUntilDetached(terminal, subscription)
 
-        void this.bridge.listen('desktop.fileDrop', event => {
+        void this.bridge.listen('desktop:fileDrop', event => {
             if (!this.containsPoint(terminal, event.x, event.y)) {
                 return
             }

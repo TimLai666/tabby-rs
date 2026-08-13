@@ -41,13 +41,17 @@ impl AppPaths {
         } else {
             None
         };
-        let data_dir = match portable_root.as_ref() {
-            Some(root) => root.join("data"),
-            None => app
-                .path()
+        let data_dir = if let Some(root) = portable_root.as_ref() {
+            root.join("data")
+        } else if let Some(root) = benchmark_data_dir() {
+            root
+        } else if let Some(root) = installer_smoke_data_dir() {
+            root
+        } else {
+            app.path()
                 .data_dir()
                 .map_err(|error| AppError::Io(error.to_string()))?
-                .join(DATA_DIR_NAME),
+                .join(DATA_DIR_NAME)
         };
 
         Ok(Self {
@@ -194,6 +198,34 @@ impl AppPaths {
     }
 }
 
+/// Release test processes must not read or mutate a developer's real profile.
+/// Requiring the matching ready-marker variable keeps each override limited to
+/// its test process rather than turning it into a general data-directory
+/// override.
+fn benchmark_data_dir() -> Option<PathBuf> {
+    data_dir_override(
+        env::var_os("TABBY_RS_BENCHMARK_READY_FILE"),
+        env::var_os("TABBY_RS_BENCHMARK_DATA_DIR"),
+    )
+}
+
+fn installer_smoke_data_dir() -> Option<PathBuf> {
+    data_dir_override(
+        env::var_os("TABBY_RS_INSTALLER_SMOKE_READY_FILE"),
+        env::var_os("TABBY_RS_INSTALLER_SMOKE_DATA_DIR"),
+    )
+}
+
+fn data_dir_override(
+    ready_marker: Option<std::ffi::OsString>,
+    data_dir: Option<std::ffi::OsString>,
+) -> Option<PathBuf> {
+    ready_marker
+        .filter(|value| !value.is_empty())
+        .and(data_dir.filter(|value| !value.is_empty()))
+        .map(PathBuf::from)
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppIdentity {
@@ -315,7 +347,11 @@ fn is_managed_alias(alias: &Path, _executable: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{APP_IDENTIFIER, CLI_NAME, CREDENTIAL_SERVICE, DATA_DIR_NAME, URL_SCHEME};
+    use std::path::PathBuf;
+
+    use super::{
+        data_dir_override, APP_IDENTIFIER, CLI_NAME, CREDENTIAL_SERVICE, DATA_DIR_NAME, URL_SCHEME,
+    };
 
     #[test]
     fn identity_is_separate_from_upstream_tabby() {
@@ -324,6 +360,19 @@ mod tests {
         assert_eq!(URL_SCHEME, "tabby-rs");
         assert_eq!(DATA_DIR_NAME, "tabby-rs");
         assert_eq!(CREDENTIAL_SERVICE, "tabby-rs");
+    }
+
+    #[test]
+    fn test_data_directory_requires_ready_marker_and_path() {
+        assert_eq!(
+            data_dir_override(Some("ready".into()), Some("/tmp/tabby-rs-smoke".into())),
+            Some(PathBuf::from("/tmp/tabby-rs-smoke")),
+        );
+        assert_eq!(
+            data_dir_override(None, Some("/tmp/tabby-rs-smoke".into())),
+            None
+        );
+        assert_eq!(data_dir_override(Some("ready".into()), None), None);
     }
 
     #[cfg(windows)]

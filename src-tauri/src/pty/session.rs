@@ -98,7 +98,7 @@ impl PtySession {
             .saturating_add(self.flow.attach() as u64);
         if dropped > 0 {
             let _ = app.emit(
-                "pty.error",
+                "pty:error",
                 PtyErrorEvent {
                     id: self.id.clone(),
                     code: "outputDropped".into(),
@@ -233,10 +233,10 @@ impl PtySession {
                             sequence,
                             data: buffer[..length].to_vec(),
                         };
-                        if let Err(error) = app.emit("pty.output", payload) {
+                        if let Err(error) = app.emit("pty:output", payload) {
                             session.flow.ack(length);
                             let _ = app.emit(
-                                "pty.error",
+                                "pty:error",
                                 PtyErrorEvent {
                                     id: session.id.clone(),
                                     code: "eventEmissionFailed".into(),
@@ -246,9 +246,9 @@ impl PtySession {
                             break;
                         }
                         if let Some(prompt) = sudo_prompt {
-                            if let Err(error) = app.emit("sudo.prompt", prompt) {
+                            if let Err(error) = app.emit("sudo:prompt", prompt) {
                                 let _ = app.emit(
-                                    "pty.error",
+                                    "pty:error",
                                     PtyErrorEvent {
                                         id: session.id.clone(),
                                         code: "sudoPromptEmissionFailed".into(),
@@ -262,7 +262,7 @@ impl PtySession {
                     Err(error) => {
                         if session.is_alive() {
                             let _ = app.emit(
-                                "pty.error",
+                                "pty:error",
                                 PtyErrorEvent {
                                     id: session.id.clone(),
                                     code: "readFailed".into(),
@@ -290,7 +290,7 @@ impl PtySession {
                 },
                 Err(error) => {
                     let _ = app.emit(
-                        "pty.error",
+                        "pty:error",
                         PtyErrorEvent {
                             id: session.id.clone(),
                             code: "waitFailed".into(),
@@ -338,10 +338,10 @@ impl PtySession {
             return;
         }
 
-        if let Err(error) = app.emit("pty.exit", event) {
+        if let Err(error) = app.emit("pty:exit", event) {
             self.exit_emitted.store(false, Ordering::Release);
             let _ = app.emit(
-                "pty.error",
+                "pty:error",
                 PtyErrorEvent {
                     id: self.id.clone(),
                     code: "exitEmissionFailed".into(),

@@ -56,6 +56,10 @@ export class Application {
             return pluginManager.install(this.userPluginsPath, name, version)
         })
 
+        ;(promiseIpc as any).on('plugin-manager:update', (name) => {
+            return pluginManager.update(this.userPluginsPath, name)
+        })
+
         ;(promiseIpc as any).on('plugin-manager:uninstall', (name) => {
             return pluginManager.uninstall(this.userPluginsPath, name)
         })

@@ -1,6 +1,6 @@
 import { NgModule } from '@angular/core'
 import { CommonModule } from '@angular/common'
-import { ConfigProvider, HostAppService, HostWindowService, LogService, PlatformService, UpdaterService } from 'tabby-core'
+import { ConfigProvider, HostAppService, HostWindowService, LogService, PlatformService, RuntimeCapabilitiesService, UpdaterService } from 'tabby-core'
 
 import { WebPlatformService } from './platform'
 import { ConsoleLogService } from './services/log.service'
@@ -9,8 +9,12 @@ import { WebHostWindow } from './services/hostWindow.service'
 import { WebHostApp } from './services/hostApp.service'
 import { MessageBoxModalComponent } from './components/messageBoxModal.component'
 import { WebConfigProvider } from './config'
+import { WebRuntimeCapabilitiesService } from './services/runtimeCapabilities.service'
 
 import './styles.scss'
+
+export { WebGatewayConnector, WebGatewaySocket } from './services/connectionGateway.service'
+export type { WebGatewayConnectorOptions, WebGatewaySocketFactory, WebGatewaySocketLike, WebGatewaySocketOptions } from './services/connectionGateway.service'
 
 @NgModule({
     imports: [
@@ -20,6 +24,7 @@ import './styles.scss'
         { provide: PlatformService, useClass: WebPlatformService },
         { provide: LogService, useClass: ConsoleLogService },
         { provide: UpdaterService, useClass: NullUpdaterService },
+        { provide: RuntimeCapabilitiesService, useClass: WebRuntimeCapabilitiesService },
         { provide: HostWindowService, useClass: WebHostWindow },
         { provide: HostAppService, useClass: WebHostApp },
         { provide: ConfigProvider, useClass: WebConfigProvider, multi: true },

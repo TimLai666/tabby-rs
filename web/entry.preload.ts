@@ -33,8 +33,16 @@ async function webRequire (url) {
     const e = document.createElement('script')
     window['module'] = { exports: {} } as any
     window['exports'] = window['module'].exports
-    await new Promise(resolve => {
-        e.onload = resolve
+    await new Promise((resolve, reject) => {
+        const cleanup = () => e.remove()
+        e.onload = () => {
+            cleanup()
+            resolve(undefined)
+        }
+        e.onerror = () => {
+            cleanup()
+            reject(new Error(`Failed to load web plugin ${url}`))
+        }
         e.src = url
         document.querySelector('head').appendChild(e)
     })

@@ -18,6 +18,7 @@ export class SocketProxy extends Duplex {
         this.socket.connect$.subscribe(() => this['emit']('connect'))
         this.socket.data$.subscribe(data => this['emit']('data', Buffer.from(data)))
         this.socket.error$.subscribe(error => this['emit']('error', error))
+        this.socket.close$.subscribe(() => this['emit']('close'))
     }
 
     connect (...args: any[]) {

@@ -29,7 +29,8 @@
     "active": false,
     "icon": [
       "icons/icon.png",
-      "icons/icon.ico"
+      "icons/icon.ico",
+      "../build/mac/icon.icns"
     ],
     "resources": {
       "../extras/UAC.exe": "extras/UAC.exe",
@@ -37,6 +38,10 @@
     }
   },
   "plugins": {
+    "updater": {
+      "pubkey": "",
+      "endpoints": []
+    },
     "deep-link": {
       "desktop": {
         "schemes": [

@@ -22,6 +22,7 @@ export interface SSHProfileOptions extends LoginScriptsOptions {
     privateKeys: string[]
     keepaliveInterval: number
     keepaliveCountMax: number
+    environment?: Record<string, string>
     readyTimeout: number | null
     x11: boolean
     skipBanner: boolean

@@ -34,6 +34,9 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Restore Tauri icons
+        run: node scripts/restore-tauri-icons.mjs
+
       - name: Fetch upstream tags
         run: git fetch --force --tags https://github.com/Eugeny/tabby.git '+refs/tags/*:refs/tags/*'
 
@@ -44,6 +47,12 @@ jobs:
 
       - name: Verify workflow safety
         run: node scripts/ci/assert-workflow-safety.mjs
+
+      - name: Test Stable child issue gate contract
+        run: yarn test:stable-issue-state
+
+      - name: Test Tauri dependency metadata audit
+        run: yarn test:tauri:dependencies
 
       - name: Install Linux build dependencies
         run: |
@@ -57,6 +66,7 @@ jobs:
             libsecret-1-dev \
             libudev-dev \
             libwebkit2gtk-4.1-dev \
+            openssh-server \
             patchelf \
             xvfb
 
@@ -106,8 +116,85 @@ jobs:
       - name: Verify Electron build outputs
         run: node scripts/ci/assert-build-output.mjs
 
+      - name: Build web container
+        run: yarn build:web
+
       - name: Verify tabby-web bundle boundary
         run: yarn audit:web
+
+      - name: Verify tabby-web source boundary
+        run: yarn test:web-source-boundary
+
+      - name: Verify no built-in telemetry
+        run: yarn audit:telemetry
+
+      - name: Test built-in telemetry audit
+        run: yarn test:telemetry
+
+      - name: Test tabby-web bundle audit
+        run: yarn test:web-output-audit
+
+      - name: Test web host-app contract
+        run: yarn test:web-host-app
+
+      - name: Test web connector transport contract
+        run: yarn test:web-connector
+      - name: Test web connector runtime contract
+        run: yarn test:web-connector-runtime
+
+      - name: Test web plugin loader
+        run: yarn test:web-plugin-loader
+
+      - name: Test web gateway protocol
+        run: yarn test:web-gateway
+
+      - name: Test web capability boundary
+        run: yarn test:web-capability-boundary
+
+      - name: Test diagnostics preview gate
+        run: yarn test:diagnostics-ui
+
+      - name: Test diagnostics privacy and rotation
+        run: yarn test:diagnostics-privacy
+
+      - name: Test release documentation contract
+        run: yarn test:release-documentation
+
+      - name: Test Tabby RS branding contract
+        run: yarn test:tabby-rs-branding
+
+      - name: Test parity report contract
+        run: yarn test:parity-report
+
+      - name: Test parity automated check links
+        run: yarn test:parity-links
+
+      - name: Test runtime capability providers
+        run: yarn test:runtime-capabilities
+
+      - name: Test Tauri platform bridge contract
+        run: yarn test:tauri-platform
+
+      - name: Test official plugin runtime fixture
+        run: yarn test:official-plugin-runtime
+
+      - name: Test plugin operation contract
+        run: yarn test:plugin-operation
+
+      - name: Test system npm plugin lifecycle
+        run: yarn test:plugin-npm-lifecycle
+
+      - name: Test plugin node status contract
+        run: yarn test:plugin-node-status
+
+      - name: Test Electron updater policy
+        run: yarn test:electron-updater
+
+      - name: Test Tauri updater confirmation
+        run: yarn test:tauri-updater-confirmation
+
+      - name: Test Tauri multi-window contract
+        run: yarn test:tauri-multi-window
 
       - name: Build Tauri renderer
         run: yarn build:tauri:frontend
@@ -115,11 +202,26 @@ jobs:
       - name: Verify Tauri renderer output
         run: node scripts/ci/assert-tauri-output.mjs
 
+      - name: Audit Tauri renderer bundle
+        run: yarn test:tauri:bundle
+
+      - name: Test release artifact contract
+        run: yarn test:tauri:release-artifacts
+
       - name: Check Rust formatting
         run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
 
       - name: Test Rust host
         run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Test real SSH and SFTP fixture
+        run: yarn test:ssh-integration
+
+      - name: Test SSH authentication fixture
+        run: yarn test:ssh-auth-integration
+
+      - name: Test SSH session routing contract
+        run: yarn test:ssh-session
 
       - name: Build Tauri host
         run: cargo build --manifest-path src-tauri/Cargo.toml
@@ -142,6 +244,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Restore Tauri icons
+        run: node scripts/restore-tauri-icons.mjs
 
       - name: Fetch upstream tags
         run: git fetch --force --tags https://github.com/Eugeny/tabby.git '+refs/tags/*:refs/tags/*'
@@ -200,8 +305,35 @@ jobs:
       - name: Verify Tauri renderer output
         run: node scripts/ci/assert-tauri-output.mjs
 
+      - name: Audit Tauri renderer bundle
+        run: yarn test:tauri:bundle
+
+      - name: Test public plugin runtime fixtures
+        run: yarn test:official-plugin-runtime
+
+      - name: Test plugin operation contract
+        run: yarn test:plugin-operation
+
+      - name: Test system npm plugin lifecycle
+        run: yarn test:plugin-npm-lifecycle
+
+      - name: Test plugin node status contract
+        run: yarn test:plugin-node-status
+
       - name: Test Rust host
+        if: matrix.name != 'windows'
         run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Compile Rust host tests on Windows
+        if: matrix.name == 'windows'
+        run: cargo test --manifest-path src-tauri/Cargo.toml --no-run
+
+      - name: Test SSH authentication fixture
+        if: matrix.name != 'windows'
+        run: yarn test:ssh-auth-integration
+
+      - name: Test SSH session routing contract
+        run: yarn test:ssh-session
 
       - name: Build Tauri host
         run: cargo build --manifest-path src-tauri/Cargo.toml

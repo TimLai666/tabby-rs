@@ -10,6 +10,7 @@ import {
     SshAuthPrompt,
     SshAuthMethodRef,
     SshConnectRequest,
+    SshExitEvent,
     SshHostKeyPrompt,
     SshJumpRequest,
 } from '../api/hostBridge'
@@ -30,14 +31,19 @@ export class TauriSshSession extends BaseSession {
     private destroying = false
     private readonly connectionId = window.crypto.randomUUID()
     private pendingOutput: { data: number[]; extended: boolean }[] = []
-    private pendingExit = false
+    private pendingExit: SshExitEvent|null = null
     private unlisteners: (() => void)[] = []
     private readonly authPrompt = new Subject<SshAuthPrompt>()
+    private readonly serviceMessage = new Subject<string>()
     private forwardingIds: string[] = []
     private sftp: TauriSftpSession|null = null
 
     get authPrompt$ (): Observable<SshAuthPrompt> {
         return this.authPrompt.asObservable()
+    }
+
+    get serviceMessage$ (): Observable<string> {
+        return this.serviceMessage.asObservable()
     }
 
     constructor (
@@ -58,7 +64,7 @@ export class TauriSshSession extends BaseSession {
             return
         }
         this.unlisteners.push(...await Promise.all([
-            this.bridge.listen('ssh.output', event => {
+            this.bridge.listen('ssh:output', event => {
                 if (event.connectionId === this.connectionId) {
                     if (!this.id) {
                         this.pendingOutput.push({ data: event.data, extended: event.extended })
@@ -67,21 +73,22 @@ export class TauriSshSession extends BaseSession {
                     this.emitOutput(Buffer.from(event.data))
                 }
             }),
-            this.bridge.listen('ssh.exit', event => {
+            this.bridge.listen('ssh:exit', event => {
                 if (event.connectionId === this.connectionId) {
                     if (!this.id) {
-                        this.pendingExit = true
+                        this.pendingExit = event
                     } else if (this.open) {
+                        this.reportExit(event)
                         void this.destroy()
                     }
                 }
             }),
-            this.bridge.listen('ssh.hostKeyPrompt', prompt => {
+            this.bridge.listen('ssh:hostKeyPrompt', prompt => {
                 if (prompt.connectionId === this.connectionId) {
                     void this.handleHostKeyPrompt(prompt)
                 }
             }),
-            this.bridge.listen('ssh.authPrompt', prompt => {
+            this.bridge.listen('ssh:authPrompt', prompt => {
                 if (prompt.connectionId === this.connectionId) {
                     this.authPrompt.next(prompt)
                 }
@@ -109,6 +116,8 @@ export class TauriSshSession extends BaseSession {
             this.emitOutput(Buffer.from(output.data))
         }
         if (this.pendingExit) {
+            this.reportExit(this.pendingExit)
+            this.pendingExit = null
             void this.destroy()
             return
         }
@@ -163,6 +172,7 @@ export class TauriSshSession extends BaseSession {
             unlisten()
         }
         this.authPrompt.complete()
+        this.serviceMessage.complete()
         await super.destroy()
     }
 
@@ -176,6 +186,14 @@ export class TauriSshSession extends BaseSession {
 
     async getWorkingDirectory (): Promise<string|null> {
         return this.reportedCWD ?? null
+    }
+
+    private reportExit (event: SshExitEvent): void {
+        if (event.exitCode !== null) {
+            this.serviceMessage.next(`SSH session exited with code ${event.exitCode}`)
+        } else if (event.signal !== null) {
+            this.serviceMessage.next(`SSH session terminated by ${event.signal}`)
+        }
     }
 
     async openSFTP (): Promise<TauriSftpSession> {
@@ -209,7 +227,7 @@ export class TauriSshSession extends BaseSession {
                 intervalMs: options.keepaliveInterval,
                 maxCount: options.keepaliveCountMax,
             } : null,
-            environment: {},
+            environment: options.environment ?? {},
             x11: !!options.x11,
             x11Display: null,
             agentForward: !!options.agentForward,
@@ -258,7 +276,7 @@ export class TauriSshSession extends BaseSession {
             const jumpOptions = jump.options as SSHProfile['options']
             chain.push({
                 host: jumpOptions.host,
-                port: jumpOptions.port,
+                port: jumpOptions.port ?? 22,
                 username: jumpOptions.user || null,
                 auth: await this.authForOptions(jumpOptions),
             })
@@ -283,7 +301,7 @@ export class TauriSshSession extends BaseSession {
     }
 
     private async passwordSecretRef (options = this.profile.options): Promise<string> {
-        const account = options.user
+        const account = options.user || 'root'
         if (!this.vault.isEnabled()) {
             return `keychain://ssh@${options.host}:${options.port ?? 22}/${account}`
         }

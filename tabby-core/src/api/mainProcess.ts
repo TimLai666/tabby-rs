@@ -12,6 +12,7 @@ export interface PluginInfo {
     path?: string
     info?: any
     searchScore?: number
+    isOfficial?: boolean
 }
 
 export interface BootstrapData {
@@ -21,4 +22,7 @@ export interface BootstrapData {
     windowID: number
     installedPlugins: PluginInfo[]
     userPluginsPath: string
+    safeMode?: boolean
+    safeModeReason?: string | null
+    safeModeSuspectedPlugins?: string[]
 }

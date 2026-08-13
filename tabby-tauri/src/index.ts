@@ -13,6 +13,7 @@ import {
     PlatformService,
     NotificationsService,
     ProfileProvider,
+    RuntimeCapabilitiesService,
     TabRecoveryProvider,
     UpdaterService,
     VaultService,
@@ -35,9 +36,14 @@ import {
     IdentitySettingsTabComponent,
     IdentitySettingsTabProvider,
 } from './components/identitySettingsTab.component'
+import {
+    TauriDiagnosticsSettingsTabComponent,
+    TauriDiagnosticsSettingsTabProvider,
+} from './components/diagnosticsSettingsTab.component'
 import { TauriConfigProvider } from './config'
 import { TauriHotkeyProvider } from './hotkeys'
 import { TauriDesktopIntegrationService } from './services/desktopIntegration.service'
+import { TauriDiagnosticsService } from './services/diagnostics.service'
 import { TauriDockingService } from './services/docking.service'
 import { TauriFileProvider } from './services/fileProvider.service'
 import { TauriHostAppService } from './services/hostApp.service'
@@ -54,6 +60,7 @@ import {
 import { TauriHostBridge } from './services/tauriHostBridge.service'
 import { TauriUACService } from './services/uac.service'
 import { TauriUpdaterService } from './services/updater.service'
+import { TauriRuntimeCapabilitiesService } from './services/runtimeCapabilities.service'
 import { TauriNotificationsService } from './services/notifications.service'
 import { TauriVaultService } from './services/vault.service'
 import { TauriPathDropDecorator } from './pathDrop'
@@ -99,6 +106,7 @@ function initializeDesktop (service: TauriDesktopIntegrationService): () => Prom
     imports: [CommonModule, FormsModule, NgbModule],
     declarations: [
         IdentitySettingsTabComponent,
+        TauriDiagnosticsSettingsTabComponent,
         TauriSshAuthPromptModalComponent,
         TauriSshHostKeyPromptModalComponent,
         TauriSshImportModalComponent,
@@ -129,8 +137,11 @@ function initializeDesktop (service: TauriDesktopIntegrationService): () => Prom
         { provide: TerminalContextMenuItemProvider, useClass: TauriSftpContextMenu, multi: true },
         { provide: FileProvider, useClass: TauriFileProvider, multi: true },
         TauriDesktopIntegrationService,
+        TauriDiagnosticsService,
         { provide: LogService, useClass: TauriLogService },
+        { provide: SettingsTabProvider, useClass: TauriDiagnosticsSettingsTabProvider, multi: true },
         { provide: UpdaterService, useClass: TauriUpdaterService },
+        { provide: RuntimeCapabilitiesService, useClass: TauriRuntimeCapabilitiesService },
         TauriVaultService,
         { provide: VaultService, useExisting: TauriVaultService },
         TauriSecretImporter,

@@ -1,13 +1,42 @@
 import { InjectionToken } from '@angular/core'
-import { BootstrapData, NodeToolchainStatus, StoredVault, TransferDescriptor } from 'tabby-core'
+import { BootstrapData, NodeToolchainStatus, PluginInfo, StoredVault, TransferDescriptor } from 'tabby-core'
 
 export type UpdateChannel = 'stable' | 'nightly'
+
+export interface UpdateInfo {
+    version: string
+    currentVersion: string
+    channel: UpdateChannel
+    publishedAt: string
+    notes: string
+    downloadSize: number | null
+    requiresConfigMigration: boolean
+}
+
+export type UpdateStateDto =
+    | { status: 'idle' }
+    | { status: 'checking' }
+    | { status: 'available'; info: UpdateInfo }
+    | { status: 'downloading'; version: string; downloaded: number; total: number | null }
+    | { status: 'readyToInstall'; version: string }
+    | { status: 'installing'; version: string }
+    | { status: 'failed'; stage: string; publicError: string }
 
 export interface RuntimeInfo {
     host: 'tauri'
     platform: string
     arch: string
     version: string
+    benchmarkReadyFile: string | null
+    benchmarkFrameReportFile: string | null
+    installerSmokeReadyFile: string | null
+}
+
+export interface BenchmarkFrameReport {
+    method: string
+    samples: number
+    p95FrameTimeMs: number
+    droppedFrameCount: number
 }
 
 export interface AppIdentity {
@@ -23,6 +52,38 @@ export interface AppIdentity {
     logsDir: string
     portable: boolean
     portableRoot: string | null
+}
+
+export interface PluginOperation {
+    id: string
+    packageName: string
+    action: 'install' | 'update' | 'uninstall'
+    status: 'running' | 'succeeded' | 'failed' | 'cancelled'
+    message: string | null
+}
+
+export interface PluginDescriptor {
+    name: string
+    packageName: string
+    version: string
+    path: string
+    entry: string
+    isBuiltin: boolean
+    isLegacy: boolean
+    manifest: Record<string, unknown>
+}
+
+export interface PluginSource {
+    packageName: string
+    entry: string
+    code: string
+}
+
+export interface PluginBootstrapFailure {
+    packageName?: string | null
+    phase: string
+    code?: string | null
+    message: string
 }
 
 export interface CliAliasStatus {
@@ -42,6 +103,47 @@ export interface ConfigReadResult {
 export interface ConfigWriteResult {
     revision: string
     path: string
+}
+
+export interface DiagnosticsStatus {
+    enabled: boolean
+    directory: string
+    fileCount: number
+    bytes: number
+    maxFileBytes: number
+    maxFiles: number
+    maxBytes: number
+    crashMarkerPresent: boolean
+}
+
+export interface DiagnosticsAppendRequest {
+    level: string
+    target: string
+    message: string
+    fields?: Record<string, unknown>
+    correlationId?: string | null
+}
+
+export interface DiagnosticsOptions {
+    includeLogs?: boolean
+}
+
+export interface DiagnosticsPreviewFile {
+    path: string
+    size: number
+    content: string
+    redacted: boolean
+}
+
+export interface DiagnosticsPreview {
+    schemaVersion: number
+    generatedAt: string
+    files: DiagnosticsPreviewFile[]
+    redactionWarning: string
+}
+
+export interface DiagnosticsExportRequest extends DiagnosticsOptions {
+    destination: string
 }
 
 export interface BackupFile {
@@ -559,6 +661,18 @@ export interface HostRequestMap {
         request: Record<string, never>
         response: RuntimeInfo
     }
+    'app.benchmarkReady': {
+        request: Record<string, never>
+        response: null
+    }
+    'app.benchmarkFrameReport': {
+        request: BenchmarkFrameReport
+        response: null
+    }
+    'app.installerSmokeReady': {
+        request: Record<string, never>
+        response: null
+    }
     'app.initialLaunch': {
         request: Record<string, never>
         response: LaunchContext | null
@@ -583,6 +697,30 @@ export interface HostRequestMap {
         request: { backupId: string }
         response: RestoreReport
     }
+    'update.check': {
+        request: Record<string, never>
+        response: UpdateInfo | null
+    }
+    'update.download': {
+        request: { version: string }
+        response: null
+    }
+    'update.install': {
+        request: { version: string }
+        response: null
+    }
+    'update.cancel': {
+        request: Record<string, never>
+        response: null
+    }
+    'update.setChannel': {
+        request: { channel: UpdateChannel }
+        response: null
+    }
+    'update.getChannel': {
+        request: Record<string, never>
+        response: UpdateChannel
+    }
     'config.read': {
         request: Record<string, never>
         response: ConfigReadResult
@@ -594,6 +732,26 @@ export interface HostRequestMap {
             requireMissing?: boolean
         }
         response: ConfigWriteResult
+    }
+    'diagnostics.status': {
+        request: Record<string, never>
+        response: DiagnosticsStatus
+    }
+    'diagnostics.clearLogs': {
+        request: Record<string, never>
+        response: null
+    }
+    'diagnostics.append': {
+        request: DiagnosticsAppendRequest
+        response: null
+    }
+    'diagnostics.preview': {
+        request: DiagnosticsOptions
+        response: DiagnosticsPreview
+    }
+    'diagnostics.export': {
+        request: DiagnosticsExportRequest
+        response: string
     }
     'identity.get': {
         request: Record<string, never>
@@ -622,6 +780,62 @@ export interface HostRequestMap {
     'plugins.nodeStatus': {
         request: { customNodePath?: string | null }
         response: NodeToolchainStatus
+    }
+    'plugins.prepareOperation': {
+        request: { id: string }
+        response: null
+    }
+    'plugins.install': {
+        request: { operationId: string; packageName: string; version: string; customNodePath?: string | null }
+        response: PluginOperation
+    }
+    'plugins.uninstall': {
+        request: { operationId: string; packageName: string; customNodePath?: string | null }
+        response: PluginOperation
+    }
+    'plugins.update': {
+        request: { operationId: string; packageName: string; customNodePath?: string | null }
+        response: PluginOperation
+    }
+    'plugins.remove': {
+        request: { operationId: string; packageName: string; customNodePath?: string | null }
+        response: PluginOperation
+    }
+    'plugins.listInstalled': {
+        request: Record<string, never>
+        response: PluginInfo[]
+    }
+    'plugins.discover': {
+        request: Record<string, never>
+        response: PluginDescriptor[]
+    }
+    'plugins.readEntry': {
+        request: { packageName: string }
+        response: PluginSource
+    }
+    'plugins.bootstrapPluginStarted': {
+        request: { packageName: string }
+        response: null
+    }
+    'plugins.bootstrapPluginCompleted': {
+        request: { packageName: string }
+        response: null
+    }
+    'plugins.bootstrapFailed': {
+        request: PluginBootstrapFailure
+        response: null
+    }
+    'plugins.bootstrapSucceeded': {
+        request: Record<string, never>
+        response: null
+    }
+    'plugins.bootstrapRetry': {
+        request: Record<string, never>
+        response: null
+    }
+    'plugins.cancelOperation': {
+        request: { id: string }
+        response: null
     }
     'vault.status': {
         request: Record<string, never>
@@ -702,6 +916,10 @@ export interface HostRequestMap {
         request: WindowStatePatch
         response: null
     }
+    'window.new': {
+        request: { launch?: LaunchContext }
+        response: null
+    }
     'window.reload': {
         request: Record<string, never>
         response: null
@@ -772,6 +990,10 @@ export interface HostRequestMap {
     }
     'desktop.openPath': {
         request: { path: string }
+        response: null
+    }
+    'desktop.exec': {
+        request: { executable: string; args: string[] }
         response: null
     }
     'desktop.readFile': {
@@ -990,29 +1212,31 @@ export interface HostRequestMap {
 }
 
 export interface HostEventMap {
-    'app.start': BootstrapData
-    'app.launch': LaunchContext
-    'desktop.hotkey': GlobalHotkeyEvent
-    'desktop.windowFocused': boolean
-    'desktop.windowMoved': { x: number; y: number }
-    'desktop.windowResized': { width: number; height: number }
-    'desktop.windowCloseRequested': null
-    'desktop.fileDrop': { paths: string[]; x: number; y: number }
-    'desktop.themeChanged': 'system' | 'light' | 'dark'
-    'desktop.displayMetricsChanged': number
-    'transfer.progress': TransferDescriptor
-    'ssh.hostKeyPrompt': SshHostKeyPrompt
-    'ssh.authPrompt': SshAuthPrompt
-    'ssh.output': SshOutputEvent
-    'ssh.exit': SshExitEvent
-    'ssh.forwardingChanged': SshForwardingInfo
-    'telnet.output': TelnetOutputEvent
-    'telnet.exit': TelnetExitEvent
-    'telnet.message': TelnetMessageEvent
-    'telnet.echo': TelnetEchoEvent
-    'serial.output': SerialOutputEvent
-    'serial.connectionState': SerialConnectionStateEvent
-    'serial.portsChanged': SerialPortInfo[]
+    'app:start': BootstrapData
+    'app:launch': LaunchContext
+    'update:state': UpdateStateDto
+    'desktop:hotkey': GlobalHotkeyEvent
+    'desktop:windowFocused': boolean
+    'desktop:windowMoved': { x: number; y: number }
+    'desktop:windowResized': { width: number; height: number }
+    'desktop:windowCloseRequested': null
+    'desktop:fileDrop': { paths: string[]; x: number; y: number }
+    'desktop:themeChanged': 'system' | 'light' | 'dark'
+    'desktop:displayMetricsChanged': number
+    'transfer:progress': TransferDescriptor
+    'ssh:hostKeyPrompt': SshHostKeyPrompt
+    'ssh:authPrompt': SshAuthPrompt
+    'ssh:output': SshOutputEvent
+    'ssh:exit': SshExitEvent
+    'ssh:forwardingChanged': SshForwardingInfo
+    'telnet:output': TelnetOutputEvent
+    'telnet:exit': TelnetExitEvent
+    'telnet:message': TelnetMessageEvent
+    'telnet:echo': TelnetEchoEvent
+    'serial:output': SerialOutputEvent
+    'serial:connectionState': SerialConnectionStateEvent
+    'serial:portsChanged': SerialPortInfo[]
+    'plugins:operation': PluginOperation
 }
 
 export abstract class HostBridge {

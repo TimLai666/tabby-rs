@@ -104,22 +104,22 @@ export class TauriHostWindowService extends HostWindowService {
 
     private async initialize (): Promise<void> {
         await Promise.all([
-            this.bridge.listen('desktop.windowFocused', focused => {
+            this.bridge.listen('desktop:windowFocused', focused => {
                 this.state.focused = focused
                 if (focused) {
                     this.windowFocused.next()
                 }
             }),
-            this.bridge.listen('desktop.windowMoved', position => {
+            this.bridge.listen('desktop:windowMoved', position => {
                 this.state.bounds.x = position.x
                 this.state.bounds.y = position.y
                 this.windowMoved.next()
             }),
-            this.bridge.listen('desktop.windowResized', size => {
+            this.bridge.listen('desktop:windowResized', size => {
                 this.state.bounds.width = size.width
                 this.state.bounds.height = size.height
             }),
-            this.bridge.listen('desktop.windowCloseRequested', () => this.windowCloseRequest.next()),
+            this.bridge.listen('desktop:windowCloseRequested', () => this.windowCloseRequest.next()),
         ])
         await this.refreshState()
         this.windowShown.next()

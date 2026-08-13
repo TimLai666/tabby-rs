@@ -7,6 +7,7 @@ pub struct StoragePaths {
     data_dir: PathBuf,
     config_file: PathBuf,
     state_file: PathBuf,
+    pending_update_file: PathBuf,
     backups_dir: PathBuf,
     migration_dir: PathBuf,
 }
@@ -20,6 +21,7 @@ impl StoragePaths {
         Self {
             config_file: data_dir.join("config.yaml"),
             state_file: data_dir.join("tabby-rs.json"),
+            pending_update_file: data_dir.join("pending-update.json"),
             backups_dir: data_dir.join("backups"),
             migration_dir: data_dir.join("migration"),
             data_dir,
@@ -43,6 +45,10 @@ impl StoragePaths {
 
     pub fn state_file(&self) -> &Path {
         &self.state_file
+    }
+
+    pub fn pending_update_file(&self) -> &Path {
+        &self.pending_update_file
     }
 
     pub fn backups_dir(&self) -> &Path {

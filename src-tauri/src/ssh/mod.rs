@@ -1,4 +1,6 @@
 pub mod engine;
+#[cfg(test)]
+mod engine_integration;
 mod forwarding;
 mod import;
 mod known_hosts;
@@ -6,8 +8,10 @@ pub mod model;
 pub mod sftp;
 
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, VecDeque},
     fs,
+    future::Future,
+    pin::Pin,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex,
@@ -17,12 +21,16 @@ use std::{
 
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use rand::RngCore;
+#[cfg(windows)]
+use russh::keys::agent::client::AgentStream;
 use russh::{
-    client::{self, AuthResult, Handler, KeyboardInteractiveAuthResponse, Prompt},
+    client::{self, AuthResult, Handler, KeyboardInteractiveAuthResponse},
     keys::{agent::client::AgentClient, decode_secret_key, PrivateKeyWithHashAlg},
     ChannelMsg, Disconnect,
 };
 use secrecy::ExposeSecret;
+use serde_json::{Map, Value};
+use sha2::{Digest, Sha512};
 use tauri::{AppHandle, Emitter};
 use tokio::{
     io::{copy_bidirectional, AsyncWriteExt},
@@ -30,12 +38,17 @@ use tokio::{
     sync::{broadcast, mpsc, oneshot},
     time::timeout,
 };
+use zeroize::Zeroize;
 
 use crate::{
     security::{
         CredentialAddress, CredentialNamespace, CredentialState, SecretState, VaultSecretSelector,
     },
     ssh::{
+        engine::{
+            HostKeyVerifier, KeyboardInteractiveResponse, PrivateKeyMaterial, RusshEngine,
+            SshAuthContext, SshAuthenticator, SshHostKey, SshTarget,
+        },
         known_hosts::fingerprint,
         model::{
             AuthMethodRef, HostKeyDecision, HostKeyDecisionRequest, HostKeyPrompt, HostKeyStatus,
@@ -48,6 +61,8 @@ use crate::{
     },
 };
 
+const CHANNEL_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
 pub use import::*;
 pub use known_hosts::KnownHostsStore;
 pub use model::*;
@@ -55,6 +70,7 @@ pub use model::*;
 const HOST_KEY_TIMEOUT: Duration = Duration::from_secs(60);
 const AUTH_PROMPT_TIMEOUT: Duration = Duration::from_secs(120);
 const MAX_BUFFER: usize = 16 * 1024 * 1024;
+const VAULT_SECRET_TYPE_PASSPHRASE: &str = "ssh:key-passphrase";
 
 type HostKeySender = oneshot::Sender<HostKeyDecision>;
 type AuthSender = oneshot::Sender<Vec<String>>;
@@ -187,17 +203,22 @@ impl Handler for SshHandler {
         &mut self,
         server_public_key: &russh::keys::PublicKey,
     ) -> Result<bool, Self::Error> {
-        match self
-            .manager
-            .verify_host_key(
-                &self.app,
-                &self.host,
-                self.port,
-                &self.connection_id,
-                server_public_key,
-            )
-            .await
-        {
+        let verifier = ManagerHostKeyVerifier {
+            manager: self.manager.clone(),
+            app: self.app.clone(),
+            connection_id: self.connection_id.clone(),
+        };
+        let key = match host_key_material(server_public_key) {
+            Ok(key) => key,
+            Err(error) => {
+                *self
+                    .host_key_error
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(error);
+                return Ok(false);
+            }
+        };
+        match verifier.verify(&self.host, self.port, &key).await {
             Ok(accepted) => Ok(accepted),
             Err(error) => {
                 *self
@@ -261,24 +282,15 @@ impl Handler for SshHandler {
     ) -> impl std::future::Future<Output = Result<(), Self::Error>> + Send {
         let socket = self.agent_socket.clone();
         let task = async move {
-            #[cfg(unix)]
-            {
-                let Some(socket) = socket.or_else(|| std::env::var("SSH_AUTH_SOCK").ok()) else {
-                    let _ = channel.close().await;
-                    return Ok::<(), russh::Error>(());
-                };
-                let Ok(mut agent) = tokio::net::UnixStream::connect(socket).await else {
-                    let _ = channel.close().await;
-                    return Ok::<(), russh::Error>(());
-                };
-                let mut ssh_stream = channel.into_stream();
-                let _ = copy_bidirectional(&mut agent, &mut ssh_stream).await;
-            }
-            #[cfg(not(unix))]
-            {
-                let _ = socket;
+            let Ok(mut agent) = connect_agent(socket)
+                .await
+                .map(|client| client.into_inner())
+            else {
                 let _ = channel.close().await;
-            }
+                return Ok::<(), russh::Error>(());
+            };
+            let mut ssh_stream = channel.into_stream();
+            let _ = copy_bidirectional(&mut agent, &mut ssh_stream).await;
             Ok::<(), russh::Error>(())
         };
         tokio::spawn(task);
@@ -324,6 +336,320 @@ impl Handler for SshHandler {
         tokio::spawn(task);
         async { Ok(()) }
     }
+}
+
+struct ManagerHostKeyVerifier {
+    manager: SshManager,
+    app: AppHandle,
+    connection_id: String,
+}
+
+#[async_trait::async_trait]
+impl HostKeyVerifier for ManagerHostKeyVerifier {
+    async fn verify(&self, host: &str, port: u16, key: &SshHostKey) -> Result<bool, SshError> {
+        let public_key = russh::keys::PublicKey::from_openssh(&key.public_key_openssh)
+            .map_err(|_| SshError::KeyParse)?;
+        self.manager
+            .verify_host_key(&self.app, host, port, &self.connection_id, &public_key)
+            .await
+    }
+}
+
+fn host_key_material(key: &russh::keys::PublicKey) -> Result<SshHostKey, SshError> {
+    Ok(SshHostKey {
+        algorithm: format!("{:?}", key.algorithm()),
+        fingerprint_sha256: fingerprint(key),
+        public_key_openssh: key.to_openssh().map_err(|_| SshError::KeyParse)?,
+    })
+}
+
+struct RawSshAuthContext<'a> {
+    handle: &'a mut client::Handle<SshHandler>,
+}
+
+#[async_trait::async_trait]
+impl<'a> SshAuthContext for RawSshAuthContext<'a> {
+    async fn authenticate_none(&mut self, username: &str) -> Result<bool, SshError> {
+        Ok(matches!(
+            self.handle
+                .authenticate_none(username)
+                .await
+                .map_err(|_| SshError::AuthenticationRejected)?,
+            AuthResult::Success
+        ))
+    }
+
+    async fn authenticate_password(
+        &mut self,
+        username: &str,
+        password: &secrecy::SecretString,
+    ) -> Result<bool, SshError> {
+        Ok(matches!(
+            self.handle
+                .authenticate_password(username, password.expose_secret())
+                .await
+                .map_err(|_| SshError::AuthenticationRejected)?,
+            AuthResult::Success
+        ))
+    }
+
+    async fn authenticate_private_key(
+        &mut self,
+        username: &str,
+        key: PrivateKeyMaterial,
+    ) -> Result<bool, SshError> {
+        let mut text = String::from_utf8(key.openssh.clone()).map_err(|_| SshError::KeyParse)?;
+        let passphrase = key.passphrase.as_ref().map(|value| value.expose_secret());
+        let private_key = decode_secret_key(&text, passphrase.map(|value| value.as_str()));
+        text.zeroize();
+        let private_key = private_key.map_err(|_| SshError::KeyParse)?;
+        Ok(matches!(
+            self.handle
+                .authenticate_publickey(
+                    username,
+                    PrivateKeyWithHashAlg::new(Arc::new(private_key), None),
+                )
+                .await
+                .map_err(|_| SshError::AuthenticationRejected)?,
+            AuthResult::Success
+        ))
+    }
+
+    async fn authenticate_agent(
+        &mut self,
+        username: &str,
+        socket: Option<&str>,
+    ) -> Result<bool, SshError> {
+        let mut agent = connect_agent(socket.map(str::to_owned)).await?;
+        let identities = agent
+            .request_identities()
+            .await
+            .map_err(|_| SshError::AuthenticationRejected)?;
+        for identity in identities {
+            let result =
+                authenticate_publickey_with_agent(self.handle, username, identity, &mut agent)
+                    .await
+                    .map_err(|_| SshError::AuthenticationRejected)?;
+            if matches!(result, AuthResult::Success) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    async fn authenticate_keyboard_interactive_start(
+        &mut self,
+        username: &str,
+    ) -> Result<KeyboardInteractiveResponse, SshError> {
+        map_keyboard_response(
+            self.handle
+                .authenticate_keyboard_interactive_start(username, None::<String>)
+                .await
+                .map_err(|_| SshError::AuthenticationRejected)?,
+        )
+    }
+
+    async fn authenticate_keyboard_interactive_respond(
+        &mut self,
+        responses: Vec<String>,
+    ) -> Result<KeyboardInteractiveResponse, SshError> {
+        map_keyboard_response(
+            self.handle
+                .authenticate_keyboard_interactive_respond(responses)
+                .await
+                .map_err(|_| SshError::AuthenticationRejected)?,
+        )
+    }
+}
+
+fn map_keyboard_response(
+    response: KeyboardInteractiveAuthResponse,
+) -> Result<KeyboardInteractiveResponse, SshError> {
+    Ok(match response {
+        KeyboardInteractiveAuthResponse::Success => KeyboardInteractiveResponse::Success,
+        KeyboardInteractiveAuthResponse::Failure { .. } => KeyboardInteractiveResponse::Failure,
+        KeyboardInteractiveAuthResponse::InfoRequest {
+            name,
+            instructions,
+            prompts,
+        } => KeyboardInteractiveResponse::Prompt(crate::ssh::engine::KeyboardInteractivePrompt {
+            name,
+            instructions,
+            prompts: prompts
+                .into_iter()
+                .map(|prompt| crate::ssh::engine::KeyboardInteractivePromptItem {
+                    text: prompt.prompt,
+                    echo: prompt.echo,
+                })
+                .collect(),
+        }),
+    })
+}
+
+struct ManagerAuthenticator<'a> {
+    manager: SshManager,
+    app: Option<AppHandle>,
+    request: SshConnectRequest,
+    secrets: &'a SecretState,
+    credentials: &'a CredentialState,
+}
+
+#[async_trait::async_trait]
+impl SshAuthenticator for ManagerAuthenticator<'_> {
+    async fn authenticate(
+        &self,
+        context: &mut dyn SshAuthContext,
+        username: &str,
+        methods: &[AuthMethodRef],
+    ) -> Result<bool, SshError> {
+        let methods = if methods.is_empty() {
+            &self.request.auth
+        } else {
+            methods
+        };
+        if methods.is_empty() {
+            return context.authenticate_none(username).await;
+        }
+        for method in methods {
+            let result = match method {
+                AuthMethodRef::Password { secret_ref } => {
+                    let password = resolve_secret_ref(secret_ref, self.secrets, self.credentials)?;
+                    context.authenticate_password(username, &password).await
+                }
+                AuthMethodRef::PrivateKey {
+                    file_ref,
+                    passphrase_ref,
+                } => {
+                    let material = self
+                        .manager
+                        .load_private_key_material(
+                            file_ref,
+                            passphrase_ref.as_deref(),
+                            self.secrets,
+                            self.credentials,
+                        )
+                        .await?;
+                    match context.authenticate_private_key(username, material).await {
+                        Err(SshError::KeyParse) if passphrase_ref.is_none() => {
+                            let responses = self
+                                .manager
+                                .prompt_for_responses(
+                                    self.app.as_ref().ok_or(SshError::Closed)?,
+                                    SshAuthPrompt {
+                                        request_id: String::new(),
+                                        id: self.request.profile_id.clone(),
+                                        connection_id: self
+                                            .request
+                                            .connection_id
+                                            .clone()
+                                            .unwrap_or_else(|| self.request.profile_id.clone()),
+                                        name: "Private key passphrase".into(),
+                                        instructions: "The private key is encrypted.".into(),
+                                        prompts: vec![SshAuthPromptItem {
+                                            text: "Passphrase".into(),
+                                            echo: false,
+                                        }],
+                                    },
+                                )
+                                .await?;
+                            let mut responses = responses;
+                            let result = if let Some(passphrase) = responses.first() {
+                                context
+                                    .authenticate_private_key(
+                                        username,
+                                        PrivateKeyMaterial {
+                                            openssh: self
+                                                .manager
+                                                .load_private_key_bytes(file_ref, self.secrets)
+                                                .await?,
+                                            passphrase: Some(secrecy::SecretString::new(
+                                                passphrase.clone(),
+                                            )),
+                                        },
+                                    )
+                                    .await
+                            } else {
+                                Err(SshError::AuthenticationRejected)
+                            };
+                            responses.zeroize();
+                            result
+                        }
+                        result => result,
+                    }
+                }
+                AuthMethodRef::Agent { socket } => {
+                    context
+                        .authenticate_agent(username, socket.as_deref())
+                        .await
+                }
+                AuthMethodRef::KeyboardInteractive => {
+                    let mut response = context
+                        .authenticate_keyboard_interactive_start(username)
+                        .await?;
+                    loop {
+                        match response {
+                            KeyboardInteractiveResponse::Success => break Ok(true),
+                            KeyboardInteractiveResponse::Failure => break Ok(false),
+                            KeyboardInteractiveResponse::Prompt(prompt) => {
+                                let mut responses = self
+                                    .manager
+                                    .prompt_for_responses(
+                                        self.app.as_ref().ok_or(SshError::Closed)?,
+                                        SshAuthPrompt {
+                                            request_id: String::new(),
+                                            id: self.request.profile_id.clone(),
+                                            connection_id: self
+                                                .request
+                                                .connection_id
+                                                .clone()
+                                                .unwrap_or_else(|| self.request.profile_id.clone()),
+                                            name: prompt.name,
+                                            instructions: prompt.instructions,
+                                            prompts: prompt
+                                                .prompts
+                                                .into_iter()
+                                                .map(|prompt| SshAuthPromptItem {
+                                                    text: prompt.text,
+                                                    echo: prompt.echo,
+                                                })
+                                                .collect(),
+                                        },
+                                    )
+                                    .await?;
+                                let result = context
+                                    .authenticate_keyboard_interactive_respond(responses.clone())
+                                    .await;
+                                responses.zeroize();
+                                response = result?;
+                            }
+                        }
+                    }
+                }
+            }?;
+            if result {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+}
+
+async fn disconnect_jump_handles(handles: &mut Vec<client::Handle<SshHandler>>) {
+    for handle in handles.drain(..) {
+        let _ = handle
+            .disconnect(Disconnect::ByApplication, "connection setup failed", "")
+            .await;
+    }
+}
+
+async fn disconnect_connection(
+    handle: &mut client::Handle<SshHandler>,
+    jump_handles: &mut Vec<client::Handle<SshHandler>>,
+    reason: Disconnect,
+    description: &'static str,
+) {
+    let _ = handle.disconnect(reason, description, "").await;
+    disconnect_jump_handles(jump_handles).await;
 }
 
 impl SshManager {
@@ -396,6 +722,46 @@ impl SshManager {
         }
     }
 
+    async fn connect_direct_engine(
+        &self,
+        config: Arc<client::Config>,
+        app: &AppHandle,
+        request: &SshConnectRequest,
+        connection_id: &str,
+        secrets: &SecretState,
+        credentials: &CredentialState,
+    ) -> Result<client::Handle<SshHandler>, SshError> {
+        let host_key_error = Arc::new(Mutex::new(None));
+        let handler = self.handler(
+            app,
+            request,
+            request.host.clone(),
+            request.port,
+            connection_id,
+            Arc::clone(&host_key_error),
+        );
+        let authenticator = Arc::new(ManagerAuthenticator {
+            manager: self.clone(),
+            app: Some(app.clone()),
+            request: request.clone(),
+            secrets,
+            credentials,
+        });
+        let engine = RusshEngine::from_shared_config(config, Duration::from_secs(30));
+        engine
+            .connect_with_handler(
+                &SshTarget {
+                    host: request.host.clone(),
+                    port: request.port,
+                    username: request.username.clone().unwrap_or_else(|| "root".into()),
+                },
+                handler,
+                host_key_error,
+                authenticator.as_ref(),
+            )
+            .await
+    }
+
     async fn connect_over_channel(
         &self,
         config: Arc<client::Config>,
@@ -466,7 +832,14 @@ impl SshManager {
         let mut handle;
         if request.jump_chain.is_empty() {
             handle = self
-                .connect_direct(Arc::clone(&config), &app, &request, &connection_id)
+                .connect_direct_engine(
+                    Arc::clone(&config),
+                    &app,
+                    &request,
+                    &connection_id,
+                    &secrets,
+                    &credentials,
+                )
                 .await?;
         } else {
             let first = jump_request(&request, &request.jump_chain[0], &connection_id, 0);
@@ -474,7 +847,7 @@ impl SshManager {
                 .connect_direct(Arc::clone(&config), &app, &first, &connection_id)
                 .await?;
             let first_username = first.username.clone().unwrap_or_else(|| "root".into());
-            if !self
+            let first_authenticated = match self
                 .authenticate(
                     &app,
                     &mut handle,
@@ -483,29 +856,61 @@ impl SshManager {
                     &secrets,
                     &credentials,
                 )
-                .await?
+                .await
             {
-                let _ = handle
-                    .disconnect(
-                        Disconnect::AuthCancelledByUser,
-                        "authentication rejected",
-                        "",
+                Ok(authenticated) => authenticated,
+                Err(error) => {
+                    disconnect_connection(
+                        &mut handle,
+                        &mut jump_handles,
+                        Disconnect::ByApplication,
+                        "authentication failed",
                     )
                     .await;
+                    return Err(error);
+                }
+            };
+            if !first_authenticated {
+                disconnect_connection(
+                    &mut handle,
+                    &mut jump_handles,
+                    Disconnect::AuthCancelledByUser,
+                    "authentication rejected",
+                )
+                .await;
                 return Err(SshError::AuthenticationRejected);
             }
             for (index, hop) in request.jump_chain.iter().enumerate().skip(1) {
                 let next = jump_request(&request, hop, &connection_id, index);
-                let channel = handle
+                let channel = match handle
                     .channel_open_direct_tcpip(&next.host, u32::from(next.port), "127.0.0.1", 0)
                     .await
-                    .map_err(|_| SshError::ChannelOpen)?;
+                {
+                    Ok(channel) => channel,
+                    Err(_) => {
+                        disconnect_connection(
+                            &mut handle,
+                            &mut jump_handles,
+                            Disconnect::ByApplication,
+                            "jump channel open failed",
+                        )
+                        .await;
+                        return Err(SshError::ChannelOpen);
+                    }
+                };
                 jump_handles.push(handle);
-                handle = self
+                handle = match self
                     .connect_over_channel(Arc::clone(&config), &app, &next, &connection_id, channel)
-                    .await?;
+                    .await
+                {
+                    Ok(handle) => handle,
+                    Err(error) => {
+                        disconnect_jump_handles(&mut jump_handles).await;
+                        return Err(error);
+                    }
+                };
                 let next_username = next.username.clone().unwrap_or_else(|| "root".into());
-                if !self
+                let next_authenticated = match self
                     .authenticate(
                         &app,
                         &mut handle,
@@ -514,48 +919,110 @@ impl SshManager {
                         &secrets,
                         &credentials,
                     )
-                    .await?
+                    .await
                 {
+                    Ok(authenticated) => authenticated,
+                    Err(error) => {
+                        disconnect_connection(
+                            &mut handle,
+                            &mut jump_handles,
+                            Disconnect::ByApplication,
+                            "authentication failed",
+                        )
+                        .await;
+                        return Err(error);
+                    }
+                };
+                if !next_authenticated {
+                    disconnect_connection(
+                        &mut handle,
+                        &mut jump_handles,
+                        Disconnect::AuthCancelledByUser,
+                        "authentication rejected",
+                    )
+                    .await;
                     return Err(SshError::AuthenticationRejected);
                 }
             }
-            let channel = handle
+            let channel = match handle
                 .channel_open_direct_tcpip(&request.host, u32::from(request.port), "127.0.0.1", 0)
                 .await
-                .map_err(|_| SshError::ChannelOpen)?;
+            {
+                Ok(channel) => channel,
+                Err(_) => {
+                    disconnect_connection(
+                        &mut handle,
+                        &mut jump_handles,
+                        Disconnect::ByApplication,
+                        "target channel open failed",
+                    )
+                    .await;
+                    return Err(SshError::ChannelOpen);
+                }
+            };
             jump_handles.push(handle);
-            handle = self
+            handle = match self
                 .connect_over_channel(Arc::clone(&config), &app, &request, &connection_id, channel)
-                .await?;
-        }
-
-        if !self
-            .authenticate(
-                &app,
-                &mut handle,
-                &request,
-                &username,
-                &secrets,
-                &credentials,
-            )
-            .await?
-        {
-            let _ = handle
-                .disconnect(
+                .await
+            {
+                Ok(handle) => handle,
+                Err(error) => {
+                    disconnect_jump_handles(&mut jump_handles).await;
+                    return Err(error);
+                }
+            };
+            let target_authenticated = match self
+                .authenticate(
+                    &app,
+                    &mut handle,
+                    &request,
+                    &username,
+                    &secrets,
+                    &credentials,
+                )
+                .await
+            {
+                Ok(authenticated) => authenticated,
+                Err(error) => {
+                    disconnect_connection(
+                        &mut handle,
+                        &mut jump_handles,
+                        Disconnect::ByApplication,
+                        "authentication failed",
+                    )
+                    .await;
+                    return Err(error);
+                }
+            };
+            if !target_authenticated {
+                disconnect_connection(
+                    &mut handle,
+                    &mut jump_handles,
                     Disconnect::AuthCancelledByUser,
                     "authentication rejected",
-                    "",
                 )
                 .await;
-            return Err(SshError::AuthenticationRejected);
+                return Err(SshError::AuthenticationRejected);
+            }
         }
 
-        let channel = handle
-            .channel_open_session()
-            .await
-            .map_err(|_| SshError::ChannelOpen)?;
+        let channel = match handle.channel_open_session().await {
+            Ok(channel) => channel,
+            Err(_) => {
+                disconnect_connection(
+                    &mut handle,
+                    &mut jump_handles,
+                    Disconnect::ByApplication,
+                    "session channel open failed",
+                )
+                .await;
+                return Err(SshError::ChannelOpen);
+            }
+        };
+        let mut channel = channel;
+        let mut pending = VecDeque::new();
         let terminal = &request.terminal;
-        channel
+        if channel
             .request_pty(
                 true,
                 &terminal.term,
@@ -566,18 +1033,79 @@ impl SshManager {
                 &[],
             )
             .await
-            .map_err(|_| SshError::ChannelOpen)?;
+            .is_err()
+        {
+            disconnect_connection(
+                &mut handle,
+                &mut jump_handles,
+                Disconnect::ByApplication,
+                "PTY request failed",
+            )
+            .await;
+            return Err(SshError::ChannelOpen);
+        }
+        match wait_for_channel_confirmation(&mut channel).await {
+            Ok(messages) => pending.extend(messages),
+            Err(_) => {
+                disconnect_connection(
+                    &mut handle,
+                    &mut jump_handles,
+                    Disconnect::ByApplication,
+                    "PTY request confirmation failed",
+                )
+                .await;
+                return Err(SshError::ChannelOpen);
+            }
+        }
         for (name, value) in &request.environment {
-            channel
-                .set_env(true, name, value)
-                .await
-                .map_err(|_| SshError::ChannelOpen)?;
+            if channel.set_env(true, name, value).await.is_err() {
+                disconnect_connection(
+                    &mut handle,
+                    &mut jump_handles,
+                    Disconnect::ByApplication,
+                    "environment setup failed",
+                )
+                .await;
+                return Err(SshError::ChannelOpen);
+            }
+            match wait_for_channel_confirmation(&mut channel).await {
+                Ok(messages) => pending.extend(messages),
+                Err(_) => {
+                    disconnect_connection(
+                        &mut handle,
+                        &mut jump_handles,
+                        Disconnect::ByApplication,
+                        "environment setup confirmation failed",
+                    )
+                    .await;
+                    return Err(SshError::ChannelOpen);
+                }
+            }
         }
         if request.agent_forward {
-            channel
-                .agent_forward(true)
-                .await
-                .map_err(|_| SshError::ChannelOpen)?;
+            if channel.agent_forward(true).await.is_err() {
+                disconnect_connection(
+                    &mut handle,
+                    &mut jump_handles,
+                    Disconnect::ByApplication,
+                    "agent forwarding setup failed",
+                )
+                .await;
+                return Err(SshError::ChannelOpen);
+            }
+            match wait_for_channel_confirmation(&mut channel).await {
+                Ok(messages) => pending.extend(messages),
+                Err(_) => {
+                    disconnect_connection(
+                        &mut handle,
+                        &mut jump_handles,
+                        Disconnect::ByApplication,
+                        "agent forwarding confirmation failed",
+                    )
+                    .await;
+                    return Err(SshError::ChannelOpen);
+                }
+            }
         }
         if request.x11 {
             let display = request
@@ -586,15 +1114,58 @@ impl SshManager {
                 .or_else(|| std::env::var("DISPLAY").ok())
                 .unwrap_or_else(|| ":0".into());
             let cookie = x11_cookie(&display);
-            channel
+            if channel
                 .request_x11(true, false, "MIT-MAGIC-COOKIE-1", cookie, 0)
                 .await
-                .map_err(|_| SshError::ChannelOpen)?;
+                .is_err()
+            {
+                disconnect_connection(
+                    &mut handle,
+                    &mut jump_handles,
+                    Disconnect::ByApplication,
+                    "X11 forwarding setup failed",
+                )
+                .await;
+                return Err(SshError::ChannelOpen);
+            }
+            match wait_for_channel_confirmation(&mut channel).await {
+                Ok(messages) => pending.extend(messages),
+                Err(_) => {
+                    disconnect_connection(
+                        &mut handle,
+                        &mut jump_handles,
+                        Disconnect::ByApplication,
+                        "X11 forwarding confirmation failed",
+                    )
+                    .await;
+                    return Err(SshError::ChannelOpen);
+                }
+            }
         }
-        channel
-            .request_shell(true)
-            .await
-            .map_err(|_| SshError::ChannelOpen)?;
+        if channel.request_shell(true).await.is_err() {
+            disconnect_connection(
+                &mut handle,
+                &mut jump_handles,
+                Disconnect::ByApplication,
+                "shell request failed",
+            )
+            .await;
+            return Err(SshError::ChannelOpen);
+        }
+
+        match wait_for_channel_confirmation(&mut channel).await {
+            Ok(messages) => pending.extend(messages),
+            Err(_) => {
+                disconnect_connection(
+                    &mut handle,
+                    &mut jump_handles,
+                    Disconnect::ByApplication,
+                    "shell request confirmation failed",
+                )
+                .await;
+                return Err(SshError::ChannelOpen);
+            }
+        }
 
         let id = self.new_id("session");
         let (mut reader, writer) = channel.split();
@@ -605,15 +1176,26 @@ impl SshManager {
         let task_profile_id = request.profile_id.clone();
         let task_app = app.clone();
         let task_manager = self.clone();
-        let jump_handles = jump_handles;
+        let mut jump_handles = jump_handles;
         let task_id_for_task = task_id.clone();
         tauri::async_runtime::spawn(async move {
-            let _keep_jump_handles = &jump_handles;
+            let mut pending = pending;
             let mut sftp = None;
+            let mut exit_event_emitted = false;
             loop {
                 tokio::select! {
-                    message = reader.wait() => {
+                    message = async {
+                        if let Some(message) = pending.pop_front() {
+                            Some(message)
+                        } else {
+                            reader.wait().await
+                        }
+                    } => {
                         let Some(message) = message else { break };
+                        let is_exit_message = matches!(
+                            &message,
+                            ChannelMsg::ExitStatus { .. } | ChannelMsg::ExitSignal { .. }
+                        );
                         if !emit_channel_message(
                             &task_app,
                             &task_id_for_task,
@@ -623,6 +1205,7 @@ impl SshManager {
                         ) {
                             break;
                         }
+                        exit_event_emitted |= is_exit_message;
                     }
                     control_message = controls.recv() => {
                         let Some(control_message) = control_message else { break };
@@ -646,17 +1229,27 @@ impl SshManager {
                 .lock()
                 .unwrap_or_else(|error| error.into_inner())
                 .remove(&task_id_for_task);
-            let _ = task_app.emit(
-                "ssh.exit",
-                SshExitEvent {
-                    id: task_id_for_task.clone(),
-                    connection_id: task_connection_id.clone(),
-                    profile_id: task_profile_id,
-                    exit_code: None,
-                    signal: None,
-                },
-            );
+            if !exit_event_emitted {
+                let _ = task_app.emit(
+                    "ssh:exit",
+                    SshExitEvent {
+                        id: task_id_for_task.clone(),
+                        connection_id: task_connection_id.clone(),
+                        profile_id: task_profile_id,
+                        exit_code: None,
+                        signal: None,
+                    },
+                );
+            }
             task_manager.stop_forwardings_for_session(&task_id_for_task, &task_connection_id);
+            let _ = handle
+                .disconnect(Disconnect::ByApplication, "session closed", "")
+                .await;
+            for jump_handle in jump_handles.drain(..) {
+                let _ = jump_handle
+                    .disconnect(Disconnect::ByApplication, "session closed", "")
+                    .await;
+            }
         });
 
         self.sessions
@@ -1194,7 +1787,7 @@ impl SshManager {
             .insert(request_id.clone(), sender);
         if app
             .emit(
-                "ssh.hostKeyPrompt",
+                "ssh:hostKeyPrompt",
                 HostKeyPrompt {
                     request_id: request_id.clone(),
                     connection_id: connection_id.into(),
@@ -1222,12 +1815,9 @@ impl SshManager {
         let Ok(Ok(decision)) = decision else {
             return Err(SshError::Timeout);
         };
-        match (status, decision) {
-            (HostKeyStatus::Unknown, HostKeyDecision::Once) => Ok(true),
-            (_, HostKeyDecision::Save) => self.known_hosts.save(host, port, key).map(|_| true),
-            (HostKeyStatus::Changed, HostKeyDecision::Reject)
-            | (HostKeyStatus::Changed, HostKeyDecision::Once) => Err(SshError::HostKeyChanged),
-            (HostKeyStatus::Unknown, HostKeyDecision::Reject) => Err(SshError::HostKeyRejected),
+        match host_key_decision_action(status, decision)? {
+            HostKeyDecisionAction::AcceptOnce => Ok(true),
+            HostKeyDecisionAction::Save => self.known_hosts.save(host, port, key).map(|_| true),
         }
     }
 
@@ -1240,140 +1830,17 @@ impl SshManager {
         secrets: &SecretState,
         credentials: &CredentialState,
     ) -> Result<bool, SshError> {
-        if request.auth.is_empty() {
-            return Ok(matches!(
-                handle
-                    .authenticate_none(username)
-                    .await
-                    .map_err(|_| SshError::AuthenticationRejected)?,
-                AuthResult::Success
-            ));
-        }
-        for method in &request.auth {
-            let result = match method {
-                AuthMethodRef::Password { secret_ref } => {
-                    let password = resolve_secret_ref(secret_ref, secrets, credentials)?;
-                    handle
-                        .authenticate_password(username, password.expose_secret())
-                        .await
-                        .map_err(|_| SshError::AuthenticationRejected)?
-                }
-                AuthMethodRef::PrivateKey {
-                    file_ref,
-                    passphrase_ref,
-                } => {
-                    let key = self
-                        .load_private_key(
-                            &app,
-                            &request.profile_id,
-                            request
-                                .connection_id
-                                .as_deref()
-                                .unwrap_or(&request.profile_id),
-                            file_ref,
-                            passphrase_ref.as_deref(),
-                            secrets,
-                            credentials,
-                        )
-                        .await?;
-                    handle
-                        .authenticate_publickey(
-                            username,
-                            PrivateKeyWithHashAlg::new(Arc::new(key), None),
-                        )
-                        .await
-                        .map_err(|_| SshError::AuthenticationRejected)?
-                }
-                AuthMethodRef::Agent { socket } => {
-                    #[cfg(unix)]
-                    {
-                        let mut agent = match socket {
-                            Some(path) => AgentClient::connect_uds(path)
-                                .await
-                                .map_err(|_| SshError::AuthenticationRejected)?,
-                            None => AgentClient::connect_env()
-                                .await
-                                .map_err(|_| SshError::AuthenticationRejected)?,
-                        };
-                        let identities = agent
-                            .request_identities()
-                            .await
-                            .map_err(|_| SshError::AuthenticationRejected)?;
-                        let mut result = AuthResult::Failure {
-                            remaining_methods: russh::MethodSet::empty(),
-                            partial_success: false,
-                        };
-                        for identity in identities {
-                            result = handle
-                                .authenticate_publickey_with(username, identity, None, &mut agent)
-                                .await
-                                .map_err(|_| SshError::AuthenticationRejected)?;
-                            if matches!(result, AuthResult::Success) {
-                                break;
-                            }
-                        }
-                        result
-                    }
-                    #[cfg(not(unix))]
-                    {
-                        let _ = socket;
-                        return Err(SshError::InvalidRequest(
-                            "SSH agent authentication is unavailable on this platform".into(),
-                        ));
-                    }
-                }
-                AuthMethodRef::KeyboardInteractive => {
-                    let mut response = handle
-                        .authenticate_keyboard_interactive_start(username, None::<String>)
-                        .await
-                        .map_err(|_| SshError::AuthenticationRejected)?;
-                    loop {
-                        match response {
-                            KeyboardInteractiveAuthResponse::Success => break AuthResult::Success,
-                            KeyboardInteractiveAuthResponse::Failure {
-                                remaining_methods,
-                                partial_success,
-                            } => {
-                                break AuthResult::Failure {
-                                    remaining_methods,
-                                    partial_success,
-                                }
-                            }
-                            KeyboardInteractiveAuthResponse::InfoRequest {
-                                name,
-                                instructions,
-                                prompts,
-                            } => {
-                                let responses = self
-                                    .prompt_for_responses(
-                                        app,
-                                        SshAuthPrompt {
-                                            request_id: String::new(),
-                                            id: request.profile_id.clone(),
-                                            connection_id: request
-                                                .connection_id
-                                                .clone()
-                                                .unwrap_or_else(|| request.profile_id.clone()),
-                                            name,
-                                            instructions,
-                                            prompts: prompts.iter().map(prompt_item).collect(),
-                                        },
-                                    )
-                                    .await?;
-                                response = handle
-                                    .authenticate_keyboard_interactive_respond(responses)
-                                    .await
-                                    .map_err(|_| SshError::AuthenticationRejected)?;
-                            }
-                        }
-                    }
-                }
-            };
-            if matches!(result, AuthResult::Success) {
-                return Ok(true);
-            }
-        }
-        Ok(false)
+        let authenticator = ManagerAuthenticator {
+            manager: self.clone(),
+            app: Some(app.clone()),
+            request: request.clone(),
+            secrets,
+            credentials,
+        };
+        let mut context = RawSshAuthContext { handle };
+        authenticator
+            .authenticate(&mut context, username, &request.auth)
+            .await
     }
 
     async fn prompt_for_responses(
@@ -1388,7 +1855,7 @@ impl SshManager {
             .lock()
             .unwrap_or_else(|error| error.into_inner())
             .insert(request_id.clone(), sender);
-        if app.emit("ssh.authPrompt", prompt).is_err() {
+        if app.emit("ssh:authPrompt", prompt).is_err() {
             self.auth_waiters
                 .lock()
                 .unwrap_or_else(|error| error.into_inner())
@@ -1407,54 +1874,39 @@ impl SshManager {
         }
     }
 
-    async fn load_private_key(
+    async fn load_private_key_material(
         &self,
-        app: &AppHandle,
-        profile_id: &str,
-        connection_id: &str,
         file_ref: &str,
         passphrase_ref: Option<&str>,
         secrets: &SecretState,
         credentials: &CredentialState,
-    ) -> Result<russh::keys::PrivateKey, SshError> {
-        let bytes = if let Some(id) = file_ref.strip_prefix("vault://") {
+    ) -> Result<PrivateKeyMaterial, SshError> {
+        let openssh = self.load_private_key_bytes(file_ref, secrets).await?;
+        let passphrase = match passphrase_ref {
+            Some(reference) => Some(resolve_secret_ref(reference, secrets, credentials)?),
+            None => resolve_saved_private_key_passphrase(&openssh, secrets, credentials),
+        };
+        Ok(PrivateKeyMaterial {
+            openssh,
+            passphrase,
+        })
+    }
+
+    async fn load_private_key_bytes(
+        &self,
+        file_ref: &str,
+        secrets: &SecretState,
+    ) -> Result<Vec<u8>, SshError> {
+        let mut bytes = if let Some(id) = file_ref.strip_prefix("vault://") {
             secrets.get_file(id).map_err(|_| SshError::KeyParse)?
         } else {
             fs::read(file_ref).map_err(|_| SshError::KeyParse)?
         };
         if bytes.len() > MAX_BUFFER {
+            bytes.zeroize();
             return Err(SshError::KeyParse);
         }
-        let text = String::from_utf8(bytes).map_err(|_| SshError::KeyParse)?;
-        let passphrase = passphrase_ref
-            .map(|reference| resolve_secret_ref(reference, secrets, credentials))
-            .transpose()?;
-        let explicit = passphrase.as_ref().map(|value| value.expose_secret());
-        let key = decode_secret_key(&text, explicit.map(|value| value.as_str()));
-        match key {
-            Ok(key) => Ok(key),
-            Err(_) if passphrase_ref.is_none() => {
-                let responses = self
-                    .prompt_for_responses(
-                        app,
-                        SshAuthPrompt {
-                            request_id: String::new(),
-                            id: profile_id.into(),
-                            connection_id: connection_id.into(),
-                            name: "Private key passphrase".into(),
-                            instructions: "The private key is encrypted.".into(),
-                            prompts: vec![SshAuthPromptItem {
-                                text: "Passphrase".into(),
-                                echo: false,
-                            }],
-                        },
-                    )
-                    .await?;
-                let passphrase = responses.first().ok_or(SshError::AuthenticationRejected)?;
-                decode_secret_key(&text, Some(passphrase)).map_err(|_| SshError::KeyParse)
-            }
-            Err(_) => Err(SshError::KeyParse),
-        }
+        Ok(bytes)
     }
 
     fn session(&self, id: &str) -> Result<SshSession, SshError> {
@@ -1838,7 +2290,7 @@ async fn connect_x11_display(display: &str) -> Result<X11Target, std::io::Error>
 }
 
 fn emit_forwarding(app: &AppHandle, info: &SshForwardingInfo) {
-    let _ = app.emit("ssh.forwardingChanged", info.clone());
+    let _ = app.emit("ssh:forwardingChanged", info.clone());
 }
 
 fn x11_cookie(display: &str) -> String {
@@ -1874,7 +2326,7 @@ fn emit_channel_message(
 ) -> bool {
     let event = match message {
         ChannelMsg::Data { data } => app.emit(
-            "ssh.output",
+            "ssh:output",
             SshOutputEvent {
                 id: id.into(),
                 connection_id: connection_id.into(),
@@ -1884,7 +2336,7 @@ fn emit_channel_message(
             },
         ),
         ChannelMsg::ExtendedData { data, .. } => app.emit(
-            "ssh.output",
+            "ssh:output",
             SshOutputEvent {
                 id: id.into(),
                 connection_id: connection_id.into(),
@@ -1894,7 +2346,7 @@ fn emit_channel_message(
             },
         ),
         ChannelMsg::ExitStatus { exit_status } => app.emit(
-            "ssh.exit",
+            "ssh:exit",
             SshExitEvent {
                 id: id.into(),
                 connection_id: connection_id.into(),
@@ -1904,7 +2356,7 @@ fn emit_channel_message(
             },
         ),
         ChannelMsg::ExitSignal { signal_name, .. } => app.emit(
-            "ssh.exit",
+            "ssh:exit",
             SshExitEvent {
                 id: id.into(),
                 connection_id: connection_id.into(),
@@ -1921,10 +2373,93 @@ fn emit_channel_message(
     event.is_ok()
 }
 
-fn prompt_item(prompt: &Prompt) -> SshAuthPromptItem {
-    SshAuthPromptItem {
-        text: prompt.prompt.clone(),
-        echo: prompt.echo,
+#[derive(Debug, PartialEq, Eq)]
+enum HostKeyDecisionAction {
+    AcceptOnce,
+    Save,
+}
+
+fn host_key_decision_action(
+    status: HostKeyStatus,
+    decision: HostKeyDecision,
+) -> Result<HostKeyDecisionAction, SshError> {
+    match (status, decision) {
+        (HostKeyStatus::Unknown, HostKeyDecision::Once) => Ok(HostKeyDecisionAction::AcceptOnce),
+        (HostKeyStatus::Unknown, HostKeyDecision::Save) => Ok(HostKeyDecisionAction::Save),
+        (HostKeyStatus::Changed, _) => Err(SshError::HostKeyChanged),
+        (HostKeyStatus::Unknown, HostKeyDecision::Reject) => Err(SshError::HostKeyRejected),
+    }
+}
+
+#[cfg(unix)]
+type PlatformAgentClient = AgentClient<tokio::net::UnixStream>;
+
+#[cfg(windows)]
+type PlatformAgentClient = AgentClient<Box<dyn AgentStream + Send + Unpin + 'static>>;
+
+fn authenticate_publickey_with_agent<'a>(
+    handle: &'a mut client::Handle<SshHandler>,
+    username: &str,
+    identity: russh::keys::PublicKey,
+    agent: &'a mut PlatformAgentClient,
+) -> Pin<Box<dyn Future<Output = Result<AuthResult, russh::AgentAuthError>> + Send + 'a>> {
+    Box::pin(handle.authenticate_publickey_with(username.to_owned(), identity, None, agent))
+}
+
+async fn wait_for_channel_confirmation(
+    channel: &mut russh::Channel<client::Msg>,
+) -> Result<Vec<ChannelMsg>, SshError> {
+    let mut pending = Vec::new();
+    loop {
+        let message = tokio::time::timeout(CHANNEL_REQUEST_TIMEOUT, channel.wait())
+            .await
+            .map_err(|_| SshError::ChannelOpen)?
+            .ok_or(SshError::ChannelOpen)?;
+        match message {
+            ChannelMsg::Success => return Ok(pending),
+            ChannelMsg::Failure
+            | ChannelMsg::Eof
+            | ChannelMsg::Close
+            | ChannelMsg::OpenFailure(_) => return Err(SshError::ChannelOpen),
+            message => pending.push(message),
+        }
+    }
+}
+
+async fn connect_agent(socket: Option<String>) -> Result<PlatformAgentClient, SshError> {
+    #[cfg(unix)]
+    {
+        let client = match socket {
+            Some(path) => AgentClient::connect_uds(path).await,
+            None => AgentClient::connect_env().await,
+        }
+        .map_err(|_| SshError::AuthenticationRejected)?;
+        return Ok(client);
+    }
+
+    #[cfg(windows)]
+    {
+        let client = match socket {
+            Some(path) => AgentClient::connect_named_pipe(path)
+                .await
+                .map(|client| client.dynamic()),
+            None => match std::env::var_os("SSH_AUTH_SOCK") {
+                Some(path) => AgentClient::connect_named_pipe(path)
+                    .await
+                    .map(|client| client.dynamic()),
+                None => Ok(AgentClient::connect_pageant().await.dynamic()),
+            },
+        }
+        .map_err(|_| SshError::AuthenticationRejected)?;
+        return Ok(client);
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = socket;
+        Err(SshError::InvalidRequest(
+            "SSH agent authentication is unavailable on this platform".into(),
+        ))
     }
 }
 
@@ -1989,7 +2524,7 @@ fn validate_request(request: &SshConnectRequest) -> Result<(), SshError> {
         max_count,
     }) = request.keepalive.as_ref()
     {
-        if *interval_ms < 100 || *interval_ms > 86_400_000 || *max_count > 100 {
+        if *interval_ms < 100 || *interval_ms > 86_400_000 || *max_count == 0 || *max_count > 100 {
             return Err(SshError::InvalidRequest(
                 "SSH keepalive options are invalid".into(),
             ));
@@ -2099,6 +2634,35 @@ fn resolve_secret_ref(
     Ok(value)
 }
 
+fn resolve_saved_private_key_passphrase(
+    openssh: &[u8],
+    secrets: &SecretState,
+    credentials: &CredentialState,
+) -> Option<secrecy::SecretString> {
+    let hash = hex::encode(Sha512::digest(openssh));
+    let mut key = Map::new();
+    key.insert("hash".into(), Value::String(hash.clone()));
+    let selector = VaultSecretSelector {
+        r#type: VAULT_SECRET_TYPE_PASSPHRASE.into(),
+        key,
+    };
+    if let Ok(Some(value)) = secrets.get_secret(&selector) {
+        return Some(secrecy::SecretString::new(value));
+    }
+
+    credentials
+        .store()
+        .get(
+            CredentialNamespace::TabbyRs,
+            &CredentialAddress {
+                service: format!("ssh-private-key:{hash}"),
+                account: "user".into(),
+            },
+        )
+        .ok()
+        .flatten()
+}
+
 impl From<SshError> for crate::error::AppError {
     fn from(error: SshError) -> Self {
         match error {
@@ -2120,8 +2684,128 @@ impl From<SshError> for crate::error::AppError {
 
 #[cfg(test)]
 mod tests {
-    use super::{model::*, validate_request};
-    use std::collections::BTreeMap;
+    use super::{
+        engine::{
+            KeyboardInteractiveResponse, PrivateKeyMaterial, SshAuthContext, SshAuthenticator,
+        },
+        host_key_decision_action,
+        model::*,
+        resolve_saved_private_key_passphrase, validate_request, HostKeyDecisionAction,
+        ManagerAuthenticator, SshManager, VAULT_SECRET_TYPE_PASSPHRASE,
+    };
+    use crate::security::{
+        CredentialAddress, CredentialError, CredentialNamespace, CredentialState, CredentialStore,
+        SecretState, VaultSnapshot, VaultSnapshotSecret,
+    };
+    use async_trait::async_trait;
+    use secrecy::{ExposeSecret, SecretString};
+    use sha2::{Digest, Sha512};
+    use std::{collections::BTreeMap, sync::Arc, time::Duration};
+    use tempfile::tempdir;
+
+    #[derive(Default)]
+    struct TestCredentialStore {
+        value: Option<(String, String, String)>,
+    }
+
+    impl CredentialStore for TestCredentialStore {
+        fn get(
+            &self,
+            namespace: CredentialNamespace,
+            address: &CredentialAddress,
+        ) -> Result<Option<SecretString>, CredentialError> {
+            let Some((service, account, value)) = &self.value else {
+                return Ok(None);
+            };
+            if namespace != CredentialNamespace::TabbyRs
+                || service != &address.service
+                || account != &address.account
+            {
+                return Ok(None);
+            }
+            Ok(Some(SecretString::new(value.clone())))
+        }
+
+        fn put(
+            &self,
+            _namespace: CredentialNamespace,
+            _address: &CredentialAddress,
+            _value: &str,
+        ) -> Result<(), CredentialError> {
+            Err(CredentialError::Unavailable)
+        }
+
+        fn delete(
+            &self,
+            _namespace: CredentialNamespace,
+            _address: &CredentialAddress,
+        ) -> Result<bool, CredentialError> {
+            Err(CredentialError::Unavailable)
+        }
+    }
+
+    struct RecordingAuthContext {
+        calls: Vec<String>,
+        password_valid: bool,
+        private_key_passphrase: Option<String>,
+    }
+
+    #[async_trait]
+    impl SshAuthContext for RecordingAuthContext {
+        async fn authenticate_none(&mut self, _username: &str) -> Result<bool, SshError> {
+            self.calls.push("none".into());
+            Ok(true)
+        }
+
+        async fn authenticate_password(
+            &mut self,
+            _username: &str,
+            password: &SecretString,
+        ) -> Result<bool, SshError> {
+            self.calls.push("password".into());
+            self.password_valid = password.expose_secret() == "secret-password";
+            Ok(false)
+        }
+
+        async fn authenticate_private_key(
+            &mut self,
+            _username: &str,
+            key: PrivateKeyMaterial,
+        ) -> Result<bool, SshError> {
+            self.calls
+                .push(format!("private-key:{}", key.openssh.len()));
+            self.private_key_passphrase = key
+                .passphrase
+                .as_ref()
+                .map(|value| value.expose_secret().to_owned());
+            Ok(true)
+        }
+
+        async fn authenticate_agent(
+            &mut self,
+            _username: &str,
+            socket: Option<&str>,
+        ) -> Result<bool, SshError> {
+            self.calls
+                .push(format!("agent:{}", socket.unwrap_or("default")));
+            Ok(true)
+        }
+
+        async fn authenticate_keyboard_interactive_start(
+            &mut self,
+            _username: &str,
+        ) -> Result<KeyboardInteractiveResponse, SshError> {
+            self.calls.push("keyboard-interactive".into());
+            Ok(KeyboardInteractiveResponse::Success)
+        }
+
+        async fn authenticate_keyboard_interactive_respond(
+            &mut self,
+            _responses: Vec<String>,
+        ) -> Result<KeyboardInteractiveResponse, SshError> {
+            Ok(KeyboardInteractiveResponse::Success)
+        }
+    }
 
     fn request() -> SshConnectRequest {
         SshConnectRequest {
@@ -2154,6 +2838,16 @@ mod tests {
         assert!(validate_request(&value).is_err());
         let mut value = request();
         value.host = "example\n.test".into();
+        assert!(validate_request(&value).is_err());
+    }
+
+    #[test]
+    fn rejects_zero_keepalive_max_count() {
+        let mut value = request();
+        value.keepalive = Some(KeepaliveOptions {
+            interval_ms: 5_000,
+            max_count: 0,
+        });
         assert!(validate_request(&value).is_err());
     }
 
@@ -2194,5 +2888,181 @@ mod tests {
             "password": "plaintext"
         }))
         .is_err());
+    }
+
+    #[test]
+    fn changed_host_keys_cannot_be_saved_or_accepted_once() {
+        assert!(matches!(
+            host_key_decision_action(HostKeyStatus::Changed, HostKeyDecision::Save),
+            Err(SshError::HostKeyChanged)
+        ));
+        assert!(matches!(
+            host_key_decision_action(HostKeyStatus::Changed, HostKeyDecision::Once),
+            Err(SshError::HostKeyChanged)
+        ));
+        assert!(matches!(
+            host_key_decision_action(HostKeyStatus::Unknown, HostKeyDecision::Save),
+            Ok(HostKeyDecisionAction::Save)
+        ));
+    }
+
+    #[tokio::test]
+    async fn manager_authenticator_runs_password_then_private_key_without_exposing_plaintext() {
+        let mut credentials = TestCredentialStore::default();
+        credentials.value = Some(("ssh".into(), "alice".into(), "secret-password".into()));
+        let credentials = CredentialState::with_store(Arc::new(credentials));
+        let secrets = SecretState::default();
+        let directory = tempdir().unwrap();
+        let private_key = directory.path().join("id_ed25519");
+        std::fs::write(&private_key, b"test-private-key").unwrap();
+        let mut value = request();
+        value.auth = vec![
+            AuthMethodRef::Password {
+                secret_ref: "keychain://ssh/alice".into(),
+            },
+            AuthMethodRef::PrivateKey {
+                file_ref: private_key.to_string_lossy().into_owned(),
+                passphrase_ref: None,
+            },
+        ];
+        let authenticator = ManagerAuthenticator {
+            manager: SshManager::new(directory.path().join("known_hosts")),
+            app: None,
+            request: value,
+            secrets: &secrets,
+            credentials: &credentials,
+        };
+        let mut context = RecordingAuthContext {
+            calls: Vec::new(),
+            password_valid: false,
+            private_key_passphrase: None,
+        };
+
+        assert!(authenticator
+            .authenticate(&mut context, "alice", &[])
+            .await
+            .unwrap());
+        assert!(context.password_valid);
+        assert_eq!(context.calls, ["password", "private-key:16"]);
+    }
+
+    #[tokio::test]
+    async fn manager_authenticator_reuses_saved_private_key_passphrase() {
+        let private_key_bytes = b"test-private-key";
+        let hash = hex::encode(Sha512::digest(private_key_bytes));
+        let mut credentials = TestCredentialStore::default();
+        credentials.value = Some((
+            format!("ssh-private-key:{hash}"),
+            "user".into(),
+            "fixture-passphrase".into(),
+        ));
+        let credentials = CredentialState::with_store(Arc::new(credentials));
+        let secrets = SecretState::default();
+        let directory = tempdir().unwrap();
+        let private_key = directory.path().join("id_ed25519");
+        std::fs::write(&private_key, private_key_bytes).unwrap();
+        let mut value = request();
+        value.auth = vec![AuthMethodRef::PrivateKey {
+            file_ref: private_key.to_string_lossy().into_owned(),
+            passphrase_ref: None,
+        }];
+        let authenticator = ManagerAuthenticator {
+            manager: SshManager::new(directory.path().join("known_hosts")),
+            app: None,
+            request: value,
+            secrets: &secrets,
+            credentials: &credentials,
+        };
+        let mut context = RecordingAuthContext {
+            calls: Vec::new(),
+            password_valid: false,
+            private_key_passphrase: None,
+        };
+
+        assert!(authenticator
+            .authenticate(&mut context, "alice", &[])
+            .await
+            .unwrap());
+        assert_eq!(
+            context.private_key_passphrase.as_deref(),
+            Some("fixture-passphrase")
+        );
+    }
+
+    #[test]
+    fn resolves_saved_private_key_passphrase_from_vault() {
+        let private_key_bytes = b"test-private-key";
+        let hash = hex::encode(Sha512::digest(private_key_bytes));
+        let mut key = serde_json::Map::new();
+        key.insert("hash".into(), serde_json::Value::String(hash));
+        let secrets = SecretState::default();
+        secrets
+            .replace(
+                VaultSnapshot {
+                    config: serde_json::Value::Null,
+                    secrets: vec![VaultSnapshotSecret {
+                        r#type: VAULT_SECRET_TYPE_PASSPHRASE.into(),
+                        key,
+                        value: "fixture-passphrase".into(),
+                    }],
+                },
+                SecretString::new("vault-passphrase".into()),
+                Duration::from_secs(60),
+            )
+            .unwrap();
+
+        let credentials = CredentialState::default();
+        let passphrase =
+            resolve_saved_private_key_passphrase(private_key_bytes, &secrets, &credentials)
+                .expect("vault passphrase should resolve");
+        assert_eq!(passphrase.expose_secret(), "fixture-passphrase");
+    }
+
+    #[tokio::test]
+    async fn manager_authenticator_supports_agent_and_keyboard_interactive_paths() {
+        let secrets = SecretState::default();
+        let credentials = CredentialState::default();
+        let directory = tempdir().unwrap();
+        let mut value = request();
+        value.auth = vec![AuthMethodRef::Agent {
+            socket: Some("/tmp/agent.sock".into()),
+        }];
+        let authenticator = ManagerAuthenticator {
+            manager: SshManager::new(directory.path().join("known_hosts")),
+            app: None,
+            request: value,
+            secrets: &secrets,
+            credentials: &credentials,
+        };
+        let mut context = RecordingAuthContext {
+            calls: Vec::new(),
+            password_valid: false,
+            private_key_passphrase: None,
+        };
+        assert!(authenticator
+            .authenticate(&mut context, "alice", &[])
+            .await
+            .unwrap());
+        assert_eq!(context.calls, ["agent:/tmp/agent.sock"]);
+
+        let mut value = request();
+        value.auth = vec![AuthMethodRef::KeyboardInteractive];
+        let authenticator = ManagerAuthenticator {
+            manager: SshManager::new(directory.path().join("known_hosts")),
+            app: None,
+            request: value,
+            secrets: &secrets,
+            credentials: &credentials,
+        };
+        let mut context = RecordingAuthContext {
+            calls: Vec::new(),
+            password_valid: false,
+            private_key_passphrase: None,
+        };
+        assert!(authenticator
+            .authenticate(&mut context, "alice", &[])
+            .await
+            .unwrap());
+        assert_eq!(context.calls, ["keyboard-interactive"]);
     }
 }

@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/explicit-module-boundary-types */
 import { marker as _ } from '@biesbjerg/ngx-translate-extract-marker'
-import { BehaviorSubject, Observable, debounceTime, distinctUntilChanged, first, tap, switchMap, map } from 'rxjs'
+import { BehaviorSubject, Observable, debounceTime, distinctUntilChanged, tap, switchMap, catchError, of, shareReplay } from 'rxjs'
 import semverGt from 'semver/functions/gt'
 
 import { Component, HostBinding, Input } from '@angular/core'
@@ -37,6 +37,8 @@ export class PluginsSettingsTabComponent {
     nodeStatus: NodeToolchainStatus | null = null
     customNodePath = ''
     nodeStatusLoading = false
+    availablePluginsError: string | null = null
+    cancellingPlugins = new Set<string>()
 
     constructor (
         private config: ConfigService,
@@ -56,19 +58,18 @@ export class PluginsSettingsTabComponent {
                 distinctUntilChanged(),
                 switchMap(query => {
                     this.availablePluginsReady = false
+                    this.availablePluginsError = null
                     return this.pluginManager.listAvailable(query).pipe(tap(() => {
                         this.availablePluginsReady = true
+                    }), catchError(error => {
+                        this.availablePluginsReady = true
+                        this.availablePluginsError = error instanceof Error ? error.message : String(error)
+                        return of([])
                     }))
                 }),
+                tap(plugins => this.updateKnownUpgrades(plugins)),
+                shareReplay({ bufferSize: 1, refCount: true }),
             )
-        this.availablePlugins$.pipe(first(), map((plugins: PluginInfo[]) => {
-            plugins.sort((a, b) => a.name > b.name ? 1 : -1)
-            return plugins
-        })).subscribe(available => {
-            for (const plugin of this.pluginManager.installedPlugins) {
-                this.knownUpgrades[plugin.name] = available.find(x => x.name === plugin.name && semverGt(x.version, plugin.version)) ?? null
-            }
-        })
 
         this.installedPluginsQuery$
             .asObservable()
@@ -81,6 +82,13 @@ export class PluginsSettingsTabComponent {
             ).subscribe(plugin => {
                 this.installedPlugins$ = plugin
             })
+    }
+
+    private updateKnownUpgrades (plugins: PluginInfo[]): void {
+        plugins.sort((a, b) => a.name > b.name ? 1 : -1)
+        for (const plugin of this.pluginManager.installedPlugins) {
+            this.knownUpgrades[plugin.name] = plugins.find(x => x.name === plugin.name && semverGt(x.version, plugin.version)) ?? null
+        }
     }
 
     async refreshNodeStatus (): Promise<void> {
@@ -157,8 +165,51 @@ export class PluginsSettingsTabComponent {
         }
     }
 
+    async updatePlugin (plugin: PluginInfo): Promise<void> {
+        if (!this.canManagePlugins()) {
+            return
+        }
+        this.busy.set(plugin.name, BusyState.Installing)
+        try {
+            await this.pluginManager.updatePlugin(plugin)
+            this.busy.delete(plugin.name)
+            this.config.requestRestart()
+        } catch (err) {
+            console.error('Error updating plugin', plugin.name, err)
+            this.erroredPlugin = plugin.name
+            this.errorMessage = err
+            this.busy.delete(plugin.name)
+            throw err
+        }
+    }
+
+    canCancelPlugin (plugin: PluginInfo): boolean {
+        return this.pluginManager.getPluginOperationId(plugin) !== null
+    }
+
+    isCancellingPlugin (plugin: PluginInfo): boolean {
+        return this.cancellingPlugins.has(plugin.name)
+    }
+
+    async cancelPlugin (plugin: PluginInfo): Promise<void> {
+        const operationId = this.pluginManager.getPluginOperationId(plugin)
+        if (!operationId || this.cancellingPlugins.has(plugin.name)) {
+            return
+        }
+        this.cancellingPlugins.add(plugin.name)
+        try {
+            await this.platform.cancelPluginOperation(operationId)
+        } catch (err) {
+            console.error('Error cancelling plugin operation', plugin.name, err)
+            this.erroredPlugin = plugin.name
+            this.errorMessage = err
+        } finally {
+            this.cancellingPlugins.delete(plugin.name)
+        }
+    }
+
     async upgradePlugin (plugin: PluginInfo): Promise<void> {
-        await this.installPlugin(this.knownUpgrades[plugin.name]!)
+        await this.updatePlugin(this.knownUpgrades[plugin.name]!)
         this.knownUpgrades[plugin.name] = null
     }
 
@@ -171,7 +222,12 @@ export class PluginsSettingsTabComponent {
     }
 
     isPluginEnabled (plugin: PluginInfo) {
-        return !this.config.store.pluginBlacklist.includes(plugin.name)
+        return !this.isPluginBlacklisted(plugin)
+    }
+
+    private isPluginBlacklisted (plugin: PluginInfo): boolean {
+        const blacklist = this.config.store.pluginBlacklist ?? []
+        return blacklist.includes(plugin.name) || blacklist.includes(plugin.packageName)
     }
 
     canDisablePlugin (plugin: PluginInfo) {
@@ -187,13 +243,17 @@ export class PluginsSettingsTabComponent {
     }
 
     enablePlugin (plugin: PluginInfo) {
-        this.config.store.pluginBlacklist = this.config.store.pluginBlacklist.filter(x => x !== plugin.name)
+        const blacklist = this.config.store.pluginBlacklist ?? []
+        this.config.store.pluginBlacklist = blacklist.filter(x => x !== plugin.name && x !== plugin.packageName)
         this.config.save()
         this.config.requestRestart()
     }
 
     disablePlugin (plugin: PluginInfo) {
-        this.config.store.pluginBlacklist = [...this.config.store.pluginBlacklist, plugin.name]
+        const blacklist = this.config.store.pluginBlacklist ?? []
+        if (!this.isPluginBlacklisted(plugin)) {
+            this.config.store.pluginBlacklist = [...blacklist, plugin.name]
+        }
         this.config.save()
         this.config.requestRestart()
     }

@@ -63,7 +63,7 @@ export class TauriTelnetSession extends BaseSession {
             return
         }
         this.unlisteners.push(...await Promise.all([
-            this.bridge.listen('telnet.output', event => {
+            this.bridge.listen('telnet:output', event => {
                 if (event.connectionId !== this.connectionId) {
                     return
                 }
@@ -73,17 +73,17 @@ export class TauriTelnetSession extends BaseSession {
                     this.emitOutput(Buffer.from(event.data))
                 }
             }),
-            this.bridge.listen('telnet.message', event => {
+            this.bridge.listen('telnet:message', event => {
                 if (event.connectionId === this.connectionId) {
                     this.serviceMessage.next(event.message)
                 }
             }),
-            this.bridge.listen('telnet.echo', event => {
+            this.bridge.listen('telnet:echo', event => {
                 if (event.connectionId === this.connectionId) {
                     this.handleEcho(event)
                 }
             }),
-            this.bridge.listen('telnet.exit', event => {
+            this.bridge.listen('telnet:exit', event => {
                 if (event.connectionId !== this.connectionId) {
                     return
                 }

@@ -1,8 +1,11 @@
 [![](docs/readme.png)](https://tabby.sh)
 
+> **Tabby RS is an unofficial fork of Tabby.** It is maintained separately from upstream Tabby and uses its own application identity, data directory, URL scheme, and release channel. Install it alongside upstream Tabby only after checking the release notes and checksums.
+>
+> Tabby RS release packages are not signed with Windows Authenticode or Apple Developer ID certificates. SmartScreen or Gatekeeper may warn or block installation. See [installation guidance](docs/install.md), [release notes](docs/release.md), and [unsupported signing details](docs/unsupported-signing.md).
 
 <p align="center">
-  <a href="https://github.com/Eugeny/tabby/releases/latest"><img alt="GitHub All Releases" src="https://img.shields.io/github/downloads/eugeny/tabby/total.svg?label=DOWNLOADS&logo=github&style=for-the-badge"></a> &nbsp; <a href="https://nightly.link/Eugeny/tabby/workflows/build/master"><img src="https://shields.io/badge/-Nightly%20Builds-orange?logo=hackthebox&logoColor=fff&style=for-the-badge"/></a> &nbsp; <a href="https://discord.gg/Vn7BjmzhtF"><img alt="Discord" src="https://img.shields.io/discord/1280890060195233934?style=for-the-badge&color=blue&logo=discord&logoColor=white&label=Discord"></a> &nbsp <a href="https://translate.tabby.sh/"><img alt="Translate" src="https://shields.io/badge/Translate-UI-white?logo=googletranslate&style=for-the-badge&color=white&logoColor=fff"></a>
+  <a href="https://github.com/TimLai666/tabby-rs/releases/latest"><img alt="Tabby RS releases" src="https://img.shields.io/github/downloads/TimLai666/tabby-rs/total.svg?label=DOWNLOADS&logo=github&style=for-the-badge"></a> &nbsp; <a href="https://github.com/TimLai666/tabby-rs/actions/workflows/release.yml"><img src="https://img.shields.io/badge/-Release%20Builds-orange?logo=githubactions&logoColor=fff&style=for-the-badge"/></a> &nbsp; <a href="https://discord.gg/Vn7BjmzhtF"><img alt="Discord" src="https://img.shields.io/discord/1280890060195233934?style=for-the-badge&color=blue&logo=discord&logoColor=white&label=Discord"></a> &nbsp <a href="https://translate.tabby.sh/"><img alt="Translate" src="https://shields.io/badge/Translate-UI-white?logo=googletranslate&style=for-the-badge&color=white&logoColor=fff"></a>
 </p>
 
 <p align="center">
@@ -20,9 +23,10 @@
 
 ### Downloads:
 
-* [Latest release](https://github.com/Eugeny/tabby/releases/latest)
-* [Repositories](https://packagecloud.io/eugeny/tabby): [Debian/Ubuntu-based](https://packagecloud.io/eugeny/tabby/install#bash-deb), [RPM-based](https://packagecloud.io/eugeny/tabby/install#bash-rpm)
-* [Latest nightly build](https://nightly.link/Eugeny/tabby/workflows/build/master)
+* [Latest Tabby RS release](https://github.com/TimLai666/tabby-rs/releases/latest)
+* [Release workflow and staged builds](https://github.com/TimLai666/tabby-rs/actions/workflows/release.yml)
+* Linux package formats and release prerequisites are documented in [docs/install.md](docs/install.md)
+* Migration details are documented in [docs/migration.md](docs/migration.md), and plugin limits in [docs/plugin-compatibility.md](docs/plugin-compatibility.md)
 
 <br/>
 <p align="center">

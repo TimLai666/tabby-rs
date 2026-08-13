@@ -10,13 +10,20 @@ import {
     MessageBoxOptions,
     MessageBoxResult,
     NodeToolchainStatus,
+    PluginInfo,
     PlatformService,
     PlatformTheme,
     sanitizeTransferName,
     sanitizeTransferRelativePath,
 } from 'tabby-core'
 
-import { HostBridge, RuntimeInfo, TAURI_RUNTIME_INFO, TransferDirectoryEntry } from '../api/hostBridge'
+import {
+    HostBridge,
+    PluginOperation,
+    RuntimeInfo,
+    TAURI_RUNTIME_INFO,
+    TransferDirectoryEntry,
+} from '../api/hostBridge'
 
 @Injectable()
 export class TauriPlatformService extends PlatformService {
@@ -24,6 +31,8 @@ export class TauriPlatformService extends PlatformService {
     private clipboardText = ''
     private configRevision: string | null = null
     private configPath: string | null = null
+    private customNodePath: string | null = null
+    private activePluginOperations = new Map<string, string>()
     private theme: PlatformTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
     private contextMenuElement: HTMLElement | null = null
     private contextMenuCleanup: (() => void) | null = null
@@ -172,6 +181,14 @@ export class TauriPlatformService extends PlatformService {
         await this.bridge.invoke('desktop.openExternal', { url })
     }
 
+    async exec (app: string, argv: string[]): Promise<void> {
+        await this.bridge.invoke('desktop.exec', { executable: app, args: argv })
+    }
+
+    getWinSCPPath (): string | null {
+        return null
+    }
+
     showItemInFolder (path: string): void {
         void this.bridge.invoke('desktop.revealPath', { path })
             .catch(error => console.warn('Could not reveal path', error))
@@ -193,7 +210,125 @@ export class TauriPlatformService extends PlatformService {
     }
 
     async getNodeToolchainStatus (customNodePath?: string): Promise<NodeToolchainStatus> {
-        return this.bridge.invoke('plugins.nodeStatus', { customNodePath: customNodePath ?? null })
+        const trimmedNodePath = customNodePath?.trim()
+        this.customNodePath = trimmedNodePath ? trimmedNodePath : null
+        try {
+            const status = await this.bridge.invoke('plugins.nodeStatus', { customNodePath: this.customNodePath })
+            this.supportsPluginManagement = status.supported
+            return status
+        } catch (error) {
+            this.supportsPluginManagement = false
+            throw error
+        }
+    }
+
+    async installPlugin (name: string, version: string): Promise<void> {
+        const operationId = await this.beginPluginOperation(name)
+        let watcher: { result: Promise<PluginOperation>; dispose: () => void }|null = null
+        try {
+            watcher = await this.watchPluginOperation(operationId)
+            await this.bridge.invoke('plugins.install', {
+                operationId,
+                packageName: name,
+                version,
+                customNodePath: this.customNodePath,
+            })
+            this.requireSuccessfulPluginOperation(await watcher.result)
+        } finally {
+            watcher?.dispose()
+            if (this.activePluginOperations.get(name) === operationId) {
+                this.activePluginOperations.delete(name)
+            }
+        }
+    }
+
+    async updatePlugin (name: string): Promise<void> {
+        const operationId = await this.beginPluginOperation(name)
+        let watcher: { result: Promise<PluginOperation>; dispose: () => void }|null = null
+        try {
+            watcher = await this.watchPluginOperation(operationId)
+            await this.bridge.invoke('plugins.update', {
+                operationId,
+                packageName: name,
+                customNodePath: this.customNodePath,
+            })
+            this.requireSuccessfulPluginOperation(await watcher.result)
+        } finally {
+            watcher?.dispose()
+            if (this.activePluginOperations.get(name) === operationId) {
+                this.activePluginOperations.delete(name)
+            }
+        }
+    }
+
+    async uninstallPlugin (name: string): Promise<void> {
+        const operationId = await this.beginPluginOperation(name)
+        let watcher: { result: Promise<PluginOperation>; dispose: () => void }|null = null
+        try {
+            watcher = await this.watchPluginOperation(operationId)
+            await this.bridge.invoke('plugins.uninstall', {
+                operationId,
+                packageName: name,
+                customNodePath: this.customNodePath,
+            })
+            this.requireSuccessfulPluginOperation(await watcher.result)
+        } finally {
+            watcher?.dispose()
+            if (this.activePluginOperations.get(name) === operationId) {
+                this.activePluginOperations.delete(name)
+            }
+        }
+    }
+
+    async listInstalledPlugins (): Promise<PluginInfo[]> {
+        return this.bridge.invoke('plugins.listInstalled', {})
+    }
+
+    async cancelPluginOperation (id: string): Promise<void> {
+        await this.bridge.invoke('plugins.cancelOperation', { id })
+    }
+
+    override getPluginOperationId (name: string): string|null {
+        return this.activePluginOperations.get(name) ?? null
+    }
+
+    private async beginPluginOperation (name: string): Promise<string> {
+        if (this.activePluginOperations.has(name)) {
+            throw new Error(`Plugin operation for ${name} is already running`)
+        }
+        const operationId = crypto.randomUUID()
+        this.activePluginOperations.set(name, operationId)
+        try {
+            await this.bridge.invoke('plugins.prepareOperation', { id: operationId })
+            return operationId
+        } catch (error) {
+            if (this.activePluginOperations.get(name) === operationId) {
+                this.activePluginOperations.delete(name)
+            }
+            throw error
+        }
+    }
+
+    private async watchPluginOperation (id: string): Promise<{
+        result: Promise<PluginOperation>
+        dispose: () => void
+    }> {
+        let resolveResult: (operation: PluginOperation) => void = () => undefined
+        const result = new Promise<PluginOperation>(resolve => {
+            resolveResult = resolve
+        })
+        const dispose = await this.bridge.listen('plugins:operation', operation => {
+            if (operation.id === id && operation.status !== 'running') {
+                resolveResult(operation)
+            }
+        })
+        return { result, dispose }
+    }
+
+    private requireSuccessfulPluginOperation (operation: PluginOperation): void {
+        if (operation.status !== 'succeeded') {
+            throw new Error(operation.message ?? `Plugin operation ${operation.status}`)
+        }
     }
 
     setErrorHandler (handler: (_: any) => void): void {
@@ -383,8 +518,8 @@ export class TauriPlatformService extends PlatformService {
 
     private async initializeDesktopEvents (): Promise<void> {
         await Promise.all([
-            this.bridge.listen('desktop.displayMetricsChanged', () => this.displayMetricsChanged.next()),
-            this.bridge.listen('desktop.themeChanged', theme => {
+            this.bridge.listen('desktop:displayMetricsChanged', () => this.displayMetricsChanged.next()),
+            this.bridge.listen('desktop:themeChanged', theme => {
                 const next = theme === 'system'
                     ? window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
                     : theme

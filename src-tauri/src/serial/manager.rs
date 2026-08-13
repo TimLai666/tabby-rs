@@ -59,7 +59,7 @@ impl SerialManager {
                     continue;
                 };
                 if current != previous {
-                    let _ = app.emit("serial.portsChanged", current.clone());
+                    let _ = app.emit("serial:portsChanged", current.clone());
                     previous = current;
                 }
             }
@@ -276,7 +276,7 @@ fn run_session(
         match port.read(&mut buffer) {
             Ok(length) if length > 0 => {
                 let _ = app.emit(
-                    "serial.output",
+                    "serial:output",
                     SerialOutputEvent {
                         id: id.clone(),
                         connection_id: request.connection_id.clone(),
@@ -453,7 +453,7 @@ fn emit_state(
     error: Option<&str>,
 ) {
     let _ = app.emit(
-        "serial.connectionState",
+        "serial:connectionState",
         SerialConnectionStateEvent {
             id: id.into(),
             connection_id: request.connection_id.clone(),

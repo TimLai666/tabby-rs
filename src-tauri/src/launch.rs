@@ -9,7 +9,7 @@ const MAX_ARGUMENT_LENGTH: usize = 32 * 1024;
 const MAX_URL_LENGTH: usize = 16 * 1024;
 const MAX_SCALAR_LENGTH: usize = 4 * 1024;
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LaunchRequest {
     pub profile: Option<String>,
@@ -22,7 +22,7 @@ pub struct LaunchRequest {
     pub argv: LegacyCliArguments,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LegacyCliArguments {
     #[serde(rename = "_")]
@@ -50,7 +50,7 @@ pub struct LegacyCliArguments {
     pub config: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LaunchContext {
     pub request: LaunchRequest,

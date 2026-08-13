@@ -1,6 +1,5 @@
 pluginBlacklist: ['local']
 terminal:
   recoverTabs: false
-enableAnalytics: false
 enableWelcomeTab: false
 enableAutomaticUpdates: false

@@ -1,3 +1,4 @@
+use std::sync::{Arc, Mutex};
 use std::{fs, path::PathBuf};
 
 use tauri::window::{ProgressBarState, ProgressBarStatus};
@@ -6,6 +7,7 @@ use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
+use tokio::process::Command;
 
 #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
@@ -17,23 +19,20 @@ use crate::{
         OpenDialogOptions, SaveDialogOptions, WindowBounds, WindowStatePatch, WindowStateSnapshot,
     },
     error::AppError,
+    state::AppState,
 };
 
-fn main_window(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow, AppError> {
-    app.get_webview_window("main")
-        .ok_or_else(|| AppError::NotFound("main window".into()))
+#[derive(Debug, Default, serde::Deserialize)]
+pub struct NewWindowRequest {
+    #[serde(default)]
+    pub launch: Option<crate::launch::LaunchContext>,
 }
 
 fn io_error(error: impl std::fmt::Display) -> AppError {
     AppError::Io(error.to_string())
 }
 
-#[tauri::command]
-pub fn window_get_state(
-    app: tauri::AppHandle,
-    _request: serde_json::Value,
-) -> Result<WindowStateSnapshot, AppError> {
-    let window = main_window(&app)?;
+fn window_state(window: &tauri::WebviewWindow) -> Result<WindowStateSnapshot, AppError> {
     let position = window.outer_position().map_err(io_error)?;
     let size = window.outer_size().map_err(io_error)?;
     Ok(WindowStateSnapshot {
@@ -55,12 +54,50 @@ pub fn window_get_state(
 }
 
 #[tauri::command]
-pub fn window_apply_state(
+pub fn window_new(
     app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    request: NewWindowRequest,
+) -> Result<(), AppError> {
+    let label = format!("window-{}", state.next_window_id());
+    let launch = Arc::new(Mutex::new(request.launch));
+    let launch_for_page_load = Arc::clone(&launch);
+    let window =
+        tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::App("index.html".into()))
+            .title("Tabby RS")
+            .inner_size(1200.0, 800.0)
+            .min_inner_size(640.0, 480.0)
+            .on_page_load(move |window, payload| {
+                if !matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
+                    return;
+                }
+                let context = launch_for_page_load
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .take();
+                if let Some(context) = context {
+                    let _ = window.emit("app:launch", context);
+                }
+            })
+            .build()
+            .map_err(io_error)?;
+    crate::register_desktop_window_events(&window);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn window_get_state(
+    window: tauri::WebviewWindow,
+    _request: serde_json::Value,
+) -> Result<WindowStateSnapshot, AppError> {
+    window_state(&window)
+}
+
+#[tauri::command]
+pub fn window_apply_state(
+    window: tauri::WebviewWindow,
     request: WindowStatePatch,
 ) -> Result<(), AppError> {
-    let window = main_window(&app)?;
-
     if let Some(title) = request.title.as_deref() {
         window.set_title(title).map_err(io_error)?;
     }
@@ -126,21 +163,26 @@ pub fn window_apply_state(
 }
 
 #[tauri::command]
-pub fn window_reload(app: tauri::AppHandle, _request: serde_json::Value) -> Result<(), AppError> {
-    main_window(&app)?.reload().map_err(io_error)
+pub fn window_reload(
+    window: tauri::WebviewWindow,
+    _request: serde_json::Value,
+) -> Result<(), AppError> {
+    window.reload().map_err(io_error)
 }
 
 #[tauri::command]
-pub fn window_minimize(app: tauri::AppHandle, _request: serde_json::Value) -> Result<(), AppError> {
-    main_window(&app)?.minimize().map_err(io_error)
+pub fn window_minimize(
+    window: tauri::WebviewWindow,
+    _request: serde_json::Value,
+) -> Result<(), AppError> {
+    window.minimize().map_err(io_error)
 }
 
 #[tauri::command]
 pub fn window_toggle_maximize(
-    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
     _request: serde_json::Value,
 ) -> Result<(), AppError> {
-    let window = main_window(&app)?;
     if window.is_maximized().map_err(io_error)? {
         window.unmaximize().map_err(io_error)
     } else {
@@ -149,16 +191,18 @@ pub fn window_toggle_maximize(
 }
 
 #[tauri::command]
-pub fn window_close(app: tauri::AppHandle, _request: serde_json::Value) -> Result<(), AppError> {
-    main_window(&app)?.close().map_err(io_error)
+pub fn window_close(
+    window: tauri::WebviewWindow,
+    _request: serde_json::Value,
+) -> Result<(), AppError> {
+    window.close().map_err(io_error)
 }
 
 #[tauri::command]
 pub fn window_bring_to_front(
-    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
     _request: serde_json::Value,
 ) -> Result<(), AppError> {
-    let window = main_window(&app)?;
     window.show().map_err(io_error)?;
     window.unminimize().map_err(io_error)?;
     window.set_focus().map_err(io_error)
@@ -166,20 +210,19 @@ pub fn window_bring_to_front(
 
 #[tauri::command]
 pub fn window_open_devtools(
-    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
     _request: serde_json::Value,
 ) -> Result<(), AppError> {
     #[cfg(debug_assertions)]
-    main_window(&app)?.open_devtools();
+    window.open_devtools();
     Ok(())
 }
 
 #[tauri::command]
 pub fn window_list_screens(
-    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
     _request: serde_json::Value,
 ) -> Result<Vec<crate::desktop::ScreenInfo>, AppError> {
-    let window = main_window(&app)?;
     let monitors = window.available_monitors().map_err(io_error)?;
     let primary = window.primary_monitor().map_err(io_error)?;
     Ok(screen_info(&monitors, primary.as_ref()))
@@ -187,13 +230,12 @@ pub fn window_list_screens(
 
 #[tauri::command]
 pub fn window_set_docking(
-    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
     request: DockingOptions,
 ) -> Result<WindowStateSnapshot, AppError> {
-    let window = main_window(&app)?;
     if request.side == "off" {
         window.set_always_on_top(false).map_err(io_error)?;
-        return window_get_state(app, serde_json::Value::Null);
+        return window_state(&window);
     }
     if !capabilities().docking {
         return Err(AppError::Unsupported(
@@ -221,15 +263,14 @@ pub fn window_set_docking(
     window
         .set_always_on_top(request.always_on_top)
         .map_err(io_error)?;
-    window_get_state(app, serde_json::Value::Null)
+    window_state(&window)
 }
 
 #[tauri::command]
 pub fn window_toggle_quake(
-    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
     _request: serde_json::Value,
 ) -> Result<bool, AppError> {
-    let window = main_window(&app)?;
     let hide = window.is_visible().map_err(io_error)? && window.is_focused().map_err(io_error)?;
     if hide {
         window.hide().map_err(io_error)?;
@@ -291,7 +332,7 @@ pub fn hotkey_replace(
                     }
                 }
                 let _ = app.emit(
-                    "desktop.hotkey",
+                    "desktop:hotkey",
                     GlobalHotkeyEvent {
                         id: id.clone(),
                         accelerator,
@@ -430,6 +471,33 @@ pub fn desktop_open_external(
 #[serde(rename_all = "camelCase")]
 pub struct PathRequest {
     pub path: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExecRequest {
+    pub executable: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+}
+
+#[tauri::command]
+pub async fn desktop_exec(request: ExecRequest) -> Result<(), AppError> {
+    if request.executable.trim().is_empty() {
+        return Err(AppError::InvalidArgument(
+            "executable must not be empty".into(),
+        ));
+    }
+
+    let status = Command::new(&request.executable)
+        .args(&request.args)
+        .status()
+        .await
+        .map_err(io_error)?;
+    if !status.success() {
+        return Err(AppError::Io(format!("process exited with {status}")));
+    }
+    Ok(())
 }
 
 #[tauri::command]

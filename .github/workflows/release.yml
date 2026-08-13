@@ -1,19 +1,435 @@
----
-name: "tagged-release"
+name: Release
 
 on:
   push:
     tags:
-      - "v*"
+      - 'v*'
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: 'Release channel'
+        required: true
+        default: stable
+        type: choice
+        options:
+          - stable
+          - nightly
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: '22'
+  YARN_VERSION: '1.22.22'
+  YARN_NETWORK_TIMEOUT: '1000000'
+  TAURI_CLI_VERSION: '2.11.4'
 
 jobs:
-  tagged-release:
-    name: "Tagged Release"
-    runs-on: "ubuntu-latest"
+  web-gate:
+    name: web gate
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
 
     steps:
-      - uses: "marvinpinto/action-automatic-releases@latest"
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
-          repo_token: "${{ secrets.GITHUB_TOKEN }}"
-          prerelease: false
-          draft: true
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            cmake \
+            libarchive-tools \
+            libfontconfig1-dev \
+            libsecret-1-dev \
+            libudev-dev
+
+      - name: Install Yarn
+        run: npm install --global yarn@${{ env.YARN_VERSION }}
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile --network-timeout ${{ env.YARN_NETWORK_TIMEOUT }}
+
+      - name: Build web container
+        run: yarn build:web
+
+      - name: Enforce Stable child issue gate
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TABBY_RS_RELEASE_CHANNEL: ${{ github.event.inputs.channel || (github.event_name == 'schedule' && 'nightly') || 'stable' }}
+        run: node scripts/assert-stable-issue-state.mjs --repo "$GITHUB_REPOSITORY" --issues "2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27"
+
+      - name: Verify tabby-web bundle boundary
+        run: yarn audit:web
+
+      - name: Verify tabby-web source boundary
+        run: yarn test:web-source-boundary
+
+      - name: Test web output audit
+        run: yarn test:web-output-audit
+
+      - name: Test web host-app contract
+        run: yarn test:web-host-app
+
+      - name: Test web connector contracts
+        run: |
+          yarn test:web-connector
+          yarn test:web-connector-runtime
+
+      - name: Test web gateway and plugin contracts
+        run: |
+          yarn test:web-gateway
+          yarn test:web-plugin-loader
+          yarn test:web-capability-boundary
+
+      - name: Test diagnostics preview gate
+        run: yarn test:diagnostics-ui
+
+      - name: Test diagnostics privacy and rotation
+        run: yarn test:diagnostics-privacy
+
+  build:
+    name: bundle (${{ matrix.name }})
+    needs: web-gate
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-x64
+            os: windows-2022
+            target: x86_64-pc-windows-msvc
+            bundles: nsis
+            platform: windows
+            arch: x86_64
+          - name: macos-arm64
+            os: macos-14
+            target: aarch64-apple-darwin
+            bundles: dmg
+            platform: macos
+            arch: aarch64
+          - name: macos-x64
+            os: macos-13
+            target: x86_64-apple-darwin
+            bundles: dmg
+            platform: macos
+            arch: x86_64
+          - name: linux-x64
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            bundles: appimage,deb,rpm
+            platform: linux
+            arch: x86_64
+
+    environment: ${{ (github.event.inputs.channel || (github.event_name == 'schedule' && 'nightly') || 'stable') == 'stable' && 'stable-release' || 'nightly-release' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Restore Tauri icons
+        run: node scripts/restore-tauri-icons.mjs
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            libayatana-appindicator3-dev libfontconfig1-dev librsvg2-dev \
+            libsecret-1-dev libudev-dev libwebkit2gtk-4.1-dev patchelf xvfb
+
+      - name: Build hardened UAC helper
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $msbuild = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -find 'MSBuild\**\Bin\MSBuild.exe' | Select-Object -First 1
+          if (-not $msbuild) {
+            throw "MSBuild was not found"
+          }
+          & $msbuild 'tabby-uac/UAC.sln' '/m' '/p:Configuration=Release' '/p:Platform=x64' '/p:PlatformToolset=v143' '/p:WindowsTargetPlatformVersion=10.0' "/p:OutDir=$env:GITHUB_WORKSPACE\extras\"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Hardened UAC helper compilation failed"
+          }
+          if (-not (Test-Path "$env:GITHUB_WORKSPACE\extras\UAC.exe")) {
+            throw "Hardened UAC helper was not produced"
+          }
+
+      - name: Install Windows build dependencies
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install nasm --no-progress --yes
+          Add-Content -Path $env:GITHUB_PATH -Value "${env:ProgramFiles}\NASM"
+
+      - name: Install Yarn
+        run: npm install --global yarn@${{ env.YARN_VERSION }}
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile --network-timeout ${{ env.YARN_NETWORK_TIMEOUT }}
+
+      - name: Audit Tauri dependency metadata
+        run: yarn audit:tauri:dependencies --tauri-release --output release-staging/dependency-audit.json
+
+      - name: Build Tauri renderer
+        run: yarn build:tauri:frontend
+
+      - name: Test Tabby RS identity contract
+        run: yarn test:tabby-rs-branding
+
+      - name: Test Tauri platform bridge contract
+        run: yarn test:tauri-platform
+
+      - name: Verify no built-in telemetry
+        run: yarn audit:telemetry
+
+      - name: Check Rust formatting
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+
+      - name: Run Rust clippy
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --lib
+
+      - name: Test Rust host
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib
+
+      - name: Test system npm plugin lifecycle
+        run: yarn test:plugin-npm-lifecycle
+
+      - name: Test plugin operation contract
+        run: yarn test:plugin-operation
+
+      - name: Test SSH authentication fixture
+        run: yarn test:ssh-auth-integration
+
+      - name: Install pinned Tauri CLI
+        run: cargo install tauri-cli --version ${{ env.TAURI_CLI_VERSION }} --locked
+
+      - name: Select release channel
+        id: channel
+        shell: bash
+        run: |
+          release_channel=stable
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            release_channel=nightly
+            echo "name=nightly" >> "$GITHUB_OUTPUT"
+          elif [ -n "${{ github.event.inputs.channel }}" ]; then
+            release_channel="${{ github.event.inputs.channel }}"
+            echo "name=${{ github.event.inputs.channel }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=stable" >> "$GITHUB_OUTPUT"
+          fi
+          base_version=$(node -e 'const fs = require("fs"); const line = fs.readFileSync("src-tauri/Cargo.toml", "utf8").split("\\n").find(value => value.startsWith("version = ")); console.log(line.match(/"([^"]+)"/)[1])')
+          if [ "$release_channel" = "nightly" ]; then
+            version="${base_version}.nightly.$(date -u +%Y%m%d).${GITHUB_RUN_NUMBER}"
+          else
+            version="$base_version"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Generate release configuration
+        env:
+          TABBY_RS_RELEASE_CHANNEL: ${{ steps.channel.outputs.name }}
+          TABBY_RS_RELEASE_VERSION: ${{ steps.channel.outputs.version }}
+          TABBY_RS_UPDATE_PUBLIC_KEY: ${{ secrets.TABBY_RS_UPDATE_PUBLIC_KEY }}
+          TABBY_RS_UPDATE_ENDPOINT: ${{ steps.channel.outputs.name == 'stable' && vars.TABBY_RS_UPDATE_ENDPOINT_STABLE || vars.TABBY_RS_UPDATE_ENDPOINT_NIGHTLY }}
+          TABBY_RS_BUNDLE_TARGETS: ${{ matrix.bundles }}
+        run: node scripts/create-tauri-release-config.mjs
+
+      - name: Build signed Tauri bundle
+        env:
+          TABBY_RS_UPDATE_PUBLIC_KEY: ${{ secrets.TABBY_RS_UPDATE_PUBLIC_KEY }}
+          TABBY_RS_UPDATE_ENDPOINT_STABLE: ${{ vars.TABBY_RS_UPDATE_ENDPOINT_STABLE }}
+          TABBY_RS_UPDATE_ENDPOINT_NIGHTLY: ${{ vars.TABBY_RS_UPDATE_ENDPOINT_NIGHTLY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: cargo tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config src-tauri/tauri.release.conf.json
+
+      - name: Prepare release metadata
+        shell: bash
+        env:
+          TABBY_RS_RELEASE_CHANNEL: ${{ steps.channel.outputs.name }}
+          TABBY_RS_RELEASE_VERSION: ${{ steps.channel.outputs.version }}
+          TABBY_RS_UPDATE_PUBLIC_KEY: ${{ secrets.TABBY_RS_UPDATE_PUBLIC_KEY }}
+          TABBY_RS_UPDATE_ARTIFACT_URL: ${{ vars.TABBY_RS_UPDATE_ARTIFACT_URL }}
+          TABBY_RS_UPDATE_PLATFORM: ${{ matrix.platform }}
+          TABBY_RS_UPDATE_ARCH: ${{ matrix.arch }}
+          TABBY_RS_RELEASE_TARGET: ${{ matrix.target }}
+          TABBY_RS_RELEASE_PLATFORM: ${{ matrix.platform }}
+          TABBY_RS_RELEASE_ARCH: ${{ matrix.arch }}
+          TABBY_RS_BUNDLE_ROOT: src-tauri/target/${{ matrix.target }}/release/bundle
+          TABBY_RS_RELEASE_STAGING: release-staging
+        run: |
+          node scripts/generate-third-party-notices.mjs --output release-staging/THIRD_PARTY_NOTICES.md
+          TABBY_RS_LICENSE_PATH=LICENSE TABBY_RS_NOTICES_PATH=release-staging/THIRD_PARTY_NOTICES.md TABBY_RS_LICENSE_REPORT=release-staging/license-report.json TABBY_RS_LICENSE_REPORT_HTML=release-staging/license-report.html node scripts/create-license-report.mjs
+          node scripts/create-tauri-release-metadata.mjs
+
+      - name: Stage release artifacts
+        shell: bash
+        env:
+          TABBY_RS_RELEASE_CHANNEL: ${{ steps.channel.outputs.name }}
+          TABBY_RS_RELEASE_VERSION: ${{ steps.channel.outputs.version }}
+          TABBY_RS_UPDATE_ARTIFACT_URL: ${{ vars.TABBY_RS_UPDATE_ARTIFACT_URL }}
+          TABBY_RS_UPDATE_PLATFORM: ${{ matrix.platform }}
+          TABBY_RS_UPDATE_ARCH: ${{ matrix.arch }}
+          TABBY_RS_BUNDLE_ROOT: src-tauri/target/${{ matrix.target }}/release/bundle
+          TABBY_RS_RELEASE_STAGING: release-staging
+        run: |
+          node scripts/stage-tauri-release.mjs
+          update_artifact=$(node scripts/assert-tauri-release-artifacts.mjs release-staging --platform "${{ matrix.platform }}" --bundles "${{ matrix.bundles }}" --output release-staging/artifact-contract.json)
+          export TABBY_RS_UPDATE_ARTIFACT="$update_artifact"
+          export TABBY_RS_UPDATE_SIGNATURE="$update_artifact.sig"
+          node scripts/create-tauri-update-manifest.mjs
+
+      - name: Verify updater signature against artifact
+        shell: bash
+        run: |
+          primary_artifact=$(node scripts/assert-tauri-release-artifacts.mjs release-staging --platform "${{ matrix.platform }}" --bundles "${{ matrix.bundles }}")
+          cargo run --quiet --manifest-path src-tauri/Cargo.toml --bin verify-tauri-signature -- \
+            "$primary_artifact" "$primary_artifact.sig" release-staging/updater-public-key.txt
+
+      - name: Snapshot release bundle for benchmarks
+        shell: bash
+        run: cp -R release-staging release-benchmark-bundle
+
+      - name: Audit release bundle
+        run: node scripts/check-tauri-bundle.mjs release-staging --release --output release-staging/bundle-audit.json
+
+      - name: Smoke test release installer
+        shell: bash
+        run: node scripts/smoke-tauri-release.mjs --staging release-staging --platform "${{ matrix.platform }}" --output release-staging/installer-smoke.json
+
+      - name: Test parity automated check links
+        run: yarn test:parity-links
+
+      - name: Generate parity report
+        run: node scripts/compare-parity.mjs --report-only --output release-staging/parity-report.json --html-output release-staging/parity-report.html
+
+      - name: Measure Tauri release
+        shell: bash
+        env:
+          TABBY_RS_BENCHMARK_FRAME_REPORT: ${{ github.workspace }}/release-staging/benchmarks/ui-frames.json
+          TABBY_RS_TOOLCHAIN: ${{ matrix.target }}
+        run: |
+          mkdir -p release-staging/benchmarks
+          binary="src-tauri/target/${{ matrix.target }}/release/tabby-rs"
+          if [ "${{ matrix.platform }}" = "windows" ]; then binary="${binary}.exe"; fi
+          benchmark_binary="$binary"
+          benchmark_args="[]"
+          if [ "${{ matrix.platform }}" = "linux" ]; then
+            benchmark_binary="xvfb-run"
+            benchmark_args="[\"-a\",\"$binary\"]"
+          fi
+          node scripts/run-benchmarks.mjs \
+            --output-dir release-staging/benchmarks \
+            --samples 20 \
+            --warmup-samples 1 \
+            --binary "$benchmark_binary" \
+            --binary-args "$benchmark_args" \
+            --platform "${{ matrix.platform }}" \
+            --arch "${{ matrix.arch }}" \
+            --output-command node \
+            --output-args '["scripts/fixtures/benchmark-process.mjs","--output","104857600"]' \
+            --minimum-output-bytes 104857600 \
+            --bundle release-benchmark-bundle \
+            --ui-frame-report release-staging/benchmarks/ui-frames.json \
+            --config-fixture-path scripts/fixtures/benchmark-config.json \
+            --config-fixture release-default
+
+      - name: Enforce release gate
+        run: node scripts/check-release-gate.mjs --bundle-audit release-staging/bundle-audit.json --dependency-audit release-staging/dependency-audit.json --license-report release-staging/license-report.json --installer-smoke release-staging/installer-smoke.json --benchmarks-dir release-staging/benchmarks --source-revision "${{ github.sha }}" --platform "${{ matrix.platform }}" --arch "${{ matrix.arch }}" --target "${{ matrix.target }}" --output release-staging/release-gate.json
+
+      - name: Create release checksums
+        run: node scripts/create-release-checksums.mjs release-staging
+
+      - name: Upload bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: tabby-rs-${{ steps.channel.outputs.name }}-${{ matrix.name }}
+          path: release-staging
+          if-no-files-found: error
+
+  aggregate:
+    name: aggregate release gate
+    needs: build
+    if: needs.build.result == 'success'
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Download platform gates
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+      - name: Enforce release-wide gate
+        run: node scripts/aggregate-release-gate.mjs release-assets --source-revision "${{ github.sha }}" --channel "${{ github.event.inputs.channel || (github.event_name == 'schedule' && 'nightly') || 'stable' }}" --expected-targets '["x86_64-pc-windows-msvc","aarch64-apple-darwin","x86_64-apple-darwin","x86_64-unknown-linux-gnu"]' --output release-gate-aggregate.json
+      - name: Upload aggregate gate
+        uses: actions/upload-artifact@v4
+        with:
+          name: tabby-rs-release-gate-aggregate
+          path: release-gate-aggregate.json
+          if-no-files-found: error
+
+  publish:
+    name: publish release
+    needs: [build, aggregate]
+    if: needs.build.result == 'success' && needs.aggregate.result == 'success'
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    environment: ${{ (github.event.inputs.channel || (github.event_name == 'schedule' && 'nightly') || 'stable') == 'stable' && 'stable-release' || 'nightly-release' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Select release channel
+        id: channel
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then echo "name=nightly" >> "$GITHUB_OUTPUT"; \
+          elif [ -n "${{ github.event.inputs.channel }}" ]; then echo "name=${{ github.event.inputs.channel }}" >> "$GITHUB_OUTPUT"; \
+          else echo "name=stable" >> "$GITHUB_OUTPUT"; fi
+      - name: Download bundles
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          base_version=$(node -e 'const fs = require("fs"); const line = fs.readFileSync("src-tauri/Cargo.toml", "utf8").split("\\n").find(value => value.startsWith("version = ")); console.log(line.match(/"([^"]+)"/)[1])')
+          if [ "${{ steps.channel.outputs.name }}" = "nightly" ]; then
+            release_tag="nightly-${GITHUB_SHA}"
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            release_tag="$GITHUB_REF_NAME"
+          else
+            release_tag="v${base_version}"
+          fi
+          mapfile -d '' assets < <(find release-assets -type f -print0)
+          test "${#assets[@]}" -gt 0
+          if [ "${{ steps.channel.outputs.name }}" = "nightly" ]; then
+            gh release create "$release_tag" "${assets[@]}" --prerelease --title "Tabby RS Nightly ${GITHUB_SHA}" --notes "Automated nightly build."
+          else
+            gh release create "$release_tag" "${assets[@]}" --draft --title "Tabby RS ${release_tag}" --generate-notes
+          fi

@@ -70,9 +70,9 @@ declare module './hostBridge' {
     }
 
     interface HostEventMap {
-        'pty.output': PtyOutputEvent
-        'pty.exit': PtyExitEvent
-        'pty.error': PtyErrorEvent
-        'sudo.prompt': SudoPromptEvent
+        'pty:output': PtyOutputEvent
+        'pty:exit': PtyExitEvent
+        'pty:error': PtyErrorEvent
+        'sudo:prompt': SudoPromptEvent
     }
 }

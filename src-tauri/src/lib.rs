@@ -1,5 +1,6 @@
 mod commands;
 mod desktop;
+mod diagnostics;
 mod error;
 mod font;
 mod identity;
@@ -16,27 +17,41 @@ mod storage;
 mod sudo;
 mod telnet;
 mod transfer;
+pub mod update;
 mod windows_integration;
 
 use std::sync::Arc;
 
 use commands::{
-    app::{app_bootstrap, app_quit, app_runtime_info},
+    app::{
+        app_benchmark_frame_report, app_benchmark_ready, app_bootstrap, app_installer_smoke_ready,
+        app_quit, app_runtime_info,
+    },
     backup::{backup_create, backup_list, backup_restore},
     config::{config_read, config_write},
     desktop::{
-        clipboard_read_text, clipboard_write_text, desktop_open_external, desktop_open_path,
-        desktop_read_file, desktop_reveal_path, dialog_open, dialog_save, hotkey_replace,
-        notification_show, window_apply_state, window_bring_to_front, window_close,
-        window_get_state, window_list_screens, window_minimize, window_open_devtools,
+        clipboard_read_text, clipboard_write_text, desktop_exec, desktop_open_external,
+        desktop_open_path, desktop_read_file, desktop_reveal_path, dialog_open, dialog_save,
+        hotkey_replace, notification_show, window_apply_state, window_bring_to_front, window_close,
+        window_get_state, window_list_screens, window_minimize, window_new, window_open_devtools,
         window_reload, window_set_docking, window_toggle_maximize, window_toggle_quake,
+    },
+    diagnostics::{
+        diagnostics_append, diagnostics_clear_logs, diagnostics_export, diagnostics_preview,
+        diagnostics_status,
     },
     font::{font_list, font_refresh},
     identity::{identity_alias_status, identity_get, identity_set_alias},
     keychain::{keychain_delete, keychain_get, keychain_put},
     launch::app_initial_launch,
     migration::{migration_detect, migration_execute},
-    plugins::plugins_node_status,
+    plugins::{
+        plugins_bootstrap_failed, plugins_bootstrap_plugin_completed,
+        plugins_bootstrap_plugin_started, plugins_bootstrap_retry, plugins_bootstrap_succeeded,
+        plugins_cancel_operation, plugins_discover, plugins_install, plugins_list_installed,
+        plugins_node_status, plugins_prepare_operation, plugins_read_entry, plugins_remove,
+        plugins_uninstall, plugins_update,
+    },
     pty::{
         pty_ack, pty_attach, pty_detach, pty_exists, pty_get_children, pty_get_cwd, pty_get_pid,
         pty_get_true_pid, pty_is_alive, pty_kill, pty_resize, pty_spawn, pty_write,
@@ -64,6 +79,10 @@ use commands::{
         transfer_list_directory, transfer_open_download, transfer_open_upload, transfer_read,
         transfer_write,
     },
+    update::{
+        update_cancel, update_check, update_download, update_get_channel, update_install,
+        update_set_channel,
+    },
     vault::{
         vault_get_file, vault_get_secret, vault_lock, vault_put_file, vault_put_secret,
         vault_remove_secret, vault_replace, vault_set_config, vault_set_enabled, vault_snapshot,
@@ -77,10 +96,7 @@ use security::{CredentialState, SecretState};
 use serial::SerialManager;
 use ssh::SshManager;
 use state::AppState;
-use storage::{
-    paths::StoragePaths,
-    state_file::{load_state, save_state},
-};
+use storage::{paths::StoragePaths, state_file::save_state};
 use tauri::{Emitter, Manager};
 use telnet::TelnetManager;
 
@@ -109,38 +125,35 @@ fn present_and_dispatch(app: &tauri::AppHandle, context: LaunchContext) {
         let _ = window.show();
         let _ = window.set_focus();
     }
-    if let Err(error) = app.emit("app.launch", context) {
-        eprintln!("failed to emit app.launch: {error}");
+    if let Err(error) = app.emit("app:launch", context) {
+        eprintln!("failed to emit app:launch: {error}");
     }
 }
 
-fn register_desktop_window_events(app: &tauri::AppHandle) {
-    let Some(window) = app.get_webview_window("main") else {
-        return;
-    };
-    let handle = app.clone();
-    window.on_window_event(move |event| match event {
+pub(crate) fn register_desktop_window_events(window: &tauri::WebviewWindow) {
+    let emitter = window.clone();
+    window.clone().on_window_event(move |event| match event {
         tauri::WindowEvent::Focused(focused) => {
-            let _ = handle.emit("desktop.windowFocused", *focused);
+            let _ = emitter.emit("desktop:windowFocused", *focused);
         }
         tauri::WindowEvent::Moved(position) => {
-            let _ = handle.emit(
-                "desktop.windowMoved",
+            let _ = emitter.emit(
+                "desktop:windowMoved",
                 serde_json::json!({ "x": position.x, "y": position.y }),
             );
         }
         tauri::WindowEvent::Resized(size) => {
-            let _ = handle.emit(
-                "desktop.windowResized",
+            let _ = emitter.emit(
+                "desktop:windowResized",
                 serde_json::json!({ "width": size.width, "height": size.height }),
             );
         }
         tauri::WindowEvent::CloseRequested { .. } => {
-            let _ = handle.emit("desktop.windowCloseRequested", ());
+            let _ = emitter.emit("desktop:windowCloseRequested", ());
         }
         tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, position }) => {
-            let _ = handle.emit(
-                "desktop.fileDrop",
+            let _ = emitter.emit(
+                "desktop:fileDrop",
                 serde_json::json!({
                     "paths": paths
                         .iter()
@@ -157,10 +170,10 @@ fn register_desktop_window_events(app: &tauri::AppHandle) {
                 tauri::Theme::Light => "light",
                 _ => "system",
             };
-            let _ = handle.emit("desktop.themeChanged", value);
+            let _ = emitter.emit("desktop:themeChanged", value);
         }
         tauri::WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
-            let _ = handle.emit("desktop.displayMetricsChanged", *scale_factor);
+            let _ = emitter.emit("desktop:displayMetricsChanged", *scale_factor);
         }
         _ => {}
     });
@@ -173,6 +186,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init());
+    builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
 
     #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
     {
@@ -200,15 +214,21 @@ pub fn run() {
             }
 
             let paths = identity::AppPaths::detect(app.handle())?;
+            let logs_dir = paths.logs_dir().clone();
             let known_hosts_path = paths.data_dir().join("known_hosts");
             let storage_paths = StoragePaths::from_app_paths(&paths);
             storage_paths.ensure_layout()?;
+            let _ = crate::diagnostics::crash::mark_startup(&logs_dir);
+            crate::diagnostics::crash::install_panic_hook(logs_dir);
             let state_file_existed = std::fs::symlink_metadata(storage_paths.state_file()).is_ok();
-            let persisted_state = load_state(storage_paths.state_file())?;
+            let persisted_state = crate::update::rollback::recover_pending_update_from_disk(
+                &storage_paths,
+                &app.package_info().version.to_string(),
+            )?;
             if !state_file_existed {
                 save_state(storage_paths.state_file(), &persisted_state)?;
             }
-            app.manage(AppState::new(paths, initial_launch));
+            app.manage(AppState::new(paths, initial_launch, persisted_state));
             app.manage(Arc::new(SecretState::default()));
             app.manage(Arc::new(PtyManager::default()));
             app.manage(Arc::new(SshManager::new(known_hosts_path)));
@@ -219,7 +239,9 @@ pub fn run() {
                 crate::transfer::manager::TransferManager::default(),
             ));
             app.manage(CredentialState::default());
-            register_desktop_window_events(app.handle());
+            if let Some(window) = app.get_webview_window("main") {
+                register_desktop_window_events(&window);
+            }
 
             #[cfg(any(target_os = "linux", all(debug_assertions, windows)))]
             app.deep_link().register_all()?;
@@ -243,6 +265,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             app_bootstrap,
             app_runtime_info,
+            app_benchmark_ready,
+            app_benchmark_frame_report,
+            app_installer_smoke_ready,
             app_initial_launch,
             app_quit,
             backup_create,
@@ -252,8 +277,14 @@ pub fn run() {
             clipboard_write_text,
             config_read,
             config_write,
+            diagnostics_status,
+            diagnostics_clear_logs,
+            diagnostics_append,
+            diagnostics_preview,
+            diagnostics_export,
             desktop_open_external,
             desktop_open_path,
+            desktop_exec,
             font_list,
             font_refresh,
             desktop_read_file,
@@ -269,7 +300,21 @@ pub fn run() {
             keychain_delete,
             migration_detect,
             migration_execute,
+            plugins_bootstrap_failed,
+            plugins_bootstrap_plugin_completed,
+            plugins_bootstrap_plugin_started,
+            plugins_bootstrap_retry,
+            plugins_bootstrap_succeeded,
+            plugins_cancel_operation,
+            plugins_discover,
+            plugins_install,
+            plugins_list_installed,
             plugins_node_status,
+            plugins_prepare_operation,
+            plugins_read_entry,
+            plugins_remove,
+            plugins_uninstall,
+            plugins_update,
             notification_show,
             pty_spawn,
             pty_exists,
@@ -335,6 +380,12 @@ pub fn run() {
             transfer_create_directory,
             transfer_list_directory,
             terminal_export,
+            update_check,
+            update_download,
+            update_install,
+            update_cancel,
+            update_set_channel,
+            update_get_channel,
             vault_status,
             vault_unlock,
             vault_replace,
@@ -356,6 +407,7 @@ pub fn run() {
             window_list_screens,
             window_minimize,
             window_open_devtools,
+            window_new,
             window_reload,
             window_set_docking,
             window_toggle_maximize,

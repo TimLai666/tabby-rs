@@ -36,6 +36,8 @@
                         )
                             .fw-20
                                 profile-icon.ms-1([icon]='profile.icon', [color]='profile.color')
+                            .fw-20.text-muted(*ngIf='activeProfileId === profile.id')
+                                .fa.fa-fw.fas.fa-eye
                             span.ms-2.no-wrap {{ profile.name }}
 
                             .actions

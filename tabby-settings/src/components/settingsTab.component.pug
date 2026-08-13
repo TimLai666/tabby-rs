@@ -11,7 +11,7 @@
                             .logo-area
                                 .tabby-logo.mt-3
 
-                                h1.tabby-title Tabby
+                                h1.tabby-title Tabby RS
                                     sup α
                                 .text-muted {{homeBase.appVersion}}
 
@@ -26,11 +26,23 @@
                                     span(translate) Check for updates
 
                                 button.btn.btn-info.mt-3.mb-2(
-                                    *ngIf='updateAvailable',
-                                    (click)='updater.update()',
+                                    *ngIf='updateAvailable && !updating',
+                                    (click)='installUpdate()',
                                 )
                                     i.fas.fa-sync
                                     span(translate) Update
+
+                                button.btn.btn-warning.mt-3.mb-2(
+                                    *ngIf='updating && updater.canCancel()',
+                                    (click)='cancelUpdate()',
+                                )
+                                    i.fas.fa-ban
+                                    span.ms-2(translate) Cancel
+
+                                .alert.alert-info.mt-2(*ngIf='updateAvailable')
+                                    .fw-bold {{updateAvailable.version}} ({{updateAvailable.channel}})
+                                    small.d-block.text-muted {{updateAvailable.publishedAt}}
+                                    p.mb-0.mt-2 {{updateAvailable.notes}}
 
                         .col-12.col-md-6
                             .list-group.list-group-light.mb-5
@@ -79,22 +91,24 @@
                             .description(translate) Allows quickly opening a terminal in the selected folder
                         toggle([ngModel]='isShellIntegrationInstalled', (ngModelChange)='toggleShellIntegration()')
 
-                    .form-line(*ngIf='hostApp.platform !== Platform.Web')
-                        .header
-                            .title(translate) Enable analytics
-                            .description(translate) We're only tracking your Tabby and OS versions.
-                        toggle(
-                            [(ngModel)]='config.store.enableAnalytics',
-                            (ngModelChange)='saveConfiguration(true)',
-                        )
-
-                    .form-line(*ngIf='hostApp.platform !== Platform.Web')
+                    .form-line(*ngIf='runtimeCapabilities.capabilities.updater')
                         .header
                             .title(translate) Automatic Updates
-                            .description(translate) Enable automatic installation of updates when they become available.
+                            .description(translate) Enable automatic update checks. Installing an update always requires your confirmation.
                         toggle([(ngModel)]='config.store.enableAutomaticUpdates', (ngModelChange)='saveConfiguration()')
 
-                    .form-line(*ngIf='hostApp.platform !== Platform.Web')
+                    .form-line(*ngIf='runtimeCapabilities.capabilities.updater')
+                        .header
+                            .title(translate) Update channel
+                            .description(translate) Stable updates are recommended. Nightly updates may contain unfinished changes.
+                        select.form-control(
+                            [ngModel]='updateChannel',
+                            (ngModelChange)='setUpdateChannel($event)'
+                        )
+                            option(value='stable', translate) Stable
+                            option(value='nightly', translate) Nightly
+
+                    .form-line(*ngIf='runtimeCapabilities.capabilities.updater')
                         .header
                             .title(translate) Debugging
 

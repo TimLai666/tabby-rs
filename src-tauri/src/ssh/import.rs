@@ -12,7 +12,7 @@ const MAX_CONFIG_BYTES: usize = 1024 * 1024;
 const MAX_INCLUDE_DEPTH: usize = 16;
 
 pub fn private_key_candidates() -> Vec<String> {
-    let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) else {
+    let Some(home) = home_directory() else {
         return Vec::new();
     };
     let directory = PathBuf::from(home).join(".ssh");
@@ -451,27 +451,22 @@ fn parse_file(
         .map_err(|_| AppError::InvalidData("SSH config file is not UTF-8".into()))?;
     let mut current: Option<HostBlock> = None;
     for raw_line in text.lines() {
-        let line = raw_line.split('#').next().unwrap_or_default().trim();
-        if line.is_empty() {
-            continue;
-        }
-        let Some((key, value)) = line.split_once(char::is_whitespace) else {
+        let Some((key, values)) = parse_config_line(raw_line) else {
             continue;
         };
-        let key = key.to_ascii_lowercase();
-        let value = value.trim();
         match key.as_str() {
             "host" => {
                 if let Some(block) = current.take() {
                     blocks.push(block);
                 }
                 current = Some(HostBlock {
-                    patterns: value.split_whitespace().map(str::to_owned).collect(),
+                    patterns: values,
                     ..Default::default()
                 });
             }
             "include" => {
-                for include in expand_include(value, canonical.parent().unwrap_or(Path::new("."))) {
+                for include in expand_include(&values, canonical.parent().unwrap_or(Path::new(".")))
+                {
                     parse_file(&include, depth + 1, visited, blocks)?;
                 }
             }
@@ -480,13 +475,17 @@ fn parse_file(
                     continue;
                 };
                 match key.as_str() {
-                    "hostname" => block.hostname = Some(value.to_owned()),
-                    "user" => block.user = Some(value.to_owned()),
-                    "port" => block.port = value.parse::<u16>().ok().filter(|port| *port > 0),
-                    "identityfile" => block.private_keys.push(resolve_identity_path(
-                        value,
-                        canonical.parent().unwrap_or(Path::new(".")),
-                    )),
+                    "hostname" => block.hostname = values.first().cloned(),
+                    "user" => block.user = values.first().cloned(),
+                    "port" => {
+                        block.port = values
+                            .first()
+                            .and_then(|value| value.parse::<u16>().ok())
+                            .filter(|port| *port > 0)
+                    }
+                    "identityfile" => block.private_keys.extend(values.into_iter().map(|value| {
+                        resolve_identity_path(&value, canonical.parent().unwrap_or(Path::new(".")))
+                    })),
                     _ => unreachable!(),
                 }
             }
@@ -499,9 +498,70 @@ fn parse_file(
     Ok(())
 }
 
-fn expand_include(value: &str, base: &Path) -> Vec<PathBuf> {
-    value
-        .split_whitespace()
+fn parse_config_line(line: &str) -> Option<(String, Vec<String>)> {
+    let mut chars = line.chars().peekable();
+    let mut tokens = Vec::new();
+    let mut token = String::new();
+    let mut token_started = false;
+    let mut quote = None;
+
+    while let Some(character) = chars.next() {
+        if character == '\\' {
+            let Some(next) = chars.peek().copied() else {
+                return None;
+            };
+            if next.is_whitespace() || matches!(next, '#' | '\\' | '"' | '\'') {
+                token.push(next);
+                chars.next();
+            } else {
+                token.push(character);
+            }
+            token_started = true;
+            continue;
+        }
+        if let Some(quote_character) = quote {
+            if character == quote_character {
+                quote = None;
+            } else {
+                token.push(character);
+            }
+            token_started = true;
+            continue;
+        }
+        match character {
+            '\'' | '"' => {
+                quote = Some(character);
+                token_started = true;
+            }
+            '#' => break,
+            character if character.is_whitespace() => {
+                if token_started {
+                    tokens.push(std::mem::take(&mut token));
+                    token_started = false;
+                }
+            }
+            _ => {
+                token.push(character);
+                token_started = true;
+            }
+        }
+    }
+    if quote.is_some() {
+        return None;
+    }
+    if token_started {
+        tokens.push(token);
+    }
+    let (key, values) = tokens.split_first()?;
+    if values.is_empty() {
+        return None;
+    }
+    Some((key.to_ascii_lowercase(), values.to_vec()))
+}
+
+fn expand_include(values: &[String], base: &Path) -> Vec<PathBuf> {
+    values
+        .iter()
         .flat_map(|pattern| {
             let path = PathBuf::from(resolve_identity_path(pattern, base));
             if !path.to_string_lossy().contains('*') && !path.to_string_lossy().contains('?') {
@@ -561,9 +621,23 @@ fn resolve_identity_path(value: &str, base: &Path) -> String {
 }
 
 fn home_directory() -> Option<PathBuf> {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
+    select_home_directory(
+        std::env::var_os("HOME").map(PathBuf::from),
+        std::env::var_os("USERPROFILE").map(PathBuf::from),
+        cfg!(windows),
+    )
+}
+
+fn select_home_directory(
+    home: Option<PathBuf>,
+    userprofile: Option<PathBuf>,
+    windows: bool,
+) -> Option<PathBuf> {
+    if windows {
+        userprofile.or(home)
+    } else {
+        home.or(userprofile)
+    }
 }
 
 fn resolve_identity_path_with_home(value: &str, base: &Path, home: Option<&Path>) -> String {
@@ -571,7 +645,7 @@ fn resolve_identity_path_with_home(value: &str, base: &Path, home: Option<&Path>
         .strip_prefix("~/")
         .or_else(|| value.strip_prefix("~\\"));
     if let (Some(rest), Some(home)) = (rest, home) {
-        return home.join(rest).to_string_lossy().into_owned();
+        return join_home_path(home, rest);
     }
     let path = Path::new(value);
     if path.is_absolute() {
@@ -581,11 +655,19 @@ fn resolve_identity_path_with_home(value: &str, base: &Path, home: Option<&Path>
     }
 }
 
+fn join_home_path(home: &Path, rest: &str) -> String {
+    let home = home.to_string_lossy();
+    let separator = if home.contains('\\') { '\\' } else { '/' };
+    let home = home.trim_end_matches(['/', '\\']);
+    let rest = rest.replace(['/', '\\'], &separator.to_string());
+    format!("{home}{separator}{rest}")
+}
+
 fn validate_source_path(path: &str) -> Result<PathBuf, AppError> {
     let rest = path.strip_prefix("~/").or_else(|| path.strip_prefix("~\\"));
     let expanded = if let Some(rest) = rest {
         home_directory()
-            .map(|home| home.join(rest))
+            .map(|home| PathBuf::from(join_home_path(&home, rest)))
             .unwrap_or_else(|| PathBuf::from(path))
     } else {
         PathBuf::from(path)
@@ -624,9 +706,30 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{
-        apply, parse_config, preview, resolve_identity_path_with_home, stable_static_profile_id,
-        SshImportAction, SshImportSelection, SshImportSelectionItem, SshImportSource,
+        apply, parse_config, parse_config_line, preview, resolve_identity_path_with_home,
+        select_home_directory, stable_static_profile_id, SshImportAction, SshImportSelection,
+        SshImportSelectionItem, SshImportSource,
     };
+
+    #[test]
+    fn prefers_native_home_variable_for_each_platform() {
+        assert_eq!(
+            select_home_directory(
+                Some(PathBuf::from("/msys/home/alice")),
+                Some(PathBuf::from(r"C:\Users\alice")),
+                true,
+            ),
+            Some(PathBuf::from(r"C:\Users\alice")),
+        );
+        assert_eq!(
+            select_home_directory(
+                Some(PathBuf::from("/home/alice")),
+                Some(PathBuf::from(r"C:\Users\alice")),
+                false,
+            ),
+            Some(PathBuf::from("/home/alice")),
+        );
+    }
 
     #[test]
     fn expands_tilde_identity_paths_from_explicit_home_directory() {
@@ -642,6 +745,109 @@ mod tests {
             PathBuf::from(resolved),
             home.join(".ssh").join("id_ed25519")
         );
+    }
+
+    #[test]
+    fn preserves_posix_home_separators_on_every_host() {
+        let resolved = resolve_identity_path_with_home(
+            "~/.ssh/id_ed25519",
+            Path::new("C:/tmp"),
+            Some(Path::new("/home/alice")),
+        );
+
+        assert_eq!(resolved, "/home/alice/.ssh/id_ed25519");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn expands_windows_tilde_identity_paths_from_explicit_home_directory() {
+        let home = PathBuf::from(r"C:\Users\alice");
+        let resolved = resolve_identity_path_with_home(
+            r"~\.ssh\id_ed25519",
+            Path::new(r"C:\tmp"),
+            Some(&home),
+        );
+
+        assert_eq!(
+            PathBuf::from(resolved),
+            home.join(".ssh").join("id_ed25519")
+        );
+    }
+
+    #[test]
+    fn parses_quoted_include_and_identity_paths() {
+        let directory = tempdir().unwrap();
+        let include_directory = directory.path().join("parts with spaces");
+        fs::create_dir(&include_directory).unwrap();
+        let included = include_directory.join("ssh config");
+        fs::write(
+            &included,
+            "Host quoted\n  HostName quoted.example # ignored\n  IdentityFile \"keys/id #1\"\n",
+        )
+        .unwrap();
+        let config = directory.path().join("config");
+        fs::write(
+            &config,
+            "Include \"parts with spaces/ssh config\" # trailing comment\n",
+        )
+        .unwrap();
+
+        let profiles = parse_config(&config).unwrap();
+        assert_eq!(profiles.len(), 1);
+        assert_eq!(profiles[0].host, "quoted.example");
+        assert!(Path::new(&profiles[0].private_keys[0])
+            .ends_with(Path::new("parts with spaces/keys/id #1")));
+
+        let (_, values) =
+            parse_config_line(r#"IdentityFile "C:\Users\alice\.ssh\id_ed25519" # comment"#)
+                .unwrap();
+        assert_eq!(values, vec![r#"C:\Users\alice\.ssh\id_ed25519"#]);
+    }
+
+    #[test]
+    fn ignores_include_cycles_without_duplicate_profiles() {
+        let directory = tempdir().unwrap();
+        let first = directory.path().join("first.conf");
+        let second = directory.path().join("second.conf");
+        fs::write(
+            &first,
+            "Include second.conf\nHost first\n  HostName first.example\n",
+        )
+        .unwrap();
+        fs::write(
+            &second,
+            "Include first.conf\nHost second\n  HostName second.example\n",
+        )
+        .unwrap();
+
+        let profiles = parse_config(&first).unwrap();
+        assert_eq!(profiles.len(), 2);
+        assert!(profiles
+            .iter()
+            .any(|profile| profile.host == "first.example"));
+        assert!(profiles
+            .iter()
+            .any(|profile| profile.host == "second.example"));
+    }
+
+    #[test]
+    fn skips_malformed_config_lines_without_aborting_import() {
+        let directory = tempdir().unwrap();
+        let config = directory.path().join("config");
+        fs::write(
+            &config,
+            "Host good\n  HostName good.example\n  IdentityFile \"unterminated\n  Port not-a-port\n  malformed-only-key\nHost next\n  HostName next.example\n",
+        )
+        .unwrap();
+
+        let profiles = parse_config(&config).unwrap();
+        assert_eq!(profiles.len(), 2);
+        assert!(profiles
+            .iter()
+            .any(|profile| profile.host == "good.example"));
+        assert!(profiles
+            .iter()
+            .any(|profile| profile.host == "next.example"));
     }
 
     #[test]

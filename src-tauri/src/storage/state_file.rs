@@ -45,6 +45,14 @@ impl Default for FirstRunImportState {
 pub struct SafeModeState {
     pub last_forced: bool,
     pub suspected_plugins: Vec<String>,
+    pub attempt_id: Option<String>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub plugins: Vec<String>,
+    pub last_started_plugin: Option<String>,
+    pub last_completed_plugin: Option<String>,
+    pub failure_phase: Option<String>,
+    pub failure_code: Option<String>,
+    pub failure_message: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
@@ -61,6 +69,14 @@ impl Default for DiagnosticsState {
     }
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingUpdateState {
+    pub target_version: String,
+    pub backup_id: String,
+    pub channel: UpdateChannel,
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct TabbyRsState {
@@ -68,6 +84,7 @@ pub struct TabbyRsState {
     pub first_run_import: FirstRunImportState,
     pub update_channel: UpdateChannel,
     pub last_stable_backup: Option<String>,
+    pub pending_update: Option<PendingUpdateState>,
     pub safe_mode: SafeModeState,
     pub diagnostics: DiagnosticsState,
     pub pending_plugins: Vec<String>,
@@ -82,6 +99,7 @@ impl Default for TabbyRsState {
             first_run_import: FirstRunImportState::NotStarted,
             update_channel: UpdateChannel::Stable,
             last_stable_backup: None,
+            pending_update: None,
             safe_mode: SafeModeState::default(),
             diagnostics: DiagnosticsState::default(),
             pending_plugins: Vec::new(),
@@ -153,8 +171,18 @@ mod tests {
     fn state_round_trips() {
         let temp = tempdir().unwrap();
         let path = temp.path().join("tabby-rs.json");
-        let state = TabbyRsState::default();
+        let mut state = TabbyRsState::default();
+        state.safe_mode.attempt_id = Some("attempt-1".into());
+        state.safe_mode.plugins = vec!["tabby-demo".into()];
+        state.safe_mode.last_started_plugin = Some("tabby-demo".into());
         save_state(&path, &state).unwrap();
-        assert_eq!(load_state(&path).unwrap().schema_version, 1);
+        let reloaded = load_state(&path).unwrap();
+        assert_eq!(reloaded.schema_version, 1);
+        assert_eq!(reloaded.safe_mode.attempt_id.as_deref(), Some("attempt-1"));
+        assert_eq!(reloaded.safe_mode.plugins, vec!["tabby-demo"]);
+        assert_eq!(
+            reloaded.safe_mode.last_started_plugin.as_deref(),
+            Some("tabby-demo")
+        );
     }
 }

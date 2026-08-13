@@ -13,6 +13,7 @@ import './styles.scss'
 
 @Injectable()
 export class WebPlatformService extends PlatformService {
+    supportsPluginManagement = false
     private menu: ContextMenuElement
     private contextMenuHandlers = new Map<ContextMenuItem, () => void>()
     private fileSelector: HTMLInputElement
@@ -37,6 +38,14 @@ export class WebPlatformService extends PlatformService {
 
     readClipboard (): string {
         return ''
+    }
+
+    async readClipboardText (): Promise<string> {
+        try {
+            return await navigator.clipboard.readText()
+        } catch {
+            return ''
+        }
     }
 
     setClipboard (content: ClipboardContent): void {
@@ -143,11 +152,43 @@ export class WebPlatformService extends PlatformService {
         throw new UnsupportedCapabilityError('filesystem')
     }
 
+    showItemInFolder (_path: string): void {
+        throw new UnsupportedCapabilityError('filesystem')
+    }
+
+    async installPlugin (_name: string, _version: string): Promise<void> {
+        throw new UnsupportedCapabilityError('pluginInstall')
+    }
+
+    async updatePlugin (_name: string): Promise<void> {
+        throw new UnsupportedCapabilityError('pluginInstall')
+    }
+
+    async uninstallPlugin (_name: string): Promise<void> {
+        throw new UnsupportedCapabilityError('pluginInstall')
+    }
+
+    async cancelPluginOperation (_id: string): Promise<void> {
+        throw new UnsupportedCapabilityError('pluginInstall')
+    }
+
+    getWinSCPPath (): string|null {
+        throw new UnsupportedCapabilityError('filesystem')
+    }
+
+    async exec (_app: string, _argv: string[]): Promise<void> {
+        throw new UnsupportedCapabilityError('localPty')
+    }
+
     setErrorHandler (handler: (_: any) => void): void {
         window.addEventListener('error', handler)
     }
 
     async pickDirectory (): Promise<string> {
+        throw new UnsupportedCapabilityError('filesystem')
+    }
+
+    openPath (_path: string): void {
         throw new UnsupportedCapabilityError('filesystem')
     }
 }

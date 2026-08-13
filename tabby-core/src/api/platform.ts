@@ -1,6 +1,7 @@
 import { MenuItemOptions } from './menu'
 import { Subject, Observable } from 'rxjs'
 import { TransferDescriptor, TransferDirection, TransferError, TransferState } from './fileTransfer'
+import { PluginInfo } from './mainProcess'
 
 /* eslint-disable @typescript-eslint/no-unused-vars */
 export interface ClipboardContent {
@@ -297,8 +298,24 @@ export abstract class PlatformService {
         throw new Error('Not implemented')
     }
 
+    async updatePlugin (_name: string): Promise<void> {
+        throw new Error('Not implemented')
+    }
+
     async uninstallPlugin (name: string): Promise<void> {
         throw new Error('Not implemented')
+    }
+
+    async listInstalledPlugins (): Promise<PluginInfo[]|null> {
+        return null
+    }
+
+    async cancelPluginOperation (_id: string): Promise<void> {
+        throw new Error('Not implemented')
+    }
+
+    getPluginOperationId (_name: string): string|null {
+        return null
     }
 
     async getNodeToolchainStatus (_customNodePath?: string): Promise<NodeToolchainStatus> {

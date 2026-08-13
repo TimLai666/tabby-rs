@@ -16,6 +16,7 @@ export class TauriSshProfilesService extends QuickConnectProfileProvider<SSHProf
         options: {
             host: '', port: 22, user: 'root', auth: null, password: null, privateKeys: [],
             keepaliveInterval: 5000, keepaliveCountMax: 10, readyTimeout: null,
+            environment: {},
             x11: false, skipBanner: false, jumpHost: null, agentForward: false,
             warnOnClose: null, algorithms: { hmac: [], kex: [], cipher: [], serverHostKey: [], compression: [] },
             proxyCommand: null, forwardedPorts: [], scripts: [], socksProxyHost: null,

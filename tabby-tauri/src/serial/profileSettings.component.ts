@@ -21,7 +21,7 @@ export class TauriSerialProfileSettingsComponent implements ProfileSettingsCompo
         } catch {
             this.ports = []
         }
-        this.stopListening = await this.bridge.listen('serial.portsChanged', ports => {
+        this.stopListening = await this.bridge.listen('serial:portsChanged', ports => {
             this.ports = ports
         })
     }

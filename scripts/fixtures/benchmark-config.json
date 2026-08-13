@@ -1,0 +1,8 @@
+{
+  "plugins": [],
+  "enableWelcomeTab": false,
+  "terminal": {
+    "autoOpen": true
+  },
+  "recoverTabs": false
+}

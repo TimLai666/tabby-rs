@@ -91,9 +91,9 @@ title-bar(
                     )
 
                 button.btn.btn-secondary.btn-tab-bar.btn-update(
-                    *ngIf='updatesAvailable',
+                    *ngIf='updatesAvailable && runtimeCapabilities.capabilities.updater',
                     [ngbTooltip]='"Update available - Click to install"|translate',
-                    (click)='updater.update()'
+                    (click)='installUpdate()'
                 ) !{require('../icons/gift.svg')}
 
             window-controls.background(

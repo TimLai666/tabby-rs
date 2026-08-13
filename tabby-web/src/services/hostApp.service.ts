@@ -22,7 +22,10 @@ export class WebHostApp extends HostAppService {
     }
 
     newWindow (): void {
-        throw new Error('Not implemented')
+        const opened = window.open(window.location.href, '_blank', 'noopener,noreferrer')
+        if (!opened) {
+            this.logger.warn('Browser blocked opening a new window')
+        }
     }
 
     relaunch (): void {
