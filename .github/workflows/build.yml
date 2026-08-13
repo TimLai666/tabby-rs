@@ -60,6 +60,7 @@ jobs:
             libsecret-1-dev \
             libudev-dev \
             libwebkit2gtk-4.1-dev \
+            openssh-server \
             patchelf \
             xvfb
 
@@ -171,6 +172,9 @@ jobs:
 
       - name: Test Rust host
         run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Test real SSH and SFTP fixture
+        run: yarn test:ssh-integration
 
       - name: Build Tauri host
         run: cargo build --manifest-path src-tauri/Cargo.toml
