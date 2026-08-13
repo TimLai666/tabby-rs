@@ -71,7 +71,7 @@ export class SafeModeModalComponent {
         if (failure?.plugin?.packageName) {
             return failure.plugin.packageName
         }
-        if (name.startsWith('tabby-') || name.startsWith('terminus-')) {
+        if (this.suspectedPlugins.includes(name)) {
             return name
         }
         return null

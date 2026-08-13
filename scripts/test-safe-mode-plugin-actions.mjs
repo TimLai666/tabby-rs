@@ -102,4 +102,28 @@ try {
 assert.deepEqual(failingConfig.store.pluginBlacklist, ['tabby-broken'])
 assert.equal(failingConfig.saveCalls, 0)
 
+globalThis.window.safeModeSuspectedPlugins = ['@scope/plugin']
+globalThis.window.pluginLoadFailures = []
+const scopedUninstallCalls = []
+const scopedConfig = {
+    store: { pluginBlacklist: [] },
+    saveCalls: 0,
+    async save () {
+        this.saveCalls++
+    },
+}
+const scopedComponent = new componentModule.exports.SafeModeModalComponent(
+    { dismiss () {} },
+    scopedConfig,
+    {
+        async uninstallPlugin (name) {
+            scopedUninstallCalls.push(name)
+        },
+    },
+)
+await scopedComponent.removePlugin('@scope/plugin')
+assert.deepEqual(scopedUninstallCalls, ['@scope/plugin'])
+assert.deepEqual(scopedConfig.store.pluginBlacklist, [])
+assert.equal(scopedConfig.saveCalls, 1)
+
 console.log('Safe mode plugin action contract passed')
