@@ -48,6 +48,9 @@ jobs:
       - name: Verify workflow safety
         run: node scripts/ci/assert-workflow-safety.mjs
 
+      - name: Test Stable child issue gate contract
+        run: yarn test:stable-issue-state
+
       - name: Test Tauri dependency metadata audit
         run: yarn test:tauri:dependencies
 
