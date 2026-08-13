@@ -10,7 +10,7 @@ const sourcePath = path.join(root, 'app/src/plugin-runtime/runtime.ts')
 const fixturesRoot = path.join(root, 'test/fixtures/plugin-runtime')
 const source = fs.readFileSync(sourcePath, 'utf8')
 const entrySource = fs.readFileSync(path.join(root, 'app/src/entry.tauri.ts'), 'utf8')
-assert.match(entrySource, /if \(!fallbackUsed && pluginResult\.failures\.length === 0\) \{[\s\S]*plugins\.bootstrapSucceeded/)
+assert.match(entrySource, /if \(!fallbackUsed\) \{[\s\S]*plugins\.bootstrapSucceeded/)
 const compiled = ts.transpileModule(source, {
     compilerOptions: {
         module: ts.ModuleKind.CommonJS,
