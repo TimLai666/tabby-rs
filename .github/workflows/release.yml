@@ -31,8 +31,65 @@ env:
   TAURI_CLI_VERSION: '2.11.4'
 
 jobs:
+  web-gate:
+    name: web gate
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            cmake \
+            libarchive-tools \
+            libfontconfig1-dev \
+            libsecret-1-dev \
+            libudev-dev
+
+      - name: Install Yarn
+        run: npm install --global yarn@${{ env.YARN_VERSION }}
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile --network-timeout ${{ env.YARN_NETWORK_TIMEOUT }}
+
+      - name: Build web container
+        run: npx webpack --config web/webpack.config.mjs --mode production
+
+      - name: Verify tabby-web bundle boundary
+        run: yarn audit:web
+
+      - name: Test web output audit
+        run: yarn test:web-output-audit
+
+      - name: Test web host-app contract
+        run: yarn test:web-host-app
+
+      - name: Test web connector contracts
+        run: |
+          yarn test:web-connector
+          yarn test:web-connector-runtime
+
+      - name: Test web gateway and plugin contracts
+        run: |
+          yarn test:web-gateway
+          yarn test:web-plugin-loader
+          yarn test:web-capability-boundary
+
   build:
     name: bundle (${{ matrix.name }})
+    needs: web-gate
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120

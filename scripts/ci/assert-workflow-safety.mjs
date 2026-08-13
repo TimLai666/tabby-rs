@@ -43,6 +43,12 @@ if (!/(^|\n)\s*schedule:\s*$/m.test(releaseTriggers) || !/(^|\n)\s*workflow_disp
 if (!/^permissions:\n\s+contents:\s+read\s*$/m.test(releaseWorkflow)) {
     violations.push('release workflow top-level permissions are not read-only')
 }
+if (!/^  web-gate:\n[\s\S]*?^      - name: Build web container\n/m.test(releaseWorkflow)) {
+    violations.push('release workflow is missing the web gate job')
+}
+if (!/^  build:\n\s+name: bundle \(\$\{\{ matrix\.name \}\}\)\n\s+needs: web-gate/m.test(releaseWorkflow)) {
+    violations.push('release bundle job does not depend on the web gate')
+}
 if (!/^\s+run: yarn audit:tauri:dependencies --output release-staging\/dependency-audit\.json\s*$/m.test(releaseWorkflow)) {
     violations.push('release workflow is missing the Tauri dependency metadata audit')
 }
