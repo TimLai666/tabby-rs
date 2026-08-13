@@ -6,7 +6,7 @@ Each feature entry represents one user-facing capability and must identify its o
 
 Release staging includes both views of the same parity result. Use `--output release-staging/parity-report.json` for automation and `--html-output release-staging/parity-report.html` for human review. The HTML renderer escapes all report values and does not change the gate result.
 
-The gate also requires a passed bundle audit, installer smoke report, and generated license report. Run:
+The gate also requires a passed bundle audit, installer smoke report, and generated license report. Release staging includes both `license-report.json` for automation and `license-report.html` for human review, plus `benchmarks/benchmark-report.json` aggregating the four individual benchmark reports. Run:
 
 ```text
 node scripts/create-license-report.mjs

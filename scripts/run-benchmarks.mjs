@@ -342,6 +342,19 @@ async function run (options) {
         assertBenchmarkReport(report, BENCHMARK_METRICS[name])
         fs.writeFileSync(path.join(outputDir, `${name}.json`), `${JSON.stringify(report, null, 2)}\n`)
     }
+    const aggregate = {
+        schemaVersion: 1,
+        host: 'tauri',
+        commit: startup.commit,
+        platform: startup.platform,
+        arch: startup.arch,
+        configFixture: startup.configFixture,
+        fixtureSha256: startup.fixtureSha256,
+        artifactSha256: startup.artifactSha256,
+        measuredAt: new Date().toISOString(),
+        reports,
+    }
+    fs.writeFileSync(path.join(outputDir, 'benchmark-report.json'), `${JSON.stringify(aggregate, null, 2)}\n`)
     console.log(`Benchmark reports written to ${outputDir}`)
 }
 

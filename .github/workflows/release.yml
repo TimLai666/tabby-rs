@@ -274,7 +274,7 @@ jobs:
           TABBY_RS_RELEASE_STAGING: release-staging
         run: |
           node scripts/generate-third-party-notices.mjs --output release-staging/THIRD_PARTY_NOTICES.md
-          TABBY_RS_LICENSE_PATH=LICENSE TABBY_RS_NOTICES_PATH=release-staging/THIRD_PARTY_NOTICES.md TABBY_RS_LICENSE_REPORT=release-staging/license-report.json node scripts/create-license-report.mjs
+          TABBY_RS_LICENSE_PATH=LICENSE TABBY_RS_NOTICES_PATH=release-staging/THIRD_PARTY_NOTICES.md TABBY_RS_LICENSE_REPORT=release-staging/license-report.json TABBY_RS_LICENSE_REPORT_HTML=release-staging/license-report.html node scripts/create-license-report.mjs
           node scripts/create-tauri-release-metadata.mjs
 
       - name: Stage release artifacts

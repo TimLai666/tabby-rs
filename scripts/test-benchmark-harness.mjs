@@ -67,6 +67,11 @@ assert.equal(outputReport.artifactSha256.length, 64)
 assert.ok(validateBenchmarkReport(outputReport, expected.output, { requireLargeOutput: true })
     .some(error => error.startsWith('bytes must be at least ')))
 
+const aggregateReport = JSON.parse(fs.readFileSync(path.join(outputDir, 'benchmark-report.json'), 'utf8'))
+assert.equal(aggregateReport.host, 'tauri')
+assert.equal(aggregateReport.commit, outputReport.commit)
+assert.deepEqual(Object.keys(aggregateReport.reports).sort(), ['bundle-size', 'memory', 'output', 'startup'])
+
 const tamperedReport = { ...outputReport, median: outputReport.median + 1 }
 assert.ok(validateBenchmarkReport(tamperedReport, expected.output).includes('median does not match values'))
 

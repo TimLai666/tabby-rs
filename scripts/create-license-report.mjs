@@ -8,6 +8,9 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const licensePath = path.resolve(process.env.TABBY_RS_LICENSE_PATH || path.join(root, 'LICENSE'))
 const noticesPath = path.resolve(process.env.TABBY_RS_NOTICES_PATH || path.join(root, 'THIRD_PARTY_NOTICES.md'))
 const output = path.resolve(process.env.TABBY_RS_LICENSE_REPORT || path.join(root, 'license-report.json'))
+const htmlOutput = process.env.TABBY_RS_LICENSE_REPORT_HTML
+    ? path.resolve(process.env.TABBY_RS_LICENSE_REPORT_HTML)
+    : null
 const revision = process.env.GITHUB_SHA || process.env.TABBY_RS_SOURCE_REVISION || 'local'
 
 assert.ok(fs.statSync(licensePath).isFile(), `LICENSE does not exist: ${licensePath}`)
@@ -44,4 +47,20 @@ const report = {
 }
 fs.mkdirSync(path.dirname(output), { recursive: true })
 fs.writeFileSync(output, `${JSON.stringify(report, null, 2)}\n`)
+if (htmlOutput) {
+    const escapeHtml = value => String(value)
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;')
+    const html = `<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Tabby RS license report</title></head>
+<body><h1>Tabby RS license report</h1><p>Source revision: <code>${escapeHtml(revision)}</code></p><pre>${escapeHtml(JSON.stringify(report, null, 2))}</pre></body>
+</html>
+`
+    fs.mkdirSync(path.dirname(htmlOutput), { recursive: true })
+    fs.writeFileSync(htmlOutput, html)
+}
 console.log(`Created license report at ${output}`)
