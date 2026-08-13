@@ -794,7 +794,7 @@ export interface HostRequestMap {
         response: PluginOperation
     }
     'plugins.update': {
-        request: { operationId: string; packageName: string; version: string; customNodePath?: string | null }
+        request: { operationId: string; packageName: string; customNodePath?: string | null }
         response: PluginOperation
     }
     'plugins.remove': {

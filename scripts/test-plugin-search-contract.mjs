@@ -80,6 +80,8 @@ assert.match(componentSource, /tap\(plugins => this\.updateKnownUpgrades\(plugin
 assert.match(componentSource, /shareReplay\(\{ bufferSize: 1, refCount: true \}\)/)
 assert.doesNotMatch(componentSource, /availablePlugins\$\.pipe\(first\(\)/)
 assert.match(templateSource, /availablePluginsError/)
+assert.match(source, /await this\.platform\.updatePlugin\(plugin\.packageName\)/)
+assert.match(componentSource, /await this\.updatePlugin\(this\.knownUpgrades\[plugin\.name\]!\)/)
 
 const componentPath = path.join(root, 'tabby-plugin-manager/src/components/pluginsSettingsTab.component.ts')
 const componentCompiled = ts.transpileModule(componentSource, {

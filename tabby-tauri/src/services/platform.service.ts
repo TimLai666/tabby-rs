@@ -234,6 +234,25 @@ export class TauriPlatformService extends PlatformService {
         }
     }
 
+    async updatePlugin (name: string): Promise<void> {
+        const operationId = await this.beginPluginOperation(name)
+        let watcher: { result: Promise<PluginOperation>; dispose: () => void }|null = null
+        try {
+            watcher = await this.watchPluginOperation(operationId)
+            await this.bridge.invoke('plugins.update', {
+                operationId,
+                packageName: name,
+                customNodePath: this.customNodePath,
+            })
+            this.requireSuccessfulPluginOperation(await watcher.result)
+        } finally {
+            watcher?.dispose()
+            if (this.activePluginOperations.get(name) === operationId) {
+                this.activePluginOperations.delete(name)
+            }
+        }
+    }
+
     async uninstallPlugin (name: string): Promise<void> {
         const operationId = await this.beginPluginOperation(name)
         let watcher: { result: Promise<PluginOperation>; dispose: () => void }|null = null

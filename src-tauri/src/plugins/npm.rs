@@ -224,6 +224,44 @@ pub async fn uninstall(
     })
 }
 
+pub async fn update(
+    root: PathBuf,
+    node_path: PathBuf,
+    npm_path: PathBuf,
+    operation_id: &str,
+    package_name: &str,
+    cancel: oneshot::Receiver<()>,
+    progress: Arc<dyn Fn(String) + Send + Sync>,
+) -> Result<PluginOperation, AppError> {
+    validate_operation_id(operation_id)?;
+    validate_package_name(package_name)?;
+    prepare_plugin_root(&root)?;
+    ensure_plugin_manifest(&root)?;
+    reject_package_symlink_escape(&root, package_name)?;
+    run_npm(
+        &root,
+        &node_path,
+        &npm_path,
+        "update",
+        &[
+            "--no-audit".into(),
+            "--no-fund".into(),
+            "--".into(),
+            package_name.into(),
+        ],
+        cancel,
+        progress,
+    )
+    .await?;
+    Ok(PluginOperation {
+        id: operation_id.into(),
+        package_name: package_name.into(),
+        action: "update".into(),
+        status: "succeeded".into(),
+        message: None,
+    })
+}
+
 fn validate_package_spec(package_name: &str, version: &str) -> Result<String, AppError> {
     validate_package_name(package_name)?;
     validate_version(version)?;
@@ -835,29 +873,48 @@ mod tests {
             }
         });
 
-        for (index, version) in versions.iter().enumerate() {
+        let (_sender, cancel) = tokio::sync::oneshot::channel();
+        let operation = super::install(
+            root.clone(),
+            node_path.clone(),
+            npm_path.clone(),
+            "system-npm-install",
+            &package_name,
+            versions[0],
+            cancel,
+            Arc::clone(&progress),
+        )
+        .await
+        .expect("system npm install should succeed");
+        assert_eq!(operation.action, "install");
+
+        let installed_manifest = root
+            .join("node_modules")
+            .join(&package_name)
+            .join("package.json");
+        let installed: serde_json::Value =
+            serde_json::from_slice(&fs::read(&installed_manifest).unwrap()).unwrap();
+        assert_eq!(installed["version"], versions[0]);
+
+        {
             let (_sender, cancel) = tokio::sync::oneshot::channel();
-            let operation = super::install(
+            let operation = super::update(
                 root.clone(),
                 node_path.clone(),
                 npm_path.clone(),
-                &format!("system-npm-{index}"),
+                "system-npm-update",
                 &package_name,
-                version,
                 cancel,
                 Arc::clone(&progress),
             )
             .await
-            .expect("system npm install/update should succeed");
-            assert_eq!(operation.status, "succeeded");
-            let installed_manifest = root
-                .join("node_modules")
-                .join(&package_name)
-                .join("package.json");
-            let installed: serde_json::Value =
-                serde_json::from_slice(&fs::read(installed_manifest).unwrap()).unwrap();
-            assert_eq!(installed["version"], *version);
+            .expect("system npm update should succeed");
+            assert_eq!(operation.action, "update");
         }
+
+        let updated: serde_json::Value =
+            serde_json::from_slice(&fs::read(&installed_manifest).unwrap()).unwrap();
+        assert_eq!(updated["version"], versions[1]);
 
         let (_sender, cancel) = tokio::sync::oneshot::channel();
         let operation = super::uninstall(

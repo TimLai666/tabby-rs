@@ -298,6 +298,10 @@ export abstract class PlatformService {
         throw new Error('Not implemented')
     }
 
+    async updatePlugin (_name: string): Promise<void> {
+        throw new Error('Not implemented')
+    }
+
     async uninstallPlugin (name: string): Promise<void> {
         throw new Error('Not implemented')
     }

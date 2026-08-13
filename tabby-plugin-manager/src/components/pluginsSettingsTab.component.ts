@@ -165,6 +165,24 @@ export class PluginsSettingsTabComponent {
         }
     }
 
+    async updatePlugin (plugin: PluginInfo): Promise<void> {
+        if (!this.canManagePlugins()) {
+            return
+        }
+        this.busy.set(plugin.name, BusyState.Installing)
+        try {
+            await this.pluginManager.updatePlugin(plugin)
+            this.busy.delete(plugin.name)
+            this.config.requestRestart()
+        } catch (err) {
+            console.error('Error updating plugin', plugin.name, err)
+            this.erroredPlugin = plugin.name
+            this.errorMessage = err
+            this.busy.delete(plugin.name)
+            throw err
+        }
+    }
+
     canCancelPlugin (plugin: PluginInfo): boolean {
         return this.pluginManager.getPluginOperationId(plugin) !== null
     }
@@ -191,7 +209,7 @@ export class PluginsSettingsTabComponent {
     }
 
     async upgradePlugin (plugin: PluginInfo): Promise<void> {
-        await this.installPlugin(this.knownUpgrades[plugin.name]!)
+        await this.updatePlugin(this.knownUpgrades[plugin.name]!)
         this.knownUpgrades[plugin.name] = null
     }
 

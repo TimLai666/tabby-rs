@@ -275,6 +275,19 @@ export class PluginManagerService {
         }
     }
 
+    async updatePlugin (plugin: PluginInfo): Promise<void> {
+        try {
+            await this.platform.updatePlugin(plugin.packageName)
+            if (!await this.refreshInstalledPlugins()) {
+                this.updateInstalledPlugin(plugin)
+            }
+        } catch (err) {
+            await this.refreshInstalledPlugins().catch(refreshError => this.logger.error(refreshError))
+            this.logger.error(err)
+            throw err
+        }
+    }
+
     async uninstallPlugin (plugin: PluginInfo): Promise<void> {
         try {
             await this.platform.uninstallPlugin(plugin.packageName)

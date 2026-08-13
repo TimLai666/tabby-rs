@@ -89,6 +89,10 @@ export class ElectronPlatformService extends PlatformService {
         await (promiseIpc as RendererProcessType).send('plugin-manager:install', name, version)
     }
 
+    async updatePlugin (name: string): Promise<void> {
+        await (promiseIpc as RendererProcessType).send('plugin-manager:update', name)
+    }
+
     async uninstallPlugin (name: string): Promise<void> {
         await (promiseIpc as RendererProcessType).send('plugin-manager:uninstall', name)
     }

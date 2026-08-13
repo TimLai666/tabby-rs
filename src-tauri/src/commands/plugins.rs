@@ -314,6 +314,14 @@ pub struct PluginInstallRequest {
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct PluginUpdateRequest {
+    pub operation_id: String,
+    pub package_name: String,
+    pub custom_node_path: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PluginUninstallRequest {
     pub operation_id: String,
     pub package_name: String,
@@ -453,10 +461,56 @@ pub async fn plugins_uninstall(
 #[tauri::command]
 pub async fn plugins_update(
     app: tauri::AppHandle,
-    request: PluginInstallRequest,
+    request: PluginUpdateRequest,
     state: tauri::State<'_, AppState>,
 ) -> Result<npm::PluginOperation, AppError> {
-    plugins_install(app, request, state).await
+    let root = state.paths().plugins_dir().clone();
+    let (node_path, npm_path) = match npm_toolchain(request.custom_node_path).await {
+        Ok(toolchain) => toolchain,
+        Err(error) => {
+            state.plugin_operations().finish(&request.operation_id);
+            return Err(error);
+        }
+    };
+    let cancel = state.plugin_operations().register(&request.operation_id)?;
+    let operation = running_operation(&request.operation_id, &request.package_name, "update");
+    if let Err(error) = app.emit("plugins:operation", &operation) {
+        state.plugin_operations().finish(&request.operation_id);
+        return Err(AppError::Io(error.to_string()));
+    }
+    let operations = state.plugin_operations().clone();
+    let operation_id = request.operation_id;
+    let package_name = request.package_name;
+    let progress = operation_progress(&app, &operation_id, &package_name, "update");
+    tauri::async_runtime::spawn(async move {
+        let result = npm::update(
+            root,
+            node_path,
+            npm_path,
+            &operation_id,
+            &package_name,
+            cancel,
+            progress,
+        )
+        .await;
+        operations.finish(&operation_id);
+        let operation = match result {
+            Ok(operation) => operation,
+            Err(error) => completed_operation(
+                &operation_id,
+                &package_name,
+                "update",
+                if matches!(error, AppError::Conflict(_)) {
+                    "cancelled"
+                } else {
+                    "failed"
+                },
+                Some(error.to_string()),
+            ),
+        };
+        let _ = app.emit("plugins:operation", operation);
+    });
+    Ok(operation)
 }
 
 #[tauri::command]

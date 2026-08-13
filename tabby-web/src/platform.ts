@@ -160,6 +160,10 @@ export class WebPlatformService extends PlatformService {
         throw new UnsupportedCapabilityError('pluginInstall')
     }
 
+    async updatePlugin (_name: string): Promise<void> {
+        throw new UnsupportedCapabilityError('pluginInstall')
+    }
+
     async uninstallPlugin (_name: string): Promise<void> {
         throw new UnsupportedCapabilityError('pluginInstall')
     }

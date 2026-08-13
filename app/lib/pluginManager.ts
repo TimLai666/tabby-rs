@@ -8,6 +8,11 @@ export class PluginManager {
             .reify({ add: [`${name}@${version}`] })
     }
 
+    async update (targetPath: string, name: string): Promise<void> {
+        await new Arborist({ path: targetPath, save: false, audit: false, fund: false })
+            .reify({ add: [name] })
+    }
+
     async uninstall (targetPath: string, name: string): Promise<void> {
         await new Arborist({ path: targetPath, save: false })
             .reify({ rm: [name] })
