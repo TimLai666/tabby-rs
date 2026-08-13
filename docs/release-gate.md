@@ -2,6 +2,8 @@
 
 `parity/features.yaml` and `parity/platform-matrix.yaml` are acceptance contracts, not status claims. Every entry needs evidence before it can change from `pending` to `passed` or a documented `accepted-difference`.
 
+Release staging includes both views of the same parity result. Use `--output release-staging/parity-report.json` for automation and `--html-output release-staging/parity-report.html` for human review. The HTML renderer escapes all report values and does not change the gate result.
+
 The gate also requires a passed bundle audit, installer smoke report, and generated license report. Run:
 
 ```text

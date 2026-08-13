@@ -106,6 +106,49 @@ function argument (args, name) {
     return index === -1 ? null : args[index + 1]
 }
 
+function escapeHtml (value) {
+    return String(value)
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;')
+}
+
+export function renderParityHtml (report) {
+    const status = report.passed ? 'passed' : 'failed'
+    const reportJson = escapeHtml(JSON.stringify(report, null, 2))
+    const failures = report.failures.length
+        ? `<ul>${report.failures.map(failure => `<li>${escapeHtml(failure)}</li>`).join('')}</ul>`
+        : '<p>No parity failures.</p>'
+    return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tabby RS parity report</title>
+  <style>
+    :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+    body { max-width: 72rem; margin: 2rem auto; padding: 0 1rem; }
+    .status { border: 1px solid currentColor; border-radius: .4rem; display: inline-block; padding: .35rem .6rem; }
+    .passed { color: #087f23; }
+    .failed { color: #b42318; }
+    pre { overflow: auto; padding: 1rem; border-radius: .4rem; background: color-mix(in srgb, currentColor 10%, transparent); }
+  </style>
+</head>
+<body>
+  <h1>Tabby RS parity report</h1>
+  <p class="status ${status}">${status.toUpperCase()}</p>
+  <p>Baseline: <code>${escapeHtml(report.baseline?.repository || 'unknown')}</code> at <code>${escapeHtml(report.baseline?.commit || 'unknown')}</code> (${escapeHtml(report.baseline?.version || 'unknown')})</p>
+  <h2>Failures</h2>
+  ${failures}
+  <h2>Machine-readable report</h2>
+  <pre>${reportJson}</pre>
+</body>
+</html>
+`
+}
+
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
     const args = process.argv.slice(2)
     const reportOnly = args.includes('--report-only')
@@ -115,6 +158,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     })
     const outputPath = argument(args, '--output')
     if (outputPath) fs.writeFileSync(path.resolve(outputPath), `${JSON.stringify(report, null, 2)}\n`)
+    const htmlOutputPath = argument(args, '--html-output')
+    if (htmlOutputPath) fs.writeFileSync(path.resolve(htmlOutputPath), renderParityHtml(report))
     console.log(JSON.stringify(report, null, 2))
     if (!report.passed && !reportOnly) process.exitCode = 1
 }

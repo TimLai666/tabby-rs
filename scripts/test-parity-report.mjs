@@ -10,8 +10,9 @@ const work = fs.mkdtempSync(path.join(os.tmpdir(), 'tabby-rs-parity-report-test-
 const features = path.join(work, 'features.yaml')
 const platforms = path.join(work, 'platforms.yaml')
 const output = path.join(work, 'parity-report.json')
+const htmlOutput = path.join(work, 'parity-report.html')
 
-fs.writeFileSync(features, `baseline:\n  repository: example/tabby\n  commit: abc123\n  version: 1.0.0\nfeatures:\n  - id: shell\n    title: Local shell\n    status: pending\n`)
+fs.writeFileSync(features, `baseline:\n  repository: 'example/<script>'\n  commit: abc123\n  version: 1.0.0\nfeatures:\n  - id: shell\n    title: Local shell\n    status: pending\n`)
 fs.writeFileSync(platforms, `platforms:\n  - id: linux\n    runner: ubuntu\n    target: x86_64-unknown-linux-gnu\n    status: pending\n`)
 
 const pending = spawnSync(process.execPath, [
@@ -32,9 +33,14 @@ const reportOnly = spawnSync(process.execPath, [
     '--platforms', platforms,
     '--report-only',
     '--output', output,
+    '--html-output', htmlOutput,
 ], { cwd: root, encoding: 'utf8' })
 assert.equal(reportOnly.status, 0)
 assert.match(reportOnly.stdout, /"passed": false/)
+const pendingHtml = fs.readFileSync(htmlOutput, 'utf8')
+assert.match(pendingHtml, /<title>Tabby RS parity report<\/title>/)
+assert.match(pendingHtml, /feature shell is pending/)
+assert.match(pendingHtml, /example\/&lt;script&gt;/)
 
 fs.writeFileSync(features, `baseline:\n  repository: example/tabby\n  commit: abc123\n  version: 1.0.0\nfeatures:\n  - id: shell\n    title: Local shell\n    status: passed\n    evidence: [fixture-test]\n`)
 fs.writeFileSync(platforms, `platforms:\n  - id: linux\n    runner: ubuntu\n    target: x86_64-unknown-linux-gnu\n    status: passed\n    evidence: [fixture-test]\n`)
@@ -43,7 +49,10 @@ const passed = execFileSync(process.execPath, [
     path.join(root, 'scripts/compare-parity.mjs'),
     '--features', features,
     '--platforms', platforms,
+    '--html-output', htmlOutput,
 ], { cwd: root, encoding: 'utf8' })
 assert.match(passed, /"passed": true/)
+const passedHtml = fs.readFileSync(htmlOutput, 'utf8')
+assert.match(passedHtml, /<p>No parity failures\.<\/p>/)
 
 console.log('Parity report fixtures passed')
