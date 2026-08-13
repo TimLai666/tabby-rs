@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const checker = path.join(root, 'scripts/assert-tauri-release-artifacts.mjs')
+const stager = path.join(root, 'scripts/stage-tauri-release.mjs')
 
 function run (staging, platform, bundles, environmentOnly = false) {
     const argumentsList = [checker, '--platform', platform, '--bundles', bundles]
@@ -73,5 +74,23 @@ fs.writeFileSync(path.join(macos, 'tabby-rs-metadata.json'), JSON.stringify({
     arch: 'aarch64',
 }))
 assert.equal(run(macos, 'macos', 'dmg'), path.join(macos, 'tabby-rs.app.tar.gz'))
+
+const bundle = fs.mkdtempSync(path.join(os.tmpdir(), 'tabby-rs-bundle-'))
+const bundleDmg = path.join(bundle, 'dmg')
+const bundleMacos = path.join(bundle, 'macos')
+fs.mkdirSync(bundleDmg)
+fs.mkdirSync(bundleMacos)
+fs.writeFileSync(path.join(bundleDmg, 'tabby-rs.dmg'), 'final dmg')
+fs.writeFileSync(path.join(bundleMacos, 'rw.intermediate.dmg'), 'intermediate dmg')
+fs.writeFileSync(path.join(bundleMacos, 'tabby-rs.app.tar.gz'), 'updater')
+const staged = fs.mkdtempSync(path.join(os.tmpdir(), 'tabby-rs-staged-'))
+execFileSync(process.execPath, [stager], {
+    cwd: root,
+    env: { ...process.env, TABBY_RS_BUNDLE_ROOT: bundle, TABBY_RS_RELEASE_STAGING: staged },
+    stdio: ['ignore', 'pipe', 'pipe'],
+})
+assert.ok(fs.existsSync(path.join(staged, 'dmg', 'tabby-rs.dmg')))
+assert.ok(fs.existsSync(path.join(staged, 'macos', 'tabby-rs.app.tar.gz')))
+assert.equal(fs.existsSync(path.join(staged, 'macos', 'rw.intermediate.dmg')), false)
 
 console.log('Tauri release artifact contract fixtures passed')
