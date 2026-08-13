@@ -291,6 +291,11 @@ pub async fn update_set_channel(
     if current_state.update_channel == request.channel {
         return Ok(());
     }
+    if configured_endpoint(&request.channel).is_none() || configured_public_key().is_none() {
+        return Err(AppError::Io(
+            "updater is not configured for the requested channel".into(),
+        ));
+    }
     let paths = StoragePaths::from_app_paths(state.paths());
     let backup = {
         let _guard = state.lock_storage();
@@ -313,8 +318,6 @@ pub async fn update_set_channel(
         persisted.update_channel = request.channel.clone();
     })?;
     emit_state(&app, &state);
-    if configured_endpoint(&request.channel).is_some() && configured_public_key().is_some() {
-        check_update(&app, &state).await?;
-    }
+    check_update(&app, &state).await?;
     Ok(())
 }

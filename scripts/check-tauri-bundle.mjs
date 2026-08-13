@@ -11,6 +11,7 @@ const forbiddenFileRules = [
     { id: 'electron-runtime', pattern: /(^|[/\\])electron(?:\.asar|\.exe)?$|electron-helper/i },
     { id: 'node-runtime', pattern: /(^|[/\\])node(?:\.exe)?$|node-runtime/i },
     { id: 'node-native-addon', pattern: /(?:node-pty|serialport|keytar)[^/\\]*\.node$/i },
+    { id: 'private-key-file', pattern: /(?:private[-_ ]?key|signing[-_ ]?key)/i },
 ]
 
 const forbiddenContentRules = [
@@ -22,6 +23,7 @@ const forbiddenContentRules = [
     { id: 'node-runtime-binary', binaryOnly: true, pattern: /node(?:\.exe|-runtime)/i },
     { id: 'sentry-sdk-or-endpoint', pattern: /(?:@sentry\/|sentry\.io|SENTRY_DSN)/i },
     { id: 'mixpanel-sdk-or-endpoint', pattern: /(?:mixpanel(?:-browser)?|mixpanel\.com)/i },
+    { id: 'private-key-material', pattern: /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----|TAURI_SIGNING_PRIVATE_KEY(?:_PASSWORD)?|TABBY_RS_UPDATE_PRIVATE_KEY/i },
 ]
 
 const requiredFiles = [
