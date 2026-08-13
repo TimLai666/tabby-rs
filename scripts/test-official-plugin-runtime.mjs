@@ -9,21 +9,38 @@ import ts from 'typescript'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'tabby-rs-official-plugin-'))
-const packageVersion = '1.0.0'
+const publicFixtures = [
+    { name: 'tabby-clippy', version: '1.0.0' },
+    { name: 'tabby-jumper', version: '1.0.3' },
+    { name: 'tabby-theme-hype', version: '1.0.0' },
+]
 
-execFileSync('npm', ['pack', `tabby-clippy@${packageVersion}`, '--pack-destination', fixture], {
-    cwd: root,
-    stdio: 'ignore',
+const packages = publicFixtures.map(({ name, version }) => {
+    execFileSync('npm', ['pack', `${name}@${version}`, '--pack-destination', fixture], {
+        cwd: root,
+        stdio: 'ignore',
+    })
+    const archive = fs.readdirSync(fixture).find(file => file === `${name}-${version}.tgz`)
+    assert.ok(archive, `the public plugin package was not downloaded: ${name}@${version}`)
+    const packageRoot = path.join(fixture, name)
+    fs.mkdirSync(packageRoot)
+    execFileSync('tar', ['-xzf', path.join(fixture, archive), '-C', packageRoot])
+    const unpackedRoot = path.join(packageRoot, 'package')
+    const packageJson = JSON.parse(fs.readFileSync(path.join(unpackedRoot, 'package.json'), 'utf8'))
+    assert.equal(packageJson.name, name)
+    assert.equal(packageJson.version, version)
+    assert.ok(packageJson.keywords.includes('tabby-plugin'))
+    return {
+        name: name.replace(/^tabby-/, ''),
+        packageName: name,
+        version,
+        path: unpackedRoot,
+        entry: path.join(unpackedRoot, packageJson.main),
+        isBuiltin: false,
+        isLegacy: false,
+        manifest: packageJson,
+    }
 })
-const archive = fs.readdirSync(fixture).find(name => name.endsWith('.tgz'))
-assert.ok(archive, 'the official plugin package was not downloaded')
-execFileSync('tar', ['-xzf', path.join(fixture, archive), '-C', fixture])
-
-const packageRoot = path.join(fixture, 'package')
-const packageJson = JSON.parse(fs.readFileSync(path.join(packageRoot, 'package.json'), 'utf8'))
-assert.equal(packageJson.name, 'tabby-clippy')
-assert.equal(packageJson.version, packageVersion)
-assert.ok(packageJson.keywords.includes('tabby-plugin'))
 
 const runtimePath = path.join(root, 'app/src/plugin-runtime/runtime.ts')
 const runtimeModule = new Module(runtimePath)
@@ -58,30 +75,23 @@ for (const name of ['@angular/core', '@angular/common', '@angular/forms', 'rxjs'
     registry.register(name, await import(name))
 }
 
-const descriptor = {
-    name: packageJson.name,
-    packageName: packageJson.name,
-    version: packageJson.version,
-    path: packageRoot,
-    entry: path.join(packageRoot, packageJson.main),
-    isBuiltin: false,
-    isLegacy: false,
-    manifest: packageJson,
-}
+const packageByName = new Map(packages.map(plugin => [plugin.packageName, plugin]))
 const result = await loadPluginModules({
     async discover () {
-        return [descriptor]
+        return packages
     },
-    async readEntry () {
+    async readEntry (packageName) {
+        const plugin = packageByName.get(packageName)
+        assert.ok(plugin, `unknown public plugin package: ${packageName}`)
         return {
-            packageName: packageJson.name,
-            entry: descriptor.entry,
-            code: fs.readFileSync(descriptor.entry, 'utf8'),
+            packageName,
+            entry: plugin.entry,
+            code: fs.readFileSync(plugin.entry, 'utf8'),
         }
     },
 }, registry)
 assert.deepEqual(result.failures, [])
-assert.equal(result.modules.length, 1)
-assert.equal(typeof result.modules[0], 'function')
+assert.equal(result.modules.length, publicFixtures.length)
+assert.deepEqual(result.modules.map(module => typeof module), publicFixtures.map(() => 'function'))
 
-console.log(`Official plugin runtime fixture passed: tabby-clippy@${packageVersion}`)
+console.log(`Official public plugin runtime fixtures passed: ${publicFixtures.map(({ name, version }) => `${name}@${version}`).join(', ')}`)
