@@ -247,6 +247,21 @@ fn bootstrap_mode(
     }
 }
 
+fn safe_mode_suspected_plugins(previous: &TabbyRsState) -> Vec<String> {
+    let mut suspected = previous.safe_mode.suspected_plugins.clone();
+    if let Some(last_started) = &previous.safe_mode.last_started_plugin {
+        if !suspected.contains(last_started) {
+            suspected.insert(0, last_started.clone());
+        }
+    }
+    for package_name in &previous.safe_mode.plugins {
+        if !suspected.contains(package_name) {
+            suspected.push(package_name.clone());
+        }
+    }
+    suspected
+}
+
 #[tauri::command]
 pub fn app_bootstrap(
     window: WebviewWindow,
@@ -272,7 +287,7 @@ pub fn app_bootstrap(
     };
     let (safe_mode, safe_mode_reason, plugin_packages) = bootstrap_mode(&previous, discovered);
     let suspected_plugins = if safe_mode {
-        previous.safe_mode.suspected_plugins.clone()
+        safe_mode_suspected_plugins(&previous)
     } else {
         Vec::new()
     };
@@ -369,8 +384,9 @@ pub fn app_quit(
 #[cfg(test)]
 mod tests {
     use super::{
-        bootstrap_mode, current_runtime_info, ensure_config_file, write_benchmark_frame_report,
-        write_benchmark_ready, write_installer_smoke_ready, BenchmarkFrameReport, BootstrapData,
+        bootstrap_mode, current_runtime_info, ensure_config_file, safe_mode_suspected_plugins,
+        write_benchmark_frame_report, write_benchmark_ready, write_installer_smoke_ready,
+        BenchmarkFrameReport, BootstrapData,
     };
     use crate::identity::AppIdentity;
     use crate::storage::state_file::{load_state, save_state, TabbyRsState};
@@ -521,6 +537,19 @@ mod tests {
         assert_eq!(
             mode,
             (true, Some("plugin evaluation failed".into()), Vec::new())
+        );
+    }
+
+    #[test]
+    fn unfinished_bootstrap_recovers_suspected_plugins_after_crash() {
+        let mut previous = TabbyRsState::default();
+        previous.safe_mode.attempt_id = Some("attempt-1".into());
+        previous.safe_mode.plugins = vec!["tabby-good".into(), "tabby-broken".into()];
+        previous.safe_mode.last_started_plugin = Some("tabby-broken".into());
+
+        assert_eq!(
+            safe_mode_suspected_plugins(&previous),
+            vec!["tabby-broken", "tabby-good"]
         );
     }
 

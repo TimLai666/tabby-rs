@@ -279,16 +279,7 @@ jobs:
       - name: Install Windows build dependencies
         if: matrix.name == 'windows'
         shell: pwsh
-        run: |
-          choco install nasm --no-progress --yes
-          $nasmDirectory = Join-Path ${env:ProgramFiles} 'NASM'
-          $nasmExecutable = Join-Path $nasmDirectory 'nasm.exe'
-          if (-not (Test-Path $nasmExecutable)) {
-            throw "NASM was not installed at $nasmExecutable"
-          }
-          Add-Content -Path $env:GITHUB_PATH -Value $nasmDirectory
-          $env:Path = "$nasmDirectory;$env:Path"
-          & $nasmExecutable -v
+        run: pwsh -NoProfile -File scripts/ci/install-nasm.ps1
 
       - name: Install Yarn
         run: npm install --global yarn@${{ env.YARN_VERSION }}

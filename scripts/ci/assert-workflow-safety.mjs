@@ -6,6 +6,7 @@ const workflowPath = new URL('../../.github/workflows/build.yml', import.meta.ur
 const workflow = await readFile(workflowPath, 'utf8')
 const releaseWorkflowPath = new URL('../../.github/workflows/release.yml', import.meta.url)
 const releaseWorkflow = await readFile(releaseWorkflowPath, 'utf8')
+const nasmInstallerScript = await readFile(new URL('./install-nasm.ps1', import.meta.url), 'utf8')
 
 const forbiddenPatterns = [
     [/\bsecrets\s*\./i, 'repository secrets'],
@@ -69,6 +70,17 @@ if (!/run: cargo clippy --manifest-path src-tauri\/Cargo\.toml --lib/.test(relea
 }
 if (!/^      - name: Build hardened UAC helper\n        if: runner\.os == 'Windows'\n        shell: pwsh\n        run: \|[\s\S]*?msbuild 'tabby-uac\/UAC\.sln'[\s\S]*?OutDir=\$env:GITHUB_WORKSPACE\\extras\\[\s\S]*?Test-Path \"\$env:GITHUB_WORKSPACE\\extras\\UAC\.exe\"/m.test(releaseWorkflow)) {
     violations.push('release Windows bundle does not rebuild and validate the hardened UAC helper')
+}
+if (!/run: pwsh -NoProfile -File scripts\/ci\/install-nasm\.ps1/.test(workflow)) {
+    violations.push('Windows CI does not use the verified NASM installer')
+}
+if (!/run: pwsh -NoProfile -File scripts\/ci\/install-nasm\.ps1/.test(releaseWorkflow)) {
+    violations.push('Windows release does not use the verified NASM installer')
+}
+if (!/https:\/\/www\.nasm\.us\/pub\/nasm\/releasebuilds\/3\.02\/win64\/nasm-3\.02-installer-x64\.exe/.test(nasmInstallerScript)
+    || !/Get-FileHash -Path \$installer -Algorithm SHA256/.test(nasmInstallerScript)
+    || !/0DDB40310861EB29F4D649FEB9466779982A2D251C0DB2B9CF0D21CF591171F3/.test(nasmInstallerScript)) {
+    violations.push('NASM installer is not pinned to the verified official binary')
 }
 if (!/^  publish:[\s\S]*?^    permissions:\n\s+contents:\s+write\s*$/m.test(releaseWorkflow)) {
     violations.push('release publish job does not explicitly grant contents write')

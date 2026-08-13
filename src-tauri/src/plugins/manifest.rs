@@ -351,7 +351,7 @@ fn regular_file(
 mod tests {
     use std::fs;
 
-    use super::{discover, list_installed, read_entry};
+    use super::{discover, list_installed, read_entry, MAX_ENTRY_BYTES};
 
     #[test]
     fn lists_only_valid_tabby_plugin_manifests() {
@@ -463,6 +463,21 @@ mod tests {
         assert!(read_entry(temp.path(), "tabby-demo").is_err());
     }
 
+    #[test]
+    fn rejects_oversized_plugin_entry() {
+        let temp = tempfile::tempdir().unwrap();
+        let plugin = temp.path().join("node_modules/tabby-demo");
+        fs::create_dir_all(&plugin).unwrap();
+        fs::write(
+            plugin.join("package.json"),
+            r#"{"name":"tabby-demo","version":"1.2.3","main":"index.js","keywords":["tabby-plugin"]}"#,
+        )
+        .unwrap();
+        fs::write(plugin.join("index.js"), vec![b'x'; MAX_ENTRY_BYTES + 1]).unwrap();
+
+        assert!(read_entry(temp.path(), "tabby-demo").is_err());
+    }
+
     #[cfg(unix)]
     #[test]
     fn rejects_symlinked_plugin_manifest() {
@@ -484,5 +499,25 @@ mod tests {
         .unwrap();
 
         assert!(list_installed(temp.path()).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_entry_symlink_outside_plugin_root() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().unwrap();
+        let plugin = temp.path().join("node_modules/tabby-demo");
+        let outside = tempfile::tempdir().unwrap();
+        fs::create_dir_all(&plugin).unwrap();
+        fs::write(
+            plugin.join("package.json"),
+            r#"{"name":"tabby-demo","version":"1.2.3","main":"index.js","keywords":["tabby-plugin"]}"#,
+        )
+        .unwrap();
+        fs::write(outside.path().join("index.js"), "module.exports = {}\n").unwrap();
+        symlink(outside.path().join("index.js"), plugin.join("index.js")).unwrap();
+
+        assert!(read_entry(temp.path(), "tabby-demo").is_err());
     }
 }
