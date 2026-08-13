@@ -46,6 +46,12 @@ const socket = {
             return { unsubscribe () {} }
         },
     },
+    close$: {
+        subscribe: listener => {
+            socket.closeListener = listener
+            return { unsubscribe () {} }
+        },
+    },
     connect: (...args) => calls.connect.push(args),
     write: chunk => calls.write.push(Buffer.from(chunk).toString()),
     close: error => calls.close.push(error),
@@ -101,9 +107,12 @@ const proxy = new context.module.exports.SocketProxy('example.test', 22)
 proxy.on('connect', () => events.push('connect'))
 proxy.on('data', data => events.push(`data:${data.toString('hex')}`))
 proxy.on('error', error => events.push(`error:${error.message}`))
+proxy.on('close', () => events.push('close'))
 
 socket.connectListener()
 socket.dataListener(Uint8Array.from([1, 2]))
+socket.errorListener(new Error('gateway failed'))
+socket.closeListener()
 proxy.connect('retry')
 proxy.write(Buffer.from('hello'))
 proxy.destroy()
@@ -112,7 +121,7 @@ assert.deepEqual(calls.createSocket, [['example.test', 22]])
 assert.deepEqual(calls.connect, [['retry']])
 assert.deepEqual(calls.write, ['hello'])
 assert.equal(calls.close.length, 1)
-assert.deepEqual(events, ['connect', 'data:0102'])
+assert.deepEqual(events, ['connect', 'data:0102', 'error:gateway failed', 'close'])
 assert.equal(registeredModules.get('net').Socket, context.module.exports.SocketProxy)
 
 console.log('Web connector runtime contract passed')
