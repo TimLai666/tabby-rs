@@ -480,7 +480,7 @@ fn map_keyboard_response(
 
 struct ManagerAuthenticator<'a> {
     manager: SshManager,
-    app: AppHandle,
+    app: Option<AppHandle>,
     request: SshConnectRequest,
     secrets: &'a SecretState,
     credentials: &'a CredentialState,
@@ -526,7 +526,7 @@ impl SshAuthenticator for ManagerAuthenticator<'_> {
                             let responses = self
                                 .manager
                                 .prompt_for_responses(
-                                    &self.app,
+                                    self.app.as_ref().ok_or(SshError::Closed)?,
                                     SshAuthPrompt {
                                         request_id: String::new(),
                                         id: self.request.profile_id.clone(),
@@ -586,7 +586,7 @@ impl SshAuthenticator for ManagerAuthenticator<'_> {
                                 let mut responses = self
                                     .manager
                                     .prompt_for_responses(
-                                        &self.app,
+                                        self.app.as_ref().ok_or(SshError::Closed)?,
                                         SshAuthPrompt {
                                             request_id: String::new(),
                                             id: self.request.profile_id.clone(),
@@ -716,7 +716,7 @@ impl SshManager {
         );
         let authenticator = Arc::new(ManagerAuthenticator {
             manager: self.clone(),
-            app: app.clone(),
+            app: Some(app.clone()),
             request: request.clone(),
             secrets,
             credentials,
@@ -1601,7 +1601,7 @@ impl SshManager {
     ) -> Result<bool, SshError> {
         let authenticator = ManagerAuthenticator {
             manager: self.clone(),
-            app: app.clone(),
+            app: Some(app.clone()),
             request: request.clone(),
             secrets,
             credentials,
@@ -2390,8 +2390,121 @@ impl From<SshError> for crate::error::AppError {
 
 #[cfg(test)]
 mod tests {
-    use super::{host_key_decision_action, model::*, validate_request, HostKeyDecisionAction};
-    use std::collections::BTreeMap;
+    use super::{
+        engine::{
+            KeyboardInteractiveResponse, PrivateKeyMaterial, SshAuthContext, SshAuthenticator,
+        },
+        host_key_decision_action,
+        model::*,
+        validate_request, HostKeyDecisionAction, ManagerAuthenticator, SshManager,
+    };
+    use crate::security::{
+        CredentialAddress, CredentialError, CredentialNamespace, CredentialState, CredentialStore,
+        SecretState,
+    };
+    use async_trait::async_trait;
+    use secrecy::{ExposeSecret, SecretString};
+    use std::{collections::BTreeMap, sync::Arc};
+    use tempfile::tempdir;
+
+    #[derive(Default)]
+    struct TestCredentialStore {
+        value: Option<(String, String, String)>,
+    }
+
+    impl CredentialStore for TestCredentialStore {
+        fn get(
+            &self,
+            namespace: CredentialNamespace,
+            address: &CredentialAddress,
+        ) -> Result<Option<SecretString>, CredentialError> {
+            let Some((service, account, value)) = &self.value else {
+                return Ok(None);
+            };
+            if namespace != CredentialNamespace::TabbyRs
+                || service != &address.service
+                || account != &address.account
+            {
+                return Ok(None);
+            }
+            Ok(Some(SecretString::new(value.clone())))
+        }
+
+        fn put(
+            &self,
+            _namespace: CredentialNamespace,
+            _address: &CredentialAddress,
+            _value: &str,
+        ) -> Result<(), CredentialError> {
+            Err(CredentialError::Unavailable)
+        }
+
+        fn delete(
+            &self,
+            _namespace: CredentialNamespace,
+            _address: &CredentialAddress,
+        ) -> Result<bool, CredentialError> {
+            Err(CredentialError::Unavailable)
+        }
+    }
+
+    struct RecordingAuthContext {
+        calls: Vec<String>,
+        password_valid: bool,
+    }
+
+    #[async_trait]
+    impl SshAuthContext for RecordingAuthContext {
+        async fn authenticate_none(&mut self, _username: &str) -> Result<bool, SshError> {
+            self.calls.push("none".into());
+            Ok(true)
+        }
+
+        async fn authenticate_password(
+            &mut self,
+            _username: &str,
+            password: &SecretString,
+        ) -> Result<bool, SshError> {
+            self.calls.push("password".into());
+            self.password_valid = password.expose_secret() == "secret-password";
+            Ok(false)
+        }
+
+        async fn authenticate_private_key(
+            &mut self,
+            _username: &str,
+            key: PrivateKeyMaterial,
+        ) -> Result<bool, SshError> {
+            self.calls
+                .push(format!("private-key:{}", key.openssh.len()));
+            Ok(true)
+        }
+
+        async fn authenticate_agent(
+            &mut self,
+            _username: &str,
+            socket: Option<&str>,
+        ) -> Result<bool, SshError> {
+            self.calls
+                .push(format!("agent:{}", socket.unwrap_or("default")));
+            Ok(true)
+        }
+
+        async fn authenticate_keyboard_interactive_start(
+            &mut self,
+            _username: &str,
+        ) -> Result<KeyboardInteractiveResponse, SshError> {
+            self.calls.push("keyboard-interactive".into());
+            Ok(KeyboardInteractiveResponse::Success)
+        }
+
+        async fn authenticate_keyboard_interactive_respond(
+            &mut self,
+            _responses: Vec<String>,
+        ) -> Result<KeyboardInteractiveResponse, SshError> {
+            Ok(KeyboardInteractiveResponse::Success)
+        }
+    }
 
     fn request() -> SshConnectRequest {
         SshConnectRequest {
@@ -2480,5 +2593,90 @@ mod tests {
             host_key_decision_action(HostKeyStatus::Unknown, HostKeyDecision::Save),
             Ok(HostKeyDecisionAction::Save)
         ));
+    }
+
+    #[tokio::test]
+    async fn manager_authenticator_runs_password_then_private_key_without_exposing_plaintext() {
+        let mut credentials = TestCredentialStore::default();
+        credentials.value = Some(("ssh".into(), "alice".into(), "secret-password".into()));
+        let credentials = CredentialState::with_store(Arc::new(credentials));
+        let secrets = SecretState::default();
+        let directory = tempdir().unwrap();
+        let private_key = directory.path().join("id_ed25519");
+        std::fs::write(&private_key, b"test-private-key").unwrap();
+        let mut value = request();
+        value.auth = vec![
+            AuthMethodRef::Password {
+                secret_ref: "keychain://ssh/alice".into(),
+            },
+            AuthMethodRef::PrivateKey {
+                file_ref: private_key.to_string_lossy().into_owned(),
+                passphrase_ref: None,
+            },
+        ];
+        let authenticator = ManagerAuthenticator {
+            manager: SshManager::new(directory.path().join("known_hosts")),
+            app: None,
+            request: value,
+            secrets: &secrets,
+            credentials: &credentials,
+        };
+        let mut context = RecordingAuthContext {
+            calls: Vec::new(),
+            password_valid: false,
+        };
+
+        assert!(authenticator
+            .authenticate(&mut context, "alice", &[])
+            .await
+            .unwrap());
+        assert!(context.password_valid);
+        assert_eq!(context.calls, ["password", "private-key:16"]);
+    }
+
+    #[tokio::test]
+    async fn manager_authenticator_supports_agent_and_keyboard_interactive_paths() {
+        let secrets = SecretState::default();
+        let credentials = CredentialState::default();
+        let directory = tempdir().unwrap();
+        let mut value = request();
+        value.auth = vec![AuthMethodRef::Agent {
+            socket: Some("/tmp/agent.sock".into()),
+        }];
+        let authenticator = ManagerAuthenticator {
+            manager: SshManager::new(directory.path().join("known_hosts")),
+            app: None,
+            request: value,
+            secrets: &secrets,
+            credentials: &credentials,
+        };
+        let mut context = RecordingAuthContext {
+            calls: Vec::new(),
+            password_valid: false,
+        };
+        assert!(authenticator
+            .authenticate(&mut context, "alice", &[])
+            .await
+            .unwrap());
+        assert_eq!(context.calls, ["agent:/tmp/agent.sock"]);
+
+        let mut value = request();
+        value.auth = vec![AuthMethodRef::KeyboardInteractive];
+        let authenticator = ManagerAuthenticator {
+            manager: SshManager::new(directory.path().join("known_hosts")),
+            app: None,
+            request: value,
+            secrets: &secrets,
+            credentials: &credentials,
+        };
+        let mut context = RecordingAuthContext {
+            calls: Vec::new(),
+            password_valid: false,
+        };
+        assert!(authenticator
+            .authenticate(&mut context, "alice", &[])
+            .await
+            .unwrap());
+        assert_eq!(context.calls, ["keyboard-interactive"]);
     }
 }
