@@ -9,6 +9,7 @@ use super::npm;
 
 const MAX_MANIFEST_BYTES: usize = 1024 * 1024;
 const MAX_ENTRY_BYTES: usize = 8 * 1024 * 1024;
+const MAX_ENTRY_DEPTH: usize = 32;
 
 #[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -263,10 +264,12 @@ fn descriptor_entry_path(package_path: &Path, entry: &str) -> Result<PathBuf, Ap
 }
 
 fn validate_entry_name(entry: &str) -> Result<(), AppError> {
+    let components = Path::new(entry).components().collect::<Vec<_>>();
     if entry.is_empty()
         || entry.len() > 512
+        || components.len() > MAX_ENTRY_DEPTH
         || entry.chars().any(char::is_control)
-        || Path::new(entry).components().any(|component| {
+        || components.iter().any(|component| {
             matches!(
                 component,
                 Component::ParentDir | Component::RootDir | Component::Prefix(_)
@@ -436,6 +439,27 @@ mod tests {
         .unwrap();
 
         assert_eq!(discover(temp.path()).unwrap().len(), 1);
+        assert!(read_entry(temp.path(), "tabby-demo").is_err());
+    }
+
+    #[test]
+    fn rejects_entry_paths_that_are_too_deep() {
+        let temp = tempfile::tempdir().unwrap();
+        let plugin = temp.path().join("node_modules/tabby-demo");
+        fs::create_dir_all(&plugin).unwrap();
+        let deep_entry = (0..33)
+            .map(|index| format!("part{index}"))
+            .chain(["index.js".into()])
+            .collect::<Vec<_>>()
+            .join("/");
+        fs::write(
+            plugin.join("package.json"),
+            format!(
+                r#"{{"name":"tabby-demo","version":"1.2.3","main":"{deep_entry}","keywords":["tabby-plugin"]}}"#
+            ),
+        )
+        .unwrap();
+
         assert!(read_entry(temp.path(), "tabby-demo").is_err());
     }
 
