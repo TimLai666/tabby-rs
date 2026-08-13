@@ -33,17 +33,17 @@ assert.match(rust, /async fn disconnect_connection\(/)
 assert.match(rust, /\*max_count == 0/)
 
 const connectMethod = rust.match(
-    /pub async fn connect\([\s\S]*?\n    \}\n\n    pub async fn host_key_decision/,
+    /pub async fn connect\([\s\S]*?\r?\n    \}\r?\n\r?\n    pub async fn host_key_decision/,
 )
 assert.ok(connectMethod, 'SSH connect method contract is missing')
 const directConnectBranch = connectMethod[0].match(
-    /if request\.jump_chain\.is_empty\(\) \{([\s\S]*?)\n        \} else \{/,
+    /if request\.jump_chain\.is_empty\(\) \{([\s\S]*?)\r?\n        \} else \{/,
 )
 assert.ok(directConnectBranch, 'SSH connect branch contract is missing')
 assert.match(directConnectBranch[1], /connect_direct_engine\(/)
 assert.doesNotMatch(directConnectBranch[1], /\.authenticate\(/)
 const jumpConnectBranch = connectMethod[0].match(
-    /\} else \{([\s\S]*?)\n        \}\n\n        let channel/,
+    /\} else \{([\s\S]*?)\r?\n        \}\r?\n\r?\n        let channel/,
 )
 assert.ok(jumpConnectBranch, 'SSH jump branch contract is missing')
 assert.match(jumpConnectBranch[1], /connect_over_channel\(/)
