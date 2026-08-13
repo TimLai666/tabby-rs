@@ -105,6 +105,12 @@ jobs:
       - name: Build Tauri renderer
         run: yarn build:tauri:frontend
 
+      - name: Test Rust host
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib
+
+      - name: Test SSH authentication fixture
+        run: yarn test:ssh-auth-integration
+
       - name: Install pinned Tauri CLI
         run: cargo install tauri-cli --version ${{ env.TAURI_CLI_VERSION }} --locked
 
