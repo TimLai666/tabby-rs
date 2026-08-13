@@ -992,6 +992,10 @@ export interface HostRequestMap {
         request: { path: string }
         response: null
     }
+    'desktop.exec': {
+        request: { executable: string; args: string[] }
+        response: null
+    }
     'desktop.readFile': {
         request: { path: string }
         response: number[]

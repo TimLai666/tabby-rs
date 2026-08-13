@@ -7,6 +7,7 @@ use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
+use tokio::process::Command;
 
 #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
@@ -470,6 +471,33 @@ pub fn desktop_open_external(
 #[serde(rename_all = "camelCase")]
 pub struct PathRequest {
     pub path: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExecRequest {
+    pub executable: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+}
+
+#[tauri::command]
+pub async fn desktop_exec(request: ExecRequest) -> Result<(), AppError> {
+    if request.executable.trim().is_empty() {
+        return Err(AppError::InvalidArgument(
+            "executable must not be empty".into(),
+        ));
+    }
+
+    let status = Command::new(&request.executable)
+        .args(&request.args)
+        .status()
+        .await
+        .map_err(io_error)?;
+    if !status.success() {
+        return Err(AppError::Io(format!("process exited with {status}")));
+    }
+    Ok(())
 }
 
 #[tauri::command]

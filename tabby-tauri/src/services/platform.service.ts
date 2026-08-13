@@ -181,6 +181,14 @@ export class TauriPlatformService extends PlatformService {
         await this.bridge.invoke('desktop.openExternal', { url })
     }
 
+    async exec (app: string, argv: string[]): Promise<void> {
+        await this.bridge.invoke('desktop.exec', { executable: app, args: argv })
+    }
+
+    getWinSCPPath (): string | null {
+        return null
+    }
+
     showItemInFolder (path: string): void {
         void this.bridge.invoke('desktop.revealPath', { path })
             .catch(error => console.warn('Could not reveal path', error))

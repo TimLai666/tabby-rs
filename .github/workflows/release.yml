@@ -197,6 +197,9 @@ jobs:
       - name: Test Tabby RS identity contract
         run: yarn test:tabby-rs-branding
 
+      - name: Test Tauri platform bridge contract
+        run: yarn test:tauri-platform
+
       - name: Verify no built-in telemetry
         run: yarn audit:telemetry
 

@@ -169,6 +169,9 @@ jobs:
       - name: Test runtime capability providers
         run: yarn test:runtime-capabilities
 
+      - name: Test Tauri platform bridge contract
+        run: yarn test:tauri-platform
+
       - name: Test official plugin runtime fixture
         run: yarn test:official-plugin-runtime
 
