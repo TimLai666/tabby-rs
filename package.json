@@ -116,7 +116,7 @@
     "test:parity-links": "node scripts/test-parity-links.mjs",
     "test:release-documentation": "node scripts/test-release-documentation.mjs",
     "test:diagnostics-ui": "node scripts/test-diagnostics-ui-contract.mjs",
-    "test:diagnostics-privacy": "cargo test --manifest-path src-tauri/Cargo.toml --lib diagnostics::",
+    "test:diagnostics-privacy": "yarn build:tauri:frontend && cargo test --manifest-path src-tauri/Cargo.toml --lib diagnostics::",
     "test:tabby-rs-branding": "node scripts/test-tabby-rs-branding.mjs",
     "test:parity-report": "node scripts/test-parity-report.mjs",
     "build:tauri": "npm run build:tauri:frontend && cargo build --manifest-path src-tauri/Cargo.toml",
