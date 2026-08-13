@@ -12,7 +12,7 @@ const MAX_CONFIG_BYTES: usize = 1024 * 1024;
 const MAX_INCLUDE_DEPTH: usize = 16;
 
 pub fn private_key_candidates() -> Vec<String> {
-    let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) else {
+    let Some(home) = home_directory() else {
         return Vec::new();
     };
     let directory = PathBuf::from(home).join(".ssh");
@@ -621,9 +621,23 @@ fn resolve_identity_path(value: &str, base: &Path) -> String {
 }
 
 fn home_directory() -> Option<PathBuf> {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
+    select_home_directory(
+        std::env::var_os("HOME").map(PathBuf::from),
+        std::env::var_os("USERPROFILE").map(PathBuf::from),
+        cfg!(windows),
+    )
+}
+
+fn select_home_directory(
+    home: Option<PathBuf>,
+    userprofile: Option<PathBuf>,
+    windows: bool,
+) -> Option<PathBuf> {
+    if windows {
+        userprofile.or(home)
+    } else {
+        home.or(userprofile)
+    }
 }
 
 fn resolve_identity_path_with_home(value: &str, base: &Path, home: Option<&Path>) -> String {
@@ -693,9 +707,29 @@ mod tests {
 
     use super::{
         apply, parse_config, parse_config_line, preview, resolve_identity_path_with_home,
-        stable_static_profile_id, SshImportAction, SshImportSelection, SshImportSelectionItem,
-        SshImportSource,
+        select_home_directory, stable_static_profile_id, SshImportAction, SshImportSelection,
+        SshImportSelectionItem, SshImportSource,
     };
+
+    #[test]
+    fn prefers_native_home_variable_for_each_platform() {
+        assert_eq!(
+            select_home_directory(
+                Some(PathBuf::from("/msys/home/alice")),
+                Some(PathBuf::from(r"C:\Users\alice")),
+                true,
+            ),
+            Some(PathBuf::from(r"C:\Users\alice")),
+        );
+        assert_eq!(
+            select_home_directory(
+                Some(PathBuf::from("/home/alice")),
+                Some(PathBuf::from(r"C:\Users\alice")),
+                false,
+            ),
+            Some(PathBuf::from("/home/alice")),
+        );
+    }
 
     #[test]
     fn expands_tilde_identity_paths_from_explicit_home_directory() {
