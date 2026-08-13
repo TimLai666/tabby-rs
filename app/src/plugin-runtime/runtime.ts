@@ -54,6 +54,15 @@ export class DuplicatePluginModuleError extends Error {
     }
 }
 
+export class InvalidPluginExportError extends Error {
+    readonly code = 'invalid-export'
+
+    constructor (message: string) {
+        super(message)
+        this.name = 'InvalidPluginExportError'
+    }
+}
+
 function isObject (value: unknown): value is Record<string, unknown> {
     return value !== null && typeof value === 'object'
 }
@@ -176,8 +185,8 @@ function failureFor (plugin: RuntimePluginDescriptor, phase: PluginLoadFailure['
         ? error.code
         : error instanceof MissingPluginModuleError
             ? error.code
-            : phase === 'evaluate' && error instanceof Error && error.message.includes('default export')
-                ? 'invalid-export'
+            : error instanceof InvalidPluginExportError
+                ? error.code
                 : 'exception'
     const failure: PluginLoadFailure = {
         plugin,
@@ -235,7 +244,7 @@ export async function loadPluginModules (
         try {
             const evaluatedModule = evaluateCommonJs(source.code, source.entry, registry)
             if (!isObject(evaluatedModule) && typeof evaluatedModule !== 'function') {
-                throw new Error('Plugin has no valid default export')
+                throw new InvalidPluginExportError('Plugin has no valid default export')
             }
             const packageModule = (typeof evaluatedModule === 'function'
                 ? { default: evaluatedModule }
@@ -245,12 +254,12 @@ export async function loadPluginModules (
             }
             const exported = packageModule.default ?? packageModule
             if (!isObject(exported) && typeof exported !== 'function') {
-                throw new Error('Plugin has no valid default export')
+                throw new InvalidPluginExportError('Plugin has no valid default export')
             }
             const exportedModule = exported as { forRoot?: () => unknown }
             const pluginModule = typeof exportedModule.forRoot === 'function' ? exportedModule.forRoot() : exported
             if (!isObject(pluginModule) && typeof pluginModule !== 'function') {
-                throw new Error('Plugin default export did not produce a module')
+                throw new InvalidPluginExportError('Plugin default export did not produce a module')
             }
             const loadedModule = pluginModule as LoadedPluginModule
             loadedModule.pluginName = plugin.name
