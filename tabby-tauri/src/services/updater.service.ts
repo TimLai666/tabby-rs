@@ -28,6 +28,21 @@ export class TauriUpdaterService extends UpdaterService {
     }
 
     async install (info: UpdateInfo): Promise<void> {
+        if (!await this.confirmInstall()) {
+            return
+        }
+        await this.installConfirmed(info)
+    }
+
+    override async update (info: UpdateInfo): Promise<void> {
+        if (!await this.confirmInstall()) {
+            return
+        }
+        await this.download(info)
+        await this.installConfirmed(info)
+    }
+
+    private async confirmInstall (): Promise<boolean> {
         const confirmation = await this.platform.showMessageBox({
             type: 'warning',
             message: this.translate.instant('Installing the update will close all tabs and restart Tabby RS.'),
@@ -38,9 +53,10 @@ export class TauriUpdaterService extends UpdaterService {
             defaultId: 0,
             cancelId: 1,
         })
-        if (confirmation.response !== 0) {
-            return
-        }
+        return confirmation.response === 0
+    }
+
+    private async installConfirmed (info: UpdateInfo): Promise<void> {
         await this.bridge.invoke('update.install', { version: info.version })
     }
 
