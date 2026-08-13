@@ -1006,7 +1006,7 @@ impl SshManager {
             }
         }
 
-        let mut channel = match handle.channel_open_session().await {
+        let channel = match handle.channel_open_session().await {
             Ok(channel) => channel,
             Err(_) => {
                 disconnect_connection(
@@ -1019,6 +1019,7 @@ impl SshManager {
                 return Err(SshError::ChannelOpen);
             }
         };
+        let mut channel = channel;
         let terminal = &request.terminal;
         if channel
             .request_pty(
