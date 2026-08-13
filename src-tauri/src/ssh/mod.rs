@@ -364,7 +364,7 @@ struct RawSshAuthContext<'a> {
 }
 
 #[async_trait::async_trait]
-impl SshAuthContext for RawSshAuthContext<'_> {
+impl<'a> SshAuthContext for RawSshAuthContext<'a> {
     async fn authenticate_none(&mut self, username: &str) -> Result<bool, SshError> {
         Ok(matches!(
             self.handle
@@ -2333,14 +2333,18 @@ async fn connect_agent(socket: Option<String>) -> Result<PlatformAgentClient, Ss
     #[cfg(windows)]
     {
         let client = match socket {
-            Some(path) => AgentClient::connect_named_pipe(path).await,
+            Some(path) => AgentClient::connect_named_pipe(path)
+                .await
+                .map(|client| client.dynamic()),
             None => match std::env::var_os("SSH_AUTH_SOCK") {
-                Some(path) => AgentClient::connect_named_pipe(path).await,
-                None => Ok(AgentClient::connect_pageant().await),
+                Some(path) => AgentClient::connect_named_pipe(path)
+                    .await
+                    .map(|client| client.dynamic()),
+                None => Ok(AgentClient::connect_pageant().await.dynamic()),
             },
         }
         .map_err(|_| SshError::AuthenticationRejected)?;
-        return Ok(client.dynamic());
+        return Ok(client);
     }
 
     #[cfg(not(any(unix, windows)))]

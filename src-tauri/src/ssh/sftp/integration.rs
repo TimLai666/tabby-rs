@@ -340,7 +340,8 @@ async fn runs_real_ssh_shell_and_sftp_lifecycle() {
             | crate::ssh::engine::SshChannelMessage::ExtendedData { data, .. } => {
                 engine_output.extend_from_slice(&data)
             }
-            crate::ssh::engine::SshChannelMessage::Close => break,
+            crate::ssh::engine::SshChannelMessage::Eof
+            | crate::ssh::engine::SshChannelMessage::Close => break,
             _ => {}
         }
     }
