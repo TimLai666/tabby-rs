@@ -61,6 +61,9 @@ if (!/run: cargo fmt --manifest-path src-tauri\/Cargo\.toml -- --check/.test(rel
 if (!/run: cargo clippy --manifest-path src-tauri\/Cargo\.toml --lib/.test(releaseWorkflow)) {
     violations.push('release workflow is missing the Rust clippy check')
 }
+if (!/^      - name: Build hardened UAC helper\n        if: runner\.os == 'Windows'\n        shell: pwsh\n        run: \|[\s\S]*?msbuild 'tabby-uac\/UAC\.sln'[\s\S]*?OutDir=\$env:GITHUB_WORKSPACE\\extras\\[\s\S]*?Test-Path \"\$env:GITHUB_WORKSPACE\\extras\\UAC\.exe\"/m.test(releaseWorkflow)) {
+    violations.push('release Windows bundle does not rebuild and validate the hardened UAC helper')
+}
 if (!/^  publish:[\s\S]*?^    permissions:\n\s+contents:\s+write\s*$/m.test(releaseWorkflow)) {
     violations.push('release publish job does not explicitly grant contents write')
 }
