@@ -263,7 +263,7 @@ features:
     issues: [24]
     platforms: [windows, macos, linux]
     tests:
-      automated: [rust-host, bundle-audit]
+      automated: [rust-host, bundle-audit, diagnostics-ui]
       manual: [diagnostics-privacy]
     status: pending
     evidence: []
@@ -281,7 +281,7 @@ features:
     issues: [26]
     platforms: [web]
     tests:
-      automated: [web-output-audit, web-host-app, web-capability-boundary]
+      automated: [web-output-audit, web-source-boundary, web-host-app, web-capability-boundary]
       manual: [web-smoke]
     status: pending
     evidence: []
@@ -317,7 +317,7 @@ features:
     issues: [23, 25, 27]
     platforms: [windows, macos, linux]
     tests:
-      automated: [release-checksums, license-report, release-documentation]
+      automated: [release-checksums, license-report, release-documentation, tauri-release-artifacts, tauri:update-manifest]
       manual: [release-provenance-docs]
     status: pending
     evidence: []
