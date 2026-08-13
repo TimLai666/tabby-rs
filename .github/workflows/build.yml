@@ -109,11 +109,20 @@ jobs:
       - name: Verify Electron build outputs
         run: node scripts/ci/assert-build-output.mjs
 
+      - name: Build web container
+        run: npx webpack --config web/webpack.config.mjs --mode production
+
       - name: Verify tabby-web bundle boundary
         run: yarn audit:web
 
       - name: Test tabby-web bundle audit
         run: yarn test:web-output-audit
+
+      - name: Test web host-app contract
+        run: yarn test:web-host-app
+
+      - name: Test web capability boundary
+        run: yarn test:web-capability-boundary
 
       - name: Test release documentation contract
         run: yarn test:release-documentation

@@ -33,6 +33,16 @@ try {
     const directoryResult = await execFileAsync(process.execPath, [checker, fixture])
     assert.match(directoryResult.stdout, /2 JavaScript file\(s\)/)
     assert.equal(await readFile(entry, 'utf8'), 'export const entry = true\n')
+
+    await writeFile(chunk, "Tabby.registerMock('keytar', { getPassword: () => null })\nTabby.registerMock('@serialport/bindings', {})\n")
+    const compatibilityMockResult = await execFileAsync(process.execPath, [checker, fixture])
+    assert.match(compatibilityMockResult.stdout, /2 JavaScript file\(s\)/)
+
+    await writeFile(chunk, "const nativeKeychain = require('keytar')\n")
+    await assert.rejects(
+        execFileAsync(process.execPath, [checker, fixture]),
+        /native keychain in .*chunks[\\/]chunk\.js/,
+    )
 } finally {
     await rm(fixture, { recursive: true, force: true })
 }
