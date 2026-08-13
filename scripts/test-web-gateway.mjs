@@ -105,4 +105,17 @@ webSocket.receive(JSON.stringify({ _: 'error', details: 'gateway rejected' }))
 assert.deepEqual(events, ['connect', 'data:0304', 'error:gateway rejected', 'close'])
 assert.equal(connector.sockets.size, 0)
 
+const nodeStyleSocket = connector.createSocket()
+await nodeStyleSocket.connect(2200, 'ssh.example')
+const nodeStyleWebSocket = sockets[1]
+nodeStyleWebSocket.open()
+nodeStyleWebSocket.receive(JSON.stringify({ _: 'hello' }))
+nodeStyleWebSocket.receive(JSON.stringify({ _: 'ready' }))
+assert.deepEqual(nodeStyleWebSocket.sent.slice(0, 2).map(x => JSON.parse(x)), [
+    { _: 'hello', version: 1, auth_token: 'secret-token' },
+    { _: 'connect', host: 'ssh.example', port: 2200 },
+])
+nodeStyleSocket.close()
+assert.equal(connector.sockets.size, 0)
+
 console.log('Web gateway protocol contract passed')

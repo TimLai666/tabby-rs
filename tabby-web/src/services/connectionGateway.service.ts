@@ -47,6 +47,31 @@ function asError (error: unknown, fallback: string): Error {
     return new Error(fallback)
 }
 
+function normalizeConnectOptions (options: WebGatewaySocketOptions|number, host?: string): WebGatewaySocketOptions {
+    if (typeof options === 'number') {
+        if (!Number.isInteger(options) || options < 1 || options > 65535) {
+            throw new Error(`Invalid web gateway port: ${options}`)
+        }
+        return {
+            host: host ?? 'localhost',
+            port: options,
+        }
+    }
+    if (
+        typeof options.host !== 'string'
+        || !options.host
+        || !Number.isInteger(options.port)
+        || options.port < 1
+        || options.port > 65535
+    ) {
+        throw new Error('Web gateway socket requires a valid host and port')
+    }
+    return {
+        host: options.host,
+        port: options.port,
+    }
+}
+
 export class WebGatewaySocket {
     readonly connect$ = new Subject<void>()
     readonly data$ = new Subject<Uint8Array>()
@@ -65,14 +90,14 @@ export class WebGatewaySocket {
         private readonly createWebSocket: WebGatewaySocketFactory = defaultWebSocketFactory,
     ) { }
 
-    async connect (options: WebGatewaySocketOptions): Promise<void> {
+    async connect (options: WebGatewaySocketOptions|number, host?: string): Promise<void> {
         if (this.closed) {
             throw new Error('Web gateway socket is already closed')
         }
         if (this.webSocket) {
             throw new Error('Web gateway socket is already connecting')
         }
-        this.options = options
+        this.options = normalizeConnectOptions(options, host)
         try {
             const webSocket = this.createWebSocket(this.gatewayUrl)
             this.webSocket = webSocket
