@@ -134,6 +134,7 @@
     "test:translate-compiler": "node scripts/test-translate-compiler-compat.mjs",
     "test:tauri-event-names": "node scripts/test-tauri-event-names.mjs",
     "test:profile-tree": "node scripts/test-profile-tree-contract.mjs",
+    "test:login-scripts-settings": "node scripts/test-login-scripts-settings-contract.mjs",
     "test:plugin-search": "node scripts/test-plugin-search-contract.mjs",
     "test:plugin-npm-lifecycle": "node scripts/test-plugin-npm-lifecycle.mjs",
     "test:plugin-node-status": "node scripts/test-plugin-node-status-contract.mjs",

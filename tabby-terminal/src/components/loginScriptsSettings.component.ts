@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/explicit-module-boundary-types */
 import { Component, Input } from '@angular/core'
+import { CdkDragDrop, moveItemInArray } from '@angular/cdk/drag-drop'
 
 import { PlatformService, TranslateService } from 'tabby-core'
 import { LoginScript, LoginScriptsOptions } from '../middleware/loginScriptProcessing'
@@ -42,6 +43,10 @@ export class LoginScriptsSettingsComponent {
 
     addScript () {
         this.scripts.push({ expect: '', send: '' })
+    }
+
+    dropScript (event: CdkDragDrop<LoginScript[]>): void {
+        moveItemInArray(this.scripts, event.previousIndex, event.currentIndex)
     }
 
     save () {
