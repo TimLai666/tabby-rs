@@ -527,7 +527,8 @@ impl SshConnection for RusshConnection {
     ) -> Result<Box<dyn SshChannel>, SshError> {
         let handle = self.handle.lock().await;
         let handle = handle.as_ref().ok_or(SshError::Closed)?;
-        let channel = handle
+        let environment_count = request.environment.len();
+        let mut channel = handle
             .channel_open_session()
             .await
             .map_err(|_| SshError::ChannelOpen)?;
@@ -553,6 +554,7 @@ impl SshConnection for RusshConnection {
             .request_shell(true)
             .await
             .map_err(|_| SshError::ChannelOpen)?;
+        super::wait_for_channel_confirmations(&mut channel, environment_count + 2).await?;
         let (reader, writer) = channel.split();
         Ok(Box::new(RusshChannel {
             reader: AsyncMutex::new(reader),

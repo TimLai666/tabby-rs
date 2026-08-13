@@ -10,6 +10,8 @@ pub mod sftp;
 use std::{
     collections::{BTreeMap, HashMap},
     fs,
+    future::Future,
+    pin::Pin,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex,
@@ -58,6 +60,8 @@ use crate::{
         sftp::{RemoteFileEntry, SftpOverwritePolicy, SftpTransferDescriptor},
     },
 };
+
+const CHANNEL_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub use import::*;
 pub use known_hosts::KnownHostsStore;
@@ -422,11 +426,10 @@ impl<'a> SshAuthContext for RawSshAuthContext<'a> {
             .await
             .map_err(|_| SshError::AuthenticationRejected)?;
         for identity in identities {
-            let result = self
-                .handle
-                .authenticate_publickey_with(username, identity, None, &mut agent)
-                .await
-                .map_err(|_| SshError::AuthenticationRejected)?;
+            let result =
+                authenticate_publickey_with_agent(self.handle, username, identity, &mut agent)
+                    .await
+                    .map_err(|_| SshError::AuthenticationRejected)?;
             if matches!(result, AuthResult::Success) {
                 return Ok(true);
             }
@@ -1003,7 +1006,7 @@ impl SshManager {
             }
         }
 
-        let channel = match handle.channel_open_session().await {
+        let mut channel = match handle.channel_open_session().await {
             Ok(channel) => channel,
             Err(_) => {
                 disconnect_connection(
@@ -1091,6 +1094,24 @@ impl SshManager {
                 &mut jump_handles,
                 Disconnect::ByApplication,
                 "shell request failed",
+            )
+            .await;
+            return Err(SshError::ChannelOpen);
+        }
+
+        let request_count = 2
+            + request.environment.len()
+            + usize::from(request.agent_forward)
+            + usize::from(request.x11);
+        if wait_for_channel_confirmations(&mut channel, request_count)
+            .await
+            .is_err()
+        {
+            disconnect_connection(
+                &mut handle,
+                &mut jump_handles,
+                Disconnect::ByApplication,
+                "shell request confirmation failed",
             )
             .await;
             return Err(SshError::ChannelOpen);
@@ -2318,6 +2339,37 @@ type PlatformAgentClient = AgentClient<tokio::net::UnixStream>;
 
 #[cfg(windows)]
 type PlatformAgentClient = AgentClient<Box<dyn AgentStream + Send + Unpin + 'static>>;
+
+fn authenticate_publickey_with_agent<'a>(
+    handle: &'a mut client::Handle<SshHandler>,
+    username: &str,
+    identity: russh::keys::PublicKey,
+    agent: &'a mut PlatformAgentClient,
+) -> Pin<Box<dyn Future<Output = Result<AuthResult, russh::AgentAuthError>> + Send + 'a>> {
+    Box::pin(handle.authenticate_publickey_with(username.to_owned(), identity, None, agent))
+}
+
+async fn wait_for_channel_confirmations(
+    channel: &mut russh::Channel<client::Msg>,
+    expected: usize,
+) -> Result<(), SshError> {
+    let mut remaining = expected;
+    while remaining > 0 {
+        let message = tokio::time::timeout(CHANNEL_REQUEST_TIMEOUT, channel.wait())
+            .await
+            .map_err(|_| SshError::ChannelOpen)?
+            .ok_or(SshError::ChannelOpen)?;
+        match message {
+            ChannelMsg::Success => remaining -= 1,
+            ChannelMsg::Failure
+            | ChannelMsg::Eof
+            | ChannelMsg::Close
+            | ChannelMsg::OpenFailure(_) => return Err(SshError::ChannelOpen),
+            _ => {}
+        }
+    }
+    Ok(())
+}
 
 async fn connect_agent(socket: Option<String>) -> Result<PlatformAgentClient, SshError> {
     #[cfg(unix)]
