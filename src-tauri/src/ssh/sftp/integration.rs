@@ -325,6 +325,10 @@ async fn runs_real_ssh_shell_and_sftp_lifecycle() {
         .await
         .expect("engine shell channel failed");
     engine_shell
+        .resize(100, 30, 0, 0)
+        .await
+        .expect("engine shell resize failed");
+    engine_shell
         .write("printf 'tabby-rs-engine-✓-中文\\n'; exit 7\\n".as_bytes())
         .await
         .expect("engine shell write failed");
@@ -346,10 +350,6 @@ async fn runs_real_ssh_shell_and_sftp_lifecycle() {
         }
     }
     assert!(String::from_utf8_lossy(&engine_output).contains("tabby-rs-engine-✓-中文"));
-    engine_shell
-        .resize(100, 30, 0, 0)
-        .await
-        .expect("engine shell resize failed");
     engine_shell
         .close()
         .await
