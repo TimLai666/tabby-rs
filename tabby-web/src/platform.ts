@@ -41,9 +41,6 @@ export class WebPlatformService extends PlatformService {
     }
 
     async readClipboardText (): Promise<string> {
-        if (!navigator.clipboard?.readText) {
-            return ''
-        }
         try {
             return await navigator.clipboard.readText()
         } catch {
