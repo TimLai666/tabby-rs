@@ -18,6 +18,16 @@ const transpile = source => ts.transpileModule(source, {
 
 const source = fs.readFileSync(path.join(root, 'web/polyfills.ts'), 'utf8')
 const bufferSource = fs.readFileSync(path.join(root, 'web/polyfills.buffer.ts'), 'utf8')
+const sshSource = fs.readFileSync(path.join(root, 'tabby-ssh/src/session/ssh.ts'), 'utf8')
+const sftpSource = fs.readFileSync(path.join(root, 'tabby-ssh/src/session/sftp.ts'), 'utf8')
+const telnetSource = fs.readFileSync(path.join(root, 'tabby-telnet/src/session.ts'), 'utf8')
+
+assert.match(source, /Socket: SocketProxy/, 'web net provider must use the gateway socket proxy')
+assert.match(sshSource, /from 'net'/, 'web SSH provider must retain the shared net transport seam')
+assert.match(sshSource, /openSFTP/, 'SFTP must remain attached to the SSH provider transport')
+assert.match(sftpSource, /constructor \(private sftp:/, 'SFTP provider must consume the SSH SFTP session')
+assert.match(telnetSource, /from 'net'/, 'web Telnet provider must retain the shared net transport seam')
+
 const registeredModules = new Map()
 const moduleCache = new Map()
 const calls = {
@@ -124,4 +134,15 @@ assert.equal(calls.close.length, 1)
 assert.deepEqual(events, ['connect', 'data:0102', 'error:gateway failed', 'close'])
 assert.equal(registeredModules.get('net').Socket, context.module.exports.SocketProxy)
 
-console.log('Web connector runtime contract passed')
+const providerRoutes = [
+    ['ssh', ['ssh.example', 22]],
+    ['sftp-over-ssh', ['sftp.example', 22]],
+    ['telnet', [23, 'telnet.example']],
+]
+for (const [, args] of providerRoutes) {
+    const providerProxy = new context.module.exports.SocketProxy()
+    providerProxy.connect(...args)
+}
+assert.deepEqual(calls.connect.slice(1), providerRoutes.map(([, args]) => args))
+
+console.log('Web connector provider routing contract passed')
