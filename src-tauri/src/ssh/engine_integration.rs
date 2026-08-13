@@ -2,6 +2,7 @@ use std::{borrow::Cow, sync::Arc, time::Duration};
 
 use russh::{
     client,
+    keys::{PrivateKey, PublicKey},
     server::{self, Auth, Handler as ServerHandler, Response, Server},
     SshId,
 };
@@ -30,11 +31,13 @@ impl HostKeyVerifier for FixtureHostKeyVerifier {
 enum AuthFixtureKind {
     Password,
     KeyboardInteractive,
+    PrivateKey,
 }
 
 struct AuthFixtureServer {
     kind: AuthFixtureKind,
     expected: String,
+    authorized_public_key: Option<String>,
 }
 
 impl Server for AuthFixtureServer {
@@ -44,6 +47,7 @@ impl Server for AuthFixtureServer {
         Self {
             kind: self.kind,
             expected: self.expected.clone(),
+            authorized_public_key: self.authorized_public_key.clone(),
         }
     }
 }
@@ -53,6 +57,30 @@ impl ServerHandler for AuthFixtureServer {
 
     async fn auth_password(&mut self, _user: &str, password: &str) -> Result<Auth, Self::Error> {
         if matches!(self.kind, AuthFixtureKind::Password) && password == self.expected {
+            Ok(Auth::Accept)
+        } else {
+            Ok(Auth::reject())
+        }
+    }
+
+    async fn auth_publickey_offered(
+        &mut self,
+        _user: &str,
+        public_key: &PublicKey,
+    ) -> Result<Auth, Self::Error> {
+        if self.public_key_matches(public_key) {
+            Ok(Auth::Accept)
+        } else {
+            Ok(Auth::reject())
+        }
+    }
+
+    async fn auth_publickey(
+        &mut self,
+        _user: &str,
+        public_key: &PublicKey,
+    ) -> Result<Auth, Self::Error> {
+        if self.public_key_matches(public_key) {
             Ok(Auth::Accept)
         } else {
             Ok(Auth::reject())
@@ -89,9 +117,22 @@ impl ServerHandler for AuthFixtureServer {
     }
 }
 
+impl AuthFixtureServer {
+    fn public_key_matches(&self, public_key: &PublicKey) -> bool {
+        if !matches!(self.kind, AuthFixtureKind::PrivateKey) {
+            return false;
+        }
+        let Ok(public_key) = public_key.to_openssh() else {
+            return false;
+        };
+        self.authorized_public_key.as_deref() == Some(public_key.as_str())
+    }
+}
+
 struct AuthFixtureAuthenticator {
     kind: AuthFixtureKind,
     expected: SecretString,
+    private_key: Option<super::engine::PrivateKeyMaterial>,
 }
 
 #[derive(Clone, Copy)]
@@ -131,6 +172,16 @@ impl SshAuthenticator for AuthFixtureAuthenticator {
                     .authenticate_password(username, &self.expected)
                     .await
             }
+            AuthFixtureKind::PrivateKey => {
+                context
+                    .authenticate_private_key(
+                        username,
+                        self.private_key
+                            .clone()
+                            .expect("private-key fixture material"),
+                    )
+                    .await
+            }
             AuthFixtureKind::KeyboardInteractive => {
                 let mut response = context
                     .authenticate_keyboard_interactive_start(username)
@@ -155,7 +206,32 @@ impl SshAuthenticator for AuthFixtureAuthenticator {
     }
 }
 
-async fn run_russh_auth_fixture(kind: AuthFixtureKind, host_key: russh::keys::PrivateKey) {
+fn private_key_fixture(encrypted: bool) -> (super::engine::PrivateKeyMaterial, PublicKey) {
+    let key = PrivateKey::random(&mut rand::rngs::OsRng, russh::keys::Algorithm::Ed25519)
+        .expect("generate russh fixture client key");
+    let public_key = key.public_key().clone();
+    let mut openssh = Vec::new();
+    if encrypted {
+        russh::keys::encode_pkcs8_pem_encrypted(&key, b"fixture-passphrase", 1, &mut openssh)
+            .expect("encode encrypted russh fixture client key");
+    } else {
+        russh::keys::encode_pkcs8_pem(&key, &mut openssh).expect("encode russh fixture client key");
+    }
+    (
+        super::engine::PrivateKeyMaterial {
+            openssh,
+            passphrase: encrypted.then(|| SecretString::new("fixture-passphrase".into())),
+        },
+        public_key,
+    )
+}
+
+async fn run_russh_auth_fixture(
+    kind: AuthFixtureKind,
+    host_key: russh::keys::PrivateKey,
+    private_key: Option<super::engine::PrivateKeyMaterial>,
+    authorized_public_key: Option<PublicKey>,
+) {
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
         .await
         .expect("bind russh auth fixture");
@@ -171,6 +247,8 @@ async fn run_russh_auth_fixture(kind: AuthFixtureKind, host_key: russh::keys::Pr
     let mut server = AuthFixtureServer {
         kind,
         expected: expected.into(),
+        authorized_public_key: authorized_public_key
+            .map(|key| key.to_openssh().expect("encode fixture public key")),
     };
     let server_task = tokio::spawn(async move {
         let (socket, _) = listener.accept().await.expect("accept russh fixture");
@@ -199,6 +277,7 @@ async fn run_russh_auth_fixture(kind: AuthFixtureKind, host_key: russh::keys::Pr
             Arc::new(AuthFixtureAuthenticator {
                 kind,
                 expected: SecretString::new(expected.into()),
+                private_key,
             }),
         ),
     )
@@ -241,7 +320,23 @@ async fn runs_real_authentication_and_host_key_algorithm_matrix() {
         HostKeyAlgorithm::EcdsaP256,
     ] {
         let host_key = host_key_algorithm.generate();
-        run_russh_auth_fixture(AuthFixtureKind::Password, host_key.clone()).await;
-        run_russh_auth_fixture(AuthFixtureKind::KeyboardInteractive, host_key).await;
+        run_russh_auth_fixture(AuthFixtureKind::Password, host_key.clone(), None, None).await;
+        run_russh_auth_fixture(
+            AuthFixtureKind::KeyboardInteractive,
+            host_key.clone(),
+            None,
+            None,
+        )
+        .await;
+        for encrypted in [false, true] {
+            let (private_key, public_key) = private_key_fixture(encrypted);
+            run_russh_auth_fixture(
+                AuthFixtureKind::PrivateKey,
+                host_key.clone(),
+                Some(private_key),
+                Some(public_key),
+            )
+            .await;
+        }
     }
 }
