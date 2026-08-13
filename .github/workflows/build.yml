@@ -321,7 +321,12 @@ jobs:
         run: yarn test:plugin-node-status
 
       - name: Test Rust host
+        if: matrix.name != 'windows'
         run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Compile Rust host tests on Windows
+        if: matrix.name == 'windows'
+        run: cargo test --manifest-path src-tauri/Cargo.toml --no-run
 
       - name: Test SSH authentication fixture
         run: yarn test:ssh-auth-integration
