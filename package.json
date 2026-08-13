@@ -153,6 +153,7 @@
     "test:benchmark": "node scripts/test-benchmark-harness.mjs",
     "test:runtime-capabilities": "node scripts/test-runtime-capabilities.mjs",
     "test:tauri-platform": "node scripts/test-tauri-platform-contract.mjs",
+    "test:plugin-operation": "node scripts/test-plugin-operation-contract.mjs",
     "test:ssh-reconnect": "node scripts/test-ssh-reconnect-contract.mjs",
     "test:device-reconnect": "node scripts/test-device-reconnect-contract.mjs",
     "test:ssh-session": "node scripts/test-ssh-session-contract.mjs",

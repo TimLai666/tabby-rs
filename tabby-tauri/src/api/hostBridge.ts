@@ -57,7 +57,7 @@ export interface AppIdentity {
 export interface PluginOperation {
     id: string
     packageName: string
-    action: 'install' | 'uninstall'
+    action: 'install' | 'update' | 'uninstall'
     status: 'running' | 'succeeded' | 'failed' | 'cancelled'
     message: string | null
 }

@@ -175,6 +175,9 @@ jobs:
       - name: Test official plugin runtime fixture
         run: yarn test:official-plugin-runtime
 
+      - name: Test plugin operation contract
+        run: yarn test:plugin-operation
+
       - name: Test system npm plugin lifecycle
         run: yarn test:plugin-npm-lifecycle
 
@@ -304,6 +307,9 @@ jobs:
 
       - name: Test public plugin runtime fixtures
         run: yarn test:official-plugin-runtime
+
+      - name: Test plugin operation contract
+        run: yarn test:plugin-operation
 
       - name: Test system npm plugin lifecycle
         run: yarn test:plugin-npm-lifecycle

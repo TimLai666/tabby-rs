@@ -215,6 +215,9 @@ jobs:
       - name: Test system npm plugin lifecycle
         run: yarn test:plugin-npm-lifecycle
 
+      - name: Test plugin operation contract
+        run: yarn test:plugin-operation
+
       - name: Test SSH authentication fixture
         run: yarn test:ssh-auth-integration
 
