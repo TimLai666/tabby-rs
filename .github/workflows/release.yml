@@ -200,6 +200,9 @@ jobs:
       - name: Test Rust host
         run: cargo test --manifest-path src-tauri/Cargo.toml --lib
 
+      - name: Test system npm plugin lifecycle
+        run: yarn test:plugin-npm-lifecycle
+
       - name: Test SSH authentication fixture
         run: yarn test:ssh-auth-integration
 
