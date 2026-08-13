@@ -181,9 +181,7 @@ jobs:
       - name: Install Windows build dependencies
         if: runner.os == 'Windows'
         shell: pwsh
-        run: |
-          choco install nasm --no-progress --yes
-          Add-Content -Path $env:GITHUB_PATH -Value "${env:ProgramFiles}\NASM"
+        run: pwsh -NoProfile -File scripts/ci/install-nasm.ps1
 
       - name: Install Yarn
         run: npm install --global yarn@${{ env.YARN_VERSION }}
