@@ -333,6 +333,21 @@ mod tests {
     }
 
     #[test]
+    fn treats_the_same_host_on_a_different_port_as_unknown() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("known_hosts");
+        let store = KnownHostsStore::new(path);
+        let recorded = key("AAAAC3NzaC1lZDI1NTE5AAAAIJdD7y3aLq454yWBdwLWbieU1ebz9/cu7/QEXn9OIeZJ");
+
+        store.save("example.com", 22, &recorded).unwrap();
+
+        assert_eq!(
+            store.classify("example.com", 2200, &recorded).unwrap(),
+            Some((HostKeyStatus::Unknown, Vec::new()))
+        );
+    }
+
+    #[test]
     fn writes_atomically_and_deduplicates_entries() {
         let directory = tempdir().unwrap();
         let path = directory.path().join("nested").join("known_hosts");

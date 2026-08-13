@@ -21,11 +21,17 @@ const { createWorkspaceSnapshot, normalizeRatios, validateWorkspaceSnapshot, wor
 
 assert.deepEqual([...normalizeRatios([0, 0, 0], 3)], [1 / 3, 1 / 3, 1 / 3])
 const first = { schemaVersion: 1, tabId: 'one', profileId: 'local:one', sessionKind: 'local', sessionState: {} }
-const second = { schemaVersion: 1, tabId: 'two', profileId: 'ssh:two', sessionKind: 'ssh', sessionState: { password: 'must-not-persist' } }
+const second = {
+    schemaVersion: 1,
+    tabId: 'two',
+    profileId: 'ssh:two',
+    sessionKind: 'ssh',
+    sessionState: { auth: { password: 'must-not-persist', nested: { token: 'must-not-persist' } }, keep: 'safe' },
+}
 const snapshot = createWorkspaceSnapshot([first, second], 'one')
 assert.equal(snapshot.schemaVersion, 1)
 assert.equal(snapshot.layout.type, 'split')
-assert.equal(JSON.stringify(snapshot.tabs[1].sessionState), '{}')
+assert.equal(JSON.stringify(snapshot.tabs[1].sessionState), JSON.stringify({ auth: { nested: {} }, keep: 'safe' }))
 assert.equal(validateWorkspaceSnapshot({ ...snapshot, layout: { ...snapshot.layout, ratios: [1] } }).layout.ratios.length, 2)
 assert.equal(validateWorkspaceSnapshot({ ...snapshot, tabs: [{ ...snapshot.tabs[0], tabId: 'duplicate' }, snapshot.tabs[1]] }), null)
 const split = workspaceReducer(snapshot, { type: 'split', tabId: 'one', direction: 'vertical', tab: { schemaVersion: 1, tabId: 'three', profileId: 'local:three', sessionKind: 'local', sessionState: {} } })
