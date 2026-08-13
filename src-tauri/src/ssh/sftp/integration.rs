@@ -20,6 +20,11 @@ use tokio::{
     time::{sleep, timeout},
 };
 
+use crate::ssh::engine::{
+    HostKeyVerifier, PrivateKeyMaterial, ShellChannelRequest, SshAuthContext, SshAuthenticator,
+    SshEngine, SshHostKey, SshTarget,
+};
+
 use super::{manager::SftpManager, SftpOverwritePolicy};
 
 #[derive(Default)]
@@ -192,12 +197,129 @@ fn generate_key(program: &std::ffi::OsStr, path: &std::path::Path) -> Result<(),
     }
 }
 
+struct FixtureHostKeyVerifier {
+    accept: bool,
+}
+
+#[async_trait::async_trait]
+impl HostKeyVerifier for FixtureHostKeyVerifier {
+    async fn verify(
+        &self,
+        _host: &str,
+        _port: u16,
+        _key: &SshHostKey,
+    ) -> Result<bool, crate::ssh::SshError> {
+        Ok(self.accept)
+    }
+}
+
+struct FixtureAuthenticator {
+    private_key: Vec<u8>,
+}
+
+#[async_trait::async_trait]
+impl SshAuthenticator for FixtureAuthenticator {
+    async fn authenticate(
+        &self,
+        context: &mut dyn SshAuthContext,
+        username: &str,
+        _methods: &[crate::ssh::AuthMethodRef],
+    ) -> Result<bool, crate::ssh::SshError> {
+        context
+            .authenticate_private_key(
+                username,
+                PrivateKeyMaterial {
+                    openssh: self.private_key.clone(),
+                    passphrase: None,
+                },
+            )
+            .await
+    }
+}
+
 #[tokio::test]
 #[ignore = "requires a local OpenSSH server; run yarn test:ssh-integration"]
 async fn runs_real_ssh_shell_and_sftp_lifecycle() {
     let fixture = OpenSshFixture::start()
         .await
         .unwrap_or_else(|error| panic!("OpenSSH fixture failed: {error}"));
+
+    let engine = crate::ssh::engine::RusshEngine::new(
+        client::Config {
+            inactivity_timeout: Some(Duration::from_secs(30)),
+            ..Default::default()
+        },
+        Duration::from_secs(20),
+    );
+    let rejected = engine
+        .connect(
+            SshTarget {
+                host: "127.0.0.1".into(),
+                port: fixture.port,
+                username: fixture.username.clone(),
+            },
+            Arc::new(FixtureHostKeyVerifier { accept: false }),
+            Arc::new(FixtureAuthenticator {
+                private_key: fs::read(&fixture.private_key).expect("read rejected client key"),
+            }),
+        )
+        .await;
+    assert!(matches!(
+        rejected,
+        Err(crate::ssh::SshError::HostKeyRejected)
+    ));
+
+    let engine_connection = engine
+        .connect(
+            SshTarget {
+                host: "127.0.0.1".into(),
+                port: fixture.port,
+                username: fixture.username.clone(),
+            },
+            Arc::new(FixtureHostKeyVerifier { accept: true }),
+            Arc::new(FixtureAuthenticator {
+                private_key: fs::read(&fixture.private_key).expect("read engine client key"),
+            }),
+        )
+        .await
+        .expect("engine SSH connection failed");
+    let engine_shell = engine_connection
+        .open_shell(ShellChannelRequest {
+            term: "xterm".into(),
+            columns: 80,
+            rows: 24,
+            pixel_width: 0,
+            pixel_height: 0,
+            environment: Default::default(),
+        })
+        .await
+        .expect("engine shell channel failed");
+    engine_shell
+        .write(b"printf 'tabby-rs-engine\\n'; exit\\n")
+        .await
+        .expect("engine shell write failed");
+    let mut engine_output = Vec::new();
+    for _ in 0..16 {
+        let message = timeout(Duration::from_secs(10), engine_shell.read())
+            .await
+            .expect("engine shell response timed out")
+            .expect("engine shell read failed");
+        let Some(message) = message else { break };
+        match message {
+            crate::ssh::engine::SshChannelMessage::Data(data)
+            | crate::ssh::engine::SshChannelMessage::ExtendedData { data, .. } => {
+                engine_output.extend_from_slice(&data)
+            }
+            crate::ssh::engine::SshChannelMessage::Close => break,
+            _ => {}
+        }
+    }
+    assert!(String::from_utf8_lossy(&engine_output).contains("tabby-rs-engine"));
+    engine_connection
+        .disconnect()
+        .await
+        .expect("engine disconnect failed");
+
     let config = Arc::new(client::Config {
         inactivity_timeout: Some(Duration::from_secs(30)),
         ..Default::default()
