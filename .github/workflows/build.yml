@@ -157,6 +157,9 @@ jobs:
       - name: Test parity report contract
         run: yarn test:parity-report
 
+      - name: Test parity automated check links
+        run: yarn test:parity-links
+
       - name: Test runtime capability providers
         run: yarn test:runtime-capabilities
 

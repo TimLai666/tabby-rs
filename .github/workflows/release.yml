@@ -306,6 +306,9 @@ jobs:
         shell: bash
         run: node scripts/smoke-tauri-release.mjs --staging release-staging --platform "${{ matrix.platform }}" --output release-staging/installer-smoke.json
 
+      - name: Test parity automated check links
+        run: yarn test:parity-links
+
       - name: Generate parity report
         run: node scripts/compare-parity.mjs --report-only --output release-staging/parity-report.json --html-output release-staging/parity-report.html
 
