@@ -19,6 +19,7 @@ export class TauriSshTabComponent extends ConnectableTerminalTabComponent<SSHPro
     sftpPanelVisible = false
     sftpPath = '/'
     private reconnectAttempts = 0
+    private reconnectTimer: ReturnType<typeof setTimeout>|null = null
 
     constructor (
         injector: Injector,
@@ -30,6 +31,7 @@ export class TauriSshTabComponent extends ConnectableTerminalTabComponent<SSHPro
     }
 
     async initializeSession (): Promise<void> {
+        this.cancelReconnectTimer()
         await super.initializeSession()
         const session = new TauriSshSession(
             this.injector,
@@ -45,6 +47,7 @@ export class TauriSshTabComponent extends ConnectableTerminalTabComponent<SSHPro
             await session.start()
             session.resize(this.size.columns, this.size.rows)
             this.reconnectAttempts = 0
+            this.cancelReconnectTimer()
         } catch (error) {
             this.write(`\r\nSSH connection failed: ${String(error)}\r\n`)
             await session.destroy()
@@ -57,13 +60,30 @@ export class TauriSshTabComponent extends ConnectableTerminalTabComponent<SSHPro
                 const delay = Math.min(30_000, 1_000 * 2 ** this.reconnectAttempts)
                 this.reconnectAttempts++
                 this.write(`\r\nSSH reconnecting in ${Math.ceil(delay / 1000)}s (${this.reconnectAttempts}/5)\r\n`)
-                setTimeout(() => void this.reconnect(), delay)
+                this.cancelReconnectTimer()
+                this.reconnectTimer = setTimeout(() => {
+                    this.reconnectTimer = null
+                    if (this.isDisconnectedByHand || !this.frontend) {
+                        return
+                    }
+                    void this.reconnect()
+                }, delay)
             } else {
                 this.offerReconnection()
             }
             return
         }
         super.onSessionDestroyed()
+    }
+
+    async disconnect (): Promise<void> {
+        this.cancelReconnectTimer()
+        await super.disconnect()
+    }
+
+    ngOnDestroy (): void {
+        this.cancelReconnectTimer()
+        super.ngOnDestroy()
     }
 
     async openSFTP (): Promise<void> {
@@ -90,5 +110,12 @@ export class TauriSshTabComponent extends ConnectableTerminalTabComponent<SSHPro
             requestId: prompt.requestId,
             responses: responses ?? [],
         }).catch(error => this.logger.warn('SSH authentication response failed', error))
+    }
+
+    private cancelReconnectTimer (): void {
+        if (this.reconnectTimer !== null) {
+            clearTimeout(this.reconnectTimer)
+            this.reconnectTimer = null
+        }
     }
 }
