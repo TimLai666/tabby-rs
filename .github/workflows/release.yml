@@ -18,7 +18,7 @@ on:
           - nightly
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-${{ github.ref }}
@@ -269,6 +269,8 @@ jobs:
     needs: [build, aggregate]
     if: needs.build.result == 'success' && needs.aggregate.result == 'success'
     runs-on: ubuntu-22.04
+    permissions:
+      contents: write
     environment: ${{ (github.event.inputs.channel || (github.event_name == 'schedule' && 'nightly') || 'stable') == 'stable' && 'stable-release' || 'nightly-release' }}
     steps:
       - name: Checkout

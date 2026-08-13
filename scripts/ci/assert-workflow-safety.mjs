@@ -40,6 +40,13 @@ if (!/(^|\n)\s*schedule:\s*$/m.test(releaseTriggers) || !/(^|\n)\s*workflow_disp
     violations.push('release workflow is missing schedule or manual trigger')
 }
 
+if (!/^permissions:\n\s+contents:\s+read\s*$/m.test(releaseWorkflow)) {
+    violations.push('release workflow top-level permissions are not read-only')
+}
+if (!/^  publish:[\s\S]*?^    permissions:\n\s+contents:\s+write\s*$/m.test(releaseWorkflow)) {
+    violations.push('release publish job does not explicitly grant contents write')
+}
+
 if (violations.length > 0) {
     console.error('Unsafe baseline workflow configuration:')
     for (const violation of violations) {
