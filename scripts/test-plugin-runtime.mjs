@@ -90,6 +90,7 @@ const fixtureDirectories = [
 ]
 const fixtureDescriptors = fixtureDirectories.map(fixtureDescriptor)
 const fixtureByPackageName = new Map(fixtureDescriptors.map(plugin => [plugin.packageName, plugin]))
+const lifecycleEvents = []
 const result = await loadPluginModules({
     async discover () {
         return fixtureDescriptors
@@ -103,7 +104,14 @@ const result = await loadPluginModules({
             code: fs.readFileSync(plugin.entry, 'utf8'),
         }
     },
-}, registry)
+}, registry, [], {
+    pluginStarted (plugin) {
+        lifecycleEvents.push(['started', plugin.packageName])
+    },
+    pluginCompleted (plugin) {
+        lifecycleEvents.push(['completed', plugin.packageName])
+    },
+})
 assert.equal(result.modules.length, 4)
 assert.deepEqual(result.modules.map(module => module.pluginName), [
     'fixture-for-root',
@@ -129,6 +137,42 @@ assert.deepEqual(result.failures.map(failure => [failure.plugin.name, failure.co
     ['fixture-native', 'node-runtime-required'],
     ['fixture-throw', 'exception'],
 ].sort())
+assert.deepEqual(
+    lifecycleEvents.filter(([event]) => event === 'started').map(([, packageName]) => packageName),
+    fixtureDirectories.map(directory => fixtureDescriptor(directory).packageName),
+)
+assert.deepEqual(
+    lifecycleEvents.filter(([event]) => event === 'completed').map(([, packageName]) => packageName),
+    ['tabby-fixture-for-root', 'tabby-fixture-class', 'tabby-fixture-pure', 'terminus-fixture-legacy'],
+)
+
+const blacklistedReads = []
+const blacklistedEvents = []
+const blacklistedResult = await loadPluginModules({
+    async discover () {
+        return fixtureDescriptors
+    },
+    async readEntry (packageName) {
+        blacklistedReads.push(packageName)
+        const plugin = fixtureByPackageName.get(packageName)
+        assert.ok(plugin, `unknown fixture package: ${packageName}`)
+        return {
+            packageName,
+            entry: plugin.entry,
+            code: fs.readFileSync(plugin.entry, 'utf8'),
+        }
+    },
+}, registry, ['tabby-fixture-pure'], {
+    pluginStarted (plugin) {
+        blacklistedEvents.push(['started', plugin.packageName])
+    },
+    pluginCompleted (plugin) {
+        blacklistedEvents.push(['completed', plugin.packageName])
+    },
+})
+assert.equal(blacklistedResult.modules.some(module => module.pluginName === 'fixture-pure'), false)
+assert.equal(blacklistedReads.includes('tabby-fixture-pure'), false)
+assert.equal(blacklistedEvents.some(([, packageName]) => packageName === 'tabby-fixture-pure'), false)
 
 const discoveryFailure = await loadPluginModules({
     async discover () {
