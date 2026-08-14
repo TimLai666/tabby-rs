@@ -14,6 +14,10 @@ const service = fs.readFileSync(
     path.join(root, 'tabby-tauri/src/services/diagnostics.service.ts'),
     'utf8',
 )
+const template = fs.readFileSync(
+    path.join(root, 'tabby-tauri/src/components/diagnosticsSettingsTab.component.pug'),
+    'utf8',
+)
 const servicePath = path.join(root, 'tabby-tauri/src/services/diagnostics.service.ts')
 const exportMethod = source.match(/async exportBundle \(\): Promise<void> \{([\s\S]*?)\n    \}/)?.[1]
 
@@ -26,6 +30,10 @@ assert.match(exportMethod, /this\.diagnostics\.exportBundle\(\)/)
 assert.match(service, /showMessageBox\(\{[\s\S]*?Export the reviewed diagnostic files\?/)
 assert.match(service, /confirmation\.response !== 0/)
 assert.match(service, /buttons: \[[\s\S]*?translate\.instant\('Export'\)[\s\S]*?translate\.instant\('Cancel'\)/)
+assert.match(source, /this\.status = await this\.diagnostics\.status\(\)/)
+assert.match(template, /\*ngIf='status\?\.crashMarkerPresent'/)
+assert.match(template, /The previous session ended unexpectedly\./)
+assert.match(template, /Review the preview before exporting diagnostics\./)
 
 const compiled = ts.transpileModule(service, {
     compilerOptions: {
@@ -103,4 +111,4 @@ assert.deepEqual(invokeCalls[1], ['diagnostics.export', {
     includeLogs: false,
 }])
 
-console.log('Diagnostics UI preview gate contract passed')
+console.log('Diagnostics UI preview and crash marker contract passed')
