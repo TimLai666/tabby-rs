@@ -17,6 +17,7 @@ const dependencyAuditPath = path.resolve(argument('--dependency-audit') || path.
 const licenseReportPath = path.resolve(argument('--license-report') || path.join(root, 'license-report.json'))
 const benchmarksDirectory = path.resolve(argument('--benchmarks-dir') || path.join(root, 'benchmarks'))
 const installerSmokePath = path.resolve(argument('--installer-smoke') || path.join(root, 'installer-smoke.json'))
+const parityReportPath = path.resolve(argument('--parity-report') || path.join(root, 'parity-report.json'))
 const outputPath = path.resolve(argument('--output') || path.join(root, 'release-gate.json'))
 const expectedRevision = argument('--source-revision') || process.env.GITHUB_SHA || null
 const expectedPlatform = argument('--platform') || null
@@ -88,6 +89,33 @@ for (const platform of platformDocument?.platforms || []) {
         failures.push(`platform ${platform.id} has no evidence`)
     }
 }
+
+const parityReport = readJson(parityReportPath, 'parity report')
+if (parityReport) {
+    if (parityReport.schemaVersion !== 1) failures.push('parity report schema version is invalid')
+    if (parityReport.passed !== true) failures.push('parity report did not pass')
+    if (!Array.isArray(parityReport.failures)) failures.push('parity report has no failures list')
+    else if (parityReport.failures.length > 0) failures.push('parity report has failures')
+    for (const [name, summary] of [['features', parityReport.features], ['platforms', parityReport.platforms]]) {
+        if (!summary || typeof summary !== 'object') {
+            failures.push(`parity report has no ${name} summary`)
+            continue
+        }
+        if (!Number.isInteger(summary.total) || summary.total < 1) failures.push(`parity report ${name} total is invalid`)
+        if (!summary.statuses || typeof summary.statuses !== 'object') {
+            failures.push(`parity report ${name} has no statuses`)
+            continue
+        }
+        if (!Array.isArray(summary.pending)) failures.push(`parity report ${name} has no pending list`)
+        const nonPassingStatuses = Object.entries(summary.statuses)
+            .filter(([status, count]) => count > 0 && !['passed', 'accepted-difference'].includes(status))
+            .map(([status]) => status)
+        if (nonPassingStatuses.length > 0) {
+            failures.push(`parity report ${name} has non-passing statuses: ${nonPassingStatuses.join(', ')}`)
+        }
+    }
+}
+
 for (const benchmark of benchmarkFiles) {
     if (!fs.existsSync(benchmark.path)) {
         failures.push(`missing benchmark report: ${benchmark.path}`)
