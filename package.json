@@ -110,6 +110,7 @@
     "test:web-host-app": "node scripts/test-web-host-app-contract.mjs",
     "test:web-connector": "node scripts/test-web-connector-contract.mjs",
     "test:web-connector-runtime": "node scripts/test-web-connector-runtime.mjs",
+    "test:web-connection-smoke": "node scripts/test-web-connection-smoke.mjs",
     "test:web-plugin-loader": "node scripts/test-web-plugin-loader.mjs",
     "test:web-gateway": "node scripts/test-web-gateway.mjs",
     "test:web-capability-boundary": "node scripts/test-web-capability-boundary.mjs",

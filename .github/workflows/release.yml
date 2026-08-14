@@ -89,6 +89,7 @@ jobs:
         run: |
           yarn test:web-connector
           yarn test:web-connector-runtime
+          yarn test:web-connection-smoke
 
       - name: Test web gateway and plugin contracts
         run: |
