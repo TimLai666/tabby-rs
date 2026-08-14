@@ -53,6 +53,74 @@ try {
 }
 
 const service = Object.create(pluginManagerModule.exports.PluginManagerService.prototype)
+const registryObject = (version, name = 'tabby-fixture') => ({
+    package: {
+        name,
+        version,
+        description: 'fixture',
+        keywords: ['tabby-plugin'],
+        maintainers: [],
+    },
+})
+const registryResponse = (value, headers = {}) => ({
+    ok: true,
+    headers: { get: name => headers[name] ?? null },
+    body: null,
+    text: async () => JSON.stringify(value),
+})
+const originalFetch = globalThis.fetch
+const originalWindow = globalThis.window
+const requests = []
+globalThis.window = { setTimeout, clearTimeout }
+globalThis.fetch = async url => {
+    requests.push(String(url))
+    const parsed = new URL(url)
+    const from = Number(parsed.searchParams.get('from'))
+    return registryResponse({
+        total: 101,
+        objects: from === 0 ? Array.from({ length: 100 }, (_, index) => registryObject('1.0.0', `tabby-fixture-${index}`)) : [registryObject('1.0.1')],
+    })
+}
+try {
+    const objects = await service.searchRegistry('tabby-plugin', ' terminal ')
+    assert.equal(objects.length, 101)
+    assert.equal(requests.length, 2)
+    assert.equal(new URL(requests[0]).searchParams.get('from'), '0')
+    assert.equal(new URL(requests[1]).searchParams.get('from'), '100')
+    assert.equal(new URL(requests[0]).searchParams.get('text'), 'keywords:tabby-plugin terminal')
+
+    globalThis.fetch = async () => ({
+        ok: false,
+        status: 503,
+        headers: { get: () => null },
+        body: null,
+        text: async () => '',
+    })
+    await assert.rejects(() => service.searchRegistry('tabby-plugin'), /HTTP 503/)
+
+    globalThis.fetch = async () => registryResponse({}, { 'content-length': String(2 * 1024 * 1024 + 1) })
+    await assert.rejects(() => service.searchRegistry('tabby-plugin'), /response is too large/)
+
+    globalThis.fetch = async () => registryResponse({
+        total: 1,
+        objects: [{ package: { name: 'tabby-invalid', version: 'not-semver' } }],
+    })
+    assert.deepEqual(await service.searchRegistry('tabby-plugin'), [])
+
+    globalThis.window = { setTimeout: callback => setTimeout(callback, 0), clearTimeout }
+    globalThis.fetch = async (_url, { signal }) => new Promise((resolve, reject) => {
+        signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true })
+    })
+    await assert.rejects(() => service.searchRegistry('tabby-plugin'), /request timed out/)
+} finally {
+    globalThis.fetch = originalFetch
+    if (originalWindow === undefined) {
+        delete globalThis.window
+    } else {
+        globalThis.window = originalWindow
+    }
+}
+
 const basePackage = {
     name: 'tabby-example',
     version: '1.2.3',
