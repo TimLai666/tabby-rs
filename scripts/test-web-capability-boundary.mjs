@@ -8,7 +8,8 @@ const source = fs.readFileSync(path.join(root, 'tabby-web/src/platform.ts'), 'ut
 const pluginSettings = fs.readFileSync(path.join(root, 'tabby-plugin-manager/src/components/pluginsSettingsTab.component.pug'), 'utf8')
 
 assert.match(source, /supportsPluginManagement = false/)
-assert.match(source, /async readClipboardText \(\): Promise<string> \{[\s\S]*navigator\.clipboard[\s\S]*readText\(\)/)
+assert.match(source, /readClipboard \(\): string \{[\s\S]*?new UnsupportedCapabilityError\('clipboard'\)/)
+assert.match(source, /async readClipboardText \(\): Promise<string> \{[\s\S]*navigator\.clipboard[\s\S]*readText\(\)[\s\S]*?new UnsupportedCapabilityError\('clipboard'\)/)
 assert.match(source, /openPath \(_path: string\): void \{[\s\S]*?new UnsupportedCapabilityError\('filesystem'\)/)
 assert.match(source, /showItemInFolder \(_path: string\): void \{[\s\S]*?new UnsupportedCapabilityError\('filesystem'\)/)
 assert.match(source, /installPlugin \(_name: string, _version: string\): Promise<void> \{[\s\S]*?new UnsupportedCapabilityError\('pluginInstall'\)/)
@@ -16,6 +17,10 @@ assert.match(source, /uninstallPlugin \(_name: string\): Promise<void> \{[\s\S]*
 assert.match(source, /cancelPluginOperation \(_id: string\): Promise<void> \{[\s\S]*?new UnsupportedCapabilityError\('pluginInstall'\)/)
 assert.match(source, /getWinSCPPath \(\): string\|null \{[\s\S]*?new UnsupportedCapabilityError\('filesystem'\)/)
 assert.match(source, /async exec \(_app: string, _argv: string\[\]\): Promise<void> \{[\s\S]*?new UnsupportedCapabilityError\('localPty'\)/)
+
+const hostWindow = fs.readFileSync(path.join(root, 'tabby-web/src/services/hostWindow.service.ts'), 'utf8')
+assert.match(hostWindow, /minimize \(\): void \{[\s\S]*?new UnsupportedCapabilityError\('windowControls'\)/)
+assert.match(hostWindow, /toggleMaximize \(\): void \{[\s\S]*?new UnsupportedCapabilityError\('windowControls'\)/)
 assert.match(pluginSettings, /button\.btn\.btn-secondary\.btn-sm\.ms-auto\(\*ngIf='canManagePlugins\(\)'/)
 
 console.log('Web capability boundary contract passed')

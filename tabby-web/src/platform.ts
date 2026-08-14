@@ -37,14 +37,14 @@ export class WebPlatformService extends PlatformService {
     }
 
     readClipboard (): string {
-        return ''
+        throw new UnsupportedCapabilityError('clipboard')
     }
 
     async readClipboardText (): Promise<string> {
         try {
             return await navigator.clipboard.readText()
         } catch {
-            return ''
+            throw new UnsupportedCapabilityError('clipboard')
         }
     }
 

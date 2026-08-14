@@ -1,5 +1,5 @@
 export type CapabilityName =
-    'filesystem'|'keychain'|'localPty'|'pluginInstall'|'serial'|'updater'|'desktopNotifications'
+    'filesystem'|'keychain'|'localPty'|'pluginInstall'|'serial'|'updater'|'desktopNotifications'|'clipboard'|'windowControls'
 
 export type RuntimeHost = 'electron' | 'tauri' | 'web'
 
