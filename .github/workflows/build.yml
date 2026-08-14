@@ -235,6 +235,18 @@ jobs:
       - name: Test release artifact contract
         run: yarn test:tauri:release-artifacts
 
+      - name: Test release installer smoke fixtures
+        run: yarn test:tauri:release-smoke
+
+      - name: Test release checksums
+        run: yarn test:release-checksums
+
+      - name: Test updater signature verification
+        run: yarn test:tauri:signature
+
+      - name: Test license report fixtures
+        run: yarn test:license-report
+
       - name: Check Rust formatting
         run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
 
