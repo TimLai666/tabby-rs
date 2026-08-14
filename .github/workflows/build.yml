@@ -208,6 +208,18 @@ jobs:
       - name: Test Tauri updater confirmation
         run: yarn test:tauri-updater-confirmation
 
+      - name: Test updater cancellation
+        run: yarn test:updater-cancellation
+
+      - name: Test updater generation
+        run: yarn test:updater-generation
+
+      - name: Test updater startup policy
+        run: yarn test:updater-startup
+
+      - name: Test Tauri update manifest
+        run: yarn test:tauri:update-manifest
+
       - name: Test Tauri multi-window contract
         run: yarn test:tauri-multi-window
 
