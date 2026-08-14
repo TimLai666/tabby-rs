@@ -159,7 +159,9 @@ mod tests {
         mark_bootstrap_succeeded, normalize_failure_code, normalize_failure_phase,
         prepare_bootstrap_retry,
     };
-    use crate::storage::state_file::TabbyRsState;
+    use crate::commands::app::{bootstrap_mode, safe_mode_suspected_plugins};
+    use crate::storage::state_file::{load_state, save_state, TabbyRsState};
+    use tempfile::tempdir;
 
     #[test]
     fn journal_preserves_crash_context_and_clears_after_success() {
@@ -272,6 +274,54 @@ mod tests {
             .contains("secret-value"));
         assert_eq!(normalize_failure_phase("read"), "read");
         assert_eq!(normalize_failure_code("exception"), "exception");
+    }
+
+    #[test]
+    fn safe_mode_restart_retry_returns_to_normal_boot() {
+        let discovered = vec!["tabby-good".to_owned(), "tabby-broken".to_owned()];
+        let mut state = TabbyRsState::default();
+        let temp = tempdir().unwrap();
+        let state_path = temp.path().join("tabby-rs.json");
+
+        let normal = bootstrap_mode(&state, Ok(discovered.clone()));
+        assert_eq!(normal, (false, None, discovered.clone()));
+
+        state.safe_mode.attempt_id = Some("attempt-1".into());
+        state.safe_mode.plugins = discovered.clone();
+        journal_plugin_started(&mut state, "tabby-broken".into());
+        journal_plugin_failure(
+            &mut state,
+            Some("tabby-broken".into()),
+            "evaluate".into(),
+            Some("exception".into()),
+            "fixture failed".into(),
+        );
+        save_state(&state_path, &state).unwrap();
+        state = load_state(&state_path).unwrap();
+
+        let after_crash = bootstrap_mode(&state, Ok(discovered.clone()));
+        assert_eq!(after_crash.0, true);
+        assert_eq!(after_crash.2, Vec::<String>::new());
+        assert_eq!(
+            safe_mode_suspected_plugins(&state),
+            vec!["tabby-broken", "tabby-good"]
+        );
+
+        prepare_bootstrap_retry(&mut state);
+        save_state(&state_path, &state).unwrap();
+        state = load_state(&state_path).unwrap();
+        let after_retry = bootstrap_mode(&state, Ok(discovered.clone()));
+        assert_eq!(after_retry, (false, None, discovered.clone()));
+
+        state.safe_mode.attempt_id = Some("attempt-2".into());
+        state.safe_mode.plugins = discovered;
+        journal_plugin_started(&mut state, "tabby-good".into());
+        journal_plugin_completed(&mut state, "tabby-good".into());
+        mark_bootstrap_succeeded(&mut state);
+
+        assert!(state.safe_mode.attempt_id.is_none());
+        assert!(state.safe_mode.plugins.is_empty());
+        assert!(state.safe_mode.suspected_plugins.is_empty());
     }
 }
 
