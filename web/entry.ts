@@ -14,12 +14,13 @@ import { platformBrowserDynamic } from '@angular/platform-browser-dynamic'
 
 import { getRootModule } from '../app/src/app.module'
 import { BootstrapData, BOOTSTRAP_DATA } from '../tabby-core/src/api/mainProcess'
+import type { WebHostConnector } from '../tabby-web/src/services/connectionGateway.service'
 
 interface BootstrapOptions {
     packageModules: any[]
     bootstrapData: BootstrapData
     debugMode: boolean
-    connector: any
+    connector: WebHostConnector
 }
 
 window['bootstrapTabby'] = async function bootstrap (options: BootstrapOptions): Promise<NgModuleRef<any>> {
