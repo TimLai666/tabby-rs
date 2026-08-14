@@ -225,7 +225,7 @@ fn parse_bootstrap_config(yaml: &str) -> Result<BTreeMap<String, serde_json::Val
         .map_err(|error| AppError::InvalidData(format!("config.yaml is invalid: {error}")))
 }
 
-fn bootstrap_mode(
+pub(crate) fn bootstrap_mode(
     previous: &TabbyRsState,
     discovered: Result<Vec<String>, String>,
 ) -> (bool, Option<String>, Vec<String>) {
@@ -247,7 +247,7 @@ fn bootstrap_mode(
     }
 }
 
-fn safe_mode_suspected_plugins(previous: &TabbyRsState) -> Vec<String> {
+pub(crate) fn safe_mode_suspected_plugins(previous: &TabbyRsState) -> Vec<String> {
     let mut suspected = previous.safe_mode.suspected_plugins.clone();
     if let Some(last_started) = &previous.safe_mode.last_started_plugin {
         if !suspected.contains(last_started) {
