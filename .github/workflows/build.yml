@@ -247,6 +247,9 @@ jobs:
       - name: Test updater signature verification
         run: yarn test:tauri:signature
 
+      - name: Test updater fake server fixtures
+        run: yarn test:tauri:update-fake-server
+
       - name: Test license report fixtures
         run: yarn test:license-report
 
@@ -364,6 +367,9 @@ jobs:
 
       - name: Test plugin node status UI runtime
         run: yarn test:plugin-node-status-ui
+
+      - name: Test updater fake server fixtures
+        run: yarn test:tauri:update-fake-server
 
       - name: Test Rust host
         if: matrix.name != 'windows'

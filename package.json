@@ -153,6 +153,7 @@
     "test:stable-issue-state": "node scripts/test-stable-issue-state.mjs",
     "test:tauri:release-artifacts": "node scripts/test-tauri-release-artifacts.mjs",
     "test:tauri:signature": "node scripts/test-tauri-signature.mjs",
+    "test:tauri:update-fake-server": "cargo test --manifest-path src-tauri/Cargo.toml --test update_fake_server",
     "test:tauri:release-smoke": "node scripts/test-tauri-release-smoke.mjs",
     "test:release-checksums": "node scripts/test-release-checksums.mjs",
     "benchmark": "node scripts/run-benchmarks.mjs",
