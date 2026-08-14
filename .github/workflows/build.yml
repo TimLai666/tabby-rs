@@ -193,6 +193,9 @@ jobs:
       - name: Test plugin node status contract
         run: yarn test:plugin-node-status
 
+      - name: Test plugin node status UI runtime
+        run: yarn test:plugin-node-status-ui
+
       - name: Test Electron updater policy
         run: yarn test:electron-updater
 
@@ -316,6 +319,9 @@ jobs:
 
       - name: Test plugin node status contract
         run: yarn test:plugin-node-status
+
+      - name: Test plugin node status UI runtime
+        run: yarn test:plugin-node-status-ui
 
       - name: Test Rust host
         if: matrix.name != 'windows'
