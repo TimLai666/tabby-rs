@@ -14,6 +14,9 @@ const bundleAudit = path.join(work, 'bundle-audit.json')
 const dependencyAudit = path.join(work, 'dependency-audit.json')
 const licenseReport = path.join(work, 'license-report.json')
 const installerSmoke = path.join(work, 'installer-smoke.json')
+const parityReport = path.join(work, 'parity-report.json')
+const passingParityReport = path.join(work, 'passing-parity-report.json')
+const malformedPassingParityReport = path.join(work, 'malformed-passing-parity-report.json')
 const metadata = path.join(work, 'tabby-rs-metadata.json')
 const expectedRevision = '0123456789abcdef0123456789abcdef01234567'
 
@@ -32,6 +35,27 @@ fs.writeFileSync(installerSmoke, JSON.stringify({
     planOnly: true,
     operations: [{ action: 'install' }],
 }))
+fs.writeFileSync(parityReport, JSON.stringify({
+    schemaVersion: 1,
+    passed: false,
+    features: { total: 1, statuses: { pending: 1 }, pending: ['fixture.feature'] },
+    platforms: { total: 1, statuses: { pending: 1 }, pending: ['fixture-platform'] },
+    failures: ['feature fixture.feature is pending', 'platform fixture-platform is pending'],
+}))
+fs.writeFileSync(passingParityReport, JSON.stringify({
+    schemaVersion: 1,
+    passed: true,
+    features: { total: 1, statuses: { passed: 1 }, pending: [] },
+    platforms: { total: 1, statuses: { passed: 1 }, pending: [] },
+    failures: [],
+}))
+fs.writeFileSync(malformedPassingParityReport, JSON.stringify({
+    schemaVersion: 1,
+    passed: true,
+    features: { total: 1, statuses: { passed: 1 }, pending: ['fixture.feature'] },
+    platforms: { total: 1, statuses: { passed: 1 }, pending: [] },
+    failures: [],
+}))
 fs.writeFileSync(metadata, JSON.stringify({
     dependencyLocks: {
         'yarn.lock': '0'.repeat(64),
@@ -46,6 +70,7 @@ await assert.rejects(
         '--dependency-audit', dependencyAudit,
         '--license-report', licenseReport,
         '--installer-smoke', installerSmoke,
+        '--parity-report', parityReport,
         '--platform', 'windows',
         '--source-revision', expectedRevision,
         '--output', output,
@@ -60,6 +85,7 @@ assert.ok(report.failures.includes(`license report sourceRevision must match ${e
 assert.ok(report.failures.includes('installer smoke must execute install, launch, and uninstall operations'))
 assert.ok(report.failures.includes('installer smoke is missing launch operation'))
 assert.ok(report.failures.includes('installer smoke is missing uninstall operation'))
+assert.ok(report.failures.includes('parity report did not pass'))
 
 const missingUserDataEvidenceSmoke = path.join(work, 'missing-user-data-evidence-smoke.json')
 const missingUserDataEvidenceOutput = path.join(work, 'missing-user-data-evidence-release-gate.json')
@@ -79,6 +105,7 @@ await assert.rejects(
         '--dependency-audit', dependencyAudit,
         '--license-report', licenseReport,
         '--installer-smoke', missingUserDataEvidenceSmoke,
+        '--parity-report', parityReport,
         '--platform', 'windows',
         '--source-revision', expectedRevision,
         '--output', missingUserDataEvidenceOutput,
@@ -110,6 +137,7 @@ await assert.rejects(
         '--dependency-audit', failingDependencyAudit,
         '--license-report', licenseReport,
         '--installer-smoke', installerSmoke,
+        '--parity-report', parityReport,
         '--platform', 'windows',
         '--source-revision', expectedRevision,
         '--output', dependencyFailureOutput,
@@ -127,6 +155,7 @@ await assert.rejects(
         '--dependency-audit', malformedDependencyAudit,
         '--license-report', licenseReport,
         '--installer-smoke', installerSmoke,
+        '--parity-report', parityReport,
         '--platform', 'windows',
         '--source-revision', expectedRevision,
         '--output', malformedDependencyOutput,
@@ -152,6 +181,7 @@ await assert.rejects(
         '--dependency-audit', strictPolicyAudit,
         '--license-report', licenseReport,
         '--installer-smoke', installerSmoke,
+        '--parity-report', parityReport,
         '--platform', 'windows',
         '--source-revision', expectedRevision,
         '--output', strictPolicyOutput,
@@ -167,6 +197,7 @@ await assert.rejects(
         '--dependency-audit', dependencyAudit,
         '--license-report', licenseReport,
         '--installer-smoke', installerSmoke,
+        '--parity-report', passingParityReport,
         '--platform', 'windows',
         '--source-revision', expectedRevision,
         '--output', mismatchOutput,
@@ -175,5 +206,22 @@ await assert.rejects(
 const mismatchReport = JSON.parse(fs.readFileSync(mismatchOutput, 'utf8'))
 assert.ok(mismatchReport.failures.includes('release metadata dependency lock hash does not match checkout: yarn.lock'))
 assert.ok(mismatchReport.failures.includes('release metadata dependency lock hash does not match checkout: src-tauri/Cargo.lock'))
+assert.ok(!mismatchReport.failures.includes('parity report did not pass'))
+
+const malformedPassingParityOutput = path.join(work, 'malformed-passing-parity-release-gate.json')
+await assert.rejects(
+    execFileAsync(process.execPath, [gate,
+        '--bundle-audit', passingBundleAudit,
+        '--dependency-audit', dependencyAudit,
+        '--license-report', licenseReport,
+        '--installer-smoke', installerSmoke,
+        '--parity-report', malformedPassingParityReport,
+        '--platform', 'windows',
+        '--source-revision', expectedRevision,
+        '--output', malformedPassingParityOutput,
+    ], { cwd: root }),
+)
+const malformedPassingParityGateReport = JSON.parse(fs.readFileSync(malformedPassingParityOutput, 'utf8'))
+assert.ok(malformedPassingParityGateReport.failures.includes('parity report features has pending entries'))
 
 console.log('Release gate contract fixtures passed')
