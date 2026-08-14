@@ -169,6 +169,9 @@ jobs:
       - name: Test Tabby RS branding contract
         run: yarn test:tabby-rs-branding
 
+      - name: Test macOS icon configuration
+        run: yarn test:macos-icon-config
+
       - name: Test parity report contract
         run: yarn test:parity-report
 
