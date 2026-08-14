@@ -16,6 +16,7 @@ const licenseReport = path.join(work, 'license-report.json')
 const installerSmoke = path.join(work, 'installer-smoke.json')
 const parityReport = path.join(work, 'parity-report.json')
 const passingParityReport = path.join(work, 'passing-parity-report.json')
+const malformedPassingParityReport = path.join(work, 'malformed-passing-parity-report.json')
 const metadata = path.join(work, 'tabby-rs-metadata.json')
 const expectedRevision = '0123456789abcdef0123456789abcdef01234567'
 
@@ -45,6 +46,13 @@ fs.writeFileSync(passingParityReport, JSON.stringify({
     schemaVersion: 1,
     passed: true,
     features: { total: 1, statuses: { passed: 1 }, pending: [] },
+    platforms: { total: 1, statuses: { passed: 1 }, pending: [] },
+    failures: [],
+}))
+fs.writeFileSync(malformedPassingParityReport, JSON.stringify({
+    schemaVersion: 1,
+    passed: true,
+    features: { total: 1, statuses: { passed: 1 }, pending: ['fixture.feature'] },
     platforms: { total: 1, statuses: { passed: 1 }, pending: [] },
     failures: [],
 }))
@@ -199,5 +207,21 @@ const mismatchReport = JSON.parse(fs.readFileSync(mismatchOutput, 'utf8'))
 assert.ok(mismatchReport.failures.includes('release metadata dependency lock hash does not match checkout: yarn.lock'))
 assert.ok(mismatchReport.failures.includes('release metadata dependency lock hash does not match checkout: src-tauri/Cargo.lock'))
 assert.ok(!mismatchReport.failures.includes('parity report did not pass'))
+
+const malformedPassingParityOutput = path.join(work, 'malformed-passing-parity-release-gate.json')
+await assert.rejects(
+    execFileAsync(process.execPath, [gate,
+        '--bundle-audit', passingBundleAudit,
+        '--dependency-audit', dependencyAudit,
+        '--license-report', licenseReport,
+        '--installer-smoke', installerSmoke,
+        '--parity-report', malformedPassingParityReport,
+        '--platform', 'windows',
+        '--source-revision', expectedRevision,
+        '--output', malformedPassingParityOutput,
+    ], { cwd: root }),
+)
+const malformedPassingParityGateReport = JSON.parse(fs.readFileSync(malformedPassingParityOutput, 'utf8'))
+assert.ok(malformedPassingParityGateReport.failures.includes('parity report features has pending entries'))
 
 console.log('Release gate contract fixtures passed')

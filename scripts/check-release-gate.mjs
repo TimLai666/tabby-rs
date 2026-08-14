@@ -107,6 +107,7 @@ if (parityReport) {
             continue
         }
         if (!Array.isArray(summary.pending)) failures.push(`parity report ${name} has no pending list`)
+        else if (summary.pending.length > 0) failures.push(`parity report ${name} has pending entries`)
         const nonPassingStatuses = Object.entries(summary.statuses)
             .filter(([status, count]) => count > 0 && !['passed', 'accepted-difference'].includes(status))
             .map(([status]) => status)
