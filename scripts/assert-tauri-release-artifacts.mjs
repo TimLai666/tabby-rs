@@ -81,7 +81,22 @@ function assertMacosApplicationIcon () {
     )
 }
 
-if (platform === 'macos') assertMacosApplicationIcon()
+function assertMacosDmgIcon () {
+    const iconPath = path.join(staging, 'dmg', 'icon.icns')
+    const sourceIconPath = path.join(root, 'build/mac/icon.icns')
+    assert.ok(fs.existsSync(iconPath), `macOS DMG icon is missing: ${iconPath}`)
+    assert.ok(fs.existsSync(sourceIconPath), `source macOS DMG icon is missing: ${sourceIconPath}`)
+    assert.equal(
+        sha256(iconPath),
+        sha256(sourceIconPath),
+        'DMG icon does not match build/mac/icon.icns',
+    )
+}
+
+if (platform === 'macos') {
+    assertMacosApplicationIcon()
+    if (bundles.includes('dmg')) assertMacosDmgIcon()
+}
 
 const primaryPatterns = {
     linux: file => file.endsWith('.AppImage'),
