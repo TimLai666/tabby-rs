@@ -265,6 +265,9 @@ jobs:
       - name: Test SSH session routing contract
         run: yarn test:ssh-session
 
+      - name: Test SSH reconnect contract
+        run: yarn test:ssh-reconnect
+
       - name: Build Tauri host
         run: cargo build --manifest-path src-tauri/Cargo.toml
 
@@ -376,6 +379,9 @@ jobs:
 
       - name: Test SSH session routing contract
         run: yarn test:ssh-session
+
+      - name: Test SSH reconnect contract
+        run: yarn test:ssh-reconnect
 
       - name: Build Tauri host
         run: cargo build --manifest-path src-tauri/Cargo.toml
