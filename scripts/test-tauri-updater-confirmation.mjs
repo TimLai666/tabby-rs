@@ -23,4 +23,12 @@ assert.match(updateCommand, /emit_state\(&app, &state\);\n    check_update\(&app
 assert.match(updateService, /\.configure_client\(configure_updater_client\)/)
 assert.match(updateService, /client\.redirect\(reqwest::redirect::Policy::none\(\)\)/)
 
+const installMethod = updateCommand.match(/pub async fn update_install\([\s\S]*?\n\}\n\n#\[tauri::command\]/)?.[0]
+assert.ok(installMethod, 'Tauri updater install method must be present')
+assert.ok(installMethod.indexOf('create_backup(') < installMethod.indexOf('write_pending_update_journal('), 'backup must be created before the rollback journal')
+assert.ok(installMethod.indexOf('write_pending_update_journal(') < installMethod.indexOf('ready.update.install('), 'rollback journal must be persisted before installation')
+assert.match(installMethod, /Err\(_\) => \{[\s\S]*?restore_ready\(ready\)[\s\S]*?update backup could not be created/)
+assert.match(installMethod, /if write_pending_update_journal\(&paths, &pending\)\.is_err\(\) \{[\s\S]*?restore_ready\(ready\)[\s\S]*?update journal could not be persisted/)
+assert.match(installMethod, /if current_state\.update_channel == UpdateChannel::Stable \{[\s\S]*?last_stable_backup = Some\(backup\.backup_id\.clone\(\)\)/)
+
 console.log('Tauri updater confirmation contract passed')
