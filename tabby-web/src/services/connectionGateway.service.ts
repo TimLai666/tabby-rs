@@ -25,9 +25,9 @@ export interface WebGatewayConnectorOptions {
 
 export interface WebHostConnector {
     createSocket: (...args: unknown[]) => WebGatewaySocket
-    loadConfig (): Promise<string>
-    saveConfig (content: string): Promise<void>
-    getAppVersion (): string
+    loadConfig: () => Promise<string>
+    saveConfig: (content: string) => Promise<void>
+    getAppVersion: () => string
 }
 
 interface GatewayMessage {
