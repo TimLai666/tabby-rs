@@ -357,6 +357,22 @@ fn is_executable_file(path: &Path) -> bool {
 mod tests {
     use super::{evaluate_toolchain, resolve_node_path, sanitize_version_output, ToolResult};
 
+    #[cfg(unix)]
+    fn write_executable(
+        directory: &std::path::Path,
+        name: &str,
+        contents: &str,
+    ) -> std::path::PathBuf {
+        use std::{fs, os::unix::fs::PermissionsExt};
+
+        let path = directory.join(name);
+        fs::write(&path, contents).unwrap();
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&path, permissions).unwrap();
+        path
+    }
+
     #[test]
     fn supports_node_and_npm_with_valid_versions() {
         let result = evaluate_toolchain(
@@ -393,6 +409,49 @@ mod tests {
     }
 
     #[test]
+    fn reports_version_command_timeout() {
+        let result = evaluate_toolchain(
+            Some(ToolResult::success("v22.1.0")),
+            Some(ToolResult::failure("timed out after 3 seconds")),
+        );
+
+        assert!(!result.supported);
+        assert_eq!(
+            result.reason.as_deref(),
+            Some("npm --version failed: timed out after 3 seconds")
+        );
+    }
+
+    #[test]
+    fn rejects_empty_version_output() {
+        let node_result = evaluate_toolchain(
+            Some(ToolResult {
+                version: None,
+                error: None,
+            }),
+            Some(ToolResult::success("10.8.2")),
+        );
+        assert!(!node_result.supported);
+        assert_eq!(
+            node_result.reason.as_deref(),
+            Some("node --version returned no version")
+        );
+
+        let npm_result = evaluate_toolchain(
+            Some(ToolResult::success("v22.1.0")),
+            Some(ToolResult {
+                version: None,
+                error: None,
+            }),
+        );
+        assert!(!npm_result.supported);
+        assert_eq!(
+            npm_result.reason.as_deref(),
+            Some("npm --version returned no version")
+        );
+    }
+
+    #[test]
     fn trims_version_output_and_rejects_control_data() {
         assert_eq!(
             sanitize_version_output(b" v22.1.0\r\n"),
@@ -422,5 +481,63 @@ mod tests {
     fn custom_node_path_must_be_absolute_and_clean() {
         assert!(resolve_node_path(Some("node".into())).is_err());
         assert!(resolve_node_path(Some("/tmp/node\n".into())).is_err());
+    }
+
+    #[tokio::test]
+    async fn reports_missing_custom_node_path() {
+        let directory = tempfile::tempdir().unwrap();
+        let node_path = directory.path().join("missing-node");
+
+        let result = super::detect(Some(node_path.to_string_lossy().into_owned()))
+            .await
+            .unwrap();
+
+        assert!(!result.supported);
+        assert!(result.node_path.is_none());
+        assert_eq!(
+            result.reason.as_deref(),
+            Some("the custom Node.js path was not found")
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn uses_custom_node_and_adjacent_npm() {
+        let directory = tempfile::tempdir().unwrap();
+        let node_path =
+            write_executable(directory.path(), "node", "#!/bin/sh\nprintf 'v22.1.0\\n'\n");
+        let npm_path = write_executable(directory.path(), "npm", "#!/bin/sh\nprintf '10.8.2\\n'\n");
+
+        let result = super::detect(Some(node_path.to_string_lossy().into_owned()))
+            .await
+            .unwrap();
+
+        assert!(result.supported);
+        assert_eq!(result.node_path.as_deref(), Some(node_path.as_path()));
+        assert_eq!(result.npm_path.as_deref(), Some(npm_path.as_path()));
+        assert_eq!(result.node_version.as_deref(), Some("v22.1.0"));
+        assert_eq!(result.npm_version.as_deref(), Some("10.8.2"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn rejects_invalid_custom_node_version_output() {
+        let directory = tempfile::tempdir().unwrap();
+        let node_path = write_executable(
+            directory.path(),
+            "node",
+            "#!/bin/sh\nprintf 'not-a-version\\n'\n",
+        );
+        write_executable(directory.path(), "npm", "#!/bin/sh\nprintf '10.8.2\\n'\n");
+
+        let result = super::detect(Some(node_path.to_string_lossy().into_owned()))
+            .await
+            .unwrap();
+
+        assert!(!result.supported);
+        assert_eq!(
+            result.reason.as_deref(),
+            Some("node --version failed: version output was invalid")
+        );
     }
 }
