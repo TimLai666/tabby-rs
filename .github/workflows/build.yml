@@ -184,6 +184,12 @@ jobs:
       - name: Test official plugin runtime fixture
         run: yarn test:official-plugin-runtime
 
+      - name: Test plugin runtime fixtures
+        run: yarn test:plugin-runtime
+
+      - name: Test safe mode plugin actions
+        run: yarn test:safe-mode-plugin-actions
+
       - name: Test plugin operation contract
         run: yarn test:plugin-operation
 
@@ -310,6 +316,12 @@ jobs:
 
       - name: Test public plugin runtime fixtures
         run: yarn test:official-plugin-runtime
+
+      - name: Test plugin runtime fixtures
+        run: yarn test:plugin-runtime
+
+      - name: Test safe mode plugin actions
+        run: yarn test:safe-mode-plugin-actions
 
       - name: Test plugin operation contract
         run: yarn test:plugin-operation
