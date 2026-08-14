@@ -145,6 +145,9 @@ jobs:
       - name: Test web connector runtime contract
         run: yarn test:web-connector-runtime
 
+      - name: Test web SSH SFTP Telnet connection smoke
+        run: yarn test:web-connection-smoke
+
       - name: Test web plugin loader
         run: yarn test:web-plugin-loader
 
