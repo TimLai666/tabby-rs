@@ -1,5 +1,5 @@
 import { Injectable } from '@angular/core'
-import { ConfigService, HostWindowService, TranslateService } from 'tabby-core'
+import { ConfigService, HostWindowService, TranslateService, UnsupportedCapabilityError } from 'tabby-core'
 
 @Injectable({ providedIn: 'root' })
 export class WebHostWindow extends HostWindowService {
@@ -41,7 +41,7 @@ export class WebHostWindow extends HostWindowService {
     }
 
     minimize (): void {
-        throw new Error('Unavailable')
+        throw new UnsupportedCapabilityError('windowControls')
     }
 
     isMaximized (): boolean {
@@ -49,7 +49,7 @@ export class WebHostWindow extends HostWindowService {
     }
 
     toggleMaximize (): void {
-        throw new Error('Unavailable')
+        throw new UnsupportedCapabilityError('windowControls')
     }
 
     close (): void {
