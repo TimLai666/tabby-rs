@@ -3,6 +3,7 @@ import copyToClipboard from 'copy-text-to-clipboard'
 import { Injectable, Inject } from '@angular/core'
 import { NgbModal } from '@ng-bootstrap/ng-bootstrap'
 import { PlatformService, ClipboardContent, MenuItemOptions, MessageBoxOptions, MessageBoxResult, FileUpload, FileUploadOptions, FileDownload, DirectoryDownload, HTMLFileUpload, DirectoryUpload, UnsupportedCapabilityError } from 'tabby-core'
+import type { WebHostConnector } from './services/connectionGateway.service'
 
 // eslint-disable-next-line no-duplicate-imports
 import type { ContextMenuElement, ContextMenuItem } from '@vaadin/vaadin-context-menu'
@@ -19,8 +20,7 @@ export class WebPlatformService extends PlatformService {
     private fileSelector: HTMLInputElement
 
     constructor (
-        // eslint-disable-next-line @typescript-eslint/explicit-module-boundary-types
-        @Inject('WEB_CONNECTOR') private connector: any,
+        @Inject('WEB_CONNECTOR') private connector: WebHostConnector,
         private ngbModal: NgbModal,
     ) {
         super()

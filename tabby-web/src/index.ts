@@ -14,7 +14,7 @@ import { WebRuntimeCapabilitiesService } from './services/runtimeCapabilities.se
 import './styles.scss'
 
 export { WebGatewayConnector, WebGatewaySocket } from './services/connectionGateway.service'
-export type { WebGatewayConnectorOptions, WebGatewaySocketFactory, WebGatewaySocketLike, WebGatewaySocketOptions } from './services/connectionGateway.service'
+export type { WebGatewayConnectorOptions, WebGatewaySocketFactory, WebGatewaySocketLike, WebGatewaySocketOptions, WebHostConnector } from './services/connectionGateway.service'
 
 @NgModule({
     imports: [

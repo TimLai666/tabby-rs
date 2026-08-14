@@ -23,6 +23,13 @@ export interface WebGatewayConnectorOptions {
     webSocketFactory?: WebGatewaySocketFactory
 }
 
+export interface WebHostConnector {
+    createSocket: (...args: unknown[]) => WebGatewaySocket
+    loadConfig (): Promise<string>
+    saveConfig (content: string): Promise<void>
+    getAppVersion (): string
+}
+
 interface GatewayMessage {
     _: string
     [key: string]: unknown
