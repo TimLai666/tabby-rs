@@ -33,6 +33,7 @@ execFileSync(process.execPath, [path.join(root, 'scripts/create-license-report.m
     cwd: root,
     env: {
         ...process.env,
+        GITHUB_SHA: '',
         TABBY_RS_LICENSE_REPORT: report,
         TABBY_RS_LICENSE_REPORT_HTML: htmlReport,
         TABBY_RS_NOTICES_PATH: notices,
