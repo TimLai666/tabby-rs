@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::{
     commands::app::EmptyRequest,
@@ -105,21 +105,24 @@ pub fn diagnostics_clear_logs(
 #[tauri::command]
 pub fn diagnostics_preview(
     request: DiagnosticsOptions,
+    app: AppHandle,
     state: State<'_, AppState>,
     secret_state: State<'_, std::sync::Arc<SecretState>>,
 ) -> Result<bundle::DiagnosticsPreview, AppError> {
     let known_secrets = known_secret_values(&secret_state);
-    bundle::preview(&state, request.include_logs, &known_secrets)
+    bundle::preview(&app, &state, request.include_logs, &known_secrets)
 }
 
 #[tauri::command]
 pub fn diagnostics_export(
     request: DiagnosticsExportRequest,
+    app: AppHandle,
     state: State<'_, AppState>,
     secret_state: State<'_, std::sync::Arc<SecretState>>,
 ) -> Result<String, AppError> {
     let known_secrets = known_secret_values(&secret_state);
     bundle::export(
+        &app,
         &state,
         &request.destination,
         request.include_logs,
