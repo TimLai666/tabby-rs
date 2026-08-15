@@ -8,14 +8,14 @@ const session = fs.readFileSync(path.join(root, 'tabby-tauri/src/ssh/session.ts'
 const tab = fs.readFileSync(path.join(root, 'tabby-tauri/src/ssh/tab.component.ts'), 'utf8')
 
 const authForOptions = session.match(
-    /private async authForOptions \\(options: SSHProfile\\['options'\\]\\): Promise<SshAuthMethodRef\\[]> \\{([\\s\\S]*?)\\n    \\/,
+    /private async authForOptions \(options: SSHProfile\['options'\]\): Promise<SshAuthMethodRef\[]> \{([\s\S]*?)\n    \}/,
 )
 assert.ok(authForOptions, 'SSH auth option mapping is missing')
-assert.match(authForOptions[1], /if \\(\\!options\\.auth\\)/)
-assert.match(authForOptions[1], /const privateKeys = options\\.privateKeys\\.length/)
-assert.match(authForOptions[1], /auth\\.push\\(\\{ type: 'privateKey', fileRef, passphraseRef: null \\}\\)/)
-assert.match(authForOptions[1], /auth\\.push\\(\\{ type: 'agent', socket: null \\}\\)/)
-assert.match(authForOptions[1], /auth\\.push\\(\\{ type: 'keyboardInteractive' \\}\\)/)
+assert.match(authForOptions[1], /if \(!options\.auth\)/)
+assert.match(authForOptions[1], /const privateKeys = options\.privateKeys\.length/)
+assert.match(authForOptions[1], /auth\.push\(\{ type: 'privateKey', fileRef, passphraseRef: null \}\)/)
+assert.match(authForOptions[1], /auth\.push\(\{ type: 'agent', socket: null \}\)/)
+assert.match(authForOptions[1], /auth\.push\(\{ type: 'keyboardInteractive' \}\)/)
 
 assert.match(session, /private pendingExit: SshExitEvent\|null = null/)
 assert.match(session, /private readonly serviceMessage = new Subject<string>\(\)/)
