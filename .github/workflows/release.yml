@@ -428,3 +428,14 @@ jobs:
           if [ "${{ steps.channel.outputs.name }}" = "nightly" ]; then
             release_tag="nightly-${GITHUB_SHA}"
           elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            release_tag="$GITHUB_REF_NAME"
+          else
+            release_tag="v${base_version}"
+          fi
+          mapfile -d '' assets < <(find release-assets -type f -print0)
+          test "${#assets[@]}" -gt 0
+          if [ "${{ steps.channel.outputs.name }}" = "nightly" ]; then
+            gh release create "$release_tag" "${assets[@]}" --prerelease --title "Tabby RS Nightly ${GITHUB_SHA}" --notes "Automated nightly build."
+          else
+            gh release create "$release_tag" "${assets[@]}" --draft --title "Tabby RS ${release_tag}" --generate-notes
+          fi
