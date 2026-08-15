@@ -66,6 +66,9 @@ jobs:
           TABBY_RS_SKIP_ELECTRON_NATIVE_REBUILD: '1'
         run: yarn install --frozen-lockfile --network-timeout ${{ env.YARN_NETWORK_TIMEOUT }}
 
+      - name: Test release platform matrix contract
+        run: yarn test:release-platform-matrix
+
       - name: Build web container
         run: yarn build:web
 
@@ -282,6 +285,7 @@ jobs:
           TABBY_RS_RELEASE_TARGET: ${{ matrix.target }}
           TABBY_RS_RELEASE_PLATFORM: ${{ matrix.platform }}
           TABBY_RS_RELEASE_ARCH: ${{ matrix.arch }}
+          TABBY_RS_TOOLCHAIN: ${{ matrix.target }}
           TABBY_RS_BUNDLE_ROOT: src-tauri/target/${{ matrix.target }}/release/bundle
           TABBY_RS_RELEASE_STAGING: release-staging
         run: |

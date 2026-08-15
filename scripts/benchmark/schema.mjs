@@ -75,6 +75,9 @@ export function validateBenchmarkReport (report, expectedMetric, { requireLargeO
     if (typeof report.measuredAt === 'string' && Number.isNaN(Date.parse(report.measuredAt))) errors.push('measuredAt must be an ISO timestamp')
     if (!isRecord(report.environment)) errors.push('environment must be an object')
     for (const name of ['os', 'arch', 'node', 'toolchain']) requireString(errors, report.environment, name)
+    if (typeof report.target === 'string' && typeof report.environment?.toolchain === 'string' && report.target !== report.environment.toolchain) {
+        errors.push('environment.toolchain must match target')
+    }
     if (!isRecord(report.provenance)) errors.push('provenance must be an object')
     requireString(errors, report.provenance, 'runner')
     if (!isRecord(report.provenance?.binary)) errors.push('provenance.binary must be an object')

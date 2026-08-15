@@ -63,6 +63,15 @@ function sha256 (filePath) {
     return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex')
 }
 
+function manifestMetadata (relativePath, entries) {
+    const filePath = path.join(root, relativePath)
+    return {
+        path: relativePath,
+        sha256: fs.existsSync(filePath) ? sha256(filePath) : null,
+        ids: entries.map(entry => entry?.id).filter(id => typeof id === 'string'),
+    }
+}
+
 const featuresDocument = readYaml('parity/features.yaml')
 const platformDocument = readYaml('parity/platform-matrix.yaml')
 if (!Array.isArray(featuresDocument?.features) || featuresDocument.features.length === 0) {
@@ -117,6 +126,25 @@ if (parityReport) {
             failures.push(`parity report ${name} has non-passing statuses: ${nonPassingStatuses.join(', ')}`)
         }
     }
+    const expectedManifests = {
+        features: manifestMetadata('parity/features.yaml', featuresDocument?.features || []),
+        platforms: manifestMetadata('parity/platform-matrix.yaml', platformDocument?.platforms || []),
+    }
+    if (!parityReport.manifests || typeof parityReport.manifests !== 'object') {
+        failures.push('parity report has no manifest provenance')
+    } else {
+        for (const name of ['features', 'platforms']) {
+            const actual = parityReport.manifests[name]
+            const expected = expectedManifests[name]
+            if (!actual || typeof actual !== 'object') {
+                failures.push(`parity report ${name} manifest provenance is missing`)
+                continue
+            }
+            if (actual.path !== expected.path) failures.push(`parity report ${name} manifest path does not match checkout`)
+            if (actual.sha256 !== expected.sha256) failures.push(`parity report ${name} manifest hash does not match checkout`)
+            if (JSON.stringify(actual.ids) !== JSON.stringify(expected.ids)) failures.push(`parity report ${name} manifest ids do not match checkout`)
+        }
+    }
 }
 
 if (!parityEvidencePath) failures.push('missing parity automated evidence path')
@@ -147,6 +175,20 @@ if (parityEvidencePath && parityEvidence) {
         for (const expectedCheck of manifestExpectedChecks) {
             if (!names.includes(expectedCheck)) failures.push(`parity automated evidence is missing check: ${expectedCheck}`)
         }
+    }
+    const platformEntry = (platformDocument?.platforms || []).find(entry => entry.target === expectedTarget)
+    const requiredPlatformChecks = [...new Set(platformEntry?.requiredChecks || [])].sort()
+    if (!Array.isArray(parityEvidence.platformRequiredChecks) || parityEvidence.platformRequiredChecks.length === 0) {
+        failures.push('parity automated evidence has no platform required checks')
+    } else if (JSON.stringify([...new Set(parityEvidence.platformRequiredChecks)].sort()) !== JSON.stringify(requiredPlatformChecks)) {
+        failures.push('parity automated evidence platform required checks do not match parity manifest')
+    }
+    if (!Array.isArray(parityEvidence.unverifiedRequiredChecks)) {
+        failures.push('parity automated evidence has no unverified required checks list')
+    } else {
+        const unverified = new Set(parityEvidence.unverifiedRequiredChecks)
+        if ([...unverified].some(check => !requiredPlatformChecks.includes(check))) failures.push('parity automated evidence has unknown unverified required checks')
+        if (unverified.size > 0) failures.push(`parity automated evidence has unverified required checks: ${[...unverified].sort().join(', ')}`)
     }
 }
 
@@ -216,6 +258,9 @@ const licenseReport = readJson(licenseReportPath, 'license report')
 if (licenseReport) {
     if (licenseReport.schemaVersion !== 1) failures.push('license report schema version is invalid')
     if (typeof licenseReport.sourceRevision !== 'string' || licenseReport.sourceRevision.length === 0) failures.push('license report sourceRevision is missing')
+    for (const name of ['platform', 'arch', 'target', 'toolchain']) {
+        if (typeof licenseReport[name] !== 'string' || licenseReport[name].length === 0) failures.push(`license report ${name} is missing`)
+    }
     if (typeof licenseReport.license?.path !== 'string' || licenseReport.license.path.length === 0) failures.push('license report has no LICENSE entry')
     if (typeof licenseReport.license?.sha256 !== 'string' || !sha256Pattern.test(licenseReport.license.sha256)) failures.push('license report LICENSE hash is invalid')
     const notices = licenseReport.thirdPartyNotices
@@ -237,6 +282,10 @@ if (licenseReport) {
     if (expectedRevision && licenseReport.sourceRevision !== expectedRevision) {
         failures.push(`license report sourceRevision must match ${expectedRevision}`)
     }
+    if (expectedPlatform && licenseReport.platform !== expectedPlatform) failures.push(`license report platform must match ${expectedPlatform}`)
+    if (expectedArch && licenseReport.arch !== expectedArch) failures.push(`license report arch must match ${expectedArch}`)
+    if (expectedTarget && licenseReport.target !== expectedTarget) failures.push(`license report target must match ${expectedTarget}`)
+    if (licenseReport.target !== licenseReport.toolchain) failures.push('license report toolchain must match target')
 }
 
 const installerSmoke = readJson(installerSmokePath, 'installer smoke report')

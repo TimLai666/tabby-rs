@@ -45,11 +45,15 @@ const failedReport = createEvidenceReport({
     sourceRevision: 'fixture-revision',
     generatedAt: '2026-01-01T00:00:00.000Z',
     expectedChecks: ['alpha', 'shared'],
+    platformRequiredChecks: ['local-shell', 'manual-check'],
+    unverifiedRequiredChecks: ['manual-check'],
 })
 assert.equal(failedReport.passed, false)
 assert.match(failedReport.failures[0], /shared/)
 assert.equal(Object.hasOwn(failedReport.checks[0], 'stdoutText'), false)
 assert.equal(failedReport.checks[0].stdout.sha256.length, 64)
+assert.deepEqual(failedReport.platformRequiredChecks, ['local-shell', 'manual-check'])
+assert.match(failedReport.failures.at(-1), /unverified required platform checks: manual-check/)
 
 const incompleteReport = createEvidenceReport({
     results: [{ name: 'alpha', passed: true, status: 'passed', exitCode: 0 }],

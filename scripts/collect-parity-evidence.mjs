@@ -114,6 +114,8 @@ export function createEvidenceReport ({
     platform = null,
     arch = process.arch,
     target = null,
+    platformRequiredChecks = [],
+    unverifiedRequiredChecks = [],
     generatedAt = new Date().toISOString(),
 } = {}) {
     const failures = [
@@ -128,6 +130,7 @@ export function createEvidenceReport ({
     ])]
     const missingExpectedChecks = expectedChecks.filter(check => !recordedChecks.includes(check))
     if (missingExpectedChecks.length > 0) failures.push(`missing expected platform checks: ${missingExpectedChecks.join(', ')}`)
+    if (unverifiedRequiredChecks.length > 0) failures.push(`unverified required platform checks: ${unverifiedRequiredChecks.join(', ')}`)
     return {
         schemaVersion: 1,
         kind: 'tabby-rs-parity-automated-evidence',
@@ -136,6 +139,8 @@ export function createEvidenceReport ({
         platform,
         arch,
         target,
+        platformRequiredChecks,
+        unverifiedRequiredChecks,
         checks: results.map(result => ({
             name: result.name,
             command: result.command || `yarn run test:${result.name}`,
@@ -170,12 +175,19 @@ async function main () {
     const packagePath = path.join(root, 'package.json')
     const parity = yaml.load(fs.readFileSync(featuresPath, 'utf8'))
     const packageJson = JSON.parse(fs.readFileSync(packagePath, 'utf8'))
+    const platformDocument = yaml.load(fs.readFileSync(path.join(root, 'parity/platform-matrix.yaml'), 'utf8'))
     const platform = argument(args, '--platform') || platformName()
     const requested = argument(args, '--checks')?.split(',') || null
     const selection = selectParityChecks({ parity, scripts: packageJson.scripts, platform, requestedChecks: requested })
     const results = await executeChecks(selection.checks.filter(check => !selection.missingScripts.includes(check) && !selection.unknownChecks.includes(check)), {
         onCheckStart: name => console.log(`Running parity check: ${name}`),
     })
+    const arch = argument(args, '--arch') || process.arch
+    const target = argument(args, '--target') || process.env.TABBY_RS_TOOLCHAIN || null
+    const platformEntry = (platformDocument?.platforms || []).find(entry => entry.target === target)
+    const platformRequiredChecks = platformEntry?.requiredChecks || []
+    const automatedChecks = new Set(selection.expectedChecks)
+    const unverifiedRequiredChecks = platformRequiredChecks.filter(check => !automatedChecks.has(check))
     const report = createEvidenceReport({
         results,
         missingScripts: selection.missingScripts,
@@ -183,8 +195,10 @@ async function main () {
         expectedChecks: selection.expectedChecks,
         sourceRevision: argument(args, '--source-revision') || process.env.GITHUB_SHA || 'local',
         platform,
-        arch: argument(args, '--arch') || process.arch,
-        target: argument(args, '--target') || process.env.TABBY_RS_TOOLCHAIN || null,
+        arch,
+        target,
+        platformRequiredChecks,
+        unverifiedRequiredChecks,
     })
     const outputPath = path.resolve(argument(args, '--output') || path.join(root, 'parity-automated-evidence.json'))
     fs.mkdirSync(path.dirname(outputPath), { recursive: true })

@@ -26,6 +26,10 @@ assert.match(pending.stdout, /"passed": false/)
 const pendingReport = JSON.parse(fs.readFileSync(output, 'utf8'))
 assert.deepEqual(pendingReport.features.pending, ['shell'])
 assert.deepEqual(pendingReport.platforms.pending, ['linux'])
+assert.equal(pendingReport.manifests.features.path, 'parity/features.yaml')
+assert.equal(pendingReport.manifests.platforms.path, 'parity/platform-matrix.yaml')
+assert.equal(pendingReport.manifests.features.ids[0], 'shell')
+assert.equal(pendingReport.manifests.platforms.ids[0], 'linux')
 
 const reportOnly = spawnSync(process.execPath, [
     path.join(root, 'scripts/compare-parity.mjs'),

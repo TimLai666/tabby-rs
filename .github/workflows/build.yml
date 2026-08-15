@@ -82,6 +82,9 @@ jobs:
       - name: Build TypeScript declarations
         run: yarn build:typings
 
+      - name: Test release platform matrix contract
+        run: yarn test:release-platform-matrix
+
       - name: Lint
         run: yarn lint --format unix
 
