@@ -54,12 +54,12 @@ function summary (values) {
     }
 }
 
-function environment () {
+function environment (target) {
     return {
         os: `${os.platform()} ${os.release()}`,
         arch: process.arch,
         node: process.version,
-        toolchain: process.env.TABBY_RS_TOOLCHAIN || 'unspecified',
+        toolchain: process.env.TABBY_RS_TOOLCHAIN || target || 'unspecified',
     }
 }
 
@@ -248,7 +248,7 @@ function baseReport (metric, options, samples, { fixtureSha256, artifactSha256, 
         samples: samples.length,
         warmupSamples: Number(options['warmup-samples'] || 0),
         measuredAt: new Date().toISOString(),
-        environment: environment(),
+        environment: environment(options.target || process.env.TABBY_RS_TOOLCHAIN),
         provenance: { runner: 'scripts/run-benchmarks.mjs', runnerVersion: '1' },
         ...summary(samples),
         ...extra,

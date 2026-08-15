@@ -1,3 +1,4 @@
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -33,6 +34,18 @@ function nonEmptyStringArray (value) {
 
 function issueNumberArray (value) {
     return Array.isArray(value) && value.length > 0 && value.every(item => Number.isInteger(item) && item > 0)
+}
+
+function manifestMetadata (filePath, logicalPath, entries) {
+    let sha256 = null
+    try {
+        sha256 = crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex')
+    } catch {}
+    return {
+        path: logicalPath,
+        sha256,
+        ids: entries.map(entry => entry?.id).filter(id => typeof id === 'string'),
+    }
 }
 
 export function compareParity ({ featuresPath = defaultFeaturesPath, platformsPath = defaultPlatformsPath } = {}) {
@@ -113,6 +126,10 @@ export function compareParity ({ featuresPath = defaultFeaturesPath, platformsPa
     return {
         schemaVersion: 1,
         baseline: featuresDocument?.baseline || null,
+        manifests: {
+            features: manifestMetadata(featuresPath, 'parity/features.yaml', features),
+            platforms: manifestMetadata(platformsPath, 'parity/platform-matrix.yaml', platforms),
+        },
         features: {
             total: features.length,
             statuses: statusCounts(features),

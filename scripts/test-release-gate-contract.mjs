@@ -100,6 +100,7 @@ assert.ok(report.failures.includes('installer smoke is missing launch operation'
 assert.ok(report.failures.includes('installer smoke is missing uninstall operation'))
 assert.ok(report.failures.includes('parity report did not pass'))
 assert.ok(report.failures.includes('parity automated evidence expected checks do not match parity manifest'))
+assert.ok(report.failures.includes('parity automated evidence has no platform required checks'))
 
 const missingUserDataEvidenceSmoke = path.join(work, 'missing-user-data-evidence-smoke.json')
 const missingUserDataEvidenceOutput = path.join(work, 'missing-user-data-evidence-release-gate.json')
@@ -238,6 +239,7 @@ await assert.rejects(
 )
 const malformedPassingParityGateReport = JSON.parse(fs.readFileSync(malformedPassingParityOutput, 'utf8'))
 assert.ok(malformedPassingParityGateReport.failures.includes('parity report features has pending entries'))
+assert.ok(malformedPassingParityGateReport.failures.includes('parity report has no manifest provenance'))
 
 assert.ok(mismatchReport.failures.includes('missing parity automated evidence path'))
 

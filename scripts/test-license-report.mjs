@@ -21,11 +21,30 @@ assert.match(noticesText, /\| cargo \|/)
 
 execFileSync(process.execPath, [path.join(root, 'scripts/create-license-report.mjs')], {
     cwd: root,
-    env: { ...process.env, TABBY_RS_LICENSE_REPORT: report, TABBY_RS_NOTICES_PATH: notices },
+    env: {
+        ...process.env,
+        TABBY_RS_LICENSE_REPORT: report,
+        TABBY_RS_NOTICES_PATH: notices,
+        TABBY_RS_RELEASE_PLATFORM: 'linux',
+        TABBY_RS_RELEASE_ARCH: 'x86_64',
+        TABBY_RS_RELEASE_TARGET: 'x86_64-unknown-linux-gnu',
+        TABBY_RS_TOOLCHAIN: 'x86_64-unknown-linux-gnu',
+    },
     stdio: 'ignore',
 })
 const licenseReport = JSON.parse(fs.readFileSync(report, 'utf8'))
 assert.equal(licenseReport.passed, true)
+assert.deepEqual({
+    platform: licenseReport.platform,
+    arch: licenseReport.arch,
+    target: licenseReport.target,
+    toolchain: licenseReport.toolchain,
+}, {
+    platform: 'linux',
+    arch: 'x86_64',
+    target: 'x86_64-unknown-linux-gnu',
+    toolchain: 'x86_64-unknown-linux-gnu',
+})
 assert.ok(licenseReport.thirdPartyNotices.dependencies.npm.length > 0)
 assert.ok(licenseReport.thirdPartyNotices.dependencies.cargo.length > 0)
 

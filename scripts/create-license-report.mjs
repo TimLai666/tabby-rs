@@ -12,6 +12,10 @@ const htmlOutput = process.env.TABBY_RS_LICENSE_REPORT_HTML
     ? path.resolve(process.env.TABBY_RS_LICENSE_REPORT_HTML)
     : null
 const revision = process.env.GITHUB_SHA || process.env.TABBY_RS_SOURCE_REVISION || 'local'
+const platform = process.env.TABBY_RS_RELEASE_PLATFORM || 'unspecified'
+const arch = process.env.TABBY_RS_RELEASE_ARCH || 'unspecified'
+const target = process.env.TABBY_RS_RELEASE_TARGET || process.env.TABBY_RS_TOOLCHAIN || 'unspecified'
+const toolchain = process.env.TABBY_RS_TOOLCHAIN || target
 
 assert.ok(fs.statSync(licensePath).isFile(), `LICENSE does not exist: ${licensePath}`)
 assert.ok(fs.statSync(noticesPath).isFile(), `third-party notices do not exist: ${noticesPath}`)
@@ -36,6 +40,10 @@ const hash = filePath => crypto.createHash('sha256').update(fs.readFileSync(file
 const report = {
     schemaVersion: 1,
     sourceRevision: revision,
+    platform,
+    arch,
+    target,
+    toolchain,
     license: { path: path.basename(licensePath), sha256: hash(licensePath) },
     thirdPartyNotices: {
         path: path.basename(noticesPath),

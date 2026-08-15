@@ -79,7 +79,7 @@ assert.deepEqual(Object.keys(aggregateReport.reports).sort(), ['bundle-size', 'm
 const tamperedReport = { ...outputReport, median: outputReport.median + 1 }
 assert.ok(validateBenchmarkReport(tamperedReport, expected.output).includes('median does not match values'))
 const wrongTargetReport = { ...outputReport, target: 'wrong-target' }
-assert.ok(validateBenchmarkReport(wrongTargetReport, expected.output).length === 0)
+assert.ok(validateBenchmarkReport(wrongTargetReport, expected.output).includes('environment.toolchain must match target'))
 const missingBinaryEvidence = {
     ...outputReport,
     provenance: { ...outputReport.provenance, binary: undefined },
