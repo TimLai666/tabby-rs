@@ -94,11 +94,18 @@ tabby-pluginname
 
 # Plugins
 
-The app will load all plugins from the source checkout in the dev mode, from the user's plugins directory at all times (click `Open Plugins Directory` under `Settings` > `Plugins`) and from the directory specified by the `TABBY_PLUGINS` environment var.
+The Tauri app loads plugins from its user plugin directory. Open it from
+`Settings` > `Plugins` > `Open Plugins Directory`, or use the path returned as
+`userPluginsPath` by the bootstrap bridge. The default path is the `plugins`
+subdirectory of the Tabby RS data directory; portable installs use
+`data/plugins` beside the executable.
 
-Only modules whose `package.json` file contains a `tabby-plugin` keyword will be loaded.
+Only modules whose `package.json` contains a `tabby-plugin`,
+`tabby-builtin-plugin`, or legacy `terminus-*` keyword will be loaded.
 
-If you're currently in your plugin's directory, start Tabby as `TABBY_PLUGINS=$(pwd) tabby --debug`
+For Tauri development, run `yarn start:tauri` and install the plugin into the
+user plugin directory. `TABBY_PLUGINS` and `tabby --debug` belong to the legacy
+Electron development path and are not read by the Tauri loader.
 
 A plugin should only provide a default export, which should be a `NgModule` class (or a `NgModuleWithDependencies` where applicable). This module will be injected as a dependency to the app's root module.
 
