@@ -237,7 +237,16 @@ export class TauriSshSession extends BaseSession {
 
     private async authForOptions (options: SSHProfile['options']): Promise<SshAuthMethodRef[]> {
         const auth: SshAuthMethodRef[] = []
-        if (options.auth === 'password') {
+        if (!options.auth) {
+            const privateKeys = options.privateKeys.length
+                ? options.privateKeys
+                : await this.bridge.invoke('ssh.listPrivateKeys', {})
+            for (const fileRef of privateKeys) {
+                auth.push({ type: 'privateKey', fileRef, passphraseRef: null })
+            }
+            auth.push({ type: 'agent', socket: null })
+            auth.push({ type: 'keyboardInteractive' })
+        } else if (options.auth === 'password') {
             auth.push({ type: 'password', secretRef: await this.passwordSecretRef(options) })
         } else if (options.auth === 'publicKey') {
             const privateKeys = options.privateKeys.length
@@ -248,8 +257,6 @@ export class TauriSshSession extends BaseSession {
             }
         } else if (options.auth === 'agent') {
             auth.push({ type: 'agent', socket: null })
-        } else if (options.auth === 'keyboardInteractive') {
-            auth.push({ type: 'keyboardInteractive' })
         }
         return auth
     }
