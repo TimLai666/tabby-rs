@@ -6,13 +6,15 @@ use std::{
 
 use chrono::Utc;
 use sha2::{Digest, Sha256};
+use tauri::{AppHandle, Manager};
 
 use crate::{
     error::AppError,
     plugins::manifest,
     state::AppState,
     storage::{
-        atomic_file::read_optional_regular_file, config_file::read_config,
+        atomic_file::read_optional_regular_file,
+        config_file::{read_config, ConfigReadResult},
         paths::validate_single_component,
     },
 };
@@ -72,11 +74,12 @@ struct BundleEntry {
 }
 
 pub fn preview(
+    app: &AppHandle,
     state: &AppState,
     include_logs: bool,
     known_secrets: &[String],
 ) -> Result<DiagnosticsPreview, AppError> {
-    let entries = collect_entries(state, include_logs, known_secrets)?;
+    let entries = collect_entries(app, state, include_logs, known_secrets)?;
     let mut remaining = MAX_PREVIEW_TOTAL_BYTES;
     let files = entries
         .into_iter()
@@ -100,6 +103,7 @@ pub fn preview(
 }
 
 pub fn export(
+    app: &AppHandle,
     state: &AppState,
     destination: &str,
     include_logs: bool,
@@ -111,7 +115,7 @@ pub fn export(
             "diagnostic bundle destination already exists".into(),
         ));
     }
-    let entries = collect_entries(state, include_logs, known_secrets)?;
+    let entries = collect_entries(app, state, include_logs, known_secrets)?;
     let total = entries.iter().map(|entry| entry.data.len()).sum::<usize>();
     if total > MAX_BUNDLE_BYTES {
         return Err(AppError::InvalidData(
@@ -174,29 +178,26 @@ pub fn export(
 }
 
 fn collect_entries(
+    app: &AppHandle,
     state: &AppState,
     include_logs: bool,
     known_secrets: &[String],
 ) -> Result<Vec<BundleEntry>, AppError> {
     let persisted_state = state.persisted_state();
+    let config = read_config(&state.paths().data_dir().join("config.yaml"))?;
+    let channel = match persisted_state.update_channel {
+        crate::storage::state_file::UpdateChannel::Stable => "stable",
+        crate::storage::state_file::UpdateChannel::Nightly => "nightly",
+    };
     let mut entries = vec![
         BundleEntry {
             path: "system.json".into(),
-            data: serde_json::to_vec_pretty(&serde_json::json!({
-                "schemaVersion": 1,
-                "appVersion": env!("CARGO_PKG_VERSION"),
-                "channel": match persisted_state.update_channel {
-                    crate::storage::state_file::UpdateChannel::Stable => "stable",
-                    crate::storage::state_file::UpdateChannel::Nightly => "nightly",
-                },
-                "os": std::env::consts::OS,
-                "arch": std::env::consts::ARCH,
-            }))?,
+            data: serde_json::to_vec_pretty(&system_summary(app, &config.yaml, channel))?,
             redacted: true,
         },
         BundleEntry {
             path: "config-summary.json".into(),
-            data: config_summary(state)?,
+            data: config_summary(&config)?,
             redacted: true,
         },
         BundleEntry {
@@ -226,8 +227,75 @@ fn collect_entries(
     Ok(entries)
 }
 
-fn config_summary(state: &AppState) -> Result<Vec<u8>, AppError> {
-    let config = read_config(&state.paths().data_dir().join("config.yaml"))?;
+fn system_summary(app: &AppHandle, config_yaml: &str, channel: &str) -> serde_json::Value {
+    let webview_version = tauri::webview_version().ok();
+    let display_count = app
+        .webview_windows()
+        .values()
+        .next()
+        .and_then(|window| window.available_monitors().ok())
+        .map(|monitors| monitors.len());
+    system_summary_value(
+        channel,
+        webview_version.as_deref(),
+        locale_from_config_or_environment(config_yaml).as_deref(),
+        display_count,
+    )
+}
+
+fn system_summary_value(
+    channel: &str,
+    webview_version: Option<&str>,
+    locale: Option<&str>,
+    display_count: Option<usize>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "schemaVersion": 1,
+        "appVersion": env!("CARGO_PKG_VERSION"),
+        "channel": channel,
+        "os": std::env::consts::OS,
+        "arch": std::env::consts::ARCH,
+        "webviewVersion": webview_version,
+        "locale": locale,
+        "displayCount": display_count,
+    })
+}
+
+fn locale_from_config_or_environment(config_yaml: &str) -> Option<String> {
+    let configured = serde_yaml::from_str::<serde_yaml::Value>(config_yaml)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("language")
+                .and_then(serde_yaml::Value::as_str)
+                .map(ToOwned::to_owned)
+        });
+    configured
+        .as_deref()
+        .and_then(normalize_locale)
+        .or_else(|| {
+            ["LC_ALL", "LC_MESSAGES", "LANG"].iter().find_map(|key| {
+                std::env::var(key)
+                    .ok()
+                    .and_then(|value| normalize_locale(&value))
+            })
+        })
+}
+
+fn normalize_locale(value: &str) -> Option<String> {
+    let locale = value.split(['.', '@']).next()?.trim();
+    if locale.is_empty()
+        || locale.len() > 32
+        || !locale
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
+    {
+        return None;
+    }
+    Some(locale.replace('_', "-"))
+}
+
+fn config_summary(config: &ConfigReadResult) -> Result<Vec<u8>, AppError> {
     let parsed = serde_yaml::from_str::<serde_yaml::Value>(&config.yaml);
     let mut top_level_keys = parsed
         .ok()
@@ -456,8 +524,9 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{
-        crc32, plugin_diagnostic_status, read_logs, validate_destination, write_zip, BundleApp,
-        BundleEntry, BundleManifest, ManifestFile,
+        crc32, locale_from_config_or_environment, plugin_diagnostic_status, read_logs,
+        system_summary_value, validate_destination, write_zip, BundleApp, BundleEntry,
+        BundleManifest, ManifestFile,
     };
     use crate::storage::state_file::SafeModeState;
 
@@ -551,5 +620,24 @@ mod tests {
         let value = serde_json::to_value(manifest).unwrap();
         assert_eq!(value["app"]["version"], "1.0.0");
         assert_eq!(value["app"]["channel"], "nightly");
+    }
+
+    #[test]
+    fn system_summary_carries_runtime_context_without_sensitive_config() {
+        let value = system_summary_value("stable", Some("123.4"), Some("zh-TW"), Some(2));
+
+        assert_eq!(value["channel"], "stable");
+        assert_eq!(value["webviewVersion"], "123.4");
+        assert_eq!(value["locale"], "zh-TW");
+        assert_eq!(value["displayCount"], 2);
+        assert!(value.get("password").is_none());
+    }
+
+    #[test]
+    fn locale_prefers_config_and_normalizes_locale() {
+        assert_eq!(
+            locale_from_config_or_environment("language: zh_TW\n"),
+            Some("zh-TW".into())
+        );
     }
 }
