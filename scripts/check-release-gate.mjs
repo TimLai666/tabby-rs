@@ -18,6 +18,7 @@ const licenseReportPath = path.resolve(argument('--license-report') || path.join
 const benchmarksDirectory = path.resolve(argument('--benchmarks-dir') || path.join(root, 'benchmarks'))
 const installerSmokePath = path.resolve(argument('--installer-smoke') || path.join(root, 'installer-smoke.json'))
 const parityReportPath = path.resolve(argument('--parity-report') || path.join(root, 'parity-report.json'))
+const parityEvidencePath = argument('--parity-evidence') ? path.resolve(argument('--parity-evidence')) : null
 const outputPath = path.resolve(argument('--output') || path.join(root, 'release-gate.json'))
 const expectedRevision = argument('--source-revision') || process.env.GITHUB_SHA || null
 const expectedPlatform = argument('--platform') || null
@@ -113,6 +114,36 @@ if (parityReport) {
             .map(([status]) => status)
         if (nonPassingStatuses.length > 0) {
             failures.push(`parity report ${name} has non-passing statuses: ${nonPassingStatuses.join(', ')}`)
+        }
+    }
+}
+
+const parityEvidence = parityEvidencePath ? readJson(parityEvidencePath, 'parity automated evidence') : null
+if (parityEvidencePath && parityEvidence) {
+    if (parityEvidence.schemaVersion !== 1 || parityEvidence.kind !== 'tabby-rs-parity-automated-evidence') {
+        failures.push('parity automated evidence schema is invalid')
+    }
+    if (parityEvidence.passed !== true) failures.push('parity automated evidence did not pass')
+    if (expectedRevision && parityEvidence.sourceRevision !== expectedRevision) failures.push(`parity automated evidence sourceRevision must match ${expectedRevision}`)
+    if (expectedPlatform && parityEvidence.platform !== expectedPlatform) failures.push(`parity automated evidence platform must match ${expectedPlatform}`)
+    if (expectedArch && parityEvidence.arch !== expectedArch) failures.push(`parity automated evidence arch must match ${expectedArch}`)
+    if (expectedTarget && parityEvidence.target !== expectedTarget) failures.push(`parity automated evidence target must match ${expectedTarget}`)
+    const expectedAutomatedChecks = new Set()
+    for (const feature of featuresDocument?.features || []) {
+        if (!expectedPlatform || !(feature.platforms || []).includes(expectedPlatform)) continue
+        for (const check of feature.tests?.automated || []) expectedAutomatedChecks.add(check)
+    }
+    const manifestExpectedChecks = [...expectedAutomatedChecks].sort()
+    if (!Array.isArray(parityEvidence.expectedChecks) || parityEvidence.expectedChecks.length === 0) failures.push('parity automated evidence has no expected checks')
+    else if (JSON.stringify([...new Set(parityEvidence.expectedChecks)].sort()) !== JSON.stringify(manifestExpectedChecks)) failures.push('parity automated evidence expected checks do not match parity manifest')
+    if (!Array.isArray(parityEvidence.checks)) failures.push('parity automated evidence has no check results')
+    else {
+        const names = parityEvidence.checks.map(check => check?.name).filter(name => typeof name === 'string')
+        if (new Set(names).size !== names.length) failures.push('parity automated evidence has duplicate check results')
+        if (parityEvidence.checks.some(check => check?.passed !== true)) failures.push('parity automated evidence contains failed checks')
+        if (JSON.stringify([...new Set(names)].sort()) !== JSON.stringify(manifestExpectedChecks)) failures.push('parity automated evidence results do not match parity manifest')
+        for (const expectedCheck of manifestExpectedChecks) {
+            if (!names.includes(expectedCheck)) failures.push(`parity automated evidence is missing check: ${expectedCheck}`)
         }
     }
 }

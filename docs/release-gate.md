@@ -4,6 +4,8 @@
 
 Each feature entry represents one user-facing capability and must identify its owning issue numbers, platform scope, and at least one automated or manual test. Each platform entry must identify its runner, compilation target, and non-empty `requiredChecks` list. These fields describe coverage responsibilities; they do not count as evidence until the named check actually runs and its result is recorded.
 
+Collect the automated results for one platform with `node scripts/collect-parity-evidence.mjs --platform linux --arch x86_64 --target x86_64-unknown-linux-gnu --source-revision "$GITHUB_SHA" --output release-staging/parity-automated-evidence.json`. The collector selects the checks linked to that platform, runs each Yarn test sequentially, streams the output for CI review, and records only exit status, duration, byte counts, and SHA-256 hashes in the JSON artifact. A failed or missing check fails the collector. This artifact proves automated execution only. It does not change the `pending` status of a feature or platform and cannot replace the required manual evidence.
+
 Release staging includes both views of the same parity result. Use `--output release-staging/parity-report.json` for automation and `--html-output release-staging/parity-report.html` for human review. The HTML renderer escapes all report values and does not change the gate result.
 
 The gate also requires a passed parity report, bundle audit, installer smoke report, and generated license report. Release staging includes both `license-report.json` for automation and `license-report.html` for human review, plus `benchmarks/benchmark-report.json` aggregating the four individual benchmark reports. Run:
@@ -11,7 +13,7 @@ The gate also requires a passed parity report, bundle audit, installer smoke rep
 ```text
 node scripts/create-license-report.mjs
 node scripts/smoke-tauri-release.mjs --staging release-staging --platform linux --output release-staging/installer-smoke.json
-node scripts/check-release-gate.mjs --benchmarks-dir path/to/benchmarks --bundle-audit path/to/bundle-audit.json --license-report license-report.json --installer-smoke release-staging/installer-smoke.json --parity-report release-staging/parity-report.json --source-revision "$GITHUB_SHA" --platform linux --arch x86_64 --target x86_64-unknown-linux-gnu
+node scripts/check-release-gate.mjs --benchmarks-dir path/to/benchmarks --bundle-audit path/to/bundle-audit.json --license-report license-report.json --installer-smoke release-staging/installer-smoke.json --parity-report release-staging/parity-report.json --parity-evidence release-staging/parity-automated-evidence.json --source-revision "$GITHUB_SHA" --platform linux --arch x86_64 --target x86_64-unknown-linux-gnu
 ```
 
 The command always writes a machine-readable report. It exits non-zero when any feature, platform, bundle, license, benchmark, or provenance evidence is missing or failed. It checks that benchmark reports, bundle metadata, and the license report refer to the same source revision and matrix target, and that all benchmark reports refer to the same fixture and artifact hash. It does not invent benchmark numbers or convert an unrun manual check into a pass.

@@ -15,6 +15,7 @@ const dependencyAudit = path.join(work, 'dependency-audit.json')
 const licenseReport = path.join(work, 'license-report.json')
 const installerSmoke = path.join(work, 'installer-smoke.json')
 const parityReport = path.join(work, 'parity-report.json')
+const parityEvidence = path.join(work, 'parity-automated-evidence.json')
 const passingParityReport = path.join(work, 'passing-parity-report.json')
 const malformedPassingParityReport = path.join(work, 'malformed-passing-parity-report.json')
 const metadata = path.join(work, 'tabby-rs-metadata.json')
@@ -41,6 +42,17 @@ fs.writeFileSync(parityReport, JSON.stringify({
     features: { total: 1, statuses: { pending: 1 }, pending: ['fixture.feature'] },
     platforms: { total: 1, statuses: { pending: 1 }, pending: ['fixture-platform'] },
     failures: ['feature fixture.feature is pending', 'platform fixture-platform is pending'],
+}))
+fs.writeFileSync(parityEvidence, JSON.stringify({
+    schemaVersion: 1,
+    kind: 'tabby-rs-parity-automated-evidence',
+    sourceRevision: expectedRevision,
+    platform: 'windows',
+    arch: 'x86_64',
+    target: null,
+    expectedChecks: ['fixture-check'],
+    checks: [{ name: 'fixture-check', passed: true }],
+    passed: true,
 }))
 fs.writeFileSync(passingParityReport, JSON.stringify({
     schemaVersion: 1,
@@ -71,6 +83,7 @@ await assert.rejects(
         '--license-report', licenseReport,
         '--installer-smoke', installerSmoke,
         '--parity-report', parityReport,
+        '--parity-evidence', parityEvidence,
         '--platform', 'windows',
         '--source-revision', expectedRevision,
         '--output', output,
@@ -86,6 +99,7 @@ assert.ok(report.failures.includes('installer smoke must execute install, launch
 assert.ok(report.failures.includes('installer smoke is missing launch operation'))
 assert.ok(report.failures.includes('installer smoke is missing uninstall operation'))
 assert.ok(report.failures.includes('parity report did not pass'))
+assert.ok(report.failures.includes('parity automated evidence expected checks do not match parity manifest'))
 
 const missingUserDataEvidenceSmoke = path.join(work, 'missing-user-data-evidence-smoke.json')
 const missingUserDataEvidenceOutput = path.join(work, 'missing-user-data-evidence-release-gate.json')
@@ -106,6 +120,7 @@ await assert.rejects(
         '--license-report', licenseReport,
         '--installer-smoke', missingUserDataEvidenceSmoke,
         '--parity-report', parityReport,
+        '--parity-evidence', parityEvidence,
         '--platform', 'windows',
         '--source-revision', expectedRevision,
         '--output', missingUserDataEvidenceOutput,

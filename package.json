@@ -115,6 +115,7 @@
     "test:web-gateway": "node scripts/test-web-gateway.mjs",
     "test:web-capability-boundary": "node scripts/test-web-capability-boundary.mjs",
     "test:parity-links": "node scripts/test-parity-links.mjs",
+    "test:parity-evidence": "node scripts/test-parity-evidence.mjs",
     "test:release-documentation": "node scripts/test-release-documentation.mjs",
     "test:docs-workflow": "node scripts/test-docs-workflow.mjs",
     "test:diagnostics-ui": "node scripts/test-diagnostics-ui-contract.mjs",
