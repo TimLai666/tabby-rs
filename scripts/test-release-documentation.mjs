@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 
 const readme = await readFile(new URL('../README.md', import.meta.url), 'utf8');
 const pluginCompatibility = await readFile(new URL('../docs/plugin-compatibility.md', import.meta.url), 'utf8');
+const hacking = await readFile(new URL('../HACKING.md', import.meta.url), 'utf8');
 const requiredDocuments = [
   'CONTRIBUTING.md',
   'SECURITY.md',
@@ -35,6 +36,31 @@ for (const text of requiredReadmeText) {
   if (!readme.includes(text)) {
     throw new Error(`README.md is missing release guidance: ${text}`);
   }
+}
+
+for (const text of [
+    'Tauri desktop application',
+    'yarn build:tauri:frontend',
+    'cargo tauri build',
+    'src-tauri/target/release/bundle/',
+]) {
+    if (!hacking.includes(text)) {
+        throw new Error(`HACKING.md is missing Tauri workflow guidance: ${text}`);
+    }
+}
+
+if (!hacking.includes('legacy Electron packaging helpers')) {
+    throw new Error('HACKING.md must identify legacy Electron packaging helpers');
+}
+
+for (const legacyCommand of [
+    'scripts/build-windows.mjs',
+    'scripts/build-linux.mjs',
+    'scripts/build-macos.mjs',
+]) {
+    if (!hacking.includes(legacyCommand)) {
+        throw new Error(`HACKING.md must retain the legacy command reference: ${legacyCommand}`);
+    }
 }
 
 const forbiddenReleaseLinks = [
