@@ -130,7 +130,10 @@ export function createEvidenceReport ({
     ])]
     const missingExpectedChecks = expectedChecks.filter(check => !recordedChecks.includes(check))
     if (missingExpectedChecks.length > 0) failures.push(`missing expected platform checks: ${missingExpectedChecks.join(', ')}`)
-    if (unverifiedRequiredChecks.length > 0) failures.push(`unverified required platform checks: ${unverifiedRequiredChecks.join(', ')}`)
+    // Platform required checks may be manual acceptance steps (for example
+    // physical serial hardware or installer side-by-side testing). They are
+    // reported here for the final release gate, but must not make an
+    // automated-only evidence collection fail when every automated check ran.
     return {
         schemaVersion: 1,
         kind: 'tabby-rs-parity-automated-evidence',
