@@ -199,6 +199,9 @@ jobs:
       - name: Test plugin runtime fixtures
         run: yarn test:plugin-runtime
 
+      - name: Test plugin Tauri bridge contract
+        run: yarn test:plugin-bridge
+
       - name: Test safe mode plugin actions
         run: yarn test:safe-mode-plugin-actions
 
@@ -361,6 +364,9 @@ jobs:
 
       - name: Test plugin runtime fixtures
         run: yarn test:plugin-runtime
+
+      - name: Test plugin Tauri bridge contract
+        run: yarn test:plugin-bridge
 
       - name: Test safe mode plugin actions
         run: yarn test:safe-mode-plugin-actions
