@@ -7,6 +7,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const session = fs.readFileSync(path.join(root, 'tabby-tauri/src/ssh/session.ts'), 'utf8')
 const tab = fs.readFileSync(path.join(root, 'tabby-tauri/src/ssh/tab.component.ts'), 'utf8')
 const recovery = fs.readFileSync(path.join(root, 'tabby-tauri/src/ssh/recoveryProvider.ts'), 'utf8')
+const tabRecovery = fs.readFileSync(path.join(root, 'tabby-core/src/services/tabRecovery.service.ts'), 'utf8')
 
 const authForOptions = session.match(
     /private async authForOptions \(options: SSHProfile\['options'\]\): Promise<SshAuthMethodRef\[]> \{([\s\S]*?)\n    \}/,
@@ -33,6 +34,7 @@ assert.doesNotMatch(tab, /safeOptions[\s\S]*password:/)
 assert.match(recovery, /recoveryToken\.type === 'app:ssh-tab'/)
 assert.match(recovery, /getConfigProxyForProfile\(recoveryToken\.profile\)/)
 assert.match(recovery, /savedState: recoveryToken\.savedState/)
+assert.match(tabRecovery, /tokens = parsed\.map\(token => sanitizeRecoveryToken\(token\) as RecoveryToken\)/)
 
 const rust = fs.readFileSync(path.join(root, 'src-tauri/src/ssh/mod.rs'), 'utf8')
 const engine = fs.readFileSync(path.join(root, 'src-tauri/src/ssh/engine.rs'), 'utf8')

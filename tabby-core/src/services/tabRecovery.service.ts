@@ -4,7 +4,7 @@ import { BaseTabComponent, GetRecoveryTokenOptions } from '../components/baseTab
 import { Logger, LogService } from './log.service'
 import { ConfigService } from './config.service'
 import { NewTabParameters } from './tabs.service'
-import { createWorkspaceSnapshot, RestorableSessionKind, validateWorkspaceSnapshot, WorkspaceSnapshot } from '../workspace'
+import { createWorkspaceSnapshot, RestorableSessionKind, sanitizeRecoveryToken, validateWorkspaceSnapshot, WorkspaceSnapshot } from '../workspace'
 
 /** @hidden */
 @Injectable({ providedIn: 'root' })
@@ -103,7 +103,7 @@ export class TabRecoveryService {
             try {
                 const parsed = JSON.parse(raw)
                 if (Array.isArray(parsed)) {
-                    tokens = parsed
+                    tokens = parsed.map(token => sanitizeRecoveryToken(token) as RecoveryToken)
                 } else {
                     const snapshot = validateWorkspaceSnapshot(parsed)
                     if (snapshot) {
