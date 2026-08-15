@@ -16,6 +16,7 @@ const licenseReport = path.join(work, 'license-report.json')
 const installerSmoke = path.join(work, 'installer-smoke.json')
 const parityReport = path.join(work, 'parity-report.json')
 const parityEvidence = path.join(work, 'parity-automated-evidence.json')
+const manualOnlyParityEvidence = path.join(work, 'manual-only-parity-automated-evidence.json')
 const passingParityReport = path.join(work, 'passing-parity-report.json')
 const malformedPassingParityReport = path.join(work, 'malformed-passing-parity-report.json')
 const metadata = path.join(work, 'tabby-rs-metadata.json')
@@ -50,6 +51,19 @@ fs.writeFileSync(parityEvidence, JSON.stringify({
     platform: 'windows',
     arch: 'x86_64',
     target: null,
+    expectedChecks: ['fixture-check'],
+    checks: [{ name: 'fixture-check', passed: true }],
+    passed: true,
+}))
+fs.writeFileSync(manualOnlyParityEvidence, JSON.stringify({
+    schemaVersion: 1,
+    kind: 'tabby-rs-parity-automated-evidence',
+    sourceRevision: expectedRevision,
+    platform: 'windows',
+    arch: 'x86_64',
+    target: 'x86_64-pc-windows-msvc',
+    platformRequiredChecks: ['local-shell', 'powershell', 'cmd', 'wsl', 'git-bash', 'clink', 'uac', 'ssh', 'serial', 'nsis', 'side-by-side'],
+    unverifiedRequiredChecks: ['powershell'],
     expectedChecks: ['fixture-check'],
     checks: [{ name: 'fixture-check', passed: true }],
     passed: true,
@@ -101,6 +115,25 @@ assert.ok(report.failures.includes('installer smoke is missing uninstall operati
 assert.ok(report.failures.includes('parity report did not pass'))
 assert.ok(report.failures.includes('parity automated evidence expected checks do not match parity manifest'))
 assert.ok(report.failures.includes('parity automated evidence has no platform required checks'))
+
+const manualOnlyEvidenceOutput = path.join(work, 'manual-only-evidence-release-gate.json')
+await assert.rejects(
+    execFileAsync(process.execPath, [gate,
+        '--bundle-audit', bundleAudit,
+        '--dependency-audit', dependencyAudit,
+        '--license-report', licenseReport,
+        '--installer-smoke', installerSmoke,
+        '--parity-report', parityReport,
+        '--parity-evidence', manualOnlyParityEvidence,
+        '--platform', 'windows',
+        '--arch', 'x86_64',
+        '--target', 'x86_64-pc-windows-msvc',
+        '--source-revision', expectedRevision,
+        '--output', manualOnlyEvidenceOutput,
+    ], { cwd: root }),
+)
+const manualOnlyEvidenceReport = JSON.parse(fs.readFileSync(manualOnlyEvidenceOutput, 'utf8'))
+assert.ok(!manualOnlyEvidenceReport.failures.some(error => error.startsWith('parity automated evidence has unverified required checks:')))
 
 const missingUserDataEvidenceSmoke = path.join(work, 'missing-user-data-evidence-smoke.json')
 const missingUserDataEvidenceOutput = path.join(work, 'missing-user-data-evidence-release-gate.json')
