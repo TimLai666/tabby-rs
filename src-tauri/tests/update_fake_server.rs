@@ -1,6 +1,6 @@
 use std::{
     io::{Read, Write},
-    net::{TcpListener, TcpStream},
+    net::{Shutdown, TcpListener, TcpStream},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -69,8 +69,10 @@ fn serve_request(stream: &mut TcpStream) {
     let mut request = Vec::new();
     let mut buffer = [0_u8; 1024];
     while !request.windows(4).any(|window| window == b"\r\n\r\n") {
-        let Ok(read) = stream.read(&mut buffer) else {
-            return;
+        let read = match stream.read(&mut buffer) {
+            Ok(read) => read,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => return,
         };
         if read == 0 {
             return;
@@ -163,9 +165,16 @@ fn serve_request(stream: &mut TcpStream) {
         response.push_str(&format!("Location: {location}\r\n"));
     }
     response.push_str("\r\n");
-    let _ = stream.write_all(response.as_bytes());
-    let _ = stream.write_all(&body);
-    let _ = stream.flush();
+    if stream.write_all(response.as_bytes()).is_err() {
+        return;
+    }
+    if stream.write_all(&body).is_err() {
+        return;
+    }
+    if stream.flush().is_err() {
+        return;
+    }
+    let _ = stream.shutdown(Shutdown::Write);
 }
 
 fn manifest_json(channel: &str, version: &str, override_field: Option<(&str, &str)>) -> Vec<u8> {
@@ -197,6 +206,9 @@ fn sha256_hex(bytes: &[u8]) -> String {
 fn get(server: &FakeUpdateServer, path: &str) -> (u16, Vec<u8>) {
     let mut stream = TcpStream::connect(&server.address).unwrap();
     stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    stream
         .write_all(
             format!(
                 "GET {path} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
@@ -205,12 +217,13 @@ fn get(server: &FakeUpdateServer, path: &str) -> (u16, Vec<u8>) {
             .as_bytes(),
         )
         .unwrap();
+    stream.shutdown(Shutdown::Write).unwrap();
     let mut response = Vec::new();
     stream.read_to_end(&mut response).unwrap();
     let header_end = response
         .windows(4)
         .position(|window| window == b"\r\n\r\n")
-        .unwrap();
+        .unwrap_or_else(|| panic!("fixture response for {path} has no HTTP header: {response:?}"));
     let headers = String::from_utf8_lossy(&response[..header_end]);
     let status = headers.split_whitespace().nth(1).unwrap().parse().unwrap();
     (status, response[header_end + 4..].to_vec())
