@@ -53,7 +53,17 @@ assert.match(failedReport.failures[0], /shared/)
 assert.equal(Object.hasOwn(failedReport.checks[0], 'stdoutText'), false)
 assert.equal(failedReport.checks[0].stdout.sha256.length, 64)
 assert.deepEqual(failedReport.platformRequiredChecks, ['local-shell', 'manual-check'])
-assert.match(failedReport.failures.at(-1), /unverified required platform checks: manual-check/)
+assert.equal(failedReport.unverifiedRequiredChecks[0], 'manual-check')
+
+const automatedOnlyReport = createEvidenceReport({
+    results: [{ name: 'alpha', passed: true, status: 'passed', exitCode: 0 }],
+    sourceRevision: 'fixture-revision',
+    expectedChecks: ['alpha'],
+    platformRequiredChecks: ['local-shell', 'manual-check'],
+    unverifiedRequiredChecks: ['manual-check'],
+})
+assert.equal(automatedOnlyReport.passed, true)
+assert.deepEqual(automatedOnlyReport.failures, [])
 
 const incompleteReport = createEvidenceReport({
     results: [{ name: 'alpha', passed: true, status: 'passed', exitCode: 0 }],

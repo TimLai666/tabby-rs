@@ -18,6 +18,8 @@ node scripts/check-release-gate.mjs --benchmarks-dir path/to/benchmarks --bundle
 
 The command always writes a machine-readable report. It exits non-zero when any feature, platform, bundle, license, benchmark, or provenance evidence is missing or failed. It checks that benchmark reports, bundle metadata, and the license report refer to the same source revision and matrix target, and that all benchmark reports refer to the same fixture and artifact hash. It does not invent benchmark numbers or convert an unrun manual check into a pass.
 
+The automated evidence collector records platform-required checks that are not automated in `unverifiedRequiredChecks`, but does not fail solely because those checks are manual. The final gate still requires every feature and platform manifest entry to be `passed` or an evidenced `accepted-difference`, so manual checks remain release blockers until their evidence is recorded in the parity manifests.
+
 Generate the four benchmark reports with the real Tauri executable and an external frame trace:
 
 ```text

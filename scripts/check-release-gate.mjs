@@ -188,7 +188,10 @@ if (parityEvidencePath && parityEvidence) {
     } else {
         const unverified = new Set(parityEvidence.unverifiedRequiredChecks)
         if ([...unverified].some(check => !requiredPlatformChecks.includes(check))) failures.push('parity automated evidence has unknown unverified required checks')
-        if (unverified.size > 0) failures.push(`parity automated evidence has unverified required checks: ${[...unverified].sort().join(', ')}`)
+        // Manual platform checks are enforced by the parity manifest status
+        // and evidence above. Keep this list for auditability, but do not
+        // make an automated-only evidence artifact fail because it contains
+        // checks that intentionally require a human or physical device.
     }
 }
 
