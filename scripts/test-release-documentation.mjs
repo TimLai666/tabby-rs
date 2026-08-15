@@ -43,9 +43,18 @@ for (const text of [
     'yarn build:tauri:frontend',
     'cargo tauri build',
     'src-tauri/target/release/bundle/',
+    '`userPluginsPath`',
+    '`data/plugins`',
+    '`TABBY_PLUGINS` and `tabby --debug` belong to the legacy',
 ]) {
     if (!hacking.includes(text)) {
         throw new Error(`HACKING.md is missing Tauri workflow guidance: ${text}`);
+    }
+}
+
+for (const keyword of ['tabby-plugin', 'tabby-builtin-plugin', 'terminus-*']) {
+    if (!hacking.includes(keyword)) {
+        throw new Error(`HACKING.md is missing plugin keyword guidance: ${keyword}`);
     }
 }
 
