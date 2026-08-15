@@ -101,6 +101,7 @@ jobs:
           yarn test:web-gateway
           yarn test:web-plugin-loader
           yarn test:web-capability-boundary
+          yarn test:web-platform
 
       - name: Test diagnostics preview gate
         run: yarn test:diagnostics-ui

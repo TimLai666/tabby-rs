@@ -160,6 +160,9 @@ jobs:
       - name: Test web capability boundary
         run: yarn test:web-capability-boundary
 
+      - name: Test web process platform mapping
+        run: yarn test:web-platform
+
       - name: Test diagnostics preview gate
         run: yarn test:diagnostics-ui
 

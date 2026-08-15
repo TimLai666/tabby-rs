@@ -8,6 +8,7 @@ import '../app/src/preload.scss'
 
 // Required before other imports
 import './polyfills.buffer'
+import { detectWebProcessPlatform } from './platform'
 
 const mocks = {}
 const modules = {}
@@ -105,7 +106,7 @@ Object.assign(window, {
     process: {
         env: { },
         argv: ['tabby'],
-        platform: 'darwin',
+        platform: detectWebProcessPlatform(window.navigator.userAgent),
         on: () => null,
         stdout: {},
         stderr: {},

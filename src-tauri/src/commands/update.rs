@@ -12,7 +12,9 @@ use crate::{
         state_file::{PendingUpdateState, UpdateChannel},
     },
     update::{
-        rollback::{clear_pending_update_journal, write_pending_update_journal},
+        rollback::{
+            clear_pending_update_journal, remember_stable_backup, write_pending_update_journal,
+        },
         service::{
             build_updater, configured_endpoint, configured_public_key, download_exceeds_limit,
             is_cancelled, read_ready_artifact, update_info_from_remote, DownloadHandle, UpdateInfo,
@@ -269,7 +271,7 @@ pub async fn update_install(
     if state
         .update_persisted_state(|persisted| {
             if current_state.update_channel == UpdateChannel::Stable {
-                persisted.last_stable_backup = Some(backup.backup_id.clone());
+                remember_stable_backup(persisted, &backup.backup_id);
             }
             persisted.pending_update = Some(pending.clone());
         })
