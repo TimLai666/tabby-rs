@@ -2691,7 +2691,7 @@ mod tests {
         host_key_decision_action,
         model::*,
         resolve_saved_private_key_passphrase, validate_request, HostKeyDecisionAction,
-        ManagerAuthenticator, SshManager, VAULT_SECRET_TYPE_PASSPHRASE,
+        ManagerAuthenticator, SshControl, SshManager, SshSession, VAULT_SECRET_TYPE_PASSPHRASE,
     };
     use crate::security::{
         CredentialAddress, CredentialError, CredentialNamespace, CredentialState, CredentialStore,
@@ -2702,6 +2702,7 @@ mod tests {
     use sha2::{Digest, Sha512};
     use std::{collections::BTreeMap, sync::Arc, time::Duration};
     use tempfile::tempdir;
+    use tokio::sync::mpsc;
 
     #[derive(Default)]
     struct TestCredentialStore {
@@ -3064,5 +3065,61 @@ mod tests {
             .await
             .unwrap());
         assert_eq!(context.calls, ["keyboard-interactive"]);
+    }
+
+    #[tokio::test]
+    async fn closing_one_session_does_not_affect_another_session() {
+        let directory = tempdir().unwrap();
+        let manager = SshManager::new(directory.path().join("known_hosts"));
+        let (first_sender, mut first_receiver) = mpsc::channel(1);
+        let (second_sender, mut second_receiver) = mpsc::channel(1);
+        manager.sessions.lock().unwrap().insert(
+            "first".into(),
+            SshSession {
+                control: first_sender,
+            },
+        );
+        manager.sessions.lock().unwrap().insert(
+            "second".into(),
+            SshSession {
+                control: second_sender,
+            },
+        );
+
+        let first_task = tokio::spawn(async move {
+            match first_receiver.recv().await {
+                Some(SshControl::Close(sender)) => {
+                    sender.send(Ok(())).unwrap();
+                }
+                Some(_) => panic!("first session received the wrong control message"),
+                None => panic!("first session control channel closed before close"),
+            }
+        });
+        let second_task = tokio::spawn(async move {
+            match second_receiver.recv().await {
+                Some(SshControl::Write(data, sender)) => {
+                    assert_eq!(data, b"still-alive");
+                    sender.send(Ok(())).unwrap();
+                }
+                Some(_) => panic!("second session received the wrong control message"),
+                None => panic!("second session control channel closed unexpectedly"),
+            }
+        });
+
+        manager
+            .close(SshSessionIdRequest { id: "first".into() })
+            .await
+            .unwrap();
+        manager.sessions.lock().unwrap().remove("first");
+        manager
+            .write(SshWriteRequest {
+                id: "second".into(),
+                data: b"still-alive".to_vec(),
+            })
+            .await
+            .unwrap();
+
+        first_task.await.unwrap();
+        second_task.await.unwrap();
     }
 }
