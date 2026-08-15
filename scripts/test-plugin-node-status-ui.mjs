@@ -8,6 +8,12 @@ import ts from 'typescript'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const componentPath = path.join(root, 'tabby-plugin-manager/src/components/pluginsSettingsTab.component.ts')
 const componentSource = fs.readFileSync(componentPath, 'utf8')
+const templatePath = path.join(root, 'tabby-plugin-manager/src/components/pluginsSettingsTab.component.pug')
+const templateSource = fs.readFileSync(templatePath, 'utf8')
+
+assert.match(templateSource, /npm lifecycle scripts/)
+assert.match(templateSource, /Only install packages you trust/)
+
 const componentCompiled = ts.transpileModule(componentSource, {
     compilerOptions: {
         module: ts.ModuleKind.CommonJS,
