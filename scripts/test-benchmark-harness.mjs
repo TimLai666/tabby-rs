@@ -32,6 +32,7 @@ await execFileAsync(process.execPath, [runner,
     '--samples', '2',
     '--memory-wait-ms', '10',
     '--binary', process.execPath,
+    '--binary-path', process.execPath,
     '--binary-args', JSON.stringify([fixture, '--ready']),
     '--output-command', process.execPath,
     '--output-args', JSON.stringify([fixture, '--output', '131072']),
@@ -41,6 +42,7 @@ await execFileAsync(process.execPath, [runner,
     '--config-fixture', 'benchmark-test',
     '--platform', 'linux',
     '--arch', 'x86_64',
+    '--target', 'fixture-target',
 ], { cwd: root })
 
 const expected = {
@@ -57,6 +59,8 @@ for (const [name, metric] of Object.entries(expected)) {
     assert.equal(report.configFixture, 'benchmark-test')
     assert.equal(report.platform, 'linux')
     assert.equal(report.arch, 'x86_64')
+    assert.equal(report.target, 'fixture-target')
+    assert.equal(report.provenance.binary.sha256.length, 64)
 }
 
 const outputReport = JSON.parse(fs.readFileSync(path.join(outputDir, 'output.json'), 'utf8'))
@@ -74,5 +78,12 @@ assert.deepEqual(Object.keys(aggregateReport.reports).sort(), ['bundle-size', 'm
 
 const tamperedReport = { ...outputReport, median: outputReport.median + 1 }
 assert.ok(validateBenchmarkReport(tamperedReport, expected.output).includes('median does not match values'))
+const wrongTargetReport = { ...outputReport, target: 'wrong-target' }
+assert.ok(validateBenchmarkReport(wrongTargetReport, expected.output).length === 0)
+const missingBinaryEvidence = {
+    ...outputReport,
+    provenance: { ...outputReport.provenance, binary: undefined },
+}
+assert.ok(validateBenchmarkReport(missingBinaryEvidence, expected.output).some(error => error.includes('provenance.binary must be an object')))
 
 console.log('Benchmark harness fixtures passed')
