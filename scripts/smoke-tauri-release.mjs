@@ -10,6 +10,7 @@ import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
 
 import { auditBundle } from './check-tauri-bundle.mjs'
+import { resolveMacosApplicationIcon } from './macos-app-icon.mjs'
 
 const execFileAsync = promisify(execFile)
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -255,8 +256,9 @@ async function smokeMacos () {
                 const sourceApp = path.join(mount, app)
                 const installedApp = path.join(installDirectory, app)
                 assertMacosIcon(path.join(mount, '.VolumeIcon.icns'), 'DMG volume icon')
-                assertMacosIcon(path.join(sourceApp, 'Contents', 'Resources', 'icon.icns'), 'macOS application icon')
-                operations.push({ action: 'icon-audit', volumeIcon: '.VolumeIcon.icns', applicationIcon: 'Contents/Resources/icon.icns' })
+                const applicationIcon = resolveMacosApplicationIcon(sourceApp)
+                assertMacosIcon(applicationIcon, 'macOS application icon')
+                operations.push({ action: 'icon-audit', volumeIcon: '.VolumeIcon.icns', applicationIcon: path.relative(sourceApp, applicationIcon) })
                 fs.cpSync(sourceApp, installedApp, { recursive: true })
                 const executableDirectory = path.join(installedApp, 'Contents', 'MacOS')
                 const executable = findFile(executableDirectory, file => path.basename(file) === 'tabby-rs')

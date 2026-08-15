@@ -4,6 +4,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { resolveMacosApplicationIcon } from './macos-app-icon.mjs'
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
 const args = process.argv.slice(2)
@@ -70,7 +72,7 @@ function assertMacosApplicationIcon () {
     const applications = findApplicationBundles(staging)
     assert.equal(applications.length, 1, 'macOS release must contain exactly one application bundle')
 
-    const iconPath = path.join(applications[0], 'Contents', 'Resources', 'icon.icns')
+    const iconPath = resolveMacosApplicationIcon(applications[0])
     const sourceIconPath = path.join(root, 'build/mac/icon.icns')
     assert.ok(fs.existsSync(iconPath), `macOS application icon is missing: ${iconPath}`)
     assert.ok(fs.existsSync(sourceIconPath), `source macOS application icon is missing: ${sourceIconPath}`)
