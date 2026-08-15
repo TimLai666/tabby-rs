@@ -12,6 +12,7 @@ const packageName = 'tabby-rs-fixture-plugin'
 const versions = ['1.0.0', '1.0.1']
 const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'tabby-rs-npm-lifecycle-'))
 const packageDirectory = path.join(fixture, 'packages')
+const npmCache = path.join(fixture, 'npm-cache')
 const tarballs = new Map()
 fs.mkdirSync(packageDirectory, { recursive: true })
 
@@ -46,7 +47,17 @@ for (const version of versions) {
     fs.writeFileSync(path.join(directory, 'index.js'), `module.exports = { version: '${version}' }\n`)
     runNpm(commandPath('npm'), [
         'pack', '--ignore-scripts', '--pack-destination', packageDirectory,
-    ], { cwd: directory, stdio: 'pipe' })
+    ], {
+        cwd: directory,
+        stdio: 'pipe',
+        env: {
+            ...process.env,
+            npm_config_cache: npmCache,
+            npm_config_audit: 'false',
+            npm_config_fund: 'false',
+            npm_config_update_notifier: 'false',
+        },
+    })
     const tarball = path.join(packageDirectory, `${packageName}-${version}.tgz`)
     assert.ok(fs.existsSync(tarball), `npm pack did not create ${tarball}`)
     const bytes = fs.readFileSync(tarball)
@@ -106,7 +117,7 @@ const env = {
     npm_config_fund: 'false',
     npm_config_update_notifier: 'false',
     npm_config_registry: `http://127.0.0.1:${server.address().port}/`,
-    npm_config_cache: path.join(fixture, 'npm-cache'),
+    npm_config_cache: npmCache,
     TABBY_RS_NPM_E2E_DEBUG: process.env.TABBY_RS_NPM_E2E_DEBUG || '',
     npm_config_loglevel: process.env.TABBY_RS_NPM_E2E_DEBUG ? 'verbose' : 'warn',
 }
