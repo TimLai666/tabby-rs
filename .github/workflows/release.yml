@@ -353,9 +353,11 @@ jobs:
             --samples 20 \
             --warmup-samples 1 \
             --binary "$benchmark_binary" \
+            --binary-path "$binary" \
             --binary-args "$benchmark_args" \
             --platform "${{ matrix.platform }}" \
             --arch "${{ matrix.arch }}" \
+            --target "${{ matrix.target }}" \
             --output-command node \
             --output-args '["scripts/fixtures/benchmark-process.mjs","--output","104857600"]' \
             --minimum-output-bytes 104857600 \
