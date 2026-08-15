@@ -20,6 +20,8 @@ assert.match(smokeSource, /userDataPreserved/)
 assert.match(smokeSource, /uninstall removed user data/)
 assert.match(smokeSource, /uninstall changed user data/)
 assert.match(smokeSource, /path\.basename\(file\) === 'tabby-rs'/)
+assert.match(smokeSource, /icon-audit/)
+assert.match(smokeSource, /DMG volume icon/)
 assert.doesNotMatch(smokeSource, /TABBY_RS_BENCHMARK_READY_FILE/)
 
 for (const [directory, fixture] of [

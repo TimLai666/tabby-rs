@@ -1,15 +1,19 @@
 #!/usr/bin/env node
 
 import assert from 'node:assert/strict'
+import crypto from 'node:crypto'
 import { execFile, spawn } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
+import { fileURLToPath } from 'node:url'
 
 import { auditBundle } from './check-tauri-bundle.mjs'
 
 const execFileAsync = promisify(execFile)
+const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const canonicalMacosIcon = path.join(repositoryRoot, 'build', 'mac', 'icon.icns')
 
 const args = process.argv.slice(2)
 const argument = name => {
@@ -46,6 +50,20 @@ function oneArtifact (extension) {
     const files = filesWithExtension(extension)
     assert.equal(files.length, 1, `expected exactly one ${extension} artifact, found ${files.length}`)
     return files[0]
+}
+
+function sha256 (filePath) {
+    return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex')
+}
+
+function assertMacosIcon (filePath, label) {
+    assert.ok(fs.existsSync(canonicalMacosIcon), `canonical macOS icon is missing: ${canonicalMacosIcon}`)
+    assert.ok(fs.existsSync(filePath), `${label} is missing: ${filePath}`)
+    assert.equal(
+        sha256(filePath),
+        sha256(canonicalMacosIcon),
+        `${label} does not match build/mac/icon.icns`,
+    )
 }
 
 function writeReport (operations) {
@@ -236,6 +254,9 @@ async function smokeMacos () {
                 assert.ok(app, `DMG contains no .app bundle: ${mount}`)
                 const sourceApp = path.join(mount, app)
                 const installedApp = path.join(installDirectory, app)
+                assertMacosIcon(path.join(mount, '.VolumeIcon.icns'), 'DMG volume icon')
+                assertMacosIcon(path.join(sourceApp, 'Contents', 'Resources', 'icon.icns'), 'macOS application icon')
+                operations.push({ action: 'icon-audit', volumeIcon: '.VolumeIcon.icns', applicationIcon: 'Contents/Resources/icon.icns' })
                 fs.cpSync(sourceApp, installedApp, { recursive: true })
                 const executableDirectory = path.join(installedApp, 'Contents', 'MacOS')
                 const executable = findFile(executableDirectory, file => path.basename(file) === 'tabby-rs')
