@@ -136,8 +136,9 @@ try {
     console.log(`System npm lifecycle fixture passed on ${process.platform}`)
 } finally {
     await new Promise(resolve => {
-        server.close(resolve)
         server.closeAllConnections?.()
+        server.closeIdleConnections?.()
+        server.close(resolve)
     })
     fs.rmSync(fixture, { recursive: true, force: true })
 }
