@@ -1,75 +1,78 @@
 # Some background
 
-Tabby is an Electron app, with the frontend written in Typescript with the help of Angular framework. It's built using Webpack.
+Tabby RS is a Tauri desktop application with an Angular/TypeScript frontend and
+a Rust host. The production desktop path is built with the Tauri CLI; the
+Electron entry and `tabby-electron` package remain only as legacy comparison
+code while the parity gate is still open.
 
 # Getting started
 
 First of all, clone this repository.
 
 # Install Dependencies
-- [Node.js](https://nodejs.org/en/download/) **version 15 or newer*
+- [Node.js](https://nodejs.org/en/download/) **version 22**
 - [Yarn](https://yarnpkg.com/)
+- Rust stable and the platform dependencies listed in [CONTRIBUTING.md](CONTRIBUTING.md)
 
-First, from within the `tabby` directory install the dependencies via yarn:
+From the repository root, install the dependencies via yarn:
 
-```
-# macOS & Windows:
-yarn
-```
-
-```
-# Linux (Debian/Ubuntu here as an example)
-sudo apt install libfontconfig-dev libsecret-1-dev libarchive-tools libnss3 libatk1.0-0 libatk-bridge2.0-0 libgdk-pixbuf2.0-0 libgtk-3-0 libgbm1 cmake
-yarn
+```sh
+yarn install --frozen-lockfile
 ```
 
-_⚠️Note: If you forked this repository, you may need to pull down the tags from this repository before installing node modules. `git pull --tags upstream master`_
+For Linux package dependencies, use the current list in [CONTRIBUTING.md](CONTRIBUTING.md) rather than copying an old distribution-specific command.
 
 Build Tabby:
 
-```
-yarn run build
-```
-
-Start Tabby
-
-```
-yarn start
+```sh
+yarn build:tauri:frontend
+cargo build --manifest-path src-tauri/Cargo.toml
 ```
 
-# Building an installer
+Start the Tauri desktop application:
 
-To build an installer, first complete a "normal" build as described above and then run:
-
-```
-node scripts/prepackage-plugins.mjs
-
-node scripts/build-windows.mjs
-# or
-node scripts/build-linux.mjs
-# or
-node scripts/build-macos.mjs
+```sh
+yarn start:tauri
 ```
 
-The artifacts will be produced in the `dist` folder.
+# Building a Tauri installer
+
+The release workflow builds the frontend and then invokes the pinned Tauri CLI. For a local bundle, install the matching CLI and run the target command for your platform:
+
+```sh
+yarn build:tauri:frontend
+cargo tauri build --bundles app --no-sign \
+  --config '{"bundle":{"active":true,"targets":["app"],"createUpdaterArtifacts":false}}'
+```
+
+The release matrix uses `nsis` on Windows, `dmg` on macOS, and `appimage,deb,rpm` on Linux. See [.github/workflows/release.yml](.github/workflows/release.yml) for the authoritative target and signing configuration.
+CI generates `src-tauri/tauri.release.conf.json` from release secrets before a signed build; that generated file is intentionally not committed.
+
+The `scripts/build-windows.mjs`, `scripts/build-macos.mjs`, and
+`scripts/build-linux.mjs` scripts are legacy Electron packaging helpers. They
+are not the release path and must not be used to validate a Tauri bundle.
+
+Tauri artifacts are produced under `src-tauri/target/release/bundle/`.
 
 # Project layout
 ```
 tabby
-├─ app                                  # Electron app, just the bare essentials
-|  ├─ src                               # Electron renderer code
-|  └─ main.js                           # Electron main entry point
+├─ app                                  # Angular renderer and Tauri frontend build
+|  ├─ src                               # Shared renderer source
+|  └─ dist-tauri                        # Generated Tauri frontend output
+├─ src-tauri                            # Rust host, commands, state and bundling
+├─ tabby-tauri                          # Tauri bridge/provider implementation
 ├─ build
 ├─ clink                                # Clink distribution, for Windows
 ├─ scripts                              # Maintenance scripts
 ├─ tabby-community-color-schemes     # Plugin that provides color schemes
 ├─ tabby-core                        # Plugin that provides base UI and tab management
-├─ tabby-electron                    # Plugin that provides Electron-specific functions
 ├─ tabby-local                       # Plugin that provides local shells and profiles
 ├─ tabby-plugin-manager              # Plugin that installs other plugins
 ├─ tabby-settings                    # Plugin that provides the settings tab
 ├─ tabby-terminal                    # Plugin that provides terminal tabs
-└─ tabby-web                         # Plugin that provides web-specific functions
+├─ tabby-web                         # Plugin that provides web-specific functions
+└─ tabby-electron                    # Legacy Electron comparison code
 ```
 
 # Plugin layout
