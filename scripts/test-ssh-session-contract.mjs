@@ -17,7 +17,7 @@ assert.match(authForOptions[1], /const privateKeys = options\.privateKeys\.lengt
 assert.match(authForOptions[1], /auth\.push\(\{ type: 'privateKey', fileRef, passphraseRef: null \}\)/)
 assert.match(authForOptions[1], /auth\.push\(\{ type: 'agent', socket: null \}\)/)
 assert.match(authForOptions[1], /auth\.push\(\{ type: 'keyboardInteractive' \}\)/)
-assert.match(authForOptions[1], /options\.auth === 'keyboardInteractive'[\s\S]*auth\.push\(\{ type: 'keyboardInteractive' \}\)/)
+assert.match(authForOptions[1], /authMode === 'keyboardInteractive'[\s\S]*auth\.push\(\{ type: 'keyboardInteractive' \}\)/)
 
 assert.match(session, /private pendingExit: SshExitEvent\|null = null/)
 assert.match(session, /private readonly serviceMessage = new Subject<string>\(\)/)

@@ -237,6 +237,7 @@ export class TauriSshSession extends BaseSession {
 
     private async authForOptions (options: SSHProfile['options']): Promise<SshAuthMethodRef[]> {
         const auth: SshAuthMethodRef[] = []
+        const authMode = String(options.auth ?? '')
         if (!options.auth) {
             const privateKeys = options.privateKeys.length
                 ? options.privateKeys
@@ -257,7 +258,7 @@ export class TauriSshSession extends BaseSession {
             }
         } else if (options.auth === 'agent') {
             auth.push({ type: 'agent', socket: null })
-        } else if (options.auth === 'keyboardInteractive') {
+        } else if (authMode === 'keyboardInteractive') {
             auth.push({ type: 'keyboardInteractive' })
         }
         return auth
