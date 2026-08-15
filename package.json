@@ -138,6 +138,7 @@
     "test:progress-detector": "node scripts/ci/test-progress-detector.mjs",
     "test:transfer-policy": "node scripts/ci/test-transfer-policy.mjs",
     "test:plugin-runtime": "node scripts/test-plugin-runtime.mjs",
+    "test:plugin-bridge": "node scripts/test-plugin-bridge-contract.mjs",
     "test:translate-compiler": "node scripts/test-translate-compiler-compat.mjs",
     "test:tauri-event-names": "node scripts/test-tauri-event-names.mjs",
     "test:profile-tree": "node scripts/test-profile-tree-contract.mjs",
