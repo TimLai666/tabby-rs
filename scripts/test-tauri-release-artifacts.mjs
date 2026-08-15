@@ -71,15 +71,30 @@ fs.writeFileSync(path.join(macos, 'tabby-rs.app.tar.gz.sig'), 'signature')
 const macosDmgIcon = path.join(macos, 'dmg', 'icon.icns')
 fs.mkdirSync(path.dirname(macosDmgIcon), { recursive: true })
 fs.copyFileSync(path.join(root, 'build/mac/icon.icns'), macosDmgIcon)
-const macosIcon = path.join(macos, 'Tabby RS.app', 'Contents', 'Resources', 'icon.icns')
+const macosApplication = path.join(macos, 'Tabby RS.app')
+const macosInfo = path.join(macosApplication, 'Contents', 'Info.plist')
+const macosIcon = path.join(macosApplication, 'Contents', 'Resources', 'Tabby RS.icns')
 fs.mkdirSync(path.dirname(macosIcon), { recursive: true })
 fs.copyFileSync(path.join(root, 'build/mac/icon.icns'), macosIcon)
+fs.writeFileSync(macosInfo, `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict><key>CFBundleIconFile</key><string>Tabby RS.icns</string></dict></plist>
+`)
 fs.writeFileSync(path.join(macos, 'tabby-rs-metadata.json'), JSON.stringify({
     version: '1.0.231-tabbyrs.1',
     platform: 'macos',
     arch: 'aarch64',
 }))
 assert.equal(run(macos, 'macos', 'dmg'), path.join(macos, 'tabby-rs.app.tar.gz'))
+fs.writeFileSync(macosInfo, `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict><key>CFBundleIconFile</key><string>icon.icns</string></dict></plist>
+`)
+assert.throws(() => run(macos, 'macos', 'dmg'), /icon declared by plist is missing/)
+fs.writeFileSync(macosInfo, `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict><key>CFBundleIconFile</key><string>Tabby RS.icns</string></dict></plist>
+`)
 fs.writeFileSync(macosDmgIcon, 'stale DMG icon')
 assert.throws(() => run(macos, 'macos', 'dmg'), /DMG icon does not match build\/mac\/icon\.icns/)
 fs.copyFileSync(path.join(root, 'build/mac/icon.icns'), macosDmgIcon)
