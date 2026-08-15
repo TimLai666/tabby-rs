@@ -36,6 +36,10 @@ assert.ok(
 
 const tauriIcons = tauriConfig.bundle?.icon
 assert.ok(Array.isArray(tauriIcons), 'Tauri bundle must declare icon assets')
+const localMacIcon = path.resolve(root, 'src-tauri', 'icons/icon.icns')
+assert.ok(tauriIcons.includes('icons/icon.icns'), 'Tauri macOS bundle must declare a local ICNS app icon')
+assert.ok(fs.existsSync(localMacIcon), 'Tauri local ICNS app icon is missing')
+assert.deepEqual(fs.readFileSync(localMacIcon), icns, 'Tauri local ICNS app icon must match the canonical icon')
 assert.ok(tauriIcons.includes('../build/mac/icon.icns'), 'Tauri macOS bundle must use the canonical icon asset')
 assert.equal(
     path.resolve(root, 'src-tauri', tauriIcons.find(icon => icon === '../build/mac/icon.icns')),
