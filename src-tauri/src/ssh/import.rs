@@ -703,6 +703,7 @@ mod tests {
         path::{Path, PathBuf},
     };
 
+    use crate::error::AppError;
     use tempfile::tempdir;
 
     use super::{
@@ -946,6 +947,98 @@ mod tests {
         assert_eq!(profile["options"]["host"].as_str(), Some("app.example"));
         assert!(yaml.contains("privateKeys"));
         assert!(!yaml.contains("password"));
+    }
+
+    #[test]
+    fn applies_skip_duplicate_overwrite_and_rejects_stale_preview() {
+        let directory = tempdir().unwrap();
+        let source = directory.path().join("ssh-profiles.yaml");
+        fs::write(
+            &source,
+            "- name: Office\n  options:\n    host: office.example\n    port: 2200\n    user: alice\n",
+        )
+        .unwrap();
+        let profile_id = stable_static_profile_id("Office");
+        let current_yaml = format!(
+            "version: 1\nprofiles:\n  - id: '{profile_id}'\n    name: Existing Office\n    type: ssh\n    options:\n      host: old.example\n      port: 22\n"
+        );
+        let source_path = source.to_string_lossy().into_owned();
+
+        let (_, imported, skipped, failed) = apply(
+            directory.path().join("config.yaml").as_path(),
+            SshImportSelection {
+                path: source_path.clone(),
+                expected_revision: None,
+                selections: vec![SshImportSelectionItem {
+                    profile_id: profile_id.clone(),
+                    action: SshImportAction::Skip,
+                }],
+            },
+            &current_yaml,
+            None,
+        )
+        .unwrap();
+        assert!(imported.is_empty());
+        assert_eq!(skipped, vec![profile_id.clone()]);
+        assert!(failed.is_empty());
+
+        let (duplicate_yaml, imported, skipped, failed) = apply(
+            directory.path().join("config.yaml").as_path(),
+            SshImportSelection {
+                path: source_path.clone(),
+                expected_revision: None,
+                selections: vec![SshImportSelectionItem {
+                    profile_id: profile_id.clone(),
+                    action: SshImportAction::Duplicate,
+                }],
+            },
+            &current_yaml,
+            None,
+        )
+        .unwrap();
+        assert_eq!(imported.len(), 1);
+        assert_eq!(imported[0].id, format!("{profile_id}:imported-2"));
+        assert!(skipped.is_empty());
+        assert!(failed.is_empty());
+        let duplicate_root: serde_yaml::Value = serde_yaml::from_str(&duplicate_yaml).unwrap();
+        assert_eq!(duplicate_root["profiles"].as_sequence().unwrap().len(), 2);
+        assert!(duplicate_yaml.contains("Existing Office"));
+
+        let (overwrite_yaml, imported, skipped, failed) = apply(
+            directory.path().join("config.yaml").as_path(),
+            SshImportSelection {
+                path: source_path.clone(),
+                expected_revision: None,
+                selections: vec![SshImportSelectionItem {
+                    profile_id: profile_id.clone(),
+                    action: SshImportAction::Overwrite,
+                }],
+            },
+            &current_yaml,
+            None,
+        )
+        .unwrap();
+        assert_eq!(imported[0].id, profile_id);
+        assert!(skipped.is_empty());
+        assert!(failed.is_empty());
+        let overwrite_root: serde_yaml::Value = serde_yaml::from_str(&overwrite_yaml).unwrap();
+        assert_eq!(overwrite_root["profiles"].as_sequence().unwrap().len(), 1);
+        assert_eq!(
+            overwrite_root["profiles"][0]["name"].as_str(),
+            Some("Office")
+        );
+
+        let stale = apply(
+            directory.path().join("config.yaml").as_path(),
+            SshImportSelection {
+                path: source_path,
+                expected_revision: Some("stale-revision".into()),
+                selections: vec![],
+            },
+            &current_yaml,
+            Some("current-revision"),
+        );
+        assert!(matches!(stale, Err(AppError::Conflict(message)) if message.contains("changed")));
     }
 
     #[test]

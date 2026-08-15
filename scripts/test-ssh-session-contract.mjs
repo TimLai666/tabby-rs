@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const session = fs.readFileSync(path.join(root, 'tabby-tauri/src/ssh/session.ts'), 'utf8')
 const tab = fs.readFileSync(path.join(root, 'tabby-tauri/src/ssh/tab.component.ts'), 'utf8')
+const recovery = fs.readFileSync(path.join(root, 'tabby-tauri/src/ssh/recoveryProvider.ts'), 'utf8')
 
 const authForOptions = session.match(
     /private async authForOptions \(options: SSHProfile\['options'\]\): Promise<SshAuthMethodRef\[]> \{([\s\S]*?)\n    \}/,
@@ -26,6 +27,11 @@ assert.match(session, /const account = options\.user \|\| 'root'/)
 assert.match(session, /keepalive: options\.keepaliveInterval > 0[\s\S]*intervalMs: options\.keepaliveInterval[\s\S]*maxCount: options\.keepaliveCountMax/)
 assert.match(session, /environment: options\.environment/)
 assert.match(tab, /attachSessionHandler\(session\.serviceMessage\$/)
+assert.match(tab, /Object\.entries\(profile\.options\)\.filter\(\(\[key\]\) => key !== 'password'\)/)
+assert.doesNotMatch(tab, /safeOptions[\s\S]*password:/)
+assert.match(recovery, /recoveryToken\.type === 'app:ssh-tab'/)
+assert.match(recovery, /getConfigProxyForProfile\(recoveryToken\.profile\)/)
+assert.match(recovery, /savedState: recoveryToken\.savedState/)
 
 const rust = fs.readFileSync(path.join(root, 'src-tauri/src/ssh/mod.rs'), 'utf8')
 const engine = fs.readFileSync(path.join(root, 'src-tauri/src/ssh/engine.rs'), 'utf8')
