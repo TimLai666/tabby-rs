@@ -10,6 +10,7 @@ import ts from 'typescript'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm'
 const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'tabby-rs-official-plugin-'))
+const npmCache = path.join(fixture, 'npm-cache')
 const publicFixtures = [
     { name: 'tabby-clippy', version: '1.0.0' },
     { name: 'tabby-jumper', version: '1.0.3' },
@@ -17,10 +18,28 @@ const publicFixtures = [
 ]
 
 const packages = publicFixtures.map(({ name, version }) => {
-    execFileSync(npmCommand, ['pack', `${name}@${version}`, '--pack-destination', fixture], {
+    execFileSync(npmCommand, [
+        'pack',
+        '--ignore-scripts',
+        '--fetch-timeout=30000',
+        '--fetch-retries=1',
+        '--fetch-retry-mintimeout=1000',
+        '--fetch-retry-maxtimeout=3000',
+        `${name}@${version}`,
+        '--pack-destination',
+        fixture,
+    ], {
         cwd: root,
         shell: process.platform === 'win32',
-        stdio: 'ignore',
+        stdio: 'pipe',
+        env: {
+            ...process.env,
+            npm_config_cache: npmCache,
+            npm_config_audit: 'false',
+            npm_config_fund: 'false',
+            npm_config_update_notifier: 'false',
+            npm_config_loglevel: 'warn',
+        },
     })
     const archive = fs.readdirSync(fixture).find(file => file === `${name}-${version}.tgz`)
     assert.ok(archive, `the public plugin package was not downloaded: ${name}@${version}`)
