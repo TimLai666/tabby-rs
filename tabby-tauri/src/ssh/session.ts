@@ -257,6 +257,8 @@ export class TauriSshSession extends BaseSession {
             }
         } else if (options.auth === 'agent') {
             auth.push({ type: 'agent', socket: null })
+        } else if (options.auth === 'keyboardInteractive') {
+            auth.push({ type: 'keyboardInteractive' })
         }
         return auth
     }
