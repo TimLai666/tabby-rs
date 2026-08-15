@@ -64,7 +64,7 @@ export function validateBenchmarkReport (report, expectedMetric, { requireLargeO
     if (report.schemaVersion !== 1) errors.push('schemaVersion must be 1')
     if (report.metric !== expectedMetric) errors.push(`metric must be ${expectedMetric}`)
     if (report.host !== 'tauri') errors.push('host must be tauri')
-    for (const name of ['platform', 'arch', 'unit', 'commit', 'configFixture', 'measuredAt', 'fixtureSha256', 'artifactSha256']) {
+    for (const name of ['platform', 'arch', 'target', 'unit', 'commit', 'configFixture', 'measuredAt', 'fixtureSha256', 'artifactSha256']) {
         requireString(errors, report, name)
     }
     if (typeof report.commit === 'string' && !COMMIT_PATTERN.test(report.commit)) errors.push('commit must be a full git SHA')
@@ -77,6 +77,11 @@ export function validateBenchmarkReport (report, expectedMetric, { requireLargeO
     for (const name of ['os', 'arch', 'node', 'toolchain']) requireString(errors, report.environment, name)
     if (!isRecord(report.provenance)) errors.push('provenance must be an object')
     requireString(errors, report.provenance, 'runner')
+    if (!isRecord(report.provenance?.binary)) errors.push('provenance.binary must be an object')
+    requireString(errors, report.provenance?.binary, 'path')
+    if (typeof report.provenance?.binary?.sha256 !== 'string' || !HASH_PATTERN.test(report.provenance.binary.sha256)) {
+        errors.push('provenance.binary.sha256 must be a SHA-256 digest')
+    }
     if (typeof report.samples === 'number' && Number.isInteger(report.samples) && report.samples > 0) validateSummary(errors, report)
 
     switch (expectedMetric) {

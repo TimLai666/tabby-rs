@@ -239,4 +239,48 @@ await assert.rejects(
 const malformedPassingParityGateReport = JSON.parse(fs.readFileSync(malformedPassingParityOutput, 'utf8'))
 assert.ok(malformedPassingParityGateReport.failures.includes('parity report features has pending entries'))
 
+assert.ok(mismatchReport.failures.includes('missing parity automated evidence path'))
+
+const weakBundleAudit = path.join(work, 'weak-bundle-audit.json')
+const weakBundleOutput = path.join(work, 'weak-bundle-release-gate.json')
+fs.writeFileSync(weakBundleAudit, JSON.stringify({ passed: true, sourceRevision: expectedRevision }))
+await assert.rejects(
+    execFileAsync(process.execPath, [gate,
+        '--bundle-audit', weakBundleAudit,
+        '--dependency-audit', dependencyAudit,
+        '--license-report', licenseReport,
+        '--installer-smoke', installerSmoke,
+        '--parity-report', parityReport,
+        '--parity-evidence', parityEvidence,
+        '--platform', 'windows',
+        '--source-revision', expectedRevision,
+        '--output', weakBundleOutput,
+    ], { cwd: root }),
+)
+const weakBundleGateReport = JSON.parse(fs.readFileSync(weakBundleOutput, 'utf8'))
+assert.ok(weakBundleGateReport.failures.includes('bundle audit schema version is invalid'))
+assert.ok(weakBundleGateReport.failures.includes('bundle audit has no file manifest'))
+assert.ok(weakBundleGateReport.failures.includes('bundle audit target is missing'))
+
+const weakLicenseReport = path.join(work, 'weak-license-report.json')
+const weakLicenseOutput = path.join(work, 'weak-license-release-gate.json')
+fs.writeFileSync(weakLicenseReport, JSON.stringify({ passed: true, sourceRevision: expectedRevision }))
+await assert.rejects(
+    execFileAsync(process.execPath, [gate,
+        '--bundle-audit', passingBundleAudit,
+        '--dependency-audit', dependencyAudit,
+        '--license-report', weakLicenseReport,
+        '--installer-smoke', installerSmoke,
+        '--parity-report', parityReport,
+        '--parity-evidence', parityEvidence,
+        '--platform', 'windows',
+        '--source-revision', expectedRevision,
+        '--output', weakLicenseOutput,
+    ], { cwd: root }),
+)
+const weakLicenseGateReport = JSON.parse(fs.readFileSync(weakLicenseOutput, 'utf8'))
+assert.ok(weakLicenseGateReport.failures.includes('license report schema version is invalid'))
+assert.ok(weakLicenseGateReport.failures.includes('license report has no LICENSE entry'))
+assert.ok(weakLicenseGateReport.failures.includes('license report has no cargo dependencies'))
+
 console.log('Release gate contract fixtures passed')

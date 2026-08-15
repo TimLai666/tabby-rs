@@ -240,6 +240,7 @@ function baseReport (metric, options, samples, { fixtureSha256, artifactSha256, 
         host: 'tauri',
         platform: options.platform || normalizedPlatform(process.platform),
         arch: options.arch || normalizedArch(process.arch),
+        target: options.target || process.env.TABBY_RS_TOOLCHAIN || 'unspecified',
         commit: gitRevision(),
         configFixture: options['config-fixture'] || 'default-no-plugins',
         fixtureSha256,
@@ -270,32 +271,38 @@ async function run (options) {
     fs.mkdirSync(outputDir, { recursive: true })
 
     const binary = required(options, 'binary')
+    const binaryPath = path.resolve(required(options, 'binary-path'))
+    if (!fs.statSync(binaryPath).isFile()) throw new Error(`benchmark binary is not a file: ${binaryPath}`)
+    const target = options.target || process.env.TABBY_RS_TOOLCHAIN
+    if (!target) throw new Error('--target or TABBY_RS_TOOLCHAIN is required')
     const binaryArgs = jsonArgument(options, 'binary-args')
     const configFixturePath = path.resolve(required(options, 'config-fixture-path'))
     if (!fs.statSync(configFixturePath).isFile()) throw new Error(`config fixture is not a file: ${configFixturePath}`)
     const configFixture = options['config-fixture'] || path.basename(configFixturePath)
     const fixtureSha256 = sha256(fs.readFileSync(configFixturePath))
     const bundle = bundleStats(required(options, 'bundle'))
+    const binaryEvidence = { path: binaryPath, sha256: sha256(fs.readFileSync(binaryPath)) }
     const commonEvidence = { fixtureSha256, artifactSha256: bundle.artifactSha256 }
+    const reportOptions = { ...options, target, 'config-fixture': configFixture }
     for (let index = 0; index < warmups; index++) await readySample(binary, binaryArgs, readyTimeoutMs, configFixturePath)
     const startupValues = []
     for (let index = 0; index < samples; index++) startupValues.push(await readySample(binary, binaryArgs, readyTimeoutMs, configFixturePath))
-    const startup = baseReport(BENCHMARK_METRICS.startup, { ...options, 'config-fixture': configFixture }, startupValues, {
+    const startup = baseReport(BENCHMARK_METRICS.startup, reportOptions, startupValues, {
         ...commonEvidence,
         unit: 'ms',
         readyTimeoutMs,
-        provenance: { runner: 'scripts/run-benchmarks.mjs', runnerVersion: '1', readyMarker: true },
+        provenance: { runner: 'scripts/run-benchmarks.mjs', runnerVersion: '1', readyMarker: true, binary: binaryEvidence },
     })
 
     const waitMs = Number(options['memory-wait-ms'] || 30000)
     for (let index = 0; index < warmups; index++) await memorySample(binary, binaryArgs, waitMs, readyTimeoutMs, configFixturePath)
     const memoryValues = []
     for (let index = 0; index < samples; index++) memoryValues.push(await memorySample(binary, binaryArgs, waitMs, readyTimeoutMs, configFixturePath))
-    const memory = baseReport(BENCHMARK_METRICS.memory, { ...options, 'config-fixture': configFixture }, memoryValues, {
+    const memory = baseReport(BENCHMARK_METRICS.memory, reportOptions, memoryValues, {
         ...commonEvidence,
         unit: 'bytes',
         waitMs,
-        provenance: { runner: 'scripts/run-benchmarks.mjs', runnerVersion: '1', readyMarker: true },
+        provenance: { runner: 'scripts/run-benchmarks.mjs', runnerVersion: '1', readyMarker: true, binary: binaryEvidence },
     })
 
     const outputCommand = required(options, 'output-command')
@@ -309,13 +316,13 @@ async function run (options) {
         ...JSON.parse(frameReportBytes.toString('utf8')),
         traceSha256: sha256(frameReportBytes),
     }
-    const output = baseReport(BENCHMARK_METRICS.output, { ...options, 'config-fixture': configFixture }, outputSamples.map(sample => sample.throughput), {
+    const output = baseReport(BENCHMARK_METRICS.output, reportOptions, outputSamples.map(sample => sample.throughput), {
         ...commonEvidence,
         unit: 'bytesPerSecond',
         bytes: outputSamples[0].bytes,
         outputSha256: outputSamples[0].checksum,
         uiFrameResponsiveness: outputFrameReport,
-        provenance: { runner: 'scripts/run-benchmarks.mjs', runnerVersion: '1', command: [outputCommand, ...outputArgs] },
+        provenance: { runner: 'scripts/run-benchmarks.mjs', runnerVersion: '1', command: [outputCommand, ...outputArgs], binary: binaryEvidence },
     })
     if (output.bytes < minimumOutputBytes) {
         throw new Error(`output benchmark produced ${output.bytes} bytes, below the requested minimum of ${minimumOutputBytes}`)
@@ -326,7 +333,7 @@ async function run (options) {
     const finalBundle = bundleStats(required(options, 'bundle'))
     if (finalBundle.artifactSha256 !== bundle.artifactSha256) throw new Error('bundle changed during benchmark run')
 
-    const bundleReport = baseReport(BENCHMARK_METRICS['bundle-size'], { ...options, 'config-fixture': configFixture }, [bundle.installedFootprintBytes], {
+    const bundleReport = baseReport(BENCHMARK_METRICS['bundle-size'], reportOptions, [bundle.installedFootprintBytes], {
         ...commonEvidence,
         unit: 'bytes',
         artifactBytes: bundle.installedFootprintBytes,
@@ -334,7 +341,7 @@ async function run (options) {
         largestFileBytes: bundle.largest.size,
         largestFile: bundle.largest.path,
         artifactSha256: bundle.artifactSha256,
-        provenance: { runner: 'scripts/run-benchmarks.mjs', runnerVersion: '1', bundlePath: path.resolve(options.bundle) },
+        provenance: { runner: 'scripts/run-benchmarks.mjs', runnerVersion: '1', bundlePath: path.resolve(options.bundle), binary: binaryEvidence },
     })
 
     const reports = { startup, memory, output, 'bundle-size': bundleReport }

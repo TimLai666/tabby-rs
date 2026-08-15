@@ -25,6 +25,7 @@ const expectedPlatform = argument('--platform') || null
 const expectedArch = argument('--arch') || null
 const expectedTarget = argument('--target') || null
 const failures = []
+const sha256Pattern = /^[0-9a-f]{64}$/i
 const benchmarkFiles = Object.entries(BENCHMARK_METRICS).map(([name, metric]) => ({
     name,
     metric,
@@ -118,6 +119,7 @@ if (parityReport) {
     }
 }
 
+if (!parityEvidencePath) failures.push('missing parity automated evidence path')
 const parityEvidence = parityEvidencePath ? readJson(parityEvidencePath, 'parity automated evidence') : null
 if (parityEvidencePath && parityEvidence) {
     if (parityEvidence.schemaVersion !== 1 || parityEvidence.kind !== 'tabby-rs-parity-automated-evidence') {
@@ -159,6 +161,7 @@ for (const benchmark of benchmarkFiles) {
         if (expectedRevision && report.commit !== expectedRevision) errors.push(`commit must match ${expectedRevision}`)
         if (expectedPlatform && report.platform !== expectedPlatform) errors.push(`platform must match ${expectedPlatform}`)
         if (expectedArch && report.arch !== expectedArch) errors.push(`arch must match ${expectedArch}`)
+        if (expectedTarget && report.target !== expectedTarget) errors.push(`target must match ${expectedTarget}`)
         for (const error of errors) {
             failures.push(`${benchmark.name}: ${error}`)
         }
@@ -170,6 +173,19 @@ for (const benchmark of benchmarkFiles) {
 
 const bundleAudit = readJson(bundleAuditPath, 'bundle audit')
 if (bundleAudit) {
+    if (bundleAudit.schemaVersion !== 1) failures.push('bundle audit schema version is invalid')
+    if (!Array.isArray(bundleAudit.files) || bundleAudit.files.length === 0) failures.push('bundle audit has no file manifest')
+    if (typeof bundleAudit.artifactSha256 !== 'string' || !sha256Pattern.test(bundleAudit.artifactSha256)) failures.push('bundle audit artifactSha256 is invalid')
+    if (!Array.isArray(bundleAudit.findings)) failures.push('bundle audit has no findings list')
+    if (!Array.isArray(bundleAudit.missing)) failures.push('bundle audit has no missing list')
+    for (const [index, file] of (bundleAudit.files || []).entries()) {
+        if (typeof file?.path !== 'string' || file.path.length === 0) failures.push(`bundle audit file ${index} has no path`)
+        if (!Number.isInteger(file?.size) || file.size < 0) failures.push(`bundle audit file ${index} has an invalid size`)
+        if (typeof file?.sha256 !== 'string' || !sha256Pattern.test(file.sha256)) failures.push(`bundle audit file ${index} has an invalid hash`)
+    }
+    for (const name of ['sourceRevision', 'platform', 'arch', 'target']) {
+        if (typeof bundleAudit[name] !== 'string' || bundleAudit[name].length === 0) failures.push(`bundle audit ${name} is missing`)
+    }
     if (bundleAudit.passed !== true) {
         failures.push('bundle audit did not pass')
     }
@@ -197,11 +213,30 @@ if (dependencyAudit) {
 }
 
 const licenseReport = readJson(licenseReportPath, 'license report')
-if (licenseReport && licenseReport.passed !== true) {
-    failures.push('license report did not pass')
-}
-if (licenseReport && expectedRevision && licenseReport.sourceRevision !== expectedRevision) {
-    failures.push(`license report sourceRevision must match ${expectedRevision}`)
+if (licenseReport) {
+    if (licenseReport.schemaVersion !== 1) failures.push('license report schema version is invalid')
+    if (typeof licenseReport.sourceRevision !== 'string' || licenseReport.sourceRevision.length === 0) failures.push('license report sourceRevision is missing')
+    if (typeof licenseReport.license?.path !== 'string' || licenseReport.license.path.length === 0) failures.push('license report has no LICENSE entry')
+    if (typeof licenseReport.license?.sha256 !== 'string' || !sha256Pattern.test(licenseReport.license.sha256)) failures.push('license report LICENSE hash is invalid')
+    const notices = licenseReport.thirdPartyNotices
+    if (typeof notices?.path !== 'string' || notices.path.length === 0) failures.push('license report has no third-party notices entry')
+    if (!Number.isInteger(notices?.packageRows) || notices.packageRows < 1) failures.push('license report third-party packageRows is invalid')
+    if (typeof notices?.sha256 !== 'string' || !sha256Pattern.test(notices.sha256)) failures.push('license report third-party notices hash is invalid')
+    if (!Array.isArray(notices?.dependencies?.npm) || notices.dependencies.npm.length === 0) failures.push('license report has no npm dependencies')
+    if (!Array.isArray(notices?.dependencies?.cargo) || notices.dependencies.cargo.length === 0) failures.push('license report has no cargo dependencies')
+    for (const ecosystem of ['npm', 'cargo']) {
+        for (const [index, dependency] of (notices?.dependencies?.[ecosystem] || []).entries()) {
+            for (const field of ['name', 'version', 'license', 'manifest']) {
+                if (typeof dependency?.[field] !== 'string' || dependency[field].length === 0) {
+                    failures.push(`license report ${ecosystem} dependency ${index} has no ${field}`)
+                }
+            }
+        }
+    }
+    if (licenseReport.passed !== true) failures.push('license report did not pass')
+    if (expectedRevision && licenseReport.sourceRevision !== expectedRevision) {
+        failures.push(`license report sourceRevision must match ${expectedRevision}`)
+    }
 }
 
 const installerSmoke = readJson(installerSmokePath, 'installer smoke report')
@@ -267,9 +302,13 @@ const validBenchmarkReports = benchmarkFiles.map(benchmark => benchmark.report).
 if (validBenchmarkReports.length > 1) {
     const fixtureSha256 = validBenchmarkReports[0].fixtureSha256
     const artifactSha256 = validBenchmarkReports[0].artifactSha256
+    const target = validBenchmarkReports[0].target
+    const binarySha256 = validBenchmarkReports[0].provenance?.binary?.sha256
     for (const report of validBenchmarkReports.slice(1)) {
         if (report.fixtureSha256 !== fixtureSha256) failures.push('benchmark reports must use one config fixture')
         if (report.artifactSha256 !== artifactSha256) failures.push('benchmark reports must use one bundle artifact')
+        if (report.target !== target) failures.push('benchmark reports must use one matrix target')
+        if (report.provenance?.binary?.sha256 !== binarySha256) failures.push('benchmark reports must use one benchmark binary')
     }
     if (bundleAudit?.artifactSha256 && artifactSha256 !== bundleAudit.artifactSha256) {
         failures.push('benchmark reports must match bundle audit artifactSha256')
