@@ -135,6 +135,9 @@ try {
     assert.equal(result.code, 0, `cargo test exited with ${result.code}`)
     console.log(`System npm lifecycle fixture passed on ${process.platform}`)
 } finally {
-    await new Promise(resolve => server.close(resolve))
+    await new Promise(resolve => {
+        server.close(resolve)
+        server.closeAllConnections?.()
+    })
     fs.rmSync(fixture, { recursive: true, force: true })
 }
