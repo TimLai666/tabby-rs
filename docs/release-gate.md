@@ -23,6 +23,8 @@ Generate the four benchmark reports with the real Tauri executable and an extern
 ```text
 node scripts/run-benchmarks.mjs \
   --binary path/to/tabby-rs \
+  --binary-path path/to/tabby-rs \
+  --target x86_64-unknown-linux-gnu \
   --output-command path/to/output-fixture \
   --output-args '["100000000"]' \
   --ui-frame-report path/to/frame-report.json \
