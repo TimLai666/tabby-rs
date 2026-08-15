@@ -18,6 +18,15 @@ pub struct PendingUpdateJournal {
     pub channel: crate::storage::state_file::UpdateChannel,
 }
 
+/// Keep the last known Stable snapshot available while a Nightly-to-Stable
+/// transition is being validated. The current update backup may contain
+/// Nightly data even after the channel has been switched to Stable.
+pub fn remember_stable_backup(state: &mut TabbyRsState, backup_id: &str) {
+    if state.last_stable_backup.is_none() {
+        state.last_stable_backup = Some(backup_id.to_owned());
+    }
+}
+
 pub fn write_pending_update_journal(
     paths: &StoragePaths,
     pending: &PendingUpdateState,
@@ -161,7 +170,7 @@ mod tests {
 
     use super::{
         clear_pending_update_journal, recover_pending_update, recover_pending_update_from_disk,
-        write_pending_update_journal,
+        remember_stable_backup, write_pending_update_journal,
     };
     use crate::storage::{
         atomic_file::atomic_write,
@@ -302,6 +311,19 @@ mod tests {
         assert_eq!(
             recovered.extra["lastUpdateRecovery"]["backupId"],
             stable_backup.backup_id
+        );
+    }
+
+    #[test]
+    fn stable_update_does_not_replace_last_stable_backup_with_nightly_snapshot() {
+        let mut state = TabbyRsState::default();
+        state.last_stable_backup = Some("stable-before-nightly".into());
+
+        remember_stable_backup(&mut state, "nightly-before-stable");
+
+        assert_eq!(
+            state.last_stable_backup.as_deref(),
+            Some("stable-before-nightly")
         );
     }
 
