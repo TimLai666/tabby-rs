@@ -524,10 +524,11 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{
-        crc32, locale_from_config_or_environment, plugin_diagnostic_status, read_logs,
-        system_summary_value, validate_destination, write_zip, BundleApp, BundleEntry,
+        config_summary, crc32, locale_from_config_or_environment, plugin_diagnostic_status,
+        read_logs, system_summary_value, validate_destination, write_zip, BundleApp, BundleEntry,
         BundleManifest, ManifestFile,
     };
+    use crate::storage::config_file::ConfigReadResult;
     use crate::storage::state_file::SafeModeState;
 
     #[test]
@@ -631,6 +632,46 @@ mod tests {
         assert_eq!(value["locale"], "zh-TW");
         assert_eq!(value["displayCount"], 2);
         assert!(value.get("password").is_none());
+    }
+
+    #[test]
+    fn config_summary_omits_raw_values_and_sensitive_payloads() {
+        let config = ConfigReadResult {
+            yaml: r#"
+password: diagnostic-password
+token: diagnostic-token
+privateKey: |
+  -----BEGIN PRIVATE KEY-----
+  diagnostic-private-key
+  -----END PRIVATE KEY-----
+scrollback: terminal-secret-output
+hosts:
+  - hostname: server.internal
+    username: alice
+"#
+            .into(),
+            revision: Some("revision-1".into()),
+            path: "/tmp/config.yaml".into(),
+        };
+
+        let summary = String::from_utf8(config_summary(&config).unwrap()).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&summary).unwrap();
+
+        assert_eq!(value["configPresent"], true);
+        assert_eq!(
+            value["topLevelKeys"],
+            serde_json::json!(["hosts", "password", "privateKey", "scrollback", "token"])
+        );
+        for secret in [
+            "diagnostic-password",
+            "diagnostic-token",
+            "diagnostic-private-key",
+            "terminal-secret-output",
+            "server.internal",
+            "alice",
+        ] {
+            assert!(!summary.contains(secret), "summary leaked {secret}");
+        }
     }
 
     #[test]
