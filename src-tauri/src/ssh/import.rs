@@ -1023,7 +1023,10 @@ mod tests {
         assert!(failed.is_empty());
         let overwrite_root: serde_yaml::Value = serde_yaml::from_str(&overwrite_yaml).unwrap();
         assert_eq!(overwrite_root["profiles"].as_sequence().unwrap().len(), 1);
-        assert_eq!(overwrite_root["profiles"][0]["name"].as_str(), Some("Office"));
+        assert_eq!(
+            overwrite_root["profiles"][0]["name"].as_str(),
+            Some("Office")
+        );
 
         let stale = apply(
             directory.path().join("config.yaml").as_path(),
