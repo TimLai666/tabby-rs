@@ -17,7 +17,7 @@ const compiled = ts.transpileModule(source, {
 
 const module = { exports: {} }
 vm.runInNewContext(compiled.outputText, { module, exports: module.exports }, { filename: 'workspace.cjs' })
-const { createWorkspaceSnapshot, normalizeRatios, validateWorkspaceSnapshot, workspaceReducer } = module.exports
+const { createWorkspaceSnapshot, normalizeRatios, sanitizeRecoveryToken, validateWorkspaceSnapshot, workspaceReducer } = module.exports
 
 assert.deepEqual([...normalizeRatios([0, 0, 0], 3)], [1 / 3, 1 / 3, 1 / 3])
 const first = { schemaVersion: 1, tabId: 'one', profileId: 'local:one', sessionKind: 'local', sessionState: {} }
@@ -32,6 +32,15 @@ const snapshot = createWorkspaceSnapshot([first, second], 'one')
 assert.equal(snapshot.schemaVersion, 1)
 assert.equal(snapshot.layout.type, 'split')
 assert.equal(JSON.stringify(snapshot.tabs[1].sessionState), JSON.stringify({ auth: { nested: {} }, keep: 'safe' }))
+assert.equal(JSON.stringify(sanitizeRecoveryToken({
+    type: 'app:ssh-tab',
+    profile: { options: { password: 'must-not-persist', privateKeys: ['private-key'], keep: 'safe' } },
+    savedState: { auth: { password: 'must-not-persist', token: 'must-not-persist' }, keep: 'safe' },
+})), JSON.stringify({
+    type: 'app:ssh-tab',
+    profile: { options: { keep: 'safe' } },
+    savedState: { auth: {}, keep: 'safe' },
+}))
 assert.equal(validateWorkspaceSnapshot({ ...snapshot, layout: { ...snapshot.layout, ratios: [1] } }).layout.ratios.length, 2)
 assert.equal(validateWorkspaceSnapshot({ ...snapshot, tabs: [{ ...snapshot.tabs[0], tabId: 'duplicate' }, snapshot.tabs[1]] }), null)
 const split = workspaceReducer(snapshot, { type: 'split', tabId: 'one', direction: 'vertical', tab: { schemaVersion: 1, tabId: 'three', profileId: 'local:three', sessionKind: 'local', sessionState: {} } })

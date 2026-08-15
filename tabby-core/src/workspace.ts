@@ -125,9 +125,9 @@ function normalizeNode (node: unknown, seenTabs: Set<string>): WorkspaceNode | n
     }
 }
 
-function sanitizeSessionState (value: unknown): unknown {
+export function sanitizeRecoveryToken (value: unknown): unknown {
     if (Array.isArray(value)) {
-        return value.map(sanitizeSessionState)
+        return value.map(sanitizeRecoveryToken)
     }
     if (!isRecord(value)) {
         return value
@@ -138,7 +138,7 @@ function sanitizeSessionState (value: unknown): unknown {
         if (blocked.has(key.toLowerCase())) {
             continue
         }
-        result[key] = sanitizeSessionState(child)
+        result[key] = sanitizeRecoveryToken(child)
     }
     return result
 }
@@ -166,7 +166,7 @@ export function validateWorkspaceSnapshot (value: unknown): WorkspaceSnapshot | 
             customTitle: typeof tab.customTitle === 'string' ? tab.customTitle : undefined,
             profileId: tab.profileId,
             sessionKind: tab.sessionKind,
-            sessionState: sanitizeSessionState(tab.sessionState),
+            sessionState: sanitizeRecoveryToken(tab.sessionState),
             pinned: typeof tab.pinned === 'boolean' ? tab.pinned : undefined,
         })
     }
@@ -191,7 +191,7 @@ export function createWorkspaceSnapshot (tabs: RestorableTab[], activeTabId?: st
     const safeTabs = tabs.map(tab => ({
         ...tab,
         schemaVersion: 1 as const,
-        sessionState: sanitizeSessionState(tab.sessionState),
+        sessionState: sanitizeRecoveryToken(tab.sessionState),
     }))
     const layout: WorkspaceNode = safeTabs.length === 1
         ? { type: 'pane', tabId: safeTabs[0].tabId }
