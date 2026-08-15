@@ -27,9 +27,12 @@ for (let offset = 8; offset < icns.length;) {
     iconTypes.add(type)
     offset += length
 }
-for (const type of ['icp4', 'icp5', 'icp6', 'ic07', 'ic08', 'ic09', 'ic10']) {
-    assert.ok(iconTypes.has(type), `canonical macOS icon is missing ${type} representation`)
-}
+const legacyRepresentations = ['icp4', 'icp5', 'icp6', 'ic07', 'ic08', 'ic09', 'ic10']
+const modernRepresentations = ['ic07', 'ic08', 'ic09', 'ic10', 'ic11', 'ic12', 'ic13', 'ic14']
+assert.ok(
+    [legacyRepresentations, modernRepresentations].some(representations => representations.every(type => iconTypes.has(type))),
+    'canonical macOS icon is missing a complete legacy or modern representation set',
+)
 
 const tauriIcons = tauriConfig.bundle?.icon
 assert.ok(Array.isArray(tauriIcons), 'Tauri bundle must declare icon assets')
