@@ -4,6 +4,10 @@
         i.fas.fa-folder
         span(translate) Plugins folder
 
+.alert.alert-warning.mb-3
+    strong(translate) Plugin installation runs npm lifecycle scripts with your user permissions and is not sandboxed.
+    div(translate) Only install packages you trust.
+
 .alert.alert-warning(*ngIf='!canManagePlugins() && nodeStatus && !nodeStatus.supported')
     strong(translate) Node.js and npm are required for plugin management.
     div {{nodeStatus.reason}}
