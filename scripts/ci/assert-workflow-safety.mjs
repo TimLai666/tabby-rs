@@ -62,6 +62,11 @@ if (!/^\s+run: yarn audit:tauri:dependencies --tauri-release --output release-st
 if (!/--dependency-audit release-staging\/dependency-audit\.json/.test(releaseWorkflow)) {
     violations.push('release gate does not consume the Tauri dependency metadata audit')
 }
+const releaseDependencyInstallSteps = [...releaseWorkflow.matchAll(/- name: Install dependencies\n(?<step>[\s\S]*?)\n\s+- name:/g)]
+if (releaseDependencyInstallSteps.length < 2
+    || releaseDependencyInstallSteps.some(match => !/TABBY_RS_SKIP_ELECTRON_NATIVE_REBUILD:\s*['"]?1['"]?/.test(match.groups.step))) {
+    violations.push('Tauri release dependency installs must skip Electron native rebuilds')
+}
 if (!/run: cargo fmt --manifest-path src-tauri\/Cargo\.toml -- --check/.test(releaseWorkflow)) {
     violations.push('release workflow is missing the Rust formatting check')
 }
