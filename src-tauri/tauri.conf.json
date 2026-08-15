@@ -28,6 +28,7 @@
   "bundle": {
     "active": false,
     "icon": [
+      "icons/icon.icns",
       "icons/icon.png",
       "icons/icon.ico",
       "../build/mac/icon.icns"
