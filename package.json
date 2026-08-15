@@ -166,7 +166,7 @@
     "test:device-reconnect": "node scripts/test-device-reconnect-contract.mjs",
     "test:ssh-session": "node scripts/test-ssh-session-contract.mjs",
     "test:ssh-config-parser": "cargo test --manifest-path src-tauri/Cargo.toml --lib ssh::import::tests::parses_",
-    "test:ssh-import": "cargo test --manifest-path src-tauri/Cargo.toml --lib ssh::import::tests::imports_",
+    "test:ssh-import": "cargo test --manifest-path src-tauri/Cargo.toml --lib ssh::import::tests",
     "test:ssh-manager-auth": "cargo test --manifest-path src-tauri/Cargo.toml --lib manager_authenticator",
     "test:ssh-known-hosts": "cargo test --manifest-path src-tauri/Cargo.toml --lib ssh::known_hosts::tests",
     "test:ssh-forwarding": "cargo test --manifest-path src-tauri/Cargo.toml --lib ssh::forwarding",
