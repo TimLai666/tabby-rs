@@ -908,6 +908,32 @@ mod tests {
     }
 
     #[test]
+    fn old_version_clears_install_failure_marker_without_restoring() {
+        let temp = tempdir().unwrap();
+        let paths = StoragePaths::from_data_dir(temp.path().join("data"));
+        paths.ensure_layout().unwrap();
+        atomic_write(paths.config_file(), b"version: old\n").unwrap();
+        save_state(paths.state_file(), &TabbyRsState::default()).unwrap();
+        write_pending_update_journal(
+            &paths,
+            &PendingUpdateState {
+                target_version: "1.0.231-tabbyrs.2".into(),
+                backup_id: "unused".into(),
+                channel: UpdateChannel::Stable,
+            },
+        )
+        .unwrap();
+
+        let recovered = recover_pending_update_from_disk(&paths, "1.0.231-tabbyrs.1").unwrap();
+        assert!(recovered.pending_update.is_none());
+        assert_eq!(
+            std::fs::read(paths.config_file()).unwrap(),
+            b"version: old\n"
+        );
+        assert!(!paths.pending_update_file().exists());
+    }
+
+    #[test]
     fn malformed_journal_is_preserved_for_diagnosis() {
         let temp = tempdir().unwrap();
         let paths = StoragePaths::from_data_dir(temp.path().join("data"));

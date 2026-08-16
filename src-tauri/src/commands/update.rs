@@ -312,9 +312,10 @@ pub async fn update_install(
     if ready.update.install(&bytes).is_err() {
         let rollback_result = binary_rollback.fail();
         let _ = state.update_persisted_state(|persisted| persisted.pending_update = None);
-        if rollback_result.is_ok() {
-            let _ = clear_pending_update_journal(&paths);
-        }
+        // Keep the recovery marker until the next launch. The updater may have
+        // replaced part of the bundle before reporting an installation error,
+        // so deleting the marker here could leave a newly started binary with
+        // no way to restore the pre-update backup.
         state.update_manager().restore_ready(ready);
         emit_state(&app, &state);
         if rollback_result.is_err() {
