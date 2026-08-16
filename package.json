@@ -100,6 +100,7 @@
     "build": "npm run build:typings && node scripts/build-modules.mjs",
     "build:electron": "npm run build",
     "build:web": "webpack --config web/webpack.config.mjs --mode production",
+    "start:web-browser-fixture": "yarn build:web && node scripts/test-web-browser-smoke.mjs",
     "build:tauri:frontend": "webpack --config app/webpack.config.tauri.mjs --progress --color",
     "audit:telemetry": "node scripts/ci/assert-no-built-in-telemetry.mjs",
     "audit:tauri:dependencies": "node scripts/ci/assert-tauri-dependency-safety.mjs",

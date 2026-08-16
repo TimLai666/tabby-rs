@@ -1,3 +1,4 @@
+import '@angular/compiler'
 import './polyfills'
 
 import 'zone.js'
