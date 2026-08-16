@@ -5311,6 +5311,7 @@ dependencies = [
  "keyring",
  "libc",
  "minisign-verify",
+ "objc2-app-kit",
  "pbkdf2",
  "portable-pty",
  "rand 0.8.7",

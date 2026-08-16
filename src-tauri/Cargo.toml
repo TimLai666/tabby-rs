@@ -63,10 +63,11 @@ libc = "0.2.153"
 
 [target.'cfg(windows)'.dependencies]
 keyring = { version = "=3.6.3", default-features = false, features = ["windows-native"] }
-windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem"] }
+windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem", "Win32_UI_WindowsAndMessaging"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "=3.6.3", default-features = false, features = ["apple-native"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSResponder", "NSView", "NSWindow"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 keyring = { version = "=3.6.3", default-features = false, features = ["sync-secret-service", "crypto-rust"] }
