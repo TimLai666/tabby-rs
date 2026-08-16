@@ -23,4 +23,13 @@ assert.match(source, /clearTimeout\(this\.reconnectTimer\)/)
 assert.match(source, /this\.offerReconnection\(\)/)
 assert.match(source, /super\.onSessionDestroyed\(\)/)
 
+const sharedReconnectSource = fs.readFileSync(
+    path.join(root, 'tabby-terminal/src/api/connectableTerminalTab.component.ts'),
+    'utf8',
+)
+assert.match(
+    sharedReconnectSource,
+    /async reconnect \(\): Promise<void> \{\s*this\.isDisconnectedByHand = true\s*await this\.session\?\.destroy\(\)/,
+)
+
 console.log('SSH reconnect contract passed')
