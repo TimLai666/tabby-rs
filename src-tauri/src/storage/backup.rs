@@ -71,45 +71,51 @@ pub fn create_backup(
     );
     let backup_dir = paths.backup_dir(&backup_id)?;
     fs::create_dir(&backup_dir)?;
-    let files_dir = backup_dir.join("files");
-    fs::create_dir(&files_dir)?;
+    let result = (|| {
+        let files_dir = backup_dir.join("files");
+        fs::create_dir(&files_dir)?;
 
-    let mut files = Vec::new();
-    let mut absent = Vec::new();
-    for (relative, source) in [
-        ("config.yaml", paths.config_file()),
-        ("tabby-rs.json", paths.state_file()),
-    ] {
-        let Some(bytes) = read_optional_regular_file(source)? else {
-            absent.push(relative.into());
-            continue;
+        let mut files = Vec::new();
+        let mut absent = Vec::new();
+        for (relative, source) in [
+            ("config.yaml", paths.config_file()),
+            ("tabby-rs.json", paths.state_file()),
+        ] {
+            let Some(bytes) = read_optional_regular_file(source)? else {
+                absent.push(relative.into());
+                continue;
+            };
+            atomic_write(&files_dir.join(relative), &bytes)?;
+            files.push(BackupFile {
+                path: relative.into(),
+                sha256: sha256_hex(&bytes),
+                size: bytes.len() as u64,
+            });
+        }
+
+        let manifest = BackupManifest {
+            schema_version: BACKUP_SCHEMA_VERSION,
+            backup_id: backup_id.clone(),
+            created_at,
+            reason: request.reason.trim().into(),
+            source_version: request
+                .source_version
+                .clone()
+                .unwrap_or_else(|| app_version.to_owned()),
+            channel: request.channel.clone().unwrap_or_default(),
+            files,
+            absent,
         };
-        atomic_write(&files_dir.join(relative), &bytes)?;
-        files.push(BackupFile {
-            path: relative.into(),
-            sha256: sha256_hex(&bytes),
-            size: bytes.len() as u64,
-        });
+        let mut manifest_bytes = serde_json::to_vec_pretty(&manifest)?;
+        manifest_bytes.push(b'\n');
+        atomic_write(&backup_dir.join("manifest.json"), &manifest_bytes)?;
+        prune_backups(paths, &backup_id)?;
+        Ok(manifest)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_dir_all(&backup_dir);
     }
-
-    let manifest = BackupManifest {
-        schema_version: BACKUP_SCHEMA_VERSION,
-        backup_id: backup_id.clone(),
-        created_at,
-        reason: request.reason.trim().into(),
-        source_version: request
-            .source_version
-            .clone()
-            .unwrap_or_else(|| app_version.to_owned()),
-        channel: request.channel.clone().unwrap_or_default(),
-        files,
-        absent,
-    };
-    let mut manifest_bytes = serde_json::to_vec_pretty(&manifest)?;
-    manifest_bytes.push(b'\n');
-    atomic_write(&backup_dir.join("manifest.json"), &manifest_bytes)?;
-    prune_backups(paths, &backup_id)?;
-    Ok(manifest)
+    result
 }
 
 pub fn list_backups(paths: &StoragePaths) -> Result<Vec<BackupManifest>, AppError> {
@@ -326,5 +332,26 @@ mod tests {
         )
         .unwrap();
         assert!(restore_backup(&paths, &manifest.backup_id).is_err());
+    }
+
+    #[test]
+    fn removes_partial_backup_when_source_read_fails() {
+        let temp = tempdir().unwrap();
+        let paths = StoragePaths::from_data_dir(temp.path().join("data"));
+        paths.ensure_layout().unwrap();
+        atomic_write(paths.config_file(), b"version: 1\n").unwrap();
+        std::fs::create_dir(paths.state_file()).unwrap();
+
+        assert!(create_backup(
+            &paths,
+            &BackupRequest {
+                reason: "failed update backup".into(),
+                source_version: None,
+                channel: None,
+            },
+            "test",
+        )
+        .is_err());
+        assert_eq!(std::fs::read_dir(paths.backups_dir()).unwrap().count(), 0);
     }
 }
