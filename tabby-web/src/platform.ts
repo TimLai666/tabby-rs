@@ -129,6 +129,16 @@ export class WebPlatformService extends PlatformService {
 
     startUpload (options?: FileUploadOptions): Promise<FileUpload[]> {
         return new Promise(resolve => {
+            const finish = (transfers: FileUpload[]) => {
+                this.fileSelector.onchange = null
+                this.fileSelector.oncancel = null
+                this.fileSelector.value = ''
+                resolve(transfers)
+            }
+            const onCancel = () => finish([])
+
+            this.fileSelector.multiple = options?.multiple ?? false
+            this.fileSelector.oncancel = onCancel
             this.fileSelector.onchange = () => {
                 const transfers: FileUpload[] = []
                 const fileList = this.fileSelector.files!
@@ -142,7 +152,7 @@ export class WebPlatformService extends PlatformService {
                         break
                     }
                 }
-                resolve(transfers)
+                finish(transfers)
             }
             this.fileSelector.click()
         })
