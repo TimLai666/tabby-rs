@@ -117,6 +117,21 @@ async function terminate (child) {
     })
 }
 
+function waitForReadyOrExit (child, marker) {
+    const exited = new Promise((_, reject) => {
+        child.once('error', reject)
+        child.once('close', (code, signal) => {
+            reject(new Error(
+                `installed application exited before writing ready marker (code=${code ?? 'null'}, signal=${signal ?? 'null'}, marker=${marker})`,
+            ))
+        })
+    })
+    // The race may resolve from the marker first. Attach a handler now so a
+    // later normal process exit cannot become an unhandled rejection.
+    exited.catch(() => {})
+    return Promise.race([waitForFile(marker), exited])
+}
+
 async function launchAndCheck (executable, cwd, environment, { preserveUserData = false } = {}) {
     const markerDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'tabby-rs-installer-smoke-ready-'))
     const marker = path.join(markerDirectory, 'ready.marker')
@@ -138,10 +153,7 @@ async function launchAndCheck (executable, cwd, environment, { preserveUserData 
         windowsHide: true,
     })
     try {
-        const readyReport = await Promise.race([
-            waitForFile(marker),
-            new Promise((resolve, reject) => child.once('error', reject)),
-        ])
+        const readyReport = await waitForReadyOrExit(child, marker)
         const identity = readyReport.identity
         assert.equal(identity.productName, 'Tabby RS')
         assert.equal(identity.appIdentifier, 'io.tabbyrs.app')
