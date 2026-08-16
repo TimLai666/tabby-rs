@@ -380,52 +380,22 @@ where
         username: &str,
         socket: Option<&str>,
     ) -> Result<bool, SshError> {
-        #[cfg(unix)]
-        let mut agent = if let Some(socket) = socket {
-            russh::keys::agent::client::AgentClient::connect_uds(socket)
-                .await
-                .map_err(|_| SshError::AuthenticationRejected)?
-        } else {
-            russh::keys::agent::client::AgentClient::connect_env()
-                .await
-                .map_err(|_| SshError::AuthenticationRejected)?
-        };
-
-        #[cfg(windows)]
-        let mut agent = match socket {
-            Some(path) => russh::keys::agent::client::AgentClient::connect_named_pipe(path)
-                .await
-                .map(|client| client.dynamic()),
-            None => Ok(russh::keys::agent::client::AgentClient::connect_pageant()
-                .await
-                .dynamic()),
-        }
-        .map_err(|_| SshError::AuthenticationRejected)?;
-
-        #[cfg(not(any(unix, windows)))]
-        {
-            let _ = (username, socket);
-            return Err(SshError::AuthenticationRejected);
-        }
-
-        #[cfg(any(unix, windows))]
-        {
-            let identities = agent
-                .request_identities()
+        let mut agent = super::connect_agent(socket.map(str::to_owned)).await?;
+        let identities = agent
+            .request_identities()
+            .await
+            .map_err(|_| SshError::AuthenticationRejected)?;
+        for identity in identities {
+            let result = self
+                .handle
+                .authenticate_publickey_with(username, identity, None, &mut agent)
                 .await
                 .map_err(|_| SshError::AuthenticationRejected)?;
-            for identity in identities {
-                let result = self
-                    .handle
-                    .authenticate_publickey_with(username, identity, None, &mut agent)
-                    .await
-                    .map_err(|_| SshError::AuthenticationRejected)?;
-                if matches!(result, russh::client::AuthResult::Success) {
-                    return Ok(true);
-                }
+            if matches!(result, russh::client::AuthResult::Success) {
+                return Ok(true);
             }
-            Ok(false)
         }
+        Ok(false)
     }
 
     async fn authenticate_keyboard_interactive_start(
