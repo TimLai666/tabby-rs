@@ -1,6 +1,6 @@
 import { marker as _ } from '@biesbjerg/ngx-translate-extract-marker'
 import { Component, Input, Injector, Inject, Optional } from '@angular/core'
-import { BaseTabProcess, WIN_BUILD_CONPTY_SUPPORTED, isWindowsBuild, GetRecoveryTokenOptions } from 'tabby-core'
+import { BaseTabProcess, WIN_BUILD_CONPTY_SUPPORTED, isWindowsBuild, GetRecoveryTokenOptions, HostAppService } from 'tabby-core'
 import { BaseTerminalTabComponent } from 'tabby-terminal'
 import { LocalProfile, SessionOptions, UACService } from '../api'
 import { Session } from '../session'
@@ -29,7 +29,8 @@ export class TerminalTabComponent extends BaseTerminalTabComponent<LocalProfile>
 
         this.logger = this.log.create('terminalTab')
 
-        const isConPTY = isWindowsBuild(WIN_BUILD_CONPTY_SUPPORTED) && this.config.store.terminal.useConPTY
+        const hostApp = this.injector.get(HostAppService)
+        const isConPTY = isWindowsBuild(WIN_BUILD_CONPTY_SUPPORTED, hostApp.platform, hostApp.windowsBuild) && this.config.store.terminal.useConPTY
 
         this.subscribeUntilDestroyed(this.hotkeys.hotkey$, hotkey => {
             if (!this.hasFocus) {

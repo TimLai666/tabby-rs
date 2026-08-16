@@ -1,7 +1,7 @@
 import { Injectable } from '@angular/core'
 import * as fs from 'fs'
 import * as path from 'path'
-import { WIN_BUILD_CONPTY_SUPPORTED, isWindowsBuild } from 'tabby-core'
+import { WIN_BUILD_CONPTY_SUPPORTED, isWindowsBuild, HostAppService } from 'tabby-core'
 import { SessionOptions, UACService } from 'tabby-local'
 import { ElectronService } from './electron.service'
 
@@ -15,10 +15,11 @@ export class ElectronUACService extends UACService {
 
     constructor (
         private electron: ElectronService,
+        private hostApp: HostAppService,
     ) {
         super()
         this.helperPath = this.resolveHelperPath()
-        this.isAvailable = isWindowsBuild(WIN_BUILD_CONPTY_SUPPORTED)
+        this.isAvailable = isWindowsBuild(WIN_BUILD_CONPTY_SUPPORTED, this.hostApp.platform, this.hostApp.windowsBuild)
             && this.isHardenedHelper(this.helperPath)
     }
 

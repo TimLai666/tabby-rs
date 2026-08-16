@@ -76,7 +76,7 @@ export class XTermFrontend extends Frontend {
             sixel: this.configService.store.terminal.sixel,
             windowsPty: this.hostApp.platform === Platform.Windows ? {
                 backend: this.configService.store.terminal.useConPTY ? 'conpty' : 'winpty',
-                buildNumber: getWindows10Build(),
+                buildNumber: getWindows10Build(this.hostApp.platform, this.hostApp.windowsBuild),
             } : undefined,
         })
 

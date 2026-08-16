@@ -47,7 +47,7 @@ export class WindowSettingsTabComponent extends BaseComponent {
             this.screens = dockingService.getScreens()
         }
 
-        this.isFluentVibrancySupported = isWindowsBuild(WIN_BUILD_FLUENT_BG_SUPPORTED)
+        this.isFluentVibrancySupported = isWindowsBuild(WIN_BUILD_FLUENT_BG_SUPPORTED, hostApp.platform, hostApp.windowsBuild)
     }
 
     @debounce(500)

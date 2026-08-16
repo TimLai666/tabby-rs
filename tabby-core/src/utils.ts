@@ -1,18 +1,18 @@
-import * as os from 'os'
 import { NgZone } from '@angular/core'
 import { marker as _ } from '@biesbjerg/ngx-translate-extract-marker'
+import { Platform } from './api/hostApp'
 
 export const WIN_BUILD_CONPTY_SUPPORTED = 17692
 export const WIN_BUILD_CONPTY_STABLE = 18309
 export const WIN_BUILD_WSL_EXE_DISTRO_FLAG = 17763
 export const WIN_BUILD_FLUENT_BG_SUPPORTED = 17063
 
-export function getWindows10Build (): number|undefined {
-    return process.platform === 'win32' && parseFloat(os.release()) >= 10 ? parseInt(os.release().split('.')[2]) : undefined
+export function getWindows10Build (platform: Platform, windowsBuild?: number): number|undefined {
+    return platform === Platform.Windows ? windowsBuild : undefined
 }
 
-export function isWindowsBuild (build: number): boolean {
-    const b = getWindows10Build()
+export function isWindowsBuild (build: number, platform: Platform, windowsBuild?: number): boolean {
+    const b = getWindows10Build(platform, windowsBuild)
     return b !== undefined && b >= build
 }
 

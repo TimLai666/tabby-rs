@@ -1,4 +1,5 @@
 import { Injectable, NgZone, Injector } from '@angular/core'
+import * as os from 'os'
 import { isWindowsBuild, WIN_BUILD_FLUENT_BG_SUPPORTED, HostAppService, Platform, CLIHandler } from 'tabby-core'
 import { ElectronService } from '../services/electron.service'
 
@@ -15,6 +16,14 @@ export class ElectronHostAppService extends HostAppService {
             darwin: Platform.macOS,
             linux: Platform.Linux,
         }[process.platform]
+    }
+
+    get windowsBuild (): number|undefined {
+        if (this.configPlatform !== Platform.Windows) {
+            return undefined
+        }
+        const release = os.release().split('.')
+        return parseFloat(os.release()) >= 10 ? parseInt(release[2]) : undefined
     }
 
     constructor (
@@ -49,7 +58,7 @@ export class ElectronHostAppService extends HostAppService {
             this.configChangeBroadcast.next()
         }))
 
-        if (isWindowsBuild(WIN_BUILD_FLUENT_BG_SUPPORTED)) {
+        if (isWindowsBuild(WIN_BUILD_FLUENT_BG_SUPPORTED, this.configPlatform, this.windowsBuild)) {
             electron.ipcRenderer.send('window-set-disable-vibrancy-while-dragging', true)
         }
     }
