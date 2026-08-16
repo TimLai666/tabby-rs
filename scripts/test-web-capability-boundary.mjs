@@ -17,6 +17,11 @@ assert.match(source, /uninstallPlugin \(_name: string\): Promise<void> \{[\s\S]*
 assert.match(source, /cancelPluginOperation \(_id: string\): Promise<void> \{[\s\S]*?new UnsupportedCapabilityError\('pluginInstall'\)/)
 assert.match(source, /getWinSCPPath \(\): string\|null \{[\s\S]*?new UnsupportedCapabilityError\('filesystem'\)/)
 assert.match(source, /async exec \(_app: string, _argv: string\[\]\): Promise<void> \{[\s\S]*?new UnsupportedCapabilityError\('localPty'\)/)
+assert.match(source, /const onCancel = \(\) => finish\(\[\]\)/)
+assert.match(source, /this\.fileSelector\.multiple = options\?\.multiple \?\? false/)
+assert.match(source, /this\.fileSelector\.oncancel = onCancel/)
+assert.match(source, /this\.fileSelector\.oncancel = null/)
+assert.match(source, /this\.fileSelector\.value = ''/)
 
 const hostWindow = fs.readFileSync(path.join(root, 'tabby-web/src/services/hostWindow.service.ts'), 'utf8')
 assert.match(hostWindow, /minimize \(\): void \{[\s\S]*?new UnsupportedCapabilityError\('windowControls'\)/)
