@@ -1,7 +1,7 @@
 import { Injectable, Inject, NgZone, EventEmitter } from '@angular/core'
 import { Observable, Subject, filter } from 'rxjs'
 import { HotkeyDescription, HotkeyProvider } from '../api/hotkeyProvider'
-import { KeyEventData, getKeyName, Keystroke, KeyName, getKeystrokeName, metaKeyName, altKeyName } from './hotkeys.util'
+import { KeyEventData, getKeyName, Keystroke, KeyName, getKeystrokeName, getMetaKeyName, getAltKeyName } from './hotkeys.util'
 import { ConfigService } from './config.service'
 import { HostAppService, Platform } from '../api/hostApp'
 import { deprecate } from 'util'
@@ -78,6 +78,7 @@ export class HotkeysService {
     private suppressNextKeyupKeystroke = false
     private lastEventTimestamp = 0
     private lastWheelTimestamp: number|null = null
+    private keyPlatform: Platform
 
     private constructor (
         private zone: NgZone,
@@ -85,6 +86,7 @@ export class HotkeysService {
         @Inject(HotkeyProvider) private hotkeyProviders: HotkeyProvider[],
         hostApp: HostAppService,
     ) {
+        this.keyPlatform = hostApp.configPlatform
         this.config.ready$.toPromise().then(async () => {
             const hotkeys = await this.getHotkeyDescriptions()
             this.hotkeyDescriptions = hotkeys
@@ -154,7 +156,7 @@ export class HotkeysService {
             }
         }
 
-        const keyName = getKeyName(eventData)
+        const keyName = getKeyName(eventData, this.keyPlatform)
 
         // During hotkey recording, ignore additional wheel events for a short interval
         if (eventName === 'wheel' && !this.isEnabled()) {
@@ -175,7 +177,7 @@ export class HotkeysService {
         if (eventName === 'keyup') {
             const shouldSuppressKeystroke = this.suppressNextKeyupKeystroke
             this.suppressNextKeyupKeystroke = false
-            const keystroke = getKeystrokeName([...this.pressedKeys])
+            const keystroke = getKeystrokeName([...this.pressedKeys], this.keyPlatform)
             if (!shouldSuppressKeystroke && keystroke && this.recognitionPhase) {
                 this._keystroke.next(keystroke)
                 this.lastKeystrokes.push({
@@ -191,7 +193,7 @@ export class HotkeysService {
         if (eventName === 'wheel' || eventName === 'mouseup' || eventName === 'auxclick') {
             this.updateModifiers(eventData)
             this.addPressedKey(keyName, eventData)
-            const keystroke = getKeystrokeName([...this.pressedKeys])
+            const keystroke = getKeystrokeName([...this.pressedKeys], this.keyPlatform)
             this._keystroke.next(keystroke)
             this.lastKeystrokes.push({
                 keystroke,
@@ -203,7 +205,7 @@ export class HotkeysService {
         }
 
         if (this.pressedKeys.size) {
-            this.pressedKeystroke = getKeystrokeName([...this.pressedKeys])
+            this.pressedKeystroke = getKeystrokeName([...this.pressedKeys], this.keyPlatform)
         } else {
             this.pressedKeystroke = null
         }
@@ -223,10 +225,10 @@ export class HotkeysService {
         })
 
         this.zone.run(() => {
-            this._key.next(getKeyName(eventData))
+            this._key.next(getKeyName(eventData, this.keyPlatform))
         })
 
-        if (process.platform === 'darwin' && eventData.metaKey && eventName === 'keydown' && !['Ctrl', 'Shift', altKeyName, metaKeyName, 'Enter'].includes(keyName)) {
+        if (this.keyPlatform === Platform.macOS && eventData.metaKey && eventName === 'keydown' && !['Ctrl', 'Shift', getAltKeyName(this.keyPlatform), getMetaKeyName(this.keyPlatform), 'Enter'].includes(keyName)) {
             // macOS will swallow non-modified keyups if Cmd is held down
             this.pushKeyEvent('keyup', nativeEvent)
         }
@@ -337,8 +339,8 @@ export class HotkeysService {
     private updateModifiers (event: KeyEventData) {
         for (const [prop, key] of Object.entries({
             ctrlKey: 'Ctrl',
-            metaKey: metaKeyName,
-            altKey: altKeyName,
+            metaKey: getMetaKeyName(this.keyPlatform),
+            altKey: getAltKeyName(this.keyPlatform),
             shiftKey: 'Shift',
         })) {
             if (!event[prop] && this.pressedKeys.has(key)) {

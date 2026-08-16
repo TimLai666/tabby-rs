@@ -1,5 +1,5 @@
 import { Component, HostBinding } from '@angular/core'
-import { ConfigService, HostAppService, Platform, PlatformService, altKeyName, metaKeyName } from 'tabby-core'
+import { ConfigService, getAltKeyName, getMetaKeyName, HostAppService, Platform, PlatformService } from 'tabby-core'
 
 /** @hidden */
 @Component({
@@ -7,8 +7,8 @@ import { ConfigService, HostAppService, Platform, PlatformService, altKeyName, m
 })
 export class TerminalSettingsTabComponent {
     Platform = Platform
-    altKeyName = altKeyName
-    metaKeyName = metaKeyName
+    get altKeyName (): string { return getAltKeyName(this.hostApp.configPlatform) }
+    get metaKeyName (): string { return getMetaKeyName(this.hostApp.configPlatform) }
 
     @HostBinding('class.content-box') true
 
