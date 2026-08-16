@@ -27,10 +27,29 @@ const aggregateSteps = releaseWorkflow?.jobs?.aggregate?.steps || []
 const stableIssueGate = webGateSteps.find(step => step.name === 'Enforce Stable child issue gate')
 const platformGate = buildSteps.find(step => step.name === 'Enforce release gate')
 const aggregateGate = aggregateSteps.find(step => step.name === 'Enforce release-wide gate')
+const bundleUpload = buildSteps.find(step => step.name === 'Upload bundle')
+const evidenceFallback = buildSteps.find(step => step.name === 'Write incomplete evidence fallback')
+const aggregateDownload = aggregateSteps.find(step => step.name === 'Download platform gates')
+const aggregateFallback = aggregateSteps.find(step => step.name === 'Write incomplete aggregate evidence fallback')
+const aggregateUpload = aggregateSteps.find(step => step.name === 'Upload aggregate gate')
+const evidenceCondition = "github.event_name == 'workflow_dispatch' && inputs.evidence_only == true"
+const evidenceContinueOnError = `\${{ ${evidenceCondition} }}`
+const evidenceUploadCondition = `\${{ always() && ((${evidenceCondition}) || success()) }}`
+const evidenceMissingFilesPolicy = `\${{ ${evidenceCondition} && 'warn' || 'error' }}`
 assert.equal(stableIssueGate?.if, "github.event_name != 'workflow_dispatch' || inputs.evidence_only != true", 'evidence-only runs must skip the stable issue gate')
-assert.equal(platformGate?.['continue-on-error'], "${{ github.event_name == 'workflow_dispatch' && inputs.evidence_only == true }}", 'evidence-only runs must upload platform gate reports even when they fail')
-assert.equal(aggregateGate?.['continue-on-error'], "${{ github.event_name == 'workflow_dispatch' && inputs.evidence_only == true }}", 'evidence-only runs must upload the aggregate gate report even when it fails')
-assert.match(releaseWorkflow?.jobs?.publish?.if || '', /inputs\.evidence_only == true/, 'evidence-only runs must never publish a release')
+assert.equal(platformGate?.['continue-on-error'], evidenceContinueOnError, 'evidence-only runs must upload platform gate reports even when they fail')
+assert.equal(aggregateGate?.['continue-on-error'], evidenceContinueOnError, 'evidence-only runs must upload the aggregate gate report even when it fails')
+assert.equal(evidenceFallback?.if, `\${{ always() && ${evidenceCondition} }}`, 'evidence-only runs must create an explicit incomplete gate report after early failures')
+assert.match(evidenceFallback?.run || '', /evidence collection stopped before release gate evaluation/, 'evidence fallback must explain why the gate is incomplete')
+assert.equal(bundleUpload?.if, evidenceUploadCondition, 'evidence-only runs must upload partial platform evidence after an earlier failure')
+assert.equal(bundleUpload?.with?.['if-no-files-found'], evidenceMissingFilesPolicy, 'evidence-only platform uploads must tolerate missing partial staging')
+assert.equal(releaseWorkflow?.jobs?.aggregate?.if, `\${{ always() && (needs.build.result == 'success' || (${evidenceCondition})) }}`, 'evidence-only runs must aggregate even when a platform job fails')
+assert.equal(aggregateDownload?.['continue-on-error'], evidenceContinueOnError, 'evidence-only aggregation must tolerate missing platform artifacts')
+assert.equal(aggregateFallback?.if, `\${{ always() && ${evidenceCondition} }}`, 'evidence-only runs must create an aggregate fallback after early failures')
+assert.match(aggregateFallback?.run || '', /evidence aggregation stopped before release-wide gate evaluation/, 'aggregate fallback must explain why the gate is incomplete')
+assert.equal(aggregateUpload?.if, evidenceUploadCondition, 'evidence-only runs must upload the aggregate report after partial downloads')
+assert.equal(aggregateUpload?.with?.['if-no-files-found'], evidenceMissingFilesPolicy, 'evidence-only aggregate uploads must tolerate missing reports')
+assert.equal(releaseWorkflow?.jobs?.publish?.if, "needs.build.result == 'success' && needs.aggregate.result == 'success' && !(github.event_name == 'workflow_dispatch' && inputs.evidence_only == true)", 'evidence-only runs must never publish a release')
 
 const project = entries => new Map(entries.map(entry => [entry.id || entry.name, entry]))
 const manifest = project(manifestPlatforms)
