@@ -116,7 +116,8 @@ export abstract class ConnectableTerminalTabComponent<P extends ConnectableTermi
     }
 
     async reconnect (): Promise<void> {
-        this.session?.destroy()
+        this.isDisconnectedByHand = true
+        await this.session?.destroy()
         this.frontend?.resetTerminalModes()
         await this.initializeSession()
         this.clearServiceMessagesOnConnect()
