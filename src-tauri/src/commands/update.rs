@@ -234,7 +234,7 @@ pub async fn update_install(
         .update_manager()
         .install_is_current(install_generation)
     {
-        return Err(AppError::Conflict("update installation cancelled".into()));
+        return abort_cancelled_install(&state, &paths, install_generation);
     }
     let backup = {
         let _guard = state.lock_storage();
