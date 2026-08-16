@@ -16,6 +16,11 @@ on:
         options:
           - stable
           - nightly
+      evidence_only:
+        description: 'Build and upload release evidence without publishing'
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -73,6 +78,7 @@ jobs:
         run: yarn build:web
 
       - name: Enforce Stable child issue gate
+        if: github.event_name != 'workflow_dispatch' || inputs.evidence_only != true
         env:
           GITHUB_TOKEN: ${{ github.token }}
           TABBY_RS_RELEASE_CHANNEL: ${{ github.event.inputs.channel || (github.event_name == 'schedule' && 'nightly') || 'stable' }}
@@ -372,6 +378,7 @@ jobs:
             --config-fixture release-default
 
       - name: Enforce release gate
+        continue-on-error: ${{ github.event_name == 'workflow_dispatch' && inputs.evidence_only == true }}
         run: node scripts/check-release-gate.mjs --bundle-audit release-staging/bundle-audit.json --dependency-audit release-staging/dependency-audit.json --license-report release-staging/license-report.json --installer-smoke release-staging/installer-smoke.json --parity-report release-staging/parity-report.json --parity-evidence release-staging/parity-automated-evidence.json --benchmarks-dir release-staging/benchmarks --source-revision "${{ github.sha }}" --platform "${{ matrix.platform }}" --arch "${{ matrix.arch }}" --target "${{ matrix.target }}" --output release-staging/release-gate.json
 
       - name: Create release checksums
@@ -397,6 +404,7 @@ jobs:
         with:
           path: release-assets
       - name: Enforce release-wide gate
+        continue-on-error: ${{ github.event_name == 'workflow_dispatch' && inputs.evidence_only == true }}
         run: node scripts/aggregate-release-gate.mjs release-assets --source-revision "${{ github.sha }}" --channel "${{ github.event.inputs.channel || (github.event_name == 'schedule' && 'nightly') || 'stable' }}" --expected-targets '["x86_64-pc-windows-msvc","aarch64-apple-darwin","x86_64-apple-darwin","x86_64-unknown-linux-gnu"]' --output release-gate-aggregate.json
       - name: Upload aggregate gate
         uses: actions/upload-artifact@v4
@@ -408,7 +416,7 @@ jobs:
   publish:
     name: publish release
     needs: [build, aggregate]
-    if: needs.build.result == 'success' && needs.aggregate.result == 'success'
+    if: needs.build.result == 'success' && needs.aggregate.result == 'success' && !(github.event_name == 'workflow_dispatch' && inputs.evidence_only == true)
     runs-on: ubuntu-22.04
     permissions:
       contents: write
