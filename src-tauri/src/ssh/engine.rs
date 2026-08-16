@@ -380,19 +380,63 @@ where
         username: &str,
         socket: Option<&str>,
     ) -> Result<bool, SshError> {
-        let mut agent = super::connect_agent(socket.map(str::to_owned)).await?;
-        let identities = agent
-            .request_identities()
-            .await
-            .map_err(|_| SshError::AuthenticationRejected)?;
-        for identity in identities {
-            let result = self
-                .handle
-                .authenticate_publickey_with(username, identity, None, &mut agent)
+        #[cfg(windows)]
+        if let Some(path) = socket {
+            let mut agent = russh::keys::agent::client::AgentClient::connect_named_pipe(path)
                 .await
                 .map_err(|_| SshError::AuthenticationRejected)?;
-            if matches!(result, russh::client::AuthResult::Success) {
-                return Ok(true);
+            let identities = agent
+                .request_identities()
+                .await
+                .map_err(|_| SshError::AuthenticationRejected)?;
+            for identity in identities {
+                let result = self
+                    .handle
+                    .authenticate_publickey_with(username, identity, None, &mut agent)
+                    .await
+                    .map_err(|_| SshError::AuthenticationRejected)?;
+                if matches!(result, russh::client::AuthResult::Success) {
+                    return Ok(true);
+                }
+            }
+            return Ok(false);
+        }
+
+        #[cfg(unix)]
+        let mut agent = if let Some(socket) = socket {
+            russh::keys::agent::client::AgentClient::connect_uds(socket)
+                .await
+                .map_err(|_| SshError::AuthenticationRejected)?
+        } else {
+            russh::keys::agent::client::AgentClient::connect_env()
+                .await
+                .map_err(|_| SshError::AuthenticationRejected)?
+        };
+
+        #[cfg(windows)]
+        let mut agent = russh::keys::agent::client::AgentClient::connect_pageant().await;
+
+        #[cfg(not(any(unix, windows)))]
+        {
+            let _ = (username, socket);
+            return Err(SshError::AuthenticationRejected);
+        }
+
+        #[cfg(any(unix, windows))]
+        {
+            let identities = agent
+                .request_identities()
+                .await
+                .map_err(|_| SshError::AuthenticationRejected)?;
+            for identity in identities {
+                let result = self
+                    .handle
+                    .authenticate_publickey_with(username, identity, None, &mut agent)
+                    .await
+                    .map_err(|_| SshError::AuthenticationRejected)?;
+                if matches!(result, russh::client::AuthResult::Success) {
+                    return Ok(true);
+                }
             }
         }
         Ok(false)
