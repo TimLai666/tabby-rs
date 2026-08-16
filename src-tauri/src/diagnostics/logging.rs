@@ -126,7 +126,7 @@ impl LogWriter {
             target: self.redactor.redact_text(target).text,
             message: self.redactor.redact_text(message).text,
             fields: redact_fields(&self.redactor, fields),
-            correlation_id: correlation_id.map(str::to_owned),
+            correlation_id: correlation_id.map(|value| self.redactor.redact_text(value).text),
         };
         let mut bytes = serde_json::to_vec(&event)?;
         bytes.push(b'\n');
@@ -288,7 +288,7 @@ mod tests {
         let writer = LogWriter::new(
             temp.path(),
             Redactor::new(crate::diagnostics::redaction::RedactionContext {
-                known_secrets: vec!["top-secret".into()],
+                known_secrets: vec!["top-secret".into(), "correlation-secret".into()],
                 ..Default::default()
             }),
         );
@@ -301,11 +301,12 @@ mod tests {
                     "password".into(),
                     serde_json::Value::String("top-secret".into()),
                 )]),
-                None,
+                Some("correlation-secret"),
             )
             .unwrap();
         let contents = std::fs::read_to_string(temp.path().join("tabby-rs.log")).unwrap();
         assert!(!contents.contains("top-secret"));
+        assert!(!contents.contains("correlation-secret"));
         assert!(contents.contains("<SECRET>"));
         assert!(contents.contains("<REDACTED>"));
     }
