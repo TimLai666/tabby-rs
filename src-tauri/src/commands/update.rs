@@ -284,8 +284,10 @@ pub async fn update_install(
     }
     abort_cancelled_install(&state, &paths, install_generation)?;
     if ready.update.install(&bytes).is_err() {
-        let _ = state.update_persisted_state(|persisted| persisted.pending_update = None);
-        let _ = clear_pending_update_journal(&paths);
+        // Keep the recovery marker until the next launch. The updater may have
+        // replaced part of the bundle before reporting an installation error,
+        // so deleting the marker here could leave a newly started binary with
+        // no way to restore the pre-update backup.
         state.update_manager().restore_ready(ready);
         emit_state(&app, &state);
         return Err(public_update_error(UpdateStage::Installing));
