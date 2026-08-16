@@ -180,6 +180,9 @@ pub(crate) fn register_desktop_window_events(window: &tauri::WebviewWindow) {
 }
 
 pub fn run() {
+    if crate::update::rollback::maybe_run_update_rollback_helper() {
+        return;
+    }
     let initial_launch = initial_launch_context();
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())

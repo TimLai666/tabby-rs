@@ -25,15 +25,19 @@ assert.match(updateService, /client\.redirect\(reqwest::redirect::Policy::none\(
 
 const installMethod = updateCommand.match(/pub async fn update_install\([\s\S]*?\n\}\n\n#\[tauri::command\]/)?.[0]
 assert.ok(installMethod, 'Tauri updater install method must be present')
-assert.ok(installMethod.indexOf('create_backup(') < installMethod.indexOf('write_pending_update_journal('), 'backup must be created before the rollback journal')
-assert.ok(installMethod.indexOf('write_pending_update_journal(') < installMethod.indexOf('ready.update.install('), 'rollback journal must be persisted before installation')
+const journalWriteIndex = installMethod.indexOf('write_pending_update_journal_with_binary(')
+assert.ok(installMethod.indexOf('create_backup(') < journalWriteIndex, 'backup must be created before the rollback journal')
+assert.ok(journalWriteIndex < installMethod.indexOf('ready.update.install('), 'rollback journal must be persisted before installation')
 assert.match(
     installMethod,
     /let paths = StoragePaths::from_app_paths\(state\.paths\(\)\)[\s\S]*?if !state[\s\S]*?install_is_current\(install_generation\)[\s\S]*?return abort_cancelled_install\(&state, &paths, install_generation\)/,
     'a cancellation observed before backup creation must clear persisted rollback state',
 )
 assert.match(installMethod, /Err\(_\) => \{[\s\S]*?restore_ready\(ready\)[\s\S]*?update backup could not be created/)
-assert.match(installMethod, /if write_pending_update_journal\(&paths, &pending\)\.is_err\(\) \{[\s\S]*?restore_ready\(ready\)[\s\S]*?update journal could not be persisted/)
+const journalFailureIndex = installMethod.indexOf('update journal could not be persisted')
+assert.ok(journalFailureIndex > journalWriteIndex, 'journal failure path must remain after journal write')
+assert.match(installMethod.slice(journalWriteIndex, journalFailureIndex), /restore_ready\(ready\)/)
+assert.match(installMethod, /rollback_result\.is_err\(\)[\s\S]*?std::process::exit\(1\)/)
 assert.match(installMethod, /if current_state\.update_channel == UpdateChannel::Stable \{[\s\S]*?remember_stable_backup\(persisted, &backup\.backup_id\)/)
 
 console.log('Tauri updater confirmation contract passed')
