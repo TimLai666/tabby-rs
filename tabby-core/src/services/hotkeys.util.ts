@@ -1,15 +1,42 @@
 /* eslint-disable @typescript-eslint/no-type-alias */
-export const metaKeyName = {
-    darwin: '⌘',
-    win32: 'Win',
-    linux: 'Super',
-}[process.platform]
+import { Platform } from '../api/hostApp'
 
-export const altKeyName = {
-    darwin: '⌥',
-    win32: 'Alt',
-    linux: 'Alt',
-}[process.platform]
+function detectBrowserPlatform (): Platform {
+    if (typeof navigator === 'undefined') {
+        return Platform.Web
+    }
+
+    const platform = `${navigator.platform} ${navigator.userAgent}`
+    if (/Macintosh|Mac OS X/i.test(platform)) {
+        return Platform.macOS
+    }
+    if (/Windows/i.test(platform)) {
+        return Platform.Windows
+    }
+    if (/Linux/i.test(platform)) {
+        return Platform.Linux
+    }
+    return Platform.Web
+}
+
+export function getMetaKeyName (platform: Platform = detectBrowserPlatform()): string {
+    if (platform === Platform.macOS) {
+        return '⌘'
+    }
+    if (platform === Platform.Windows) {
+        return 'Win'
+    }
+    return 'Super'
+}
+
+export function getAltKeyName (platform: Platform = detectBrowserPlatform()): string {
+    return platform === Platform.macOS ? '⌥' : 'Alt'
+}
+
+// Keep the legacy exports for plugin compatibility. Platform-aware code should
+// use getMetaKeyName/getAltKeyName with HostAppService.configPlatform.
+export const metaKeyName = getMetaKeyName()
+export const altKeyName = getAltKeyName()
 
 export interface KeyEventData {
     ctrlKey?: boolean
@@ -31,7 +58,7 @@ const REGEX_LATIN_KEYNAME = /^[A-Za-z]$/
 export type KeyName = string
 export type Keystroke = string
 
-export function getKeyName (event: KeyEventData): KeyName {
+export function getKeyName (event: KeyEventData, platform?: Platform): KeyName {
     if (event.eventName === 'mouseup' || event.eventName === 'auxclick') {
         if (event.button === 1) {
             return 'MiddleClick'
@@ -56,9 +83,9 @@ export function getKeyName (event: KeyEventData): KeyName {
     if (event.key === 'Control') {
         key = 'Ctrl'
     } else if (event.key === 'Meta') {
-        key = metaKeyName
+        key = getMetaKeyName(platform)
     } else if (event.key === 'Alt') {
-        key = altKeyName
+        key = getAltKeyName(platform)
     } else if (event.key === 'Shift') {
         key = 'Shift'
     } else if (event.key === '`') {
@@ -92,8 +119,8 @@ export function getKeyName (event: KeyEventData): KeyName {
     return key
 }
 
-export function getKeystrokeName (keys: KeyName[]): Keystroke {
-    const strictOrdering: KeyName[] = ['Ctrl', metaKeyName, altKeyName, 'Shift']
+export function getKeystrokeName (keys: KeyName[], platform?: Platform): Keystroke {
+    const strictOrdering: KeyName[] = ['Ctrl', getMetaKeyName(platform), getAltKeyName(platform), 'Shift']
     keys = [
         ...strictOrdering.map(x => keys.find(k => k === x)).filter(x => !!x) as KeyName[],
         ...keys.filter(k => !strictOrdering.includes(k)),
