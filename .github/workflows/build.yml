@@ -193,6 +193,9 @@ jobs:
       - name: Test Tauri platform bridge contract
         run: yarn test:tauri-platform
 
+      - name: Test Tauri window opacity contract
+        run: yarn test:tauri-opacity
+
       - name: Test official plugin runtime fixture
         run: yarn test:official-plugin-runtime
 

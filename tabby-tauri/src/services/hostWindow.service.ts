@@ -88,9 +88,6 @@ export class TauriHostWindowService extends HostWindowService {
     }
 
     setOpacity (opacity: number): void {
-        if (!this.state.capabilities.opacity) {
-            return
-        }
         void this.apply({ opacity })
     }
 

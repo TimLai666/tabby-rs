@@ -136,7 +136,7 @@ pub fn capabilities() -> WindowCapabilities {
         absolute_positioning: !wayland,
         docking: !wayland,
         global_hotkey: true,
-        opacity: false,
+        opacity: cfg!(any(target_os = "windows", target_os = "macos")),
         vibrancy: cfg!(any(target_os = "windows", target_os = "macos")),
         progress: true,
         clipboard: true,

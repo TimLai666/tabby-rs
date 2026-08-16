@@ -6,6 +6,7 @@ const root = process.cwd()
 const cargo = fs.readFileSync(path.join(root, 'src-tauri/Cargo.toml'), 'utf8')
 const platform = fs.readFileSync(path.join(root, 'src-tauri/src/platform/mod.rs'), 'utf8')
 const desktop = fs.readFileSync(path.join(root, 'src-tauri/src/desktop.rs'), 'utf8')
+const hostWindow = fs.readFileSync(path.join(root, 'tabby-tauri/src/services/hostWindow.service.ts'), 'utf8')
 
 assert.match(
     cargo,
@@ -30,6 +31,11 @@ assert.match(
     platform,
     /target_os\s*=\s*"linux"[\s\S]*?window opacity is unavailable on Linux/,
     'Linux opacity must remain an explicit unsupported capability',
+)
+assert.match(
+    hostWindow,
+    /setOpacity \(opacity: number\): void \{\s*void this\.apply\(\{ opacity \}\)/,
+    'opacity updates must not be dropped before capabilities are refreshed',
 )
 
 console.log('Tauri native window opacity contract passed')
