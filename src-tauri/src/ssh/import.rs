@@ -465,9 +465,19 @@ fn parse_file(
                 });
             }
             "include" => {
+                let continuation_patterns = current.as_ref().map(|block| block.patterns.clone());
+                if let Some(block) = current.take() {
+                    blocks.push(block);
+                }
                 for include in expand_include(&values, canonical.parent().unwrap_or(Path::new(".")))
                 {
                     parse_file(&include, depth + 1, visited, blocks)?;
+                }
+                if let Some(patterns) = continuation_patterns {
+                    current = Some(HostBlock {
+                        patterns,
+                        ..Default::default()
+                    });
                 }
             }
             "hostname" | "user" | "port" | "identityfile" => {
@@ -883,6 +893,27 @@ mod tests {
             .conflicts
             .iter()
             .any(|conflict| conflict.profile_id == app.id));
+    }
+
+    #[test]
+    fn preserves_host_block_precedence_across_inline_include() {
+        let directory = tempdir().unwrap();
+        fs::write(
+            directory.path().join("included.conf"),
+            "Host app\n  HostName included.example\n  User included-user\n",
+        )
+        .unwrap();
+        let config = directory.path().join("config");
+        fs::write(
+            &config,
+            "Host app\n  HostName main.example\n  Include included.conf\n  User main-user\n",
+        )
+        .unwrap();
+
+        let profiles = parse_config(&config).unwrap();
+        assert_eq!(profiles.len(), 1);
+        assert_eq!(profiles[0].host, "main.example");
+        assert_eq!(profiles[0].user.as_deref(), Some("included-user"));
     }
 
     #[test]
