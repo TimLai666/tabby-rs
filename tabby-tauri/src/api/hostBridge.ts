@@ -27,6 +27,7 @@ export interface RuntimeInfo {
     platform: string
     arch: string
     version: string
+    windowsBuild: number | null
     benchmarkReadyFile: string | null
     benchmarkFrameReportFile: string | null
     installerSmokeReadyFile: string | null

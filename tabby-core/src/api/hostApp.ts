@@ -16,6 +16,10 @@ export abstract class HostAppService {
     abstract get platform (): Platform
     abstract get configPlatform (): Platform
 
+    get windowsBuild (): number|undefined {
+        return undefined
+    }
+
     protected settingsUIRequest = new Subject<void>()
     protected configChangeBroadcast = new Subject<void>()
     protected logger: Logger

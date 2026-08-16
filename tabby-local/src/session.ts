@@ -42,6 +42,7 @@ export class Session extends BaseSession {
         this.hostApp = injector.get(HostAppService)
         this.ptyInterface = injector.get(PTYInterface)
         this.bootstrapData = injector.get(BOOTSTRAP_DATA)
+        this.oscProcessor.setHomeDirectory(process.env.HOME ?? process.env.USERPROFILE)
     }
 
     async start (options: SessionOptions): Promise<void> {
@@ -104,7 +105,7 @@ export class Session extends BaseSession {
                 autoSudoPassword: options.autoSudoPassword,
                 sudoSecretRef: options.sudoSecretRef,
                 // `1` instead of `true` forces ConPTY even if unstable
-                useConpty: isWindowsBuild(WIN_BUILD_CONPTY_SUPPORTED) && this.config.store.terminal.useConPTY ? 1 : false,
+                useConpty: isWindowsBuild(WIN_BUILD_CONPTY_SUPPORTED, this.hostApp.platform, this.hostApp.windowsBuild) && this.config.store.terminal.useConPTY ? 1 : false,
             })
 
             this.guessedCWD = cwd ?? null

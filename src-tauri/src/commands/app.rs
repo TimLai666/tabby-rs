@@ -31,6 +31,7 @@ pub struct RuntimeInfo {
     pub platform: String,
     pub arch: String,
     pub version: String,
+    pub windows_build: Option<u32>,
     pub benchmark_ready_file: Option<String>,
     pub benchmark_frame_report_file: Option<String>,
     pub installer_smoke_ready_file: Option<String>,
@@ -78,6 +79,7 @@ fn current_runtime_info() -> RuntimeInfo {
         platform: std::env::consts::OS.to_owned(),
         arch: std::env::consts::ARCH.to_owned(),
         version: env!("CARGO_PKG_VERSION").to_owned(),
+        windows_build: windows_build_number(),
         benchmark_ready_file: benchmark_ready_path()
             .map(|path| path.to_string_lossy().into_owned()),
         benchmark_frame_report_file: benchmark_frame_report_path()
@@ -85,6 +87,11 @@ fn current_runtime_info() -> RuntimeInfo {
         installer_smoke_ready_file: installer_smoke_ready_path()
             .map(|path| path.to_string_lossy().into_owned()),
     }
+}
+
+fn windows_build_number() -> Option<u32> {
+    sysinfo::System::os_version()
+        .and_then(|version| version.rsplit_once('(')?.1.strip_suffix(')')?.parse().ok())
 }
 
 fn benchmark_ready_path() -> Option<PathBuf> {

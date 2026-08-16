@@ -197,7 +197,7 @@ export default class ElectronModule {
 
     private updateVibrancy () {
         let vibrancyType = this.config.store.appearance.vibrancyType
-        if (this.hostApp.platform === Platform.Windows && !isWindowsBuild(WIN_BUILD_FLUENT_BG_SUPPORTED)) {
+        if (this.hostApp.platform === Platform.Windows && !isWindowsBuild(WIN_BUILD_FLUENT_BG_SUPPORTED, this.hostApp.platform, this.hostApp.windowsBuild)) {
             vibrancyType = null
         }
         this.electron.ipcRenderer.send('window-set-vibrancy', this.config.store.appearance.vibrancy, vibrancyType)

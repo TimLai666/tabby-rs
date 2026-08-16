@@ -1,4 +1,3 @@
-import * as os from 'os'
 import { Subject, Observable } from 'rxjs'
 import { SessionMiddleware } from '../api/middleware'
 import { OSCProgressDetector, TerminalProgressState } from '../progressDetector'
@@ -16,6 +15,11 @@ export class OSCProcessor extends SessionMiddleware {
     private copyRequested = new Subject<string>()
     private progress = new Subject<TerminalProgressState>()
     private progressDetector = new OSCProgressDetector()
+    private homeDirectory?: string
+
+    setHomeDirectory (homeDirectory?: string): void {
+        this.homeDirectory = homeDirectory
+    }
 
     feedFromSession (data: Buffer): void {
         const progress = this.progressDetector.consume(data)
@@ -75,8 +79,8 @@ export class OSCProcessor extends SessionMiddleware {
                 const paramString = oscParams.join(';')
                 if (paramString.startsWith('CurrentDir=')) {
                     let reportedCWD = paramString.split('=', 2)[1]
-                    if (reportedCWD.startsWith('~')) {
-                        reportedCWD = os.homedir() + reportedCWD.substring(1)
+                    if (this.homeDirectory && reportedCWD.startsWith('~')) {
+                        reportedCWD = this.homeDirectory + reportedCWD.substring(1)
                     }
                     this.cwdReported.next(reportedCWD)
                 } else {

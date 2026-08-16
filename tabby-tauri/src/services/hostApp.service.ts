@@ -22,6 +22,11 @@ function mapPlatform (platform: string): Platform {
 export class TauriHostAppService extends HostAppService {
     readonly platform: Platform
     readonly configPlatform: Platform
+    private readonly detectedWindowsBuild: number|undefined
+
+    get windowsBuild (): number|undefined {
+        return this.detectedWindowsBuild
+    }
 
     private ready = false
     private pendingLaunches: LaunchContext[] = []
@@ -35,6 +40,7 @@ export class TauriHostAppService extends HostAppService {
         super(injector)
         this.platform = mapPlatform(runtimeInfo.platform)
         this.configPlatform = this.platform
+        this.detectedWindowsBuild = runtimeInfo.windowsBuild ?? undefined
 
         void this.bridge.listen('app:launch', context => this.enqueueLaunch(context)).catch(error => {
             this.logger.error('Failed to listen for launch requests:', error)
