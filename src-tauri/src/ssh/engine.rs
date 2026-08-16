@@ -380,6 +380,28 @@ where
         username: &str,
         socket: Option<&str>,
     ) -> Result<bool, SshError> {
+        #[cfg(windows)]
+        if let Some(path) = socket {
+            let mut agent = russh::keys::agent::client::AgentClient::connect_named_pipe(path)
+                .await
+                .map_err(|_| SshError::AuthenticationRejected)?;
+            let identities = agent
+                .request_identities()
+                .await
+                .map_err(|_| SshError::AuthenticationRejected)?;
+            for identity in identities {
+                let result = self
+                    .handle
+                    .authenticate_publickey_with(username, identity, None, &mut agent)
+                    .await
+                    .map_err(|_| SshError::AuthenticationRejected)?;
+                if matches!(result, russh::client::AuthResult::Success) {
+                    return Ok(true);
+                }
+            }
+            return Ok(false);
+        }
+
         #[cfg(unix)]
         let mut agent = if let Some(socket) = socket {
             russh::keys::agent::client::AgentClient::connect_uds(socket)
@@ -392,10 +414,7 @@ where
         };
 
         #[cfg(windows)]
-        let mut agent = {
-            let _ = socket;
-            russh::keys::agent::client::AgentClient::connect_pageant().await
-        };
+        let mut agent = russh::keys::agent::client::AgentClient::connect_pageant().await;
 
         #[cfg(not(any(unix, windows)))]
         {
@@ -419,8 +438,8 @@ where
                     return Ok(true);
                 }
             }
-            Ok(false)
         }
+        Ok(false)
     }
 
     async fn authenticate_keyboard_interactive_start(
