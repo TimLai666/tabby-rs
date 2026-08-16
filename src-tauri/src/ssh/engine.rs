@@ -392,10 +392,15 @@ where
         };
 
         #[cfg(windows)]
-        let mut agent = {
-            let _ = socket;
-            russh::keys::agent::client::AgentClient::connect_pageant().await
-        };
+        let mut agent = match socket {
+            Some(path) => russh::keys::agent::client::AgentClient::connect_named_pipe(path)
+                .await
+                .map(|client| client.dynamic()),
+            None => Ok(russh::keys::agent::client::AgentClient::connect_pageant()
+                .await
+                .dynamic()),
+        }
+        .map_err(|_| SshError::AuthenticationRejected)?;
 
         #[cfg(not(any(unix, windows)))]
         {
