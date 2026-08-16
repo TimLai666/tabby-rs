@@ -16,6 +16,11 @@ on:
         options:
           - stable
           - nightly
+      evidence_only:
+        description: 'Build and upload release evidence without publishing'
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -73,6 +78,7 @@ jobs:
         run: yarn build:web
 
       - name: Enforce Stable child issue gate
+        if: github.event_name != 'workflow_dispatch' || inputs.evidence_only != true
         env:
           GITHUB_TOKEN: ${{ github.token }}
           TABBY_RS_RELEASE_CHANNEL: ${{ github.event.inputs.channel || (github.event_name == 'schedule' && 'nightly') || 'stable' }}
@@ -371,44 +377,65 @@ jobs:
             --config-fixture-path scripts/fixtures/benchmark-config.json \
             --config-fixture release-default
 
+      - name: Write incomplete evidence fallback
+        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.evidence_only == true }}
+        env:
+          TABBY_RS_EVIDENCE_CHANNEL: ${{ github.event.inputs.channel || (github.event_name == 'schedule' && 'nightly') || 'stable' }}
+          TABBY_RS_EVIDENCE_PLATFORM: ${{ matrix.platform }}
+          TABBY_RS_EVIDENCE_ARCH: ${{ matrix.arch }}
+          TABBY_RS_EVIDENCE_TARGET: ${{ matrix.target }}
+        run: |
+          node -e 'const fs = require("fs"); const file = "release-staging/release-gate.json"; if (!fs.existsSync(file)) { fs.mkdirSync("release-staging", { recursive: true }); fs.writeFileSync(file, `${JSON.stringify({ schemaVersion: 1, passed: false, sourceRevision: process.env.GITHUB_SHA || "unknown", channel: process.env.TABBY_RS_EVIDENCE_CHANNEL || null, platform: process.env.TABBY_RS_EVIDENCE_PLATFORM || null, arch: process.env.TABBY_RS_EVIDENCE_ARCH || null, target: process.env.TABBY_RS_EVIDENCE_TARGET || null, failures: ["evidence collection stopped before release gate evaluation"] }, null, 2)}\n`) }'
+
       - name: Enforce release gate
+        continue-on-error: ${{ github.event_name == 'workflow_dispatch' && inputs.evidence_only == true }}
         run: node scripts/check-release-gate.mjs --bundle-audit release-staging/bundle-audit.json --dependency-audit release-staging/dependency-audit.json --license-report release-staging/license-report.json --installer-smoke release-staging/installer-smoke.json --parity-report release-staging/parity-report.json --parity-evidence release-staging/parity-automated-evidence.json --benchmarks-dir release-staging/benchmarks --source-revision "${{ github.sha }}" --platform "${{ matrix.platform }}" --arch "${{ matrix.arch }}" --target "${{ matrix.target }}" --output release-staging/release-gate.json
 
       - name: Create release checksums
         run: node scripts/create-release-checksums.mjs release-staging
 
       - name: Upload bundle
+        if: ${{ always() && ((github.event_name == 'workflow_dispatch' && inputs.evidence_only == true) || success()) }}
         uses: actions/upload-artifact@v4
         with:
           name: tabby-rs-${{ steps.channel.outputs.name }}-${{ matrix.name }}
           path: release-staging
-          if-no-files-found: error
+          if-no-files-found: ${{ github.event_name == 'workflow_dispatch' && inputs.evidence_only == true && 'warn' || 'error' }}
 
   aggregate:
     name: aggregate release gate
     needs: build
-    if: needs.build.result == 'success'
+    if: ${{ always() && (needs.build.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.evidence_only == true)) }}
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
       - name: Download platform gates
         uses: actions/download-artifact@v4
+        continue-on-error: ${{ github.event_name == 'workflow_dispatch' && inputs.evidence_only == true }}
         with:
           path: release-assets
       - name: Enforce release-wide gate
+        continue-on-error: ${{ github.event_name == 'workflow_dispatch' && inputs.evidence_only == true }}
         run: node scripts/aggregate-release-gate.mjs release-assets --source-revision "${{ github.sha }}" --channel "${{ github.event.inputs.channel || (github.event_name == 'schedule' && 'nightly') || 'stable' }}" --expected-targets '["x86_64-pc-windows-msvc","aarch64-apple-darwin","x86_64-apple-darwin","x86_64-unknown-linux-gnu"]' --output release-gate-aggregate.json
+      - name: Write incomplete aggregate evidence fallback
+        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.evidence_only == true }}
+        env:
+          TABBY_RS_EVIDENCE_CHANNEL: ${{ github.event.inputs.channel || (github.event_name == 'schedule' && 'nightly') || 'stable' }}
+        run: |
+          node -e 'const fs = require("fs"); const file = "release-gate-aggregate.json"; if (!fs.existsSync(file)) { fs.writeFileSync(file, `${JSON.stringify({ schemaVersion: 1, passed: false, sourceRevision: process.env.GITHUB_SHA || "unknown", channel: process.env.TABBY_RS_EVIDENCE_CHANNEL || null, targets: [], gates: [], failures: ["evidence aggregation stopped before release-wide gate evaluation"] }, null, 2)}\n`) }'
       - name: Upload aggregate gate
+        if: ${{ always() && ((github.event_name == 'workflow_dispatch' && inputs.evidence_only == true) || success()) }}
         uses: actions/upload-artifact@v4
         with:
           name: tabby-rs-release-gate-aggregate
           path: release-gate-aggregate.json
-          if-no-files-found: error
+          if-no-files-found: ${{ github.event_name == 'workflow_dispatch' && inputs.evidence_only == true && 'warn' || 'error' }}
 
   publish:
     name: publish release
     needs: [build, aggregate]
-    if: needs.build.result == 'success' && needs.aggregate.result == 'success'
+    if: needs.build.result == 'success' && needs.aggregate.result == 'success' && !(github.event_name == 'workflow_dispatch' && inputs.evidence_only == true)
     runs-on: ubuntu-22.04
     permissions:
       contents: write

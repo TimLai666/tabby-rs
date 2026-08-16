@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 const readme = await readFile(new URL('../README.md', import.meta.url), 'utf8');
 const pluginCompatibility = await readFile(new URL('../docs/plugin-compatibility.md', import.meta.url), 'utf8');
 const hacking = await readFile(new URL('../HACKING.md', import.meta.url), 'utf8');
+const release = await readFile(new URL('../docs/release.md', import.meta.url), 'utf8');
 const requiredDocuments = [
   'CONTRIBUTING.md',
   'SECURITY.md',
@@ -50,6 +51,10 @@ for (const text of [
     if (!hacking.includes(text)) {
         throw new Error(`HACKING.md is missing Tauri workflow guidance: ${text}`);
     }
+}
+
+if (!release.includes('`evidence_only`') || !release.includes('skips publishing')) {
+    throw new Error('docs/release.md is missing evidence-only workflow guidance');
 }
 
 for (const keyword of ['tabby-plugin', 'tabby-builtin-plugin', 'terminus-*']) {
