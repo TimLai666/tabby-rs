@@ -44,4 +44,10 @@ for (const relativeRoot of commonSourceRoots) {
     }
 }
 
+const appRootSource = fs.readFileSync(path.resolve('tabby-core/src/components/appRoot.component.ts'), 'utf8')
+assert.doesNotMatch(appRootSource, /process\.platform/, 'common app root must use the injected host platform service')
+assert.match(appRootSource, /hostApp\.platform === Platform\.Windows/)
+assert.match(appRootSource, /hostApp\.platform === Platform\.macOS/)
+assert.match(appRootSource, /hostApp\.platform === Platform\.Linux/)
+
 console.log('Runtime capability contract fixtures passed')

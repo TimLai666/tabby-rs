@@ -66,9 +66,9 @@ export class AppRootComponent {
     @Input() ready = false
     @Input() leftToolbarButtons: Command[]
     @Input() rightToolbarButtons: Command[]
-    @HostBinding('class.platform-win32') platformClassWindows = process.platform === 'win32'
-    @HostBinding('class.platform-darwin') platformClassMacOS = process.platform === 'darwin'
-    @HostBinding('class.platform-linux') platformClassLinux = process.platform === 'linux'
+    @HostBinding('class.platform-win32') get platformClassWindows () { return this.hostApp.platform === Platform.Windows }
+    @HostBinding('class.platform-darwin') get platformClassMacOS () { return this.hostApp.platform === Platform.macOS }
+    @HostBinding('class.platform-linux') get platformClassLinux () { return this.hostApp.platform === Platform.Linux }
     @HostBinding('class.no-tabs') noTabs = true
     @ViewChildren(TabBodyComponent) tabBodies: TabBodyComponent[]
     @ViewChild('activeTransfersDropdown') activeTransfersDropdown: NgbDropdown
