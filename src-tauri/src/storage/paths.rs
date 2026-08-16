@@ -9,6 +9,7 @@ pub struct StoragePaths {
     state_file: PathBuf,
     pending_update_file: PathBuf,
     backups_dir: PathBuf,
+    update_staging_dir: PathBuf,
     migration_dir: PathBuf,
 }
 
@@ -23,6 +24,7 @@ impl StoragePaths {
             state_file: data_dir.join("tabby-rs.json"),
             pending_update_file: data_dir.join("pending-update.json"),
             backups_dir: data_dir.join("backups"),
+            update_staging_dir: data_dir.join("update-staging"),
             migration_dir: data_dir.join("migration"),
             data_dir,
         }
@@ -31,6 +33,7 @@ impl StoragePaths {
     pub fn ensure_layout(&self) -> Result<(), AppError> {
         std::fs::create_dir_all(&self.data_dir)?;
         std::fs::create_dir_all(&self.backups_dir)?;
+        std::fs::create_dir_all(&self.update_staging_dir)?;
         std::fs::create_dir_all(&self.migration_dir)?;
         Ok(())
     }
@@ -53,6 +56,10 @@ impl StoragePaths {
 
     pub fn backups_dir(&self) -> &Path {
         &self.backups_dir
+    }
+
+    pub fn update_staging_dir(&self) -> &Path {
+        &self.update_staging_dir
     }
 
     pub fn migration_dir(&self) -> &Path {

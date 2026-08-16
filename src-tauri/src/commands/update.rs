@@ -13,7 +13,8 @@ use crate::{
     },
     update::{
         rollback::{
-            clear_pending_update_journal, remember_stable_backup, write_pending_update_journal,
+            clear_pending_update_journal, prepare_binary_rollback, remember_stable_backup,
+            write_pending_update_journal_with_binary,
         },
         service::{
             build_updater, configured_endpoint, configured_public_key, download_exceeds_limit,
@@ -256,14 +257,35 @@ pub async fn update_install(
             return Err(AppError::Io("update backup could not be created".into()));
         }
     };
-    abort_cancelled_install(&state, &paths, install_generation)?;
+    let binary_rollback =
+        match prepare_binary_rollback(&paths, state.paths().executable(), &backup.backup_id) {
+            Ok(rollback) => rollback,
+            Err(_) => {
+                state.update_manager().restore_ready(ready);
+                emit_state(&app, &state);
+                return Err(AppError::Io(
+                    "update binary rollback could not be prepared".into(),
+                ));
+            }
+        };
+    if let Err(error) = abort_cancelled_install(&state, &paths, install_generation) {
+        binary_rollback.abort();
+        return Err(error);
+    }
     let target_version = ready.info.version.clone();
     let pending = PendingUpdateState {
         target_version: target_version.clone(),
         backup_id: backup.backup_id.clone(),
         channel: current_state.update_channel.clone(),
     };
-    if write_pending_update_journal(&paths, &pending).is_err() {
+    if write_pending_update_journal_with_binary(
+        &paths,
+        &pending,
+        Some(binary_rollback.journal().clone()),
+    )
+    .is_err()
+    {
+        binary_rollback.abort();
         state.update_manager().restore_ready(ready);
         emit_state(&app, &state);
         return Err(AppError::Io("update journal could not be persisted".into()));
@@ -278,18 +300,30 @@ pub async fn update_install(
         .is_err()
     {
         let _ = clear_pending_update_journal(&paths);
+        binary_rollback.abort();
         state.update_manager().restore_ready(ready);
         emit_state(&app, &state);
         return Err(AppError::Io("update state could not be persisted".into()));
     }
-    abort_cancelled_install(&state, &paths, install_generation)?;
+    if let Err(error) = abort_cancelled_install(&state, &paths, install_generation) {
+        binary_rollback.abort();
+        return Err(error);
+    }
     if ready.update.install(&bytes).is_err() {
+        let rollback_result = binary_rollback.fail();
         let _ = state.update_persisted_state(|persisted| persisted.pending_update = None);
-        let _ = clear_pending_update_journal(&paths);
+        if rollback_result.is_ok() {
+            let _ = clear_pending_update_journal(&paths);
+        }
         state.update_manager().restore_ready(ready);
         emit_state(&app, &state);
+        if rollback_result.is_err() {
+            eprintln!("update failed and binary rollback is pending application exit; terminating");
+            std::process::exit(1);
+        }
         return Err(public_update_error(UpdateStage::Installing));
     }
+    drop(binary_rollback);
     state.update_manager().finish_install(install_generation);
     emit_state(&app, &state);
     app.request_restart();
