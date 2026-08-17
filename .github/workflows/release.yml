@@ -62,10 +62,14 @@ jobs:
           sudo apt-get install --yes --no-install-recommends \
             cmake \
             libarchive-tools \
+            libayatana-appindicator3-dev \
             libfontconfig1-dev \
+            librsvg2-dev \
             libsecret-1-dev \
             libudev-dev \
+            libwebkit2gtk-4.1-dev \
             openssh-server \
+            patchelf \
             xvfb
 
       - name: Install Yarn
