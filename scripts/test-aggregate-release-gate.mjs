@@ -15,10 +15,11 @@ const targets = ['x86_64-pc-windows-msvc', 'x86_64-unknown-linux-gnu']
 for (const target of targets) {
     const directory = path.join(work, target)
     fs.mkdirSync(directory, { recursive: true })
-    fs.writeFileSync(path.join(directory, 'release-gate.json'), JSON.stringify({ passed: true, sourceRevision: revision, failures: [] }))
+    fs.writeFileSync(path.join(directory, 'release-gate.json'), JSON.stringify({ schemaVersion: 1, passed: true, sourceRevision: revision, failures: [] }))
     fs.writeFileSync(path.join(directory, 'tabby-rs-metadata.json'), JSON.stringify({
         revision,
         channel: 'stable',
+        version: '0.1.0',
         target,
         platform: target.includes('windows') ? 'windows' : 'linux',
         arch: 'x86_64',
@@ -34,7 +35,32 @@ await execFileAsync(process.execPath, [script, work,
 ], { cwd: root })
 const report = JSON.parse(fs.readFileSync(output, 'utf8'))
 assert.equal(report.passed, true)
+assert.equal(report.version, '0.1.0')
 assert.deepEqual(report.targets.map(target => target.target).sort(), [...targets].sort())
+
+const invalidWork = path.join(work, 'invalid')
+fs.mkdirSync(invalidWork, { recursive: true })
+fs.writeFileSync(path.join(invalidWork, 'release-gate.json'), JSON.stringify({ passed: true, sourceRevision: revision, failures: [] }))
+fs.writeFileSync(path.join(invalidWork, 'tabby-rs-metadata.json'), JSON.stringify({
+    revision,
+    channel: 'stable',
+    target: targets[0],
+    platform: 'windows',
+    arch: 'x86_64',
+}))
+const invalidOutput = path.join(work, 'invalid-aggregate.json')
+await assert.rejects(
+    execFileAsync(process.execPath, [script, path.join(work, 'invalid'),
+        '--source-revision', revision,
+        '--channel', 'stable',
+        '--expected-targets', JSON.stringify([targets[0]]),
+        '--output', invalidOutput,
+    ], { cwd: root }),
+)
+const invalidReport = JSON.parse(fs.readFileSync(invalidOutput, 'utf8'))
+assert.equal(invalidReport.passed, false)
+assert.ok(invalidReport.failures.includes('release-gate.json: release gate schema version is invalid'))
+assert.ok(invalidReport.failures.includes('release-gate.json: release version is missing'))
 
 const emptyOutput = path.join(work, 'empty-aggregate.json')
 await assert.rejects(
