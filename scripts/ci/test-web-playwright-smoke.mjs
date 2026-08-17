@@ -173,7 +173,9 @@ async function exerciseFixture (page) {
     const positiveChecks = [
         'host login accepted',
         'web SSH provider connected',
-        'received: "fixture gateway ready',
+        process.env.TABBY_WEB_REAL_OPENSSH === '1'
+            ? 'received: "real OpenSSH gateway ready'
+            : 'received: "fixture gateway ready',
         'sent: "echo browser',
         'viewport resize observed:',
         'sftp list response:',

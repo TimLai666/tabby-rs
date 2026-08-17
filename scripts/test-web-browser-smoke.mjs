@@ -3,6 +3,7 @@ import http from 'node:http'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import ws from 'ws'
+import { startRealWebGateway } from './test-web-real-remote-gateway.mjs'
 
 const { Server: WebSocketServer } = ws
 
@@ -46,6 +47,9 @@ function serve (request, response) {
 const server = http.createServer(serve)
 const gateway = new WebSocketServer({ noServer: true })
 const events = []
+const realGateway = process.env.TABBY_WEB_REAL_OPENSSH === '1'
+    ? await startRealWebGateway({ token })
+    : null
 
 server.on('upgrade', (request, socket, head) => {
     if (request.url !== '/gateway') {
@@ -56,6 +60,10 @@ server.on('upgrade', (request, socket, head) => {
 })
 
 gateway.on('connection', client => {
+    if (realGateway) {
+        realGateway.handleConnection(client)
+        return
+    }
     let authenticated = false
     let connected = false
     let protocol = 'tcp'
@@ -106,11 +114,12 @@ server.listen(requestedPort, '127.0.0.1', () => {
     console.log('Use the page to sign in, connect, send terminal input, record resize, request SFTP list, save/load settings, and boot shared UI.')
 })
 
-function shutdown () {
+async function shutdown () {
     for (const client of gateway.clients) client.close()
     gateway.close()
+    await realGateway?.close()
     server.close(() => process.exit(0))
 }
 
-process.on('SIGINT', shutdown)
-process.on('SIGTERM', shutdown)
+process.on('SIGINT', () => { void shutdown() })
+process.on('SIGTERM', () => { void shutdown() })
