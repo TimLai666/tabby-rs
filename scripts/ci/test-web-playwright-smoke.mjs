@@ -119,6 +119,11 @@ async function exerciseFixture (page) {
         'shared Tabby UI bootstrapped',
     ]
     const checks = positiveChecks.map(check => ({ check, passed: output.includes(check) }))
+    checks.push(
+        { check: 'shared app root rendered', passed: (await page.locator('app-root').locator('> *').count()) > 0 },
+        { check: 'shared theme stylesheet applied', passed: (await page.locator('#theme').count()) > 0 },
+        { check: 'shared theme variables applied', passed: await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--theme-bg').trim().length > 0) },
+    )
     checks.push({
         check: 'invalid token rejected',
         passed: negativeStatus === 'invalid token' && negativeOutput.includes('host login rejected'),
