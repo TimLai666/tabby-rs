@@ -27,7 +27,7 @@ permissions:
 
 concurrency:
   group: release-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' && inputs.evidence_only == true }}
 
 env:
   NODE_VERSION: '22'
