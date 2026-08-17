@@ -128,6 +128,7 @@
     "test:diagnostics-privacy": "yarn build:tauri:frontend && cargo test --manifest-path src-tauri/Cargo.toml --lib diagnostics::",
     "test:tabby-rs-branding": "node scripts/test-tabby-rs-branding.mjs",
     "test:macos-icon-config": "node scripts/test-macos-icon-config.mjs",
+    "test:tauri-release-config": "node scripts/test-tauri-release-config.mjs",
     "test:parity-report": "node scripts/test-parity-report.mjs",
     "build:tauri": "npm run build:tauri:frontend && cargo build --manifest-path src-tauri/Cargo.toml",
     "build:typings": "node scripts/build-typings.mjs",

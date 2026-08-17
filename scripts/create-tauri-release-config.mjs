@@ -8,6 +8,12 @@ const publicKey = process.env.TABBY_RS_UPDATE_PUBLIC_KEY
 const endpoint = process.env.TABBY_RS_UPDATE_ENDPOINT
 const bundleTargets = process.env.TABBY_RS_BUNDLE_TARGETS?.split(',').filter(Boolean)
 const output = process.env.TABBY_RS_RELEASE_CONFIG || path.resolve('src-tauri/tauri.release.conf.json')
+const iconAssets = [
+    'icons/icon.icns',
+    'icons/icon.png',
+    'icons/icon.ico',
+    '../build/mac/icon.icns',
+]
 
 assert.ok(channel === 'stable' || channel === 'nightly', 'TABBY_RS_RELEASE_CHANNEL must be stable or nightly')
 assert.ok(version, 'TABBY_RS_RELEASE_VERSION is required for a release build')
@@ -21,6 +27,7 @@ const config = {
         active: true,
         targets: bundleTargets,
         createUpdaterArtifacts: true,
+        icon: iconAssets,
     },
     plugins: {
         updater: {
