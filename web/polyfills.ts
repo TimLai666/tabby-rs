@@ -105,10 +105,12 @@ Tabby.registerModule('net', {
 })
 Tabby.registerModule('events', require('events'))
 Tabby.registerModule('path', require('path-browserify'))
-Tabby.registerModule('url', {
+const webURL = {
     ...require('url'),
     pathToFileURL: x => `file://${x}`,
-})
+}
+Tabby.registerModule('url', webURL)
+Tabby.registerModule('node:url', webURL)
 Tabby.registerModule('zlib', {
     ...require('browserify-zlib'),
     constants: require('browserify-zlib'),

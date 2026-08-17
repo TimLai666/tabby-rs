@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Tabby RS Web Host Fixture</title>
+    <style id="custom-css"></style>
+    <style>
+        :root { color-scheme: dark; font-family: system-ui, sans-serif; }
+        body { margin: 0; padding: 2rem; background: #111827; color: #f9fafb; }
+        main { max-width: 64rem; margin: auto; display: grid; gap: 1rem; }
+        section { padding: 1rem; border: 1px solid #374151; border-radius: .5rem; background: #1f2937; }
+        form, .actions { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+        input, textarea, button { font: inherit; border: 1px solid #4b5563; border-radius: .25rem; padding: .45rem .6rem; }
+        input, textarea { color: #f9fafb; background: #111827; }
+        button { color: #111827; background: #93c5fd; cursor: pointer; }
+        button.secondary { color: #f9fafb; background: #374151; }
+        textarea { width: 100%; min-height: 4rem; }
+        pre { min-height: 12rem; max-height: 24rem; overflow: auto; padding: 1rem; background: #030712; }
+        [data-testid="fixture-status"] { font-weight: 700; }
+    </style>
+    <script src="/preload.js"></script>
+    <script src="/bundle.js"></script>
+</head>
+<body>
+<main>
+    <h1>Tabby RS Web Host Fixture</h1>
+    <p>Browser-level host boundary for web connector and shared UI smoke checks.</p>
+    <section>
+        <h2>Host login</h2>
+        <form id="fixture-login">
+            <label for="fixture-token">Auth token</label>
+            <input id="fixture-token" autocomplete="off">
+            <button type="submit">Sign in</button>
+        </form>
+        <p>Status: <span id="fixture-status" data-testid="fixture-status"></span></p>
+    </section>
+    <section>
+        <h2>Connection</h2>
+        <form id="fixture-connect">
+            <label for="fixture-host">Host</label>
+            <input id="fixture-host" value="fixture.example.test">
+            <label for="fixture-port">Port</label>
+            <input id="fixture-port" type="number" value="22" min="1" max="65535">
+            <button type="submit">Connect</button>
+        </form>
+        <div class="actions">
+            <input id="fixture-terminal-input" placeholder="terminal input, press Enter" data-testid="terminal-input">
+            <button id="fixture-resize" type="button" class="secondary">Record resize</button>
+            <button id="fixture-sftp-list" type="button" class="secondary">Request SFTP list</button>
+            <button id="fixture-telnet-connect" type="button" class="secondary">Connect Telnet provider</button>
+        </div>
+    </section>
+    <section>
+        <h2>Settings and shared UI</h2>
+        <textarea id="fixture-settings" aria-label="Fixture settings"></textarea>
+        <div class="actions">
+            <button id="fixture-save-settings" type="button">Save settings</button>
+            <button id="fixture-load-settings" type="button" class="secondary">Load settings</button>
+            <button id="fixture-boot-shared-ui" type="button">Boot shared Tabby UI</button>
+        </div>
+    </section>
+    <section>
+        <h2>Gateway evidence</h2>
+        <pre id="fixture-output" data-testid="fixture-output"></pre>
+    </section>
+</main>
+<app-root></app-root>
+<script src="/fixture.js"></script>
+</body>
+</html>

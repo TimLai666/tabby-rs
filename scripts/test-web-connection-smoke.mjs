@@ -17,6 +17,7 @@ const transpile = source => ts.transpileModule(source, {
 }).outputText
 
 const gatewaySource = fs.readFileSync(path.join(root, 'tabby-web/src/services/connectionGateway.service.ts'), 'utf8')
+const providerSource = fs.readFileSync(path.join(root, 'tabby-web/src/services/webProvider.service.ts'), 'utf8')
 const bufferSource = fs.readFileSync(path.join(root, 'web/polyfills.buffer.ts'), 'utf8')
 const polyfillsSource = fs.readFileSync(path.join(root, 'web/polyfills.ts'), 'utf8')
 const sshSource = fs.readFileSync(path.join(root, 'tabby-ssh/src/session/ssh.ts'), 'utf8')
@@ -29,6 +30,12 @@ assert.match(sftpSource, /constructor \(private sftp:/, 'SFTP must consume the S
 assert.match(telnetSource, /from 'net'/, 'web Telnet must retain the shared socket transport seam')
 
 const gatewayModule = { exports: {} }
+const providerModule = { exports: {} }
+vm.runInNewContext(transpile(providerSource), {
+    exports: providerModule.exports,
+    module: providerModule,
+    require: name => name === 'rxjs' ? require('rxjs') : require(name),
+}, { filename: 'webProvider.service.cjs' })
 const gatewayContext = {
     ArrayBuffer,
     Error,
@@ -36,7 +43,9 @@ const gatewayContext = {
     JSON,
     module: gatewayModule,
     Promise,
-    require: name => name === 'rxjs' ? require('rxjs') : require(name),
+    require: name => name === './webProvider.service'
+        ? providerModule.exports
+        : name === 'rxjs' ? require('rxjs') : require(name),
     Set,
     Uint8Array,
 }

@@ -125,6 +125,12 @@ jobs:
       - name: Build web container
         run: yarn build:web
 
+      - name: Test web browser smoke
+        run: yarn test:web-browser-smoke
+
+      - name: Test web Playwright smoke
+        run: yarn test:web-playwright-smoke
+
       - name: Verify tabby-web bundle boundary
         run: yarn audit:web
 
@@ -150,6 +156,9 @@ jobs:
 
       - name: Test web SSH SFTP Telnet connection smoke
         run: yarn test:web-connection-smoke
+
+      - name: Test web provider contract
+        run: yarn test:web-provider-contract
 
       - name: Test web plugin loader
         run: yarn test:web-plugin-loader

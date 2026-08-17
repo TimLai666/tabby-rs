@@ -29,6 +29,7 @@ const config = {
     entry: {
         preload: path.resolve(__dirname, 'entry.preload.ts'),
         bundle: path.resolve(__dirname, 'entry.ts'),
+        fixture: path.resolve(__dirname, 'fixture.ts'),
     },
     mode: process.env.TABBY_DEV ? 'development' : 'production',
     optimization:{
