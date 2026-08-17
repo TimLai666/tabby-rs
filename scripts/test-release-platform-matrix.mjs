@@ -45,6 +45,8 @@ const webContainerBuild = webGateSteps.find(step => step.name === 'Build web con
 const typingsBuild = buildSteps.find(step => step.name === 'Build TypeScript declarations')
 const tauriRendererBuild = buildSteps.find(step => step.name === 'Build Tauri renderer')
 const releaseChannel = buildSteps.find(step => step.name === 'Select release channel')
+const rustHostTest = buildSteps.find(step => step.name === 'Test Rust host')
+const windowsRustCompile = buildSteps.find(step => step.name === 'Compile Rust host tests on Windows')
 const publishSteps = releaseWorkflow?.jobs?.publish?.steps || []
 const releaseCreation = publishSteps.find(step => step.name === 'Create release')
 const stableIssueGate = webGateSteps.find(step => step.name === 'Enforce Stable child issue gate')
@@ -74,6 +76,9 @@ assert.equal(typingsBuild?.run, 'yarn build:typings', 'release bundle job must b
 assert.ok(buildSteps.indexOf(typingsBuild) < buildSteps.indexOf(tauriRendererBuild), 'TypeScript declarations must be built before the Tauri renderer')
 assert.ok(releaseChannel?.run?.includes('.split(/\\r?\\n/)'), 'release bundle job must parse Cargo.toml across line endings')
 assert.ok(releaseCreation?.run?.includes('.split(/\\r?\\n/)'), 'release publishing must parse Cargo.toml across line endings')
+assert.equal(rustHostTest?.if, "runner.os != 'Windows'", 'release Rust tests must not execute Tauri test binaries on Windows')
+assert.equal(windowsRustCompile?.if, "runner.os == 'Windows'", 'release Windows Rust coverage must compile test binaries')
+assert.equal(windowsRustCompile?.run, 'cargo test --manifest-path src-tauri/Cargo.toml --lib --no-run', 'release Windows Rust coverage must compile the library tests without executing them')
 assert.equal(platformGate?.['continue-on-error'], evidenceContinueOnError, 'evidence-only runs must upload platform gate reports even when they fail')
 assert.equal(aggregateGate?.['continue-on-error'], evidenceContinueOnError, 'evidence-only runs must upload the aggregate gate report even when it fails')
 assert.equal(evidenceFallback?.if, `\${{ always() && ${evidenceCondition} }}`, 'evidence-only runs must create an explicit incomplete gate report after early failures')
