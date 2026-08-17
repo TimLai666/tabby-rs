@@ -130,6 +130,7 @@ async function exerciseFixture (page) {
         const splitTab = appRoot.app.activeTab
         const newPane = splitTab.tabsService.create({ type: splitTab.focusedTab.constructor })
         await splitTab.addTab(newPane, splitTab.focusedTab, 'r')
+        window.ng?.applyChanges?.(appRoot)
     })
     await page.waitForFunction(() => document.querySelectorAll('split-tab-pane-label').length === 2)
     await page.evaluate(async () => {
