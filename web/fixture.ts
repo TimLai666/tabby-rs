@@ -146,7 +146,15 @@ telnetButton.addEventListener('click', () => {
     }
     telnetSession?.close()
     telnetSession = connector.createTelnetSession()
-    telnetSession.connect$.subscribe(() => log('web Telnet provider connected'))
+    telnetSession.connect$.subscribe(() => {
+        log('web Telnet provider connected')
+        const data = new TextEncoder().encode('telnet browser\r\n')
+        telnetSession!.write(data)
+        log(`sent: ${JSON.stringify('telnet browser\\r\\n')}`)
+    })
+    telnetSession.data$.subscribe(data => {
+        log(`received Telnet: ${JSON.stringify(new TextDecoder().decode(data))}`)
+    })
     void telnetSession.connect({
         host: hostInput.value || 'fixture.example.test',
         port: 23,

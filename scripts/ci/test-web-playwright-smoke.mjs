@@ -101,6 +101,7 @@ async function exerciseFixture (page) {
         await page.waitForFunction(
             () => document.getElementById('fixture-output')?.textContent?.includes('sftp list response:')
                 && document.getElementById('fixture-output')?.textContent?.includes('web Telnet provider connected')
+                && document.getElementById('fixture-output')?.textContent?.includes('sent: "telnet browser')
                 && document.getElementById('fixture-output')?.textContent?.includes('shared Tabby UI bootstrapped'),
             null,
             { timeout: 20000 },
@@ -180,6 +181,10 @@ async function exerciseFixture (page) {
         'viewport resize observed:',
         'sftp list response:',
         'web Telnet provider connected',
+        'sent: "telnet browser',
+        process.env.TABBY_WEB_REAL_OPENSSH === '1'
+            ? 'real telnet fixture'
+            : 'received Telnet: "fixture echo: telnet browser',
         'settings saved:',
         'settings loaded:',
         'shared plugins loaded: tabby-core, tabby-settings, tabby-terminal, tabby-web',
