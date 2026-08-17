@@ -36,6 +36,48 @@ function connectSocket (port) {
     return socket
 }
 
+function startTelnetFixture (socket) {
+    const IAC = 255
+    const WILL = 251
+    const ECHO = 1
+    const SUPPRESS_GO_AHEAD = 3
+    const negotiation = Buffer.from([IAC, WILL, ECHO, IAC, WILL, SUPPRESS_GO_AHEAD])
+    socket.write(Buffer.concat([negotiation, Buffer.from('real telnet fixture\r\n')]))
+
+    let command = false
+    let subnegotiation = false
+    let option = false
+    const payload = []
+    socket.on('data', data => {
+        for (const byte of data) {
+            if (subnegotiation) {
+                if (command && byte === 240) subnegotiation = false
+                command = byte === IAC
+                continue
+            }
+            if (option) {
+                option = false
+                continue
+            }
+            if (command) {
+                command = false
+                if (byte === 250) subnegotiation = true
+                else if (byte === 251 || byte === 252 || byte === 253 || byte === 254) option = true
+                continue
+            }
+            if (byte === IAC) {
+                command = true
+                continue
+            }
+            payload.push(byte)
+        }
+        if (payload.length > 0) {
+            const response = Buffer.from(`telnet echo: ${Buffer.from(payload.splice(0)).toString()}`)
+            socket.write(response)
+        }
+    })
+}
+
 function sshArguments (fixture, extra = [], portFlag = '-p') {
     return [
         '-o', 'BatchMode=yes',
@@ -111,8 +153,7 @@ async function startOpenSsh () {
     }
 
     const telnetServer = net.createServer(socket => {
-        socket.write('real telnet fixture\r\n')
-        socket.on('data', data => socket.write(Buffer.from(`telnet echo: ${data.toString()}`)))
+        startTelnetFixture(socket)
     })
     const telnetPort = await listen(telnetServer)
 
