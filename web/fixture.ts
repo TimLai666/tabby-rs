@@ -9,7 +9,14 @@ interface FixtureBootstrapOptions {
     connector: WebHostConnector
 }
 
-const tabbyWindow = window as Window & { bootstrapTabby?: (options: FixtureBootstrapOptions) => Promise<unknown> }
+interface FixtureTabby {
+    loadPlugin: (url: string) => Promise<any>
+}
+
+const tabbyWindow = window as Window & {
+    bootstrapTabby?: (options: FixtureBootstrapOptions) => Promise<unknown>
+    Tabby?: FixtureTabby
+}
 
 const fixtureToken = 'tabby-rs-web-fixture-token'
 const output = document.querySelector<HTMLPreElement>('#fixture-output')!
@@ -135,6 +142,10 @@ document.querySelector<HTMLButtonElement>('#fixture-boot-shared-ui')!.addEventLi
         setStatus('shared UI bundle is unavailable')
         return
     }
+    if (!tabbyWindow.Tabby) {
+        setStatus('shared plugin loader is unavailable')
+        return
+    }
     try {
         const hostConnector: WebHostConnector = {
             createSocket: (..._args: unknown[]) => connector!.createSocket(),
@@ -142,8 +153,14 @@ document.querySelector<HTMLButtonElement>('#fixture-boot-shared-ui')!.addEventLi
             saveConfig: async content => window.localStorage.setItem('tabby-rs-web-fixture-settings', content),
             getAppVersion: () => 'web-fixture',
         }
+        const packageNames = ['tabby-core', 'tabby-settings', 'tabby-terminal', 'tabby-web']
+        const packageModules = []
+        for (const packageName of packageNames) {
+            packageModules.push(await tabbyWindow.Tabby.loadPlugin(`/plugins/${packageName}`))
+        }
+        log(`shared plugins loaded: ${packageNames.join(', ')}`)
         await tabbyWindow.bootstrapTabby({
-            packageModules: [],
+            packageModules,
             bootstrapData: {
                 config: {},
                 executable: 'tabby-rs-web-fixture',

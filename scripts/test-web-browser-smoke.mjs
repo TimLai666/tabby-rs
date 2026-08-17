@@ -14,14 +14,26 @@ const requestedPort = Number(process.env.TABBY_WEB_FIXTURE_PORT ?? 0)
 const contentTypes = {
     '.html': 'text/html; charset=utf-8',
     '.js': 'text/javascript; charset=utf-8',
+    '.json': 'application/json; charset=utf-8',
     '.map': 'application/json; charset=utf-8',
 }
+
+const pluginAssets = new Map([
+    ['/plugins/tabby-core/package.json', path.join(root, 'tabby-core/package.json')],
+    ['/plugins/tabby-core/dist/index.js', path.join(root, 'tabby-core/dist/index.js')],
+    ['/plugins/tabby-terminal/package.json', path.join(root, 'tabby-terminal/package.json')],
+    ['/plugins/tabby-terminal/dist/index.js', path.join(root, 'tabby-terminal/dist/index.js')],
+    ['/plugins/tabby-settings/package.json', path.join(root, 'tabby-settings/package.json')],
+    ['/plugins/tabby-settings/dist/index.js', path.join(root, 'tabby-settings/dist/index.js')],
+    ['/plugins/tabby-web/package.json', path.join(root, 'tabby-web/package.json')],
+    ['/plugins/tabby-web/dist/index.js', path.join(root, 'tabby-web/dist/index.js')],
+])
 
 function serve (request, response) {
     const requestPath = request.url === '/' ? '/fixture.html' : request.url
     const filePath = requestPath === '/fixture.html'
         ? path.join(root, 'web', requestPath.slice(1))
-        : path.join(dist, requestPath.slice(1))
+        : pluginAssets.get(requestPath) ?? path.join(dist, requestPath.slice(1))
     if (!filePath.startsWith(root) || !fs.existsSync(filePath)) {
         response.writeHead(404)
         response.end('not found')

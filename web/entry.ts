@@ -40,6 +40,7 @@ window['bootstrapTabby'] = async function bootstrap (options: BootstrapOptions):
         pluginModule.bootstrap = packageModule.bootstrap
         pluginModules.push(pluginModule)
     }
+    window['pluginModules'] = pluginModules
 
     if (!options.debugMode) {
         enableProdMode()
