@@ -107,6 +107,9 @@ jobs:
           yarn test:web-connector-runtime
           yarn test:web-connection-smoke
 
+      - name: Test web real OpenSSH fixture contract
+        run: yarn test:web-real-remote-contract
+
       - name: Test web real OpenSSH SFTP Telnet smoke
         run: yarn test:web-real-remote
 
