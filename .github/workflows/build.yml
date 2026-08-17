@@ -187,6 +187,9 @@ jobs:
       - name: Test macOS icon configuration
         run: yarn test:macos-icon-config
 
+      - name: Test Tauri release icon configuration
+        run: yarn test:tauri-release-config
+
       - name: Test parity report contract
         run: yarn test:parity-report
 
