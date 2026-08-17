@@ -11,6 +11,7 @@ const manifestPlatforms = platformManifest?.platforms || []
 const workflowPlatforms = releaseWorkflow?.jobs?.build?.strategy?.matrix?.include || []
 const workflowTriggers = releaseWorkflow?.on || releaseWorkflow?.true || {}
 const workflowDispatch = workflowTriggers.workflow_dispatch || {}
+const evidenceOnlyConcurrency = "\${{ github.event_name == 'workflow_dispatch' && inputs.evidence_only == true }}"
 
 assert.ok(Array.isArray(manifestPlatforms) && manifestPlatforms.length > 0, 'platform manifest must define platforms')
 assert.ok(Array.isArray(workflowPlatforms) && workflowPlatforms.length > 0, 'release workflow must define a build matrix')
@@ -20,6 +21,7 @@ assert.deepEqual(workflowDispatch.inputs?.evidence_only, {
     default: false,
     type: 'boolean',
 }, 'manual release workflow must expose an explicit evidence-only mode')
+assert.equal(releaseWorkflow?.concurrency?.['cancel-in-progress'], evidenceOnlyConcurrency, 'evidence-only runs must cancel stale evidence runs without interrupting scheduled or tagged releases')
 
 const webGateSteps = releaseWorkflow?.jobs?.['web-gate']?.steps || []
 const buildSteps = releaseWorkflow?.jobs?.build?.steps || []
