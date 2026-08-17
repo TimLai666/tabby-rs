@@ -61,7 +61,9 @@ jobs:
             libarchive-tools \
             libfontconfig1-dev \
             libsecret-1-dev \
-            libudev-dev
+            libudev-dev \
+            openssh-server \
+            xvfb
 
       - name: Install Yarn
         run: npm install --global yarn@${{ env.YARN_VERSION }}
@@ -101,6 +103,9 @@ jobs:
           yarn test:web-connector
           yarn test:web-connector-runtime
           yarn test:web-connection-smoke
+
+      - name: Test web real OpenSSH SFTP Telnet smoke
+        run: yarn test:web-real-remote
 
       - name: Test web gateway and plugin contracts
         run: |
