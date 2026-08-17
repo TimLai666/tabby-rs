@@ -81,8 +81,18 @@ Tabby.registerMock('os', {
 Tabby.registerModule('buffer', {
     Buffer: window['Buffer'],
 })
+const browserCrypto = require('crypto-browserify')
+
 Tabby.registerModule('crypto', {
-    ...require('crypto-browserify'),
+    ...browserCrypto,
+    randomFillSync (buffer, offset, size) {
+        if (Buffer.isBuffer(buffer)) {
+            return browserCrypto.randomFillSync(buffer, offset, size)
+        }
+        const view = Buffer.from(buffer.buffer, buffer.byteOffset, buffer.byteLength)
+        browserCrypto.randomFillSync(view, offset, size)
+        return buffer
+    },
     getHashes () {
         return ['sha1', 'sha224', 'sha256', 'sha384', 'sha512', 'md5', 'rmd160']
     },
