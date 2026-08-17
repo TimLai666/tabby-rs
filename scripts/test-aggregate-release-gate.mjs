@@ -42,7 +42,6 @@ const invalidWork = path.join(work, 'invalid')
 fs.mkdirSync(invalidWork, { recursive: true })
 fs.writeFileSync(path.join(invalidWork, 'release-gate.json'), JSON.stringify({ passed: true, sourceRevision: revision, failures: [] }))
 fs.writeFileSync(path.join(invalidWork, 'tabby-rs-metadata.json'), JSON.stringify({
-    revision,
     channel: 'stable',
     target: targets[0],
     platform: 'windows',
@@ -61,6 +60,7 @@ const invalidReport = JSON.parse(fs.readFileSync(invalidOutput, 'utf8'))
 assert.equal(invalidReport.passed, false)
 assert.ok(invalidReport.failures.includes('release-gate.json: release gate schema version is invalid'))
 assert.ok(invalidReport.failures.includes('release-gate.json: release version is missing'))
+assert.ok(invalidReport.failures.includes('release-gate.json: release metadata revision is missing'))
 
 const emptyOutput = path.join(work, 'empty-aggregate.json')
 await assert.rejects(

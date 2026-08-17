@@ -54,7 +54,9 @@ for (const gatePath of gatePaths) {
             passed: gate.passed === true,
             hasFailureList: Array.isArray(gate.failures),
             failures: Array.isArray(gate.failures) ? gate.failures : ['release gate has no failure list'],
+            gateSourceRevision: gate.sourceRevision || null,
             sourceRevision: metadata?.revision || gate.sourceRevision || null,
+            metadataRevision: metadata?.revision || null,
             channel: metadata?.channel || null,
             version: metadata?.version || null,
             target: metadata?.target || null,
@@ -75,7 +77,9 @@ for (const gate of gates) {
     if (gate.schemaVersion !== 1) failures.push(`${gate.path}: release gate schema version is invalid`)
     if (!gate.passed) failures.push(`${gate.path}: child release gate failed`)
     if (!gate.hasFailureList) failures.push(`${gate.path}: child release gate has no failure list`)
-    if (expectedRevision && gate.sourceRevision !== expectedRevision) failures.push(`${gate.path}: source revision mismatch`)
+    if (typeof gate.metadataRevision !== 'string' || gate.metadataRevision.length === 0) failures.push(`${gate.path}: release metadata revision is missing`)
+    if (gate.gateSourceRevision && gate.metadataRevision && gate.gateSourceRevision !== gate.metadataRevision) failures.push(`${gate.path}: gate and metadata revisions do not match`)
+    if (expectedRevision && gate.metadataRevision !== expectedRevision) failures.push(`${gate.path}: source revision mismatch`)
     if (expectedChannel && gate.channel !== expectedChannel) failures.push(`${gate.path}: release channel mismatch`)
     if (typeof gate.version !== 'string' || gate.version.length === 0) failures.push(`${gate.path}: release version is missing`)
     if (typeof gate.platform !== 'string' || gate.platform.length === 0) failures.push(`${gate.path}: release platform is missing`)
