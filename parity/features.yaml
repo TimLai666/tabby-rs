@@ -290,7 +290,7 @@ features:
     issues: [26]
     platforms: [web]
     tests:
-      automated: [web-host-app, web-capability-boundary, web-provider-contract, web-connection-smoke, web-playwright-smoke]
+      automated: [web-host-app, web-capability-boundary, web-provider-contract, web-connection-smoke, web-playwright-smoke, web-real-remote]
       manual: [web-ssh-sftp-telnet]
     status: pending
     evidence: []
