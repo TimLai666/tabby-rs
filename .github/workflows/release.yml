@@ -250,7 +250,12 @@ jobs:
         run: cargo clippy --manifest-path src-tauri/Cargo.toml --lib
 
       - name: Test Rust host
+        if: runner.os != 'Windows'
         run: cargo test --manifest-path src-tauri/Cargo.toml --lib
+
+      - name: Compile Rust host tests on Windows
+        if: runner.os == 'Windows'
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib --no-run
 
       - name: Test system npm plugin lifecycle
         run: yarn test:plugin-npm-lifecycle
