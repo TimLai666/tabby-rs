@@ -44,6 +44,9 @@ const sharedPluginBuild = webGateSteps.find(step => step.name === 'Build shared 
 const webContainerBuild = webGateSteps.find(step => step.name === 'Build web container')
 const typingsBuild = buildSteps.find(step => step.name === 'Build TypeScript declarations')
 const tauriRendererBuild = buildSteps.find(step => step.name === 'Build Tauri renderer')
+const releaseChannel = buildSteps.find(step => step.name === 'Select release channel')
+const publishSteps = releaseWorkflow?.jobs?.publish?.steps || []
+const releaseCreation = publishSteps.find(step => step.name === 'Create release')
 const stableIssueGate = webGateSteps.find(step => step.name === 'Enforce Stable child issue gate')
 const platformGate = buildSteps.find(step => step.name === 'Enforce release gate')
 const aggregateGate = aggregateSteps.find(step => step.name === 'Enforce release-wide gate')
@@ -69,6 +72,8 @@ assert.equal(sharedPluginBuild?.run, 'yarn build', 'release Web gate must build 
 assert.ok(webGateSteps.indexOf(sharedPluginBuild) < webGateSteps.indexOf(webContainerBuild), 'shared plugin bundles must be built before the Web container')
 assert.equal(typingsBuild?.run, 'yarn build:typings', 'release bundle job must build TypeScript declarations')
 assert.ok(buildSteps.indexOf(typingsBuild) < buildSteps.indexOf(tauriRendererBuild), 'TypeScript declarations must be built before the Tauri renderer')
+assert.ok(releaseChannel?.run?.includes('.split(/\\r?\\n/)'), 'release bundle job must parse Cargo.toml across line endings')
+assert.ok(releaseCreation?.run?.includes('.split(/\\r?\\n/)'), 'release publishing must parse Cargo.toml across line endings')
 assert.equal(platformGate?.['continue-on-error'], evidenceContinueOnError, 'evidence-only runs must upload platform gate reports even when they fail')
 assert.equal(aggregateGate?.['continue-on-error'], evidenceContinueOnError, 'evidence-only runs must upload the aggregate gate report even when it fails')
 assert.equal(evidenceFallback?.if, `\${{ always() && ${evidenceCondition} }}`, 'evidence-only runs must create an explicit incomplete gate report after early failures')
