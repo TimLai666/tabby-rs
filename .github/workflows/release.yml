@@ -79,6 +79,9 @@ jobs:
       - name: Test release platform matrix contract
         run: yarn test:release-platform-matrix
 
+      - name: Build shared plugin bundles
+        run: yarn build
+
       - name: Build web container
         run: yarn build:web
 
