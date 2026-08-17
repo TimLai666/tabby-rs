@@ -45,6 +45,7 @@ try {
             ...process.env,
             ELECTRON_DISABLE_SECURITY_WARNINGS: 'true',
         },
+        detached: process.platform !== 'win32',
         stdio: ['ignore', 'pipe', 'pipe'],
     })
 
@@ -71,7 +72,7 @@ try {
     console.log(`Web Playwright smoke passed: ${result.checks.join(', ')}`)
 } finally {
     await browser?.close().catch(() => {})
-    await stopProcess(electron)
+    await stopProcess(electron, { processGroup: true })
     await stopProcess(server)
     if (serverError) process.stderr.write(serverError)
     if (outputDir) await rm(outputDir, { recursive: true, force: true })
@@ -227,12 +228,26 @@ function electronBinary () {
     return path.join(root, 'node_modules', 'electron', 'dist', 'electron')
 }
 
-async function stopProcess (child) {
+async function stopProcess (child, { processGroup = false } = {}) {
     if (!child || child.exitCode !== null) return
-    child.kill('SIGTERM')
+    if (processGroup && process.platform !== 'win32' && child.pid) {
+        try {
+            process.kill(-child.pid, 'SIGTERM')
+        } catch { }
+    } else {
+        child.kill('SIGTERM')
+    }
     await Promise.race([
         new Promise(resolve => child.once('close', resolve)),
         wait(5000),
     ])
-    if (child.exitCode === null) child.kill('SIGKILL')
+    if (child.exitCode === null) {
+        if (processGroup && process.platform !== 'win32' && child.pid) {
+            try {
+                process.kill(-child.pid, 'SIGKILL')
+            } catch { }
+        } else {
+            child.kill('SIGKILL')
+        }
+    }
 }
