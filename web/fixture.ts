@@ -203,13 +203,36 @@ document.querySelector<HTMLButtonElement>('#fixture-boot-shared-ui')!.addEventLi
             debugMode: true,
             connector: hostConnector,
         })
+        const appRootComponent = (window as any).ng?.getComponent(document.querySelector('app-root'))
+        const welcomeTabComponent = packageModules
+            .map((module: any) => module?.default)
+            ?.flatMap((module: any) => module?.ɵmod?.declarations ?? [])
+            .find((component: any) => component?.ɵcmp?.selectors?.flat().includes('welcome-page'))
+        if (!appRootComponent?.app || !welcomeTabComponent) {
+            throw new Error('shared Welcome tab component is unavailable')
+        }
+        appRootComponent.app.openNewTab({ type: welcomeTabComponent })
         log('shared Tabby UI bootstrapped')
     } catch (error) {
-        setStatus(error instanceof Error ? error.message : 'shared UI bootstrap failed')
-        log(`shared UI bootstrap failed: ${error instanceof Error ? error.message : String(error)}`)
+        const message = error instanceof Error ? error.stack ?? error.message : String(error)
+        setStatus(message)
+        log(`shared UI bootstrap failed: ${message}`)
     }
 })
 
 tokenInput.value = fixtureToken
-settingsInput.value = '{}'
+settingsInput.value = `enableWelcomeTab: false
+hotkeys:
+  split-right:
+    - Ctrl-Shift-S
+    - ⌘-Shift-S
+  duplicate-tab:
+    - Ctrl-Shift-T
+    - ⌘-Shift-T
+  next-tab:
+    - Ctrl-Shift-Right
+    - ⌘-Shift-Right
+  command-selector:
+    - Ctrl-Shift-P
+    - ⌘-Shift-P`
 setStatus('signed out')

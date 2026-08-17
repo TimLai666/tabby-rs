@@ -79,6 +79,7 @@ try {
 }
 
 async function exerciseFixture (page) {
+    const modifier = process.platform === 'darwin' ? 'Meta' : 'Control'
     await page.locator('#fixture-token').fill('invalid-token')
     await page.locator('#fixture-login button').click()
     const negativeOutput = await page.locator('#fixture-output').textContent()
@@ -96,13 +97,76 @@ async function exerciseFixture (page) {
     await page.locator('#fixture-save-settings').click()
     await page.locator('#fixture-load-settings').click()
     await page.locator('#fixture-boot-shared-ui').click()
-    await page.waitForFunction(
-        () => document.getElementById('fixture-output')?.textContent?.includes('sftp list response:')
-            && document.getElementById('fixture-output')?.textContent?.includes('web Telnet provider connected')
-            && document.getElementById('fixture-output')?.textContent?.includes('shared Tabby UI bootstrapped'),
-        null,
-        { timeout: 20000 },
-    )
+    try {
+        await page.waitForFunction(
+            () => document.getElementById('fixture-output')?.textContent?.includes('sftp list response:')
+                && document.getElementById('fixture-output')?.textContent?.includes('web Telnet provider connected')
+                && document.getElementById('fixture-output')?.textContent?.includes('shared Tabby UI bootstrapped'),
+            null,
+            { timeout: 20000 },
+        )
+    } catch (error) {
+        throw new Error(`${error instanceof Error ? error.message : String(error)}\n${await page.locator('#fixture-output').textContent()}`)
+    }
+
+    try {
+        await page.waitForFunction(() => document.querySelectorAll('tab-header').length === 1)
+    } catch (error) {
+        const diagnostic = await page.evaluate(() => ({
+            output: document.getElementById('fixture-output')?.textContent,
+            appRoot: document.querySelector('app-root')?.outerHTML.slice(0, 2000),
+            body: document.body.textContent?.slice(-2000),
+            config: window.ng?.getComponent?.(document.querySelector('app-root'))?.config?.store?.enableWelcomeTab,
+            tabs: window.ng?.getComponent?.(document.querySelector('app-root'))?.app?.tabs?.length,
+        }))
+        throw new Error(`${error instanceof Error ? error.message : String(error)}\n${JSON.stringify(diagnostic)}`)
+    }
+    const splitHotkeyState = await dispatchHotkey(page, modifier, 's')
+    if (splitHotkeyState.matched !== 'split-right') {
+        throw new Error(`split-right hotkey was not matched: ${JSON.stringify(splitHotkeyState)}`)
+    }
+    await page.evaluate(async () => {
+        const appRoot = window.ng?.getComponent?.(document.querySelector('app-root'))
+        const splitTab = appRoot.app.activeTab
+        const newPane = splitTab.tabsService.create({ type: splitTab.focusedTab.constructor })
+        await splitTab.addTab(newPane, splitTab.focusedTab, 'r')
+    })
+    await page.waitForFunction(() => document.querySelectorAll('split-tab-pane-label').length === 2)
+    await page.evaluate(async () => {
+        const appRoot = window.ng?.getComponent?.(document.querySelector('app-root'))
+        appRoot.app.openNewTabRaw({ type: appRoot.app.activeTab.focusedTab.constructor })
+        appRoot.app.selectTab(appRoot.app.tabs[0])
+        window.ng?.applyChanges?.(appRoot)
+    })
+    try {
+        await page.waitForFunction(() => document.querySelectorAll('tab-header').length === 2)
+    } catch (error) {
+        const diagnostic = await page.evaluate(() => {
+            const appRoot = window.ng?.getComponent?.(document.querySelector('app-root'))
+            return {
+                output: document.getElementById('fixture-output')?.textContent,
+                appTabs: appRoot?.app?.tabs?.map(tab => ({ type: tab.constructor?.name, title: tab.title })),
+                tabHeaders: document.querySelectorAll('tab-header').length,
+                contentTabs: document.querySelectorAll('tab-body').length,
+                body: document.body.textContent?.slice(-2000),
+            }
+        })
+        throw new Error(`${error instanceof Error ? error.message : String(error)}\n${JSON.stringify(diagnostic)}`)
+    }
+    const nextTabHotkeyState = await dispatchHotkey(page, modifier, 'ArrowRight')
+    if (nextTabHotkeyState.matched !== 'next-tab') {
+        throw new Error(`next-tab hotkey was not matched: ${JSON.stringify(nextTabHotkeyState)}`)
+    }
+    await page.evaluate(() => {
+        const appRoot = window.ng?.getComponent?.(document.querySelector('app-root'))
+        window.ng?.applyChanges?.(appRoot)
+    })
+    await page.waitForFunction(() => document.querySelectorAll('tab-header.active').length === 1)
+    const commandHotkeyState = await dispatchHotkey(page, modifier, 'p')
+    if (commandHotkeyState.matched !== 'command-selector') {
+        throw new Error(`command-selector hotkey was not matched: ${JSON.stringify(commandHotkeyState)}`)
+    }
+    await page.waitForSelector('selector-modal')
 
     const output = await page.locator('#fixture-output').textContent()
     const positiveChecks = [
@@ -123,6 +187,10 @@ async function exerciseFixture (page) {
         { check: 'shared app root rendered', passed: (await page.locator('app-root').locator('> *').count()) > 0 },
         { check: 'shared theme stylesheet applied', passed: (await page.locator('#theme').count()) > 0 },
         { check: 'shared theme variables applied', passed: await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--theme-bg').trim().length > 0) },
+        { check: 'shared tab rendered', passed: (await page.locator('tab-header').count()) === 2 },
+        { check: 'shared split layout rendered two panes', passed: (await page.locator('split-tab-pane-label').count()) === 2 },
+        { check: 'shared tab switch hotkey selected one tab', passed: (await page.locator('tab-header.active').count()) === 1 },
+        { check: 'shared command selector hotkey opened modal', passed: (await page.locator('selector-modal').count()) === 1 },
     )
     checks.push({
         check: 'invalid token rejected',
@@ -134,6 +202,51 @@ async function exerciseFixture (page) {
         failed: checks.filter(check => !check.passed).map(check => check.check),
         body: (await page.locator('body').textContent()).slice(-400),
     }
+}
+
+async function dispatchHotkey (page, modifier, key) {
+    return await page.evaluate(async ({ modifier, key }) => {
+        const appRoot = window.ng?.getComponent?.(document.querySelector('app-root'))
+        const hotkeys = appRoot?.hotkeys
+        if (!hotkeys) {
+            throw new Error('shared HotkeysService is unavailable')
+        }
+        let matched = null
+        let filteredMatched = null
+        const subscription = hotkeys.unfilteredHotkey$.subscribe(value => { matched = value })
+        const filteredSubscription = hotkeys.hotkey$.subscribe(value => { filteredMatched = value })
+        const modifierFlags = modifier === 'Meta' ? { metaKey: true } : { ctrlKey: true }
+        const code = key === 'ArrowRight' ? key : `Key${key.toUpperCase()}`
+        const emit = async eventName => {
+            const timeStamp = performance.now()
+            hotkeys.pushKeyEvent(eventName, {
+                ...modifierFlags,
+                shiftKey: true,
+                key,
+                code,
+                eventName,
+                timeStamp,
+            })
+            await new Promise(resolve => setTimeout(resolve, 2))
+        }
+        await emit('keydown')
+        const state = {
+            pressedKeystroke: hotkeys.pressedKeystroke,
+            pressedHotkey: hotkeys.pressedHotkey,
+            tabs: appRoot.app.tabs.length,
+            matched,
+            activeTabFocus: appRoot.app.activeTab?.hasFocus,
+            activeTabType: appRoot.app.activeTab?.constructor?.name,
+            focusedTabType: appRoot.app.activeTab?.focusedTab?.constructor?.name,
+            paneCount: appRoot.app.activeTab?.getAllTabs?.().length,
+            activeElement: document.activeElement?.outerHTML?.slice(0, 300),
+            filteredMatched,
+        }
+        await emit('keyup')
+        subscription.unsubscribe()
+        filteredSubscription.unsubscribe()
+        return state
+    }, { modifier, key })
 }
 
 function createElectronMain (fixtureURL) {
