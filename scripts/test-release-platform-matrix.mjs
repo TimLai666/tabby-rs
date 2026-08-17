@@ -24,6 +24,17 @@ assert.deepEqual(workflowDispatch.inputs?.evidence_only, {
 const webGateSteps = releaseWorkflow?.jobs?.['web-gate']?.steps || []
 const buildSteps = releaseWorkflow?.jobs?.build?.steps || []
 const aggregateSteps = releaseWorkflow?.jobs?.aggregate?.steps || []
+const upstreamTagFetch = "git fetch --force --tags https://github.com/Eugeny/tabby.git '+refs/tags/*:refs/tags/*'"
+function assertUpstreamTagsBeforeInstall (steps, jobName) {
+    const fetchIndex = steps.findIndex(step => step.name === 'Fetch upstream tags')
+    const installIndex = steps.findIndex(step => step.name === 'Install dependencies')
+    assert.ok(fetchIndex >= 0, `${jobName} must fetch upstream tags`)
+    assert.equal(steps[fetchIndex]?.run, upstreamTagFetch, `${jobName} must use the pinned upstream tag fetch command`)
+    assert.ok(installIndex >= 0, `${jobName} must install dependencies`)
+    assert.ok(fetchIndex < installIndex, `${jobName} must fetch upstream tags before dependency installation`)
+}
+assertUpstreamTagsBeforeInstall(webGateSteps, 'release Web gate')
+assertUpstreamTagsBeforeInstall(buildSteps, 'release bundle job')
 const linuxDependencies = webGateSteps.find(step => step.name === 'Install Linux build dependencies')
 const realWebRemoteSmoke = webGateSteps.find(step => step.name === 'Test web real OpenSSH SFTP Telnet smoke')
 const stableIssueGate = webGateSteps.find(step => step.name === 'Enforce Stable child issue gate')
