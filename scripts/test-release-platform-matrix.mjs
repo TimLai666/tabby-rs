@@ -24,6 +24,8 @@ assert.deepEqual(workflowDispatch.inputs?.evidence_only, {
 const webGateSteps = releaseWorkflow?.jobs?.['web-gate']?.steps || []
 const buildSteps = releaseWorkflow?.jobs?.build?.steps || []
 const aggregateSteps = releaseWorkflow?.jobs?.aggregate?.steps || []
+const linuxDependencies = webGateSteps.find(step => step.name === 'Install Linux build dependencies')
+const realWebRemoteSmoke = webGateSteps.find(step => step.name === 'Test web real OpenSSH SFTP Telnet smoke')
 const stableIssueGate = webGateSteps.find(step => step.name === 'Enforce Stable child issue gate')
 const platformGate = buildSteps.find(step => step.name === 'Enforce release gate')
 const aggregateGate = aggregateSteps.find(step => step.name === 'Enforce release-wide gate')
@@ -37,6 +39,9 @@ const evidenceContinueOnError = `\${{ ${evidenceCondition} }}`
 const evidenceUploadCondition = `\${{ always() && ((${evidenceCondition}) || success()) }}`
 const evidenceMissingFilesPolicy = `\${{ ${evidenceCondition} && 'warn' || 'error' }}`
 assert.equal(stableIssueGate?.if, "github.event_name != 'workflow_dispatch' || inputs.evidence_only != true", 'evidence-only runs must skip the stable issue gate')
+assert.match(linuxDependencies?.run || '', /openssh-server/, 'release Web gate must install OpenSSH for the real remote smoke')
+assert.match(linuxDependencies?.run || '', /xvfb/, 'release Web gate must install xvfb for the browser smoke')
+assert.equal(realWebRemoteSmoke?.run, 'yarn test:web-real-remote', 'release Web gate must run the real SSH/SFTP/Telnet smoke')
 assert.equal(platformGate?.['continue-on-error'], evidenceContinueOnError, 'evidence-only runs must upload platform gate reports even when they fail')
 assert.equal(aggregateGate?.['continue-on-error'], evidenceContinueOnError, 'evidence-only runs must upload the aggregate gate report even when it fails')
 assert.equal(evidenceFallback?.if, `\${{ always() && ${evidenceCondition} }}`, 'evidence-only runs must create an explicit incomplete gate report after early failures')
