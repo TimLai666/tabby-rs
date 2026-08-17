@@ -9,6 +9,7 @@ import ts from 'typescript'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const require = createRequire(path.join(root, 'tabby-web/webpack.config.mjs'))
 const source = fs.readFileSync(path.join(root, 'tabby-web/src/services/connectionGateway.service.ts'), 'utf8')
+const providerSource = fs.readFileSync(path.join(root, 'tabby-web/src/services/webProvider.service.ts'), 'utf8')
 const javascriptSource = ts.transpileModule(source, {
     compilerOptions: {
         esModuleInterop: true,
@@ -16,6 +17,19 @@ const javascriptSource = ts.transpileModule(source, {
         target: ts.ScriptTarget.ES2020,
     },
 }).outputText
+
+const providerModule = { exports: {} }
+vm.runInNewContext(ts.transpileModule(providerSource, {
+    compilerOptions: {
+        esModuleInterop: true,
+        module: ts.ModuleKind.CommonJS,
+        target: ts.ScriptTarget.ES2020,
+    },
+}).outputText, {
+    exports: providerModule.exports,
+    module: providerModule,
+    require,
+}, { filename: 'webProvider.service.ts' })
 
 const module = { exports: {} }
 const context = {
@@ -27,7 +41,7 @@ const context = {
     console,
     exports: module.exports,
     module,
-    require,
+    require: name => name === './webProvider.service' ? providerModule.exports : require(name),
 }
 vm.runInNewContext(javascriptSource, context, { filename: 'connectionGateway.service.ts' })
 

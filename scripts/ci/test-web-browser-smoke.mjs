@@ -34,6 +34,7 @@ async () => {
     document.getElementById('fixture-terminal-input').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
     click('fixture-resize')
     click('fixture-sftp-list')
+    click('fixture-telnet-connect')
     click('fixture-save-settings')
     click('fixture-load-settings')
     click('fixture-boot-shared-ui')
@@ -42,11 +43,12 @@ async () => {
     const output = document.getElementById('fixture-output').textContent
     const positiveChecks = [
         'host login accepted',
-        'gateway connected',
+        'web SSH provider connected',
         'received: "fixture gateway ready',
         'sent: "echo browser',
         'viewport resize observed:',
-        'sent: "SFTP-LIST /',
+        'sftp list response:',
+        'web Telnet provider connected',
         'settings saved:',
         'settings loaded:',
         'shared plugins loaded: tabby-core, tabby-settings, tabby-terminal, tabby-web',

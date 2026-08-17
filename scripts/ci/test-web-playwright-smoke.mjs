@@ -92,11 +92,14 @@ async function exerciseFixture (page) {
     await page.locator('#fixture-terminal-input').press('Enter')
     await page.locator('#fixture-resize').click()
     await page.locator('#fixture-sftp-list').click()
+    await page.locator('#fixture-telnet-connect').click()
     await page.locator('#fixture-save-settings').click()
     await page.locator('#fixture-load-settings').click()
     await page.locator('#fixture-boot-shared-ui').click()
     await page.waitForFunction(
-        () => document.getElementById('fixture-output')?.textContent?.includes('shared Tabby UI bootstrapped'),
+        () => document.getElementById('fixture-output')?.textContent?.includes('sftp list response:')
+            && document.getElementById('fixture-output')?.textContent?.includes('web Telnet provider connected')
+            && document.getElementById('fixture-output')?.textContent?.includes('shared Tabby UI bootstrapped'),
         null,
         { timeout: 20000 },
     )
@@ -104,11 +107,12 @@ async function exerciseFixture (page) {
     const output = await page.locator('#fixture-output').textContent()
     const positiveChecks = [
         'host login accepted',
-        'gateway connected',
+        'web SSH provider connected',
         'received: "fixture gateway ready',
         'sent: "echo browser',
         'viewport resize observed:',
-        'sent: "SFTP-LIST /',
+        'sftp list response:',
+        'web Telnet provider connected',
         'settings saved:',
         'settings loaded:',
         'shared plugins loaded: tabby-core, tabby-settings, tabby-terminal, tabby-web',

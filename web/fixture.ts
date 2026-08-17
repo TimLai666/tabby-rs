@@ -1,5 +1,5 @@
-import { WebGatewayConnector, WebGatewaySocket } from '../tabby-web/src/services/connectionGateway.service'
-import type { WebHostConnector } from '../tabby-web/src/services/connectionGateway.service'
+import { WebGatewayConnector, type WebHostConnector } from '../tabby-web/src/services/connectionGateway.service'
+import type { WebSSHSession, WebSFTPSession, WebTelnetSession } from '../tabby-web/src/services/webProvider.service'
 import type { BootstrapData } from '../tabby-core/src/api/mainProcess'
 
 interface FixtureBootstrapOptions {
@@ -27,10 +27,13 @@ const portInput = document.querySelector<HTMLInputElement>('#fixture-port')!
 const terminalInput = document.querySelector<HTMLInputElement>('#fixture-terminal-input')!
 const resizeButton = document.querySelector<HTMLButtonElement>('#fixture-resize')!
 const sftpButton = document.querySelector<HTMLButtonElement>('#fixture-sftp-list')!
+const telnetButton = document.querySelector<HTMLButtonElement>('#fixture-telnet-connect')!
 const settingsInput = document.querySelector<HTMLTextAreaElement>('#fixture-settings')!
 
 let connector: WebGatewayConnector|null = null
-let socket: WebGatewaySocket|null = null
+let sshSession: WebSSHSession|null = null
+let sftpSession: WebSFTPSession|null = null
+let telnetSession: WebTelnetSession|null = null
 
 function setStatus (message: string): void {
     status.textContent = message
@@ -45,24 +48,25 @@ function connectSocket (): void {
     if (!connector) {
         throw new Error('Sign in to the web host before connecting')
     }
-    socket?.close()
-    socket = connector.createSocket()
-    socket.connect$.subscribe(() => {
+    sshSession?.close()
+    sshSession = connector.createSSHSession()
+    sshSession.connect$.subscribe(() => {
         setStatus('connected')
-        log('gateway connected')
+        log('web SSH provider connected')
     })
-    socket.data$.subscribe(data => {
+    sshSession.data$.subscribe(data => {
         const text = new TextDecoder().decode(data)
         log(`received: ${JSON.stringify(text)}`)
     })
-    socket.error$.subscribe(error => {
+    sshSession.error$.subscribe(error => {
         setStatus(`error: ${error.message}`)
         log(`gateway error: ${error.message}`)
     })
-    socket.close$.subscribe(() => log('gateway closed'))
-    void socket.connect({
+    sshSession.close$.subscribe(() => log('web SSH provider closed'))
+    void sshSession.connect({
         host: hostInput.value || 'fixture.example.test',
         port: Number(portInput.value) || 22,
+        username: 'fixture-user',
     })
 }
 
@@ -95,12 +99,12 @@ terminalInput.addEventListener('keydown', event => {
         return
     }
     event.preventDefault()
-    if (!socket) {
+    if (!sshSession) {
         setStatus('connect before sending terminal input')
         return
     }
     const value = `${terminalInput.value}\r`
-    socket.write(new TextEncoder().encode(value))
+    sshSession.write(new TextEncoder().encode(value))
     log(`sent: ${JSON.stringify(value)}`)
     terminalInput.value = ''
 })
@@ -109,17 +113,44 @@ resizeButton.addEventListener('click', () => {
     const columns = Math.max(1, Math.floor(window.innerWidth / 8))
     const rows = Math.max(1, Math.floor(window.innerHeight / 16))
     document.body.dataset.viewport = `${columns}x${rows}`
-    log(`viewport resize observed: ${columns}x${rows}`)
+    if (!sshSession) {
+        setStatus('connect before resizing')
+        return
+    }
+    void sshSession.resize(columns, rows).then(() => {
+        log(`viewport resize observed: ${columns}x${rows}`)
+    }).catch(error => log(`viewport resize failed: ${error instanceof Error ? error.message : String(error)}`))
 })
 
 sftpButton.addEventListener('click', () => {
-    if (!socket) {
+    if (!connector) {
         setStatus('connect before requesting SFTP list')
         return
     }
-    const request = `SFTP-LIST /\r`
-    socket.write(new TextEncoder().encode(request))
-    log(`sent: ${JSON.stringify(request)}`)
+    sftpSession?.close()
+    sftpSession = connector.createSFTPSession()
+    void sftpSession.connect({
+        host: hostInput.value || 'fixture.example.test',
+        port: Number(portInput.value) || 22,
+        username: 'fixture-user',
+    }).then(async () => {
+        const entries = await sftpSession!.list('/')
+        log(`sftp list response: ${JSON.stringify(entries)}`)
+    }).catch(error => log(`sftp list failed: ${error instanceof Error ? error.message : String(error)}`))
+})
+
+telnetButton.addEventListener('click', () => {
+    if (!connector) {
+        setStatus('sign in before connecting Telnet')
+        return
+    }
+    telnetSession?.close()
+    telnetSession = connector.createTelnetSession()
+    telnetSession.connect$.subscribe(() => log('web Telnet provider connected'))
+    void telnetSession.connect({
+        host: hostInput.value || 'fixture.example.test',
+        port: 23,
+    }).catch(error => log(`Telnet provider failed: ${error instanceof Error ? error.message : String(error)}`))
 })
 
 document.querySelector<HTMLButtonElement>('#fixture-save-settings')!.addEventListener('click', () => {

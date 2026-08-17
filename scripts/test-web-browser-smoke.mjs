@@ -58,6 +58,7 @@ server.on('upgrade', (request, socket, head) => {
 gateway.on('connection', client => {
     let authenticated = false
     let connected = false
+    let protocol = 'tcp'
     client.send(JSON.stringify({ _: 'hello' }))
     events.push('hello')
     client.on('message', (message, isBinary) => {
@@ -74,9 +75,24 @@ gateway.on('connection', client => {
             client.send(JSON.stringify(authenticated ? { _: 'ready' } : { _: 'error', details: 'invalid fixture token' }))
         } else if (serviceMessage._ === 'connect' && authenticated) {
             connected = true
-            events.push(`connect:${serviceMessage.host}:${serviceMessage.port}`)
-            client.send(JSON.stringify({ _: 'connected' }))
-            client.send(Buffer.from('fixture gateway ready\r\n'))
+            protocol = serviceMessage.protocol ?? 'tcp'
+            events.push(`connect:${protocol}:${serviceMessage.host}:${serviceMessage.port}`)
+            client.send(JSON.stringify({ _: 'connected', protocol }))
+            if (protocol !== 'sftp') client.send(Buffer.from('fixture gateway ready\r\n'))
+        } else if (serviceMessage._ === 'provider-request' && authenticated && connected) {
+            events.push(`provider:${serviceMessage.protocol}:${serviceMessage.operation}`)
+            if (serviceMessage.operation === 'list' && serviceMessage.protocol === 'sftp') {
+                client.send(JSON.stringify({
+                    _: 'response',
+                    id: serviceMessage.id,
+                    ok: true,
+                    result: [{ name: 'fixture.txt', path: '/', directory: false, size: 16 }],
+                }))
+            } else if (serviceMessage.operation === 'resize') {
+                client.send(JSON.stringify({ _: 'response', id: serviceMessage.id, ok: true, result: null }))
+            } else {
+                client.send(JSON.stringify({ _: 'response', id: serviceMessage.id, ok: true, result: null }))
+            }
         }
     })
     client.on('close', () => events.push(connected ? 'closed-connected' : 'closed'))

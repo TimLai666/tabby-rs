@@ -157,6 +157,9 @@ jobs:
       - name: Test web SSH SFTP Telnet connection smoke
         run: yarn test:web-connection-smoke
 
+      - name: Test web provider contract
+        run: yarn test:web-provider-contract
+
       - name: Test web plugin loader
         run: yarn test:web-plugin-loader
 

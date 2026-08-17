@@ -1,8 +1,13 @@
 import { Subject } from 'rxjs'
+import { WebProviderSession, WebSFTPSession, WebSSHSession, WebTelnetSession } from './webProvider.service'
+
+export type WebGatewayProtocol = 'tcp'|'ssh'|'sftp'|'telnet'
 
 export interface WebGatewaySocketOptions {
     host: string
     port: number
+    protocol?: WebGatewayProtocol
+    username?: string
 }
 
 export interface WebGatewaySocketLike {
@@ -30,8 +35,10 @@ export interface WebHostConnector {
     getAppVersion: () => string
 }
 
-interface GatewayMessage {
+export interface WebGatewayServiceMessage {
     _: string
+    id?: string
+    ok?: boolean
     [key: string]: unknown
 }
 
@@ -73,21 +80,32 @@ function normalizeConnectOptions (options: WebGatewaySocketOptions|number, host?
     ) {
         throw new Error('Web gateway socket requires a valid host and port')
     }
-    return {
+    const normalized: WebGatewaySocketOptions = {
         host: options.host,
         port: options.port,
     }
+    if (options.protocol) {
+        normalized.protocol = options.protocol
+    }
+    if (options.username) {
+        normalized.username = options.username
+    }
+    return normalized
 }
 
 export class WebGatewaySocket {
     readonly connect$ = new Subject<void>()
     readonly data$ = new Subject<Uint8Array>()
+    readonly service$ = new Subject<WebGatewayServiceMessage>()
     readonly error$ = new Subject<Error>()
     readonly close$ = new Subject<void>()
 
     private webSocket: WebGatewaySocketLike|null = null
     private options: WebGatewaySocketOptions|null = null
     private readonly pendingWrites: Uint8Array[] = []
+    private readonly pendingRequests = new Map<string, { resolve: (value: unknown) => void, reject: (error: Error) => void }>()
+    private readonly connectionWaiters = new Set<{ resolve: () => void, reject: (error: Error) => void }>()
+    private requestSequence = 0
     private connected = false
     private closed = false
 
@@ -123,7 +141,7 @@ export class WebGatewaySocket {
     private async handleMessage (data: unknown): Promise<void> {
         if (typeof data === 'string') {
             try {
-                const message = JSON.parse(data) as GatewayMessage
+                const message = JSON.parse(data) as WebGatewayServiceMessage
                 this.handleServiceMessage(message)
             } catch (error) {
                 this.close(asError(error, 'Web gateway sent invalid JSON'))
@@ -150,7 +168,20 @@ export class WebGatewaySocket {
         throw new Error('Web gateway sent an unsupported data frame')
     }
 
-    handleServiceMessage (message: GatewayMessage): void {
+    handleServiceMessage (message: WebGatewayServiceMessage): void {
+        this.service$.next(message)
+        if (message._ === 'response' && typeof message.id === 'string') {
+            const pending = this.pendingRequests.get(message.id)
+            if (pending) {
+                this.pendingRequests.delete(message.id)
+                if (message.ok === false) {
+                    pending.reject(new Error(typeof message.error === 'string' ? message.error : 'Web gateway request failed'))
+                } else {
+                    pending.resolve(message.result)
+                }
+            }
+            return
+        }
         if (message._ === 'hello') {
             this.sendServiceMessage({
                 _: 'hello',
@@ -162,22 +193,33 @@ export class WebGatewaySocket {
                 this.close(new Error('Web gateway became ready before connect options were set'))
                 return
             }
-            this.sendServiceMessage({
+            const connectMessage: WebGatewayServiceMessage = {
                 _: 'connect',
                 host: this.options.host,
                 port: this.options.port,
-            })
+            }
+            if (this.options.protocol) {
+                connectMessage.protocol = this.options.protocol
+            }
+            if (this.options.username) {
+                connectMessage.username = this.options.username
+            }
+            this.sendServiceMessage(connectMessage)
         } else if (message._ === 'connected') {
             this.connected = true
             this.connect$.next()
             this.connect$.complete()
+            for (const waiter of this.connectionWaiters) {
+                waiter.resolve()
+            }
+            this.connectionWaiters.clear()
             this.flushWrites()
         } else if (message._ === 'error') {
             this.close(new Error(typeof message.details === 'string' ? message.details : 'Web gateway rejected the connection'))
         }
     }
 
-    private sendServiceMessage (message: GatewayMessage): void {
+    private sendServiceMessage (message: WebGatewayServiceMessage): void {
         this.webSocket?.send(JSON.stringify(message))
     }
 
@@ -206,6 +248,40 @@ export class WebGatewaySocket {
         this.sendBytes(chunk)
     }
 
+    async waitForConnection (): Promise<void> {
+        if (this.connected) {
+            return
+        }
+        if (this.closed) {
+            throw new Error('Web gateway socket is closed')
+        }
+        await new Promise<void>((resolve, reject) => {
+            this.connectionWaiters.add({ resolve, reject })
+        })
+    }
+
+    request<T = unknown> (message: Omit<WebGatewayServiceMessage, 'id'>): Promise<T> {
+        if (this.closed) {
+            return Promise.reject(new Error('Web gateway socket is closed'))
+        }
+        if (!this.connected) {
+            return Promise.reject(new Error('Web gateway socket is not connected'))
+        }
+        const id = `request-${++this.requestSequence}`
+        return new Promise<T>((resolve, reject) => {
+            this.pendingRequests.set(id, {
+                resolve: value => resolve(value as T),
+                reject,
+            })
+            try {
+                this.sendServiceMessage({ ...message, id } as WebGatewayServiceMessage)
+            } catch (error) {
+                this.pendingRequests.delete(id)
+                reject(asError(error, 'Web gateway request could not be sent'))
+            }
+        })
+    }
+
     close (error?: Error): void {
         if (this.closed) {
             return
@@ -220,8 +296,18 @@ export class WebGatewaySocket {
         if (error) {
             this.error$.next(error)
         }
+        const closeError = error ?? new Error('Web gateway socket closed before connection')
+        for (const waiter of this.connectionWaiters) {
+            waiter.reject(closeError)
+        }
+        this.connectionWaiters.clear()
+        for (const pending of this.pendingRequests.values()) {
+            pending.reject(closeError)
+        }
+        this.pendingRequests.clear()
         this.connect$.complete()
         this.data$.complete()
+        this.service$.complete()
         this.error$.complete()
         this.close$.next()
         this.close$.complete()
@@ -238,5 +324,28 @@ export class WebGatewayConnector {
         this.sockets.add(socket)
         socket.close$.subscribe(() => this.sockets.delete(socket))
         return socket
+    }
+
+    createProviderSession (protocol: Exclude<WebGatewayProtocol, 'tcp'>): WebProviderSession {
+        const socket = this.createSocket()
+        if (protocol === 'ssh') {
+            return new WebSSHSession(this, socket)
+        }
+        if (protocol === 'sftp') {
+            return new WebSFTPSession(this, socket)
+        }
+        return new WebTelnetSession(this, socket)
+    }
+
+    createSSHSession (): WebSSHSession {
+        return this.createProviderSession('ssh') as WebSSHSession
+    }
+
+    createSFTPSession (): WebSFTPSession {
+        return this.createProviderSession('sftp') as WebSFTPSession
+    }
+
+    createTelnetSession (): WebTelnetSession {
+        return this.createProviderSession('telnet') as WebTelnetSession
     }
 }
