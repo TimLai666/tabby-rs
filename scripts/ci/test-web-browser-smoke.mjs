@@ -55,6 +55,11 @@ async () => {
         'shared Tabby UI bootstrapped',
     ]
     const checks = positiveChecks.map(check => ({ check, passed: output.includes(check) }))
+    checks.push(
+        { check: 'shared app root rendered', passed: (document.querySelector('app-root')?.children.length ?? 0) > 0 },
+        { check: 'shared theme stylesheet applied', passed: document.getElementById('theme') !== null },
+        { check: 'shared theme variables applied', passed: getComputedStyle(document.documentElement).getPropertyValue('--theme-bg').trim().length > 0 },
+    )
 
     checks.push({ check: 'invalid token rejected', passed: negativeStatus === 'invalid token' && negativeOutput.includes('host login rejected') })
 
