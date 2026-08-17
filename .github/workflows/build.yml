@@ -131,6 +131,9 @@ jobs:
       - name: Test web Playwright smoke
         run: yarn test:web-playwright-smoke
 
+      - name: Test web real OpenSSH fixture contract
+        run: yarn test:web-real-remote-contract
+
       - name: Test web real OpenSSH and SFTP smoke
         run: yarn test:web-real-remote
 

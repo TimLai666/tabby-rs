@@ -96,7 +96,8 @@ async function startOpenSsh () {
         throw new Error('real Web remote fixture requires Unix OpenSSH')
     }
 
-    commandOutput(process.env.TABBY_RS_SSHD || '/usr/sbin/sshd', ['-V'])
+    const sshdPath = process.env.TABBY_RS_SSHD || '/usr/sbin/sshd'
+    ensureExecutable(sshdPath)
     ensureExecutable('ssh')
     ensureExecutable('sftp')
 
@@ -135,7 +136,7 @@ async function startOpenSsh () {
         '',
     ].join('\n'))
 
-    const sshd = spawn(process.env.TABBY_RS_SSHD || '/usr/sbin/sshd', ['-D', '-e', '-f', config], {
+    const sshd = spawn(sshdPath, ['-D', '-e', '-f', config], {
         stdio: ['ignore', 'ignore', 'pipe'],
     })
     let sshdError = ''
