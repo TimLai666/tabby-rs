@@ -278,7 +278,7 @@ jobs:
           else
             echo "name=stable" >> "$GITHUB_OUTPUT"
           fi
-          base_version=$(node -e 'const fs = require("fs"); const line = fs.readFileSync("src-tauri/Cargo.toml", "utf8").split("\\n").find(value => value.startsWith("version = ")); console.log(line.match(/"([^"]+)"/)[1])')
+          base_version=$(node -e 'const fs = require("fs"); const line = fs.readFileSync("src-tauri/Cargo.toml", "utf8").split(/\r?\n/).find(value => value.startsWith("version = ")); console.log(line.match(/"([^"]+)"/)[1])')
           if [ "$release_channel" = "nightly" ]; then
             version="${base_version}.nightly.$(date -u +%Y%m%d).${GITHUB_RUN_NUMBER}"
           else
@@ -482,7 +482,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          base_version=$(node -e 'const fs = require("fs"); const line = fs.readFileSync("src-tauri/Cargo.toml", "utf8").split("\\n").find(value => value.startsWith("version = ")); console.log(line.match(/"([^"]+)"/)[1])')
+          base_version=$(node -e 'const fs = require("fs"); const line = fs.readFileSync("src-tauri/Cargo.toml", "utf8").split(/\r?\n/).find(value => value.startsWith("version = ")); console.log(line.match(/"([^"]+)"/)[1])')
           if [ "${{ steps.channel.outputs.name }}" = "nightly" ]; then
             release_tag="nightly-${GITHUB_SHA}"
           elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
