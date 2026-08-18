@@ -66,7 +66,7 @@ fn main() {
             .map(std::path::PathBuf::from)
             .expect("OUT_DIR is not set");
         println!(
-            "cargo:rustc-link-arg-tests={}",
+            "cargo:rustc-link-arg={}",
             out_dir.join("resource.lib").display()
         );
     }
