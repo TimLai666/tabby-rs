@@ -284,7 +284,9 @@ jobs:
           fi
           {
             echo "private_key_path=$private_key_path"
-            echo "public_key=$(tr -d '\r\n' < "$key_path.pub")"
+            echo "public_key<<EOF"
+            cat "$key_path.pub"
+            echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
       - name: Select release channel
