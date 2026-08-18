@@ -424,7 +424,20 @@ jobs:
           if ($null -eq $binary) {
             throw 'Windows Rust host test executable was not produced'
           }
-          & $dumpbin /nologo /imports $binary.FullName
+          $integration = Get-ChildItem 'src-tauri/target/debug/deps/update_fake_server-*.exe' |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+          if ($null -eq $integration) {
+            throw 'Windows updater integration test executable was not produced'
+          }
+          $unitImports = Join-Path $env:RUNNER_TEMP 'tabby-rs-unit-imports.txt'
+          $integrationImports = Join-Path $env:RUNNER_TEMP 'tabby-rs-integration-imports.txt'
+          & $dumpbin /nologo /imports $binary.FullName *> $unitImports
+          & $dumpbin /nologo /imports $integration.FullName *> $integrationImports
+          Write-Host '=== Unit-only imports ==='
+          Compare-Object (Get-Content $integrationImports) (Get-Content $unitImports) |
+            Where-Object SideIndicator -eq '=>' |
+            ForEach-Object InputObject
 
       - name: Test Rust host
         if: matrix.name != 'windows'
