@@ -324,15 +324,9 @@ jobs:
           TABBY_RS_UPDATE_PUBLIC_KEY: ${{ github.event_name == 'workflow_dispatch' && inputs.evidence_only == true && steps.evidence-signing.outputs.public_key || secrets.TABBY_RS_UPDATE_PUBLIC_KEY }}
           TABBY_RS_UPDATE_ENDPOINT_STABLE: ${{ vars.TABBY_RS_UPDATE_ENDPOINT_STABLE }}
           TABBY_RS_UPDATE_ENDPOINT_NIGHTLY: ${{ vars.TABBY_RS_UPDATE_ENDPOINT_NIGHTLY }}
-          TAURI_SIGNING_PRIVATE_KEY_PATH: ${{ github.event_name == 'workflow_dispatch' && inputs.evidence_only == true && steps.evidence-signing.outputs.private_key_path || '' }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ github.event_name == 'workflow_dispatch' && inputs.evidence_only == true && '' || secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ github.event_name == 'workflow_dispatch' && inputs.evidence_only == true && steps.evidence-signing.outputs.private_key_path || secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ github.event_name == 'workflow_dispatch' && inputs.evidence_only == true && '' || secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.evidence_only }}" = "true" ]; then
-            # An empty key env var takes precedence over the runner-local key path in Tauri.
-            unset TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD
-          fi
-          cargo tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config src-tauri/tauri.release.conf.json
+        run: cargo tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config src-tauri/tauri.release.conf.json
 
       - name: Prepare release metadata
         shell: bash
