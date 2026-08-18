@@ -256,7 +256,7 @@ jobs:
       - name: Test Rust host on Windows
         if: runner.os == 'Windows'
         env:
-          RUSTFLAGS: '-C link-arg=/MANIFESTINPUT:src-tauri/windows-app-manifest.xml -C link-arg=/MANIFEST:EMBED'
+          RUSTFLAGS: '-C link-arg=/MANIFESTINPUT:${{ github.workspace }}/src-tauri/windows-app-manifest.xml -C link-arg=/MANIFEST:EMBED'
         run: cargo test --manifest-path src-tauri/Cargo.toml --lib
 
       - name: Test system npm plugin lifecycle
