@@ -71,13 +71,46 @@ function normalizedArch (value) {
     return { x64: 'x86_64', arm64: 'aarch64' }[value] || value
 }
 
-async function waitForFile (filePath, timeoutMs) {
+function attachChildDiagnostics (child) {
+    const stderr = []
+    let stderrBytes = 0
+    let spawnError = null
+    const maxStderrBytes = 16 * 1024
+    child.stderr?.on('data', chunk => {
+        if (stderrBytes >= maxStderrBytes) return
+        const remaining = maxStderrBytes - stderrBytes
+        const retained = chunk.subarray(0, remaining)
+        stderr.push(retained)
+        stderrBytes += retained.length
+    })
+    child.once('error', error => {
+        spawnError = error
+    })
+    return { stderr, get spawnError () { return spawnError } }
+}
+
+function childFailureDescription (child, diagnostics) {
+    const state = diagnostics.spawnError
+        ? `could not start: ${diagnostics.spawnError.message}`
+        : child.exitCode !== null
+            ? `exited with code ${child.exitCode}`
+            : child.signalCode !== null
+                ? `exited with signal ${child.signalCode}`
+                : 'still running'
+    const stderr = Buffer.concat(diagnostics.stderr).toString('utf8').trim()
+    return stderr ? `${state}; stderr: ${stderr}` : state
+}
+
+async function waitForFile (filePath, timeoutMs, child, diagnostics) {
     const deadline = Date.now() + timeoutMs
     while (Date.now() < deadline) {
         if (fs.existsSync(filePath)) return
+        if (diagnostics.spawnError || child.exitCode !== null || child.signalCode !== null) {
+            throw new Error(`benchmark process exited before writing ready marker (${childFailureDescription(child, diagnostics)}): ${filePath}`)
+        }
         await new Promise(resolve => setTimeout(resolve, 10))
     }
-    throw new Error(`benchmark process did not write ready marker within ${timeoutMs}ms: ${filePath}`)
+    throw new Error(`benchmark process did not write ready marker within ${timeoutMs}ms (${childFailureDescription(child, diagnostics)}): ${filePath}`)
 }
 
 async function terminate (child) {
@@ -108,10 +141,11 @@ async function readySample (command, args, timeoutMs, configFixturePath) {
             TABBY_RS_BENCHMARK_READY_FILE: marker,
             TABBY_RS_BENCHMARK_DATA_DIR: dataDirectory,
         },
-        stdio: 'ignore',
+        stdio: ['ignore', 'ignore', 'pipe'],
     })
+    const diagnostics = attachChildDiagnostics(child)
     try {
-        await waitForFile(marker, timeoutMs)
+        await waitForFile(marker, timeoutMs, child, diagnostics)
         return Number(process.hrtime.bigint() - started) / 1e6
     } finally {
         await terminate(child)
@@ -162,10 +196,11 @@ async function memorySample (command, args, waitMs, timeoutMs, configFixturePath
             TABBY_RS_BENCHMARK_READY_FILE: marker,
             TABBY_RS_BENCHMARK_DATA_DIR: dataDirectory,
         },
-        stdio: 'ignore',
+        stdio: ['ignore', 'ignore', 'pipe'],
     })
+    const diagnostics = attachChildDiagnostics(child)
     try {
-        await waitForFile(marker, timeoutMs)
+        await waitForFile(marker, timeoutMs, child, diagnostics)
         await new Promise(resolve => setTimeout(resolve, waitMs))
         return processTreeRssBytes(child.pid)
     } finally {

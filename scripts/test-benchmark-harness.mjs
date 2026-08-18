@@ -86,4 +86,47 @@ const missingBinaryEvidence = {
 }
 assert.ok(validateBenchmarkReport(missingBinaryEvidence, expected.output).some(error => error.includes('provenance.binary must be an object')))
 
+let exitedBeforeReady
+try {
+    await execFileAsync(process.execPath, [runner,
+        '--output-dir', path.join(work, 'exited-before-ready'),
+        '--samples', '1',
+        '--ready-timeout-ms', '1000',
+        '--binary', process.execPath,
+        '--binary-path', process.execPath,
+        '--binary-args', JSON.stringify([fixture, '--unknown']),
+        '--bundle', bundleDir,
+        '--config-fixture-path', configFixture,
+        '--platform', 'linux',
+        '--arch', 'x86_64',
+        '--target', 'fixture-target',
+    ], { cwd: root })
+} catch (error) {
+    exitedBeforeReady = error
+}
+assert.ok(exitedBeforeReady)
+assert.match(exitedBeforeReady.stderr, /exited before writing ready marker \(exited with code 1; stderr:/)
+assert.match(exitedBeforeReady.stderr, /unknown benchmark fixture mode: --unknown/)
+
+let timedOutBeforeReady
+try {
+    await execFileAsync(process.execPath, [runner,
+        '--output-dir', path.join(work, 'timed-out-before-ready'),
+        '--samples', '1',
+        '--ready-timeout-ms', '100',
+        '--binary', process.execPath,
+        '--binary-path', process.execPath,
+        '--binary-args', JSON.stringify(['-e', 'setInterval(() => {}, 1000)']),
+        '--bundle', bundleDir,
+        '--config-fixture-path', configFixture,
+        '--platform', 'linux',
+        '--arch', 'x86_64',
+        '--target', 'fixture-target',
+    ], { cwd: root })
+} catch (error) {
+    timedOutBeforeReady = error
+}
+assert.ok(timedOutBeforeReady)
+assert.match(timedOutBeforeReady.stderr, /did not write ready marker within 100ms \(still running\)/)
+
 console.log('Benchmark harness fixtures passed')
