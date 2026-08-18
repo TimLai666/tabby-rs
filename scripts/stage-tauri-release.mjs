@@ -17,10 +17,14 @@ function copyTree (from, to, relativeDirectory = '') {
         const sourcePath = path.join(from, entry.name)
         const destinationPath = path.join(to, entry.name)
         const relativePath = path.join(relativeDirectory, entry.name)
-        if (entry.isDirectory()) {
+        // Tauri can emit the macOS application bundle as a directory symlink.
+        // Resolve symlinks for staging so the uploaded evidence contains the
+        // actual bundle instead of silently dropping it.
+        const target = entry.isSymbolicLink() ? fs.statSync(sourcePath) : entry
+        if (target.isDirectory()) {
             fs.mkdirSync(destinationPath, { recursive: true })
             copyTree(sourcePath, destinationPath, relativePath)
-        } else if (entry.isFile() && shouldStage(relativePath)) {
+        } else if (target.isFile() && shouldStage(relativePath)) {
             fs.copyFileSync(sourcePath, destinationPath)
         }
     }
