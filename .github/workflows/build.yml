@@ -447,6 +447,23 @@ jobs:
         if: matrix.name == 'windows'
         run: cargo test --manifest-path src-tauri/Cargo.toml --lib
 
+      - name: Inspect Windows Rust host startup event
+        if: matrix.name == 'windows' && failure()
+        shell: pwsh
+        run: |
+          $events = Get-WinEvent -FilterHashtable @{
+            LogName = 'Application'
+            Id = 1000, 1001
+            StartTime = (Get-Date).AddMinutes(-10)
+          } -ErrorAction SilentlyContinue
+          if ($null -eq $events) {
+            Write-Host 'No recent Windows application error events were recorded.'
+            exit 0
+          }
+          $events |
+            Select-Object -First 20 TimeCreated, Id, ProviderName, Message |
+            Format-List
+
       - name: Test SSH authentication fixture
         if: matrix.name != 'windows'
         run: yarn test:ssh-auth-integration
