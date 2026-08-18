@@ -59,9 +59,7 @@ fn main() {
     materialize_icon(&manifest_dir, "icon.png").expect("failed to materialize Tauri PNG icon");
     materialize_icon(&manifest_dir, "icon.ico").expect("failed to materialize Tauri ICO icon");
 
-    tauri_build::build();
-
-    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+    let windows_manifest = if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         let out_dir = env::var_os("OUT_DIR")
             .map(std::path::PathBuf::from)
             .expect("OUT_DIR is not set");
@@ -69,10 +67,20 @@ fn main() {
         fs::write(&manifest_path, include_str!("windows-app-manifest.xml"))
             .expect("failed to write the Windows test manifest");
         println!("cargo:rerun-if-changed=windows-app-manifest.xml");
+        Some(manifest_path)
+    } else {
+        None
+    };
+
+    let windows_attributes = tauri_build::WindowsAttributes::new_without_app_manifest();
+    tauri_build::try_build(tauri_build::Attributes::new().windows_attributes(windows_attributes))
+        .expect("failed to run Tauri build script");
+
+    if let Some(manifest_path) = windows_manifest {
         println!(
-            "cargo:rustc-link-arg-tests=/MANIFESTINPUT:{}",
+            "cargo:rustc-link-arg=/MANIFESTINPUT:{}",
             manifest_path.display()
         );
-        println!("cargo:rustc-link-arg-tests=/MANIFEST:EMBED");
+        println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
     }
 }
