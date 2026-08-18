@@ -412,11 +412,11 @@ jobs:
         shell: pwsh
         run: |
           cargo test --manifest-path src-tauri/Cargo.toml --lib --no-run
-          $sysroot = (rustc --print sysroot).Trim()
-          $readobj = Join-Path $sysroot 'bin/llvm-readobj.exe'
-          if (-not (Test-Path $readobj)) {
-            Write-Host "llvm-readobj was not found at $readobj"
-            exit 0
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $dumpbin = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -find 'VC\Tools\MSVC\**\bin\Hostx64\x64\dumpbin.exe' |
+            Select-Object -First 1
+          if (-not $dumpbin) {
+            throw 'dumpbin.exe was not found'
           }
           $binary = Get-ChildItem 'src-tauri/target/debug/deps/tabby_rs-*.exe' |
             Sort-Object LastWriteTime -Descending |
@@ -424,7 +424,7 @@ jobs:
           if ($null -eq $binary) {
             throw 'Windows Rust host test executable was not produced'
           }
-          & $readobj --coff-imports $binary.FullName
+          & $dumpbin /nologo /imports $binary.FullName
 
       - name: Test Rust host
         if: matrix.name != 'windows'
