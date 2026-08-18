@@ -217,7 +217,13 @@ fn get(server: &FakeUpdateServer, path: &str) -> (u16, Vec<u8>) {
             .as_bytes(),
         )
         .unwrap();
-    stream.shutdown(Shutdown::Write).unwrap();
+    if let Err(error) = stream.shutdown(Shutdown::Write) {
+        assert_eq!(
+            error.kind(),
+            std::io::ErrorKind::NotConnected,
+            "request half-close failed unexpectedly: {error}"
+        );
+    }
     let mut response = Vec::new();
     stream.read_to_end(&mut response).unwrap();
     let header_end = response
