@@ -407,38 +407,6 @@ jobs:
       - name: Test updater fake server fixtures
         run: yarn test:tauri:update-fake-server
 
-      - name: Inspect Windows Rust host test imports
-        if: matrix.name == 'windows'
-        shell: pwsh
-        run: |
-          cargo test --manifest-path src-tauri/Cargo.toml --lib --no-run
-          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          $dumpbin = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -find 'VC\Tools\MSVC\**\bin\Hostx64\x64\dumpbin.exe' |
-            Select-Object -First 1
-          if (-not $dumpbin) {
-            throw 'dumpbin.exe was not found'
-          }
-          $binary = Get-ChildItem 'src-tauri/target/debug/deps/tabby_rs-*.exe' |
-            Sort-Object LastWriteTime -Descending |
-            Select-Object -First 1
-          if ($null -eq $binary) {
-            throw 'Windows Rust host test executable was not produced'
-          }
-          $integration = Get-ChildItem 'src-tauri/target/debug/deps/update_fake_server-*.exe' |
-            Sort-Object LastWriteTime -Descending |
-            Select-Object -First 1
-          if ($null -eq $integration) {
-            throw 'Windows updater integration test executable was not produced'
-          }
-          $unitImports = Join-Path $env:RUNNER_TEMP 'tabby-rs-unit-imports.txt'
-          $integrationImports = Join-Path $env:RUNNER_TEMP 'tabby-rs-integration-imports.txt'
-          & $dumpbin /nologo /imports $binary.FullName *> $unitImports
-          & $dumpbin /nologo /imports $integration.FullName *> $integrationImports
-          Write-Host '=== Unit-only imports ==='
-          Compare-Object (Get-Content $integrationImports) (Get-Content $unitImports) |
-            Where-Object SideIndicator -eq '=>' |
-            ForEach-Object InputObject
-
       - name: Test Rust host
         if: matrix.name != 'windows'
         run: cargo test --manifest-path src-tauri/Cargo.toml
@@ -446,23 +414,6 @@ jobs:
       - name: Test Rust host on Windows
         if: matrix.name == 'windows'
         run: cargo test --manifest-path src-tauri/Cargo.toml --lib
-
-      - name: Inspect Windows Rust host startup event
-        if: matrix.name == 'windows' && failure()
-        shell: pwsh
-        run: |
-          $events = Get-WinEvent -FilterHashtable @{
-            LogName = 'Application'
-            Id = 1000, 1001
-            StartTime = (Get-Date).AddMinutes(-10)
-          } -ErrorAction SilentlyContinue
-          if ($null -eq $events) {
-            Write-Host 'No recent Windows application error events were recorded.'
-            exit 0
-          }
-          $events |
-            Select-Object -First 20 TimeCreated, Id, ProviderName, Message |
-            Format-List
 
       - name: Test SSH authentication fixture
         if: matrix.name != 'windows'

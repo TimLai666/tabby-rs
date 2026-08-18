@@ -59,5 +59,15 @@ fn main() {
     materialize_icon(&manifest_dir, "icon.png").expect("failed to materialize Tauri PNG icon");
     materialize_icon(&manifest_dir, "icon.ico").expect("failed to materialize Tauri ICO icon");
 
-    tauri_build::build()
+    tauri_build::build();
+
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+        let out_dir = env::var_os("OUT_DIR")
+            .map(std::path::PathBuf::from)
+            .expect("OUT_DIR is not set");
+        println!(
+            "cargo:rustc-link-arg-tests={}",
+            out_dir.join("resource.lib").display()
+        );
+    }
 }
