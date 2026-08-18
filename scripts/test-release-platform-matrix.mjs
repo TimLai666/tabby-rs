@@ -89,8 +89,8 @@ assert.match(evidenceSigning?.run || '', /cargo tauri signer generate --ci --pas
 assert.match(evidenceSigning?.run || '', /cygpath -w/, 'evidence-only signing key path must be Windows-compatible')
 assert.match(releaseConfiguration?.env?.TABBY_RS_UPDATE_PUBLIC_KEY || '', /steps\.evidence-signing\.outputs\.public_key/, 'evidence-only release config must use the ephemeral public key')
 assert.match(releaseConfiguration?.env?.TABBY_RS_UPDATE_ENDPOINT || '', /evidence\.invalid/, 'evidence-only release config must use a non-publishable endpoint')
-assert.match(signedBundle?.env?.TAURI_SIGNING_PRIVATE_KEY_PATH || '', /steps\.evidence-signing\.outputs\.private_key_path/, 'evidence-only bundle signing must use the runner-local key path')
-assert.match(signedBundle?.run || '', /unset TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD/, 'evidence-only bundle signing must not let empty key env vars override the runner-local key path')
+assert.match(signedBundle?.env?.TAURI_SIGNING_PRIVATE_KEY || '', /steps\.evidence-signing\.outputs\.private_key_path/, 'evidence-only bundle signing must pass the runner-local key path through Tauri\'s private key variable')
+assert.equal(signedBundle?.env?.TAURI_SIGNING_PRIVATE_KEY_PATH, undefined, 'evidence-only bundle signing must not rely on an unsupported private key path variable')
 assert.deepEqual(
     workflowMatrix.filter(entry => entry.platform === 'macos').map(entry => entry.bundles),
     ['app,dmg', 'app,dmg'],
