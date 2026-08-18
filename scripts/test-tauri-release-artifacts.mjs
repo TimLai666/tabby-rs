@@ -109,6 +109,11 @@ fs.mkdirSync(bundleMacos)
 fs.writeFileSync(path.join(bundleDmg, 'tabby-rs.dmg'), 'final dmg')
 fs.writeFileSync(path.join(bundleMacos, 'rw.intermediate.dmg'), 'intermediate dmg')
 fs.writeFileSync(path.join(bundleMacos, 'tabby-rs.app.tar.gz'), 'updater')
+const applicationTarget = fs.mkdtempSync(path.join(os.tmpdir(), 'tabby-rs-app-'))
+const applicationInfo = path.join(applicationTarget, 'Contents', 'Info.plist')
+fs.mkdirSync(path.dirname(applicationInfo), { recursive: true })
+fs.writeFileSync(applicationInfo, 'application bundle')
+fs.symlinkSync(applicationTarget, path.join(bundleMacos, 'Tabby RS.app'), process.platform === 'win32' ? 'junction' : 'dir')
 const staged = fs.mkdtempSync(path.join(os.tmpdir(), 'tabby-rs-staged-'))
 execFileSync(process.execPath, [stager], {
     cwd: root,
@@ -117,6 +122,7 @@ execFileSync(process.execPath, [stager], {
 })
 assert.ok(fs.existsSync(path.join(staged, 'dmg', 'tabby-rs.dmg')))
 assert.ok(fs.existsSync(path.join(staged, 'macos', 'tabby-rs.app.tar.gz')))
+assert.ok(fs.existsSync(path.join(staged, 'macos', 'Tabby RS.app', 'Contents', 'Info.plist')))
 assert.equal(fs.existsSync(path.join(staged, 'macos', 'rw.intermediate.dmg')), false)
 
 console.log('Tauri release artifact contract fixtures passed')
