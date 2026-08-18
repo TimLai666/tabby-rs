@@ -580,8 +580,11 @@ mod tests {
     #[test]
     fn rejects_relative_or_nested_destination_names() {
         assert!(validate_destination("bundle.zip").is_err());
-        assert!(validate_destination("/tmp/../bundle.zip").is_ok());
-        assert!(validate_destination("/tmp/a/bundle.zip").is_ok());
+        let temporary_directory = std::env::temp_dir();
+        let parent_path = temporary_directory.join("..").join("bundle.zip");
+        let nested_path = temporary_directory.join("a").join("bundle.zip");
+        assert!(validate_destination(parent_path.to_str().unwrap()).is_ok());
+        assert!(validate_destination(nested_path.to_str().unwrap()).is_ok());
     }
 
     #[test]
