@@ -53,7 +53,7 @@ for (const text of [
     }
 }
 
-if (!release.includes('`evidence_only`') || !release.includes('skips publishing')) {
+if (!release.includes('`evidence_only`') || !release.includes('skips publishing') || !release.includes('ephemeral updater key') || !release.includes('evidence.invalid')) {
     throw new Error('docs/release.md is missing evidence-only workflow guidance');
 }
 
