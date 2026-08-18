@@ -12,6 +12,7 @@ const revision = process.env.GITHUB_SHA || process.env.TABBY_RS_SOURCE_REVISION 
 const target = process.env.TABBY_RS_RELEASE_TARGET || 'unspecified'
 const platform = process.env.TABBY_RS_RELEASE_PLATFORM || 'unspecified'
 const arch = process.env.TABBY_RS_RELEASE_ARCH || 'unspecified'
+const evidenceOnly = process.env.TABBY_RS_EVIDENCE_ONLY === 'true'
 
 assert.ok(channel === 'stable' || channel === 'nightly', 'TABBY_RS_RELEASE_CHANNEL must be stable or nightly')
 assert.ok(version, 'TABBY_RS_RELEASE_VERSION is required')
@@ -49,6 +50,7 @@ fs.writeFileSync(path.join(output, 'tabby-rs-metadata.json'), `${JSON.stringify(
         rust: rustVersion,
         tauriCli: process.env.TAURI_CLI_VERSION || 'unspecified',
     },
+    updateSigning: evidenceOnly ? 'ephemeral-evidence-only' : 'release-environment-key',
     osCodeSigning: 'not-performed',
 }, null, 2)}\n`)
 console.log(`Prepared release metadata at ${output}`)
