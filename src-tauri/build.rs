@@ -59,5 +59,5 @@ fn main() {
     materialize_icon(&manifest_dir, "icon.png").expect("failed to materialize Tauri PNG icon");
     materialize_icon(&manifest_dir, "icon.ico").expect("failed to materialize Tauri ICO icon");
 
-    tauri_build::build()
+    tauri_build::build();
 }

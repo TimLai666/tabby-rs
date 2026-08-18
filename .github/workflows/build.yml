@@ -411,9 +411,11 @@ jobs:
         if: matrix.name != 'windows'
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
-      - name: Compile Rust host tests on Windows
+      - name: Test Rust host on Windows
         if: matrix.name == 'windows'
-        run: cargo test --manifest-path src-tauri/Cargo.toml --no-run
+        env:
+          RUSTFLAGS: '-C link-arg=/MANIFESTINPUT:${{ github.workspace }}/src-tauri/windows-app-manifest.xml -C link-arg=/MANIFEST:EMBED'
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib
 
       - name: Test SSH authentication fixture
         if: matrix.name != 'windows'
