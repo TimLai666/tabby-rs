@@ -85,21 +85,22 @@ fs.writeFileSync(path.join(macos, 'tabby-rs-metadata.json'), JSON.stringify({
     platform: 'macos',
     arch: 'aarch64',
 }))
-assert.equal(run(macos, 'macos', 'dmg'), path.join(macos, 'tabby-rs.app.tar.gz'))
+assert.throws(() => run(macos, 'macos', 'dmg'), /must request the app bundle/)
+assert.equal(run(macos, 'macos', 'app,dmg'), path.join(macos, 'tabby-rs.app.tar.gz'))
 fs.writeFileSync(macosInfo, `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict><key>CFBundleIconFile</key><string>icon.icns</string></dict></plist>
 `)
-assert.throws(() => run(macos, 'macos', 'dmg'), /icon declared by plist is missing/)
+assert.throws(() => run(macos, 'macos', 'app,dmg'), /icon declared by plist is missing/)
 fs.writeFileSync(macosInfo, `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict><key>CFBundleIconFile</key><string>Tabby RS.icns</string></dict></plist>
 `)
 fs.writeFileSync(macosDmgIcon, 'stale DMG icon')
-assert.throws(() => run(macos, 'macos', 'dmg'), /DMG icon does not match build\/mac\/icon\.icns/)
+assert.throws(() => run(macos, 'macos', 'app,dmg'), /DMG icon does not match build\/mac\/icon\.icns/)
 fs.copyFileSync(path.join(root, 'build/mac/icon.icns'), macosDmgIcon)
 fs.writeFileSync(macosIcon, 'stale icon')
-assert.throws(() => run(macos, 'macos', 'dmg'), /does not match build\/mac\/icon\.icns/)
+assert.throws(() => run(macos, 'macos', 'app,dmg'), /does not match build\/mac\/icon\.icns/)
 
 const bundle = fs.mkdtempSync(path.join(os.tmpdir(), 'tabby-rs-bundle-'))
 const bundleDmg = path.join(bundle, 'dmg')
