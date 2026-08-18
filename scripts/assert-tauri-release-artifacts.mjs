@@ -37,6 +37,7 @@ function walk (directory) {
 const files = walk(staging)
 const basenames = files.map(filePath => path.basename(filePath))
 const requiredExtensions = {
+    app: [],
     appimage: ['.AppImage'],
     deb: ['.deb'],
     dmg: ['.dmg'],
@@ -96,6 +97,7 @@ function assertMacosDmgIcon () {
 }
 
 if (platform === 'macos') {
+    assert.ok(bundles.includes('app'), 'macOS release must request the app bundle')
     assertMacosApplicationIcon()
     if (bundles.includes('dmg')) assertMacosDmgIcon()
 }

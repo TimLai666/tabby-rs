@@ -27,6 +27,7 @@ assert.equal(releaseWorkflow?.concurrency?.group, eventScopedConcurrency, 'sched
 
 const webGateSteps = releaseWorkflow?.jobs?.['web-gate']?.steps || []
 const buildSteps = releaseWorkflow?.jobs?.build?.steps || []
+const workflowMatrix = releaseWorkflow?.jobs?.build?.strategy?.matrix?.include || []
 const aggregateSteps = releaseWorkflow?.jobs?.aggregate?.steps || []
 const upstreamTagFetch = "git fetch --force --tags https://github.com/Eugeny/tabby.git '+refs/tags/*:refs/tags/*'"
 function assertUpstreamTagsBeforeInstall (steps, jobName) {
@@ -90,6 +91,11 @@ assert.match(releaseConfiguration?.env?.TABBY_RS_UPDATE_PUBLIC_KEY || '', /steps
 assert.match(releaseConfiguration?.env?.TABBY_RS_UPDATE_ENDPOINT || '', /evidence\.invalid/, 'evidence-only release config must use a non-publishable endpoint')
 assert.match(signedBundle?.env?.TAURI_SIGNING_PRIVATE_KEY_PATH || '', /steps\.evidence-signing\.outputs\.private_key_path/, 'evidence-only bundle signing must use the runner-local key path')
 assert.match(signedBundle?.run || '', /unset TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD/, 'evidence-only bundle signing must not let empty key env vars override the runner-local key path')
+assert.deepEqual(
+    workflowMatrix.filter(entry => entry.platform === 'macos').map(entry => entry.bundles),
+    ['app,dmg', 'app,dmg'],
+    'macOS release jobs must build both the app bundle and DMG',
+)
 assert.match(releaseMetadata?.env?.TABBY_RS_EVIDENCE_ONLY || '', /inputs\.evidence_only/, 'release metadata must record evidence-only signing mode')
 assert.match(stagedArtifacts?.env?.TABBY_RS_UPDATE_ARTIFACT_URL || '', /evidence\.invalid/, 'evidence-only updater manifests must use a non-publishable artifact URL')
 assert.equal(rustHostTest?.if, "runner.os != 'Windows'", 'release Rust tests must not execute Tauri test binaries on Windows')
