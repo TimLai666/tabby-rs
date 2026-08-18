@@ -65,9 +65,14 @@ fn main() {
         let out_dir = env::var_os("OUT_DIR")
             .map(std::path::PathBuf::from)
             .expect("OUT_DIR is not set");
+        let manifest_path = out_dir.join("tabby-rs-test.manifest");
+        fs::write(&manifest_path, include_str!("windows-app-manifest.xml"))
+            .expect("failed to write the Windows test manifest");
+        println!("cargo:rerun-if-changed=windows-app-manifest.xml");
         println!(
-            "cargo:rustc-link-arg={}",
-            out_dir.join("resource.lib").display()
+            "cargo:rustc-link-arg-tests=/MANIFESTINPUT:{}",
+            manifest_path.display()
         );
+        println!("cargo:rustc-link-arg-tests=/MANIFEST:EMBED");
     }
 }
