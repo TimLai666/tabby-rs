@@ -1,11 +1,87 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
+import vm from 'node:vm'
+import { createRequire } from 'node:module'
 import path from 'node:path'
+import ts from 'typescript'
 
 const providers = {
     web: 'tabby-web/src/services/runtimeCapabilities.service.ts',
     tauri: 'tabby-tauri/src/services/runtimeCapabilities.service.ts',
     electron: 'tabby-electron/src/services/runtimeCapabilities.service.ts',
+}
+
+const providerClasses = {
+    web: 'WebRuntimeCapabilitiesService',
+    tauri: 'TauriRuntimeCapabilitiesService',
+    electron: 'ElectronRuntimeCapabilitiesService',
+}
+
+const expectedCapabilities = {
+    web: {
+        host: 'web',
+        localPty: false,
+        filesystem: false,
+        keychain: false,
+        updater: false,
+        pluginInstall: false,
+        serial: false,
+        desktopNotifications: false,
+    },
+    tauri: {
+        host: 'tauri',
+        localPty: true,
+        filesystem: true,
+        keychain: true,
+        updater: true,
+        pluginInstall: true,
+        serial: true,
+        desktopNotifications: true,
+    },
+    electron: {
+        host: 'electron',
+        localPty: true,
+        filesystem: true,
+        keychain: true,
+        updater: true,
+        pluginInstall: true,
+        serial: true,
+        desktopNotifications: true,
+    },
+}
+
+function transpile (source) {
+    return ts.transpileModule(source, {
+        compilerOptions: {
+            experimentalDecorators: true,
+            module: ts.ModuleKind.CommonJS,
+            target: ts.ScriptTarget.ES2020,
+        },
+    }).outputText
+}
+
+function loadCapabilities (relativePath, className) {
+    const absolutePath = path.resolve(relativePath)
+    const module = { exports: {} }
+    const require = createRequire(absolutePath)
+    class RuntimeCapabilitiesService {}
+    vm.runInNewContext(transpile(fs.readFileSync(absolutePath, 'utf8')), {
+        console,
+        exports: module.exports,
+        module,
+        require: name => {
+            if (name === 'tabby-core') {
+                return { RuntimeCapabilitiesService }
+            }
+            if (name === '@angular/core') {
+                return { Injectable: () => target => target }
+            }
+            return require(name)
+        },
+    }, { filename: absolutePath })
+    const Provider = module.exports[className]
+    assert.equal(typeof Provider, 'function', `${className} must be loadable`)
+    return JSON.parse(JSON.stringify(new Provider().capabilities))
 }
 
 for (const [host, relativePath] of Object.entries(providers)) {
@@ -15,6 +91,11 @@ for (const [host, relativePath] of Object.entries(providers)) {
     for (const capability of ['localPty', 'filesystem', 'keychain', 'updater', 'pluginInstall', 'serial', 'desktopNotifications']) {
         assert.match(source, new RegExp(`${capability}: (true|false)`))
     }
+    assert.deepEqual(
+        loadCapabilities(relativePath, providerClasses[host]),
+        expectedCapabilities[host],
+        `${host} runtime capability provider must expose the complete host matrix`,
+    )
 }
 
 const webSource = fs.readFileSync(path.resolve(providers.web), 'utf8')
