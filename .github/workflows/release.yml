@@ -327,7 +327,12 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PATH: ${{ github.event_name == 'workflow_dispatch' && inputs.evidence_only == true && steps.evidence-signing.outputs.private_key_path || '' }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ github.event_name == 'workflow_dispatch' && inputs.evidence_only == true && '' || secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ github.event_name == 'workflow_dispatch' && inputs.evidence_only == true && '' || secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: cargo tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config src-tauri/tauri.release.conf.json
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.evidence_only }}" = "true" ]; then
+            # An empty key env var takes precedence over the runner-local key path in Tauri.
+            unset TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+          fi
+          cargo tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config src-tauri/tauri.release.conf.json
 
       - name: Prepare release metadata
         shell: bash
