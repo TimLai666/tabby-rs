@@ -89,6 +89,7 @@ assert.match(evidenceSigning?.run || '', /cygpath -w/, 'evidence-only signing ke
 assert.match(releaseConfiguration?.env?.TABBY_RS_UPDATE_PUBLIC_KEY || '', /steps\.evidence-signing\.outputs\.public_key/, 'evidence-only release config must use the ephemeral public key')
 assert.match(releaseConfiguration?.env?.TABBY_RS_UPDATE_ENDPOINT || '', /evidence\.invalid/, 'evidence-only release config must use a non-publishable endpoint')
 assert.match(signedBundle?.env?.TAURI_SIGNING_PRIVATE_KEY_PATH || '', /steps\.evidence-signing\.outputs\.private_key_path/, 'evidence-only bundle signing must use the runner-local key path')
+assert.match(signedBundle?.run || '', /unset TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD/, 'evidence-only bundle signing must not let empty key env vars override the runner-local key path')
 assert.match(releaseMetadata?.env?.TABBY_RS_EVIDENCE_ONLY || '', /inputs\.evidence_only/, 'release metadata must record evidence-only signing mode')
 assert.match(stagedArtifacts?.env?.TABBY_RS_UPDATE_ARTIFACT_URL || '', /evidence\.invalid/, 'evidence-only updater manifests must use a non-publishable artifact URL')
 assert.equal(rustHostTest?.if, "runner.os != 'Windows'", 'release Rust tests must not execute Tauri test binaries on Windows')
