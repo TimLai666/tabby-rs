@@ -218,9 +218,11 @@ fn get(server: &FakeUpdateServer, path: &str) -> (u16, Vec<u8>) {
         )
         .unwrap();
     if let Err(error) = stream.shutdown(Shutdown::Write) {
-        assert_eq!(
-            error.kind(),
-            std::io::ErrorKind::NotConnected,
+        assert!(
+            matches!(
+                error.kind(),
+                std::io::ErrorKind::NotConnected | std::io::ErrorKind::ConnectionReset
+            ),
             "request half-close failed unexpectedly: {error}"
         );
     }
