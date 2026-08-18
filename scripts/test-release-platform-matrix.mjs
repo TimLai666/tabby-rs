@@ -94,6 +94,8 @@ assert.match(stagedArtifacts?.env?.TABBY_RS_UPDATE_ARTIFACT_URL || '', /evidence
 assert.equal(rustHostTest?.if, "runner.os != 'Windows'", 'release Rust tests must not execute Tauri test binaries on Windows')
 assert.equal(windowsRustTest?.if, "runner.os == 'Windows'", 'release Windows Rust coverage must execute library tests')
 assert.equal(windowsRustTest?.run, 'cargo test --manifest-path src-tauri/Cargo.toml --lib', 'release Windows Rust coverage must execute the library tests')
+assert.match(windowsRustTest?.env?.RUSTFLAGS || '', /MANIFESTINPUT:src-tauri[\\/]windows-app-manifest\.xml/, 'release Windows Rust tests must embed the Common Controls manifest')
+assert.match(windowsRustTest?.env?.RUSTFLAGS || '', /MANIFEST:EMBED/, 'release Windows Rust tests must embed the linker manifest')
 assert.equal(platformGate?.['continue-on-error'], evidenceContinueOnError, 'evidence-only runs must upload platform gate reports even when they fail')
 assert.equal(aggregateGate?.['continue-on-error'], evidenceContinueOnError, 'evidence-only runs must upload the aggregate gate report even when it fails')
 assert.equal(evidenceFallback?.if, `\${{ always() && ${evidenceCondition} }}`, 'evidence-only runs must create an explicit incomplete gate report after early failures')

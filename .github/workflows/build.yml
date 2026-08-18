@@ -413,6 +413,8 @@ jobs:
 
       - name: Test Rust host on Windows
         if: matrix.name == 'windows'
+        env:
+          RUSTFLAGS: '-C link-arg=/MANIFESTINPUT:src-tauri/windows-app-manifest.xml -C link-arg=/MANIFEST:EMBED'
         run: cargo test --manifest-path src-tauri/Cargo.toml --lib
 
       - name: Test SSH authentication fixture
