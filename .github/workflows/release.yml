@@ -56,10 +56,12 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
+      - name: Test Linux dependency installer contract
+        run: node scripts/test-linux-dependencies.mjs
+
       - name: Install Linux build dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends \
+          bash scripts/ci/install-linux-dependencies.sh \
             cmake \
             libarchive-tools \
             libayatana-appindicator3-dev \
@@ -190,8 +192,7 @@ jobs:
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends \
+          bash scripts/ci/install-linux-dependencies.sh \
             libayatana-appindicator3-dev libfontconfig1-dev librsvg2-dev \
             libsecret-1-dev libudev-dev libwebkit2gtk-4.1-dev patchelf xvfb
 

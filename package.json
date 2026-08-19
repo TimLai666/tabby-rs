@@ -162,6 +162,7 @@
     "test:release-gate-contract": "node scripts/test-release-gate-contract.mjs",
     "test:release-gate-aggregate": "node scripts/test-aggregate-release-gate.mjs",
     "test:release-platform-matrix": "node scripts/test-release-platform-matrix.mjs",
+    "test:linux-dependencies": "node scripts/test-linux-dependencies.mjs",
     "test:stable-issue-state": "node scripts/test-stable-issue-state.mjs",
     "test:tauri:release-artifacts": "node scripts/test-tauri-release-artifacts.mjs",
     "test:tauri:signature": "node scripts/test-tauri-signature.mjs",
