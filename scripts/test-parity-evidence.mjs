@@ -37,8 +37,16 @@ assert.deepEqual(parityEnvironment({
     platform: 'win32',
     env: { RUSTFLAGS: '-C target-cpu=native', PATH: 'C:\\Windows\\System32' },
     manifestPath: 'D:\\work\\src-tauri\\windows-app-manifest.xml',
+    checkName: 'rust-host',
 }), {
     RUSTFLAGS: '-C target-cpu=native -C link-arg=/MANIFESTINPUT:D:\\work\\src-tauri\\windows-app-manifest.xml -C link-arg=/MANIFEST:EMBED',
+    PATH: 'C:\\Windows\\System32',
+})
+assert.deepEqual(parityEnvironment({
+    platform: 'win32',
+    env: { '=C:': 'C:\\work', PATH: 'C:\\Windows\\System32' },
+    checkName: 'windows-build',
+}), {
     PATH: 'C:\\Windows\\System32',
 })
 
@@ -67,6 +75,7 @@ const windowsResult = runYarnCheck('alpha', {
     platform: 'win32',
     env: { RUSTFLAGS: '-C target-cpu=native' },
     manifestPath: 'D:\\work\\src-tauri\\windows-app-manifest.xml',
+    checkName: 'rust-host',
     spawnImpl: (...args) => {
         windowsSpawnCalls.push(args)
         queueMicrotask(() => windowsChild.emit('close', 0, null))

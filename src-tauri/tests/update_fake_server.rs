@@ -32,7 +32,6 @@ struct FakeUpdateServer {
 impl FakeUpdateServer {
     fn start() -> Self {
         let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
-        listener.set_nonblocking(true).unwrap();
         let address = listener.local_addr().unwrap().to_string();
         let stop = Arc::new(AtomicBool::new(false));
         let stop_for_thread = Arc::clone(&stop);
@@ -40,9 +39,6 @@ impl FakeUpdateServer {
             while !stop_for_thread.load(Ordering::Acquire) {
                 match listener.accept() {
                     Ok((mut stream, _)) => serve_request(&mut stream),
-                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                        thread::sleep(Duration::from_millis(1));
-                    }
                     Err(_) => break,
                 }
             }
