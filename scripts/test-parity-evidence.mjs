@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict'
+import { EventEmitter } from 'node:events'
 import fs from 'node:fs'
 import path from 'node:path'
+import { PassThrough } from 'node:stream'
 import { fileURLToPath } from 'node:url'
 
-import { createEvidenceReport, executeChecks, selectParityChecks } from './collect-parity-evidence.mjs'
+import { createEvidenceReport, executeChecks, runYarnCheck, selectParityChecks, yarnInvocation } from './collect-parity-evidence.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
@@ -20,6 +22,34 @@ assert.deepEqual(selected.expectedChecks, ['alpha', 'shared'])
 assert.deepEqual(selected.missingScripts, [])
 assert.deepEqual(selectParityChecks({ parity, scripts: {}, requestedChecks: ['alpha', 'unknown'] }).missingScripts, ['alpha', 'unknown'])
 assert.deepEqual(selectParityChecks({ parity, scripts: {}, requestedChecks: ['alpha', 'unknown'] }).unknownChecks, ['unknown'])
+
+assert.deepEqual(yarnInvocation('alpha', { platform: 'win32', comSpec: 'C:\\Windows\\System32\\cmd.exe' }), {
+    executable: 'C:\\Windows\\System32\\cmd.exe',
+    args: ['/d', '/s', '/c', 'yarn.cmd run test:alpha'],
+    command: 'yarn.cmd run test:alpha',
+})
+assert.deepEqual(yarnInvocation('alpha', { platform: 'linux' }), {
+    executable: 'yarn',
+    args: ['run', 'test:alpha'],
+    command: 'yarn run test:alpha',
+})
+
+const spawnCalls = []
+const spawnedChild = new EventEmitter()
+spawnedChild.stdout = new PassThrough()
+spawnedChild.stderr = new PassThrough()
+const spawnedResult = runYarnCheck('alpha', {
+    spawnImpl: (...args) => {
+        spawnCalls.push(args)
+        queueMicrotask(() => spawnedChild.emit('close', 0, null))
+        return spawnedChild
+    },
+    output: { stdout: { write () {} }, stderr: { write () {} } },
+})
+const runResult = await spawnedResult
+assert.deepEqual(spawnCalls[0].slice(0, 2), ['yarn', ['run', 'test:alpha']])
+assert.equal(runResult.passed, true)
+assert.equal(runResult.command, 'yarn run test:alpha')
 
 const executed = []
 const results = await executeChecks(['alpha', 'shared'], {

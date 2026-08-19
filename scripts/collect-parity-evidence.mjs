@@ -47,8 +47,8 @@ export function runYarnCheck (name, {
     spawnImpl = spawn,
     output = process,
 } = {}) {
-    const executable = process.platform === 'win32' ? 'yarn.cmd' : 'yarn'
-    const command = `${executable} run test:${name}`
+    const invocation = yarnInvocation(name)
+    const { executable, args, command } = invocation
     const started = Date.now()
     const stdout = hashStream()
     const stderr = hashStream()
@@ -69,7 +69,7 @@ export function runYarnCheck (name, {
         }
         let child
         try {
-            child = spawnImpl(executable, ['run', `test:${name}`], {
+            child = spawnImpl(executable, args, {
                 cwd,
                 env,
                 stdio: ['ignore', 'pipe', 'pipe'],
@@ -94,6 +94,19 @@ export function runYarnCheck (name, {
             signal,
         }))
     })
+}
+
+export function yarnInvocation (name, {
+    platform = process.platform,
+    comSpec = process.env.ComSpec || 'cmd.exe',
+} = {}) {
+    const script = `test:${name}`
+    if (platform === 'win32') {
+        const command = `yarn.cmd run ${script}`
+        return { executable: comSpec, args: ['/d', '/s', '/c', command], command }
+    }
+    const command = `yarn run ${script}`
+    return { executable: 'yarn', args: ['run', script], command }
 }
 
 export async function executeChecks (checks, { runCheck = runYarnCheck, onCheckStart = () => {} } = {}) {
