@@ -102,6 +102,15 @@ async function waitForFile (filePath, timeoutMs = 60000) {
     throw new Error(`installed application did not write ready marker within ${timeoutMs}ms: ${filePath}`)
 }
 
+async function waitForPathGone (filePath, timeoutMs = 15000) {
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+        if (!fs.existsSync(filePath)) return
+        await new Promise(resolve => setTimeout(resolve, 250))
+    }
+    assert.ok(!fs.existsSync(filePath), `uninstaller left the application executable behind: ${filePath}`)
+}
+
 async function terminate (child) {
     if (child.exitCode !== null || child.signalCode !== null) return
     child.kill()
@@ -240,7 +249,7 @@ async function smokeWindows () {
             const uninstaller = findFile(installDirectory, file => path.basename(file).toLowerCase() === 'uninstall.exe')
             assert.ok(uninstaller, 'NSIS installer did not install an uninstaller')
             await assertCommand(uninstaller, ['/S'])
-            assert.ok(!fs.existsSync(executable), 'NSIS uninstaller left the application executable behind')
+            await waitForPathGone(executable)
             assertUserDataPreserved(identity)
             operations.push({ action: 'launch', executable: path.relative(installDirectory, executable), identity: reportIdentity(identity) })
             operations.push({ action: 'uninstall', executable: path.relative(installDirectory, uninstaller) })
