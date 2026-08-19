@@ -502,7 +502,7 @@ pub fn verify_signature(
 ) -> Result<(), AppError> {
     let public_key = decode_public_key(public_key_text)
         .map_err(|_| AppError::InvalidData("updater public key is invalid".into()))?;
-    let signature = Signature::decode(signature_text)
+    let signature = decode_signature(signature_text)
         .map_err(|_| AppError::InvalidData("updater signature is invalid".into()))?;
 
     public_key
@@ -520,6 +520,18 @@ fn decode_public_key(public_key_text: &str) -> Result<PublicKey, ()> {
         .map_err(|_| ())?;
     let decoded = String::from_utf8(decoded).map_err(|_| ())?;
     PublicKey::decode(&decoded).map_err(|_| ())
+}
+
+fn decode_signature(signature_text: &str) -> Result<Signature, ()> {
+    if let Ok(signature) = Signature::decode(signature_text) {
+        return Ok(signature);
+    }
+
+    let decoded = BASE64_STANDARD
+        .decode(signature_text.trim())
+        .map_err(|_| ())?;
+    let decoded = String::from_utf8(decoded).map_err(|_| ())?;
+    Signature::decode(&decoded).map_err(|_| ())
 }
 
 pub fn channel_name(channel: &UpdateChannel) -> &'static str {
@@ -695,7 +707,10 @@ mod tests {
 
         assert!(verify_signature(b"test", &signature, &public_key).is_ok());
         let encoded_public_key = BASE64_STANDARD.encode(public_key);
+        let encoded_signature = BASE64_STANDARD.encode(signature);
         assert!(verify_signature(b"test", &signature, &encoded_public_key).is_ok());
+        assert!(verify_signature(b"test", &encoded_signature, &public_key).is_ok());
+        assert!(verify_signature(b"test", &encoded_signature, &encoded_public_key).is_ok());
         assert!(verify_signature(b"Test", &signature, &public_key).is_err());
         assert!(verify_signature(b"test", &signature, "wrong").is_err());
     }
