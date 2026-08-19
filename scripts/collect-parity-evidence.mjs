@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 import yaml from 'js-yaml'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const windowsManifestPath = path.join(root, 'src-tauri', 'windows-app-manifest.xml')
 
 function uniqueChecks (features, platform = null) {
     const checks = new Set()
@@ -44,11 +45,14 @@ function hashStream () {
 export function runYarnCheck (name, {
     cwd = root,
     env = process.env,
+    platform = process.platform,
+    manifestPath = windowsManifestPath,
     spawnImpl = spawn,
     output = process,
 } = {}) {
-    const invocation = yarnInvocation(name)
+    const invocation = yarnInvocation(name, { platform })
     const { executable, args, command } = invocation
+    const childEnv = parityEnvironment({ platform, env, manifestPath })
     const started = Date.now()
     const stdout = hashStream()
     const stderr = hashStream()
@@ -71,7 +75,7 @@ export function runYarnCheck (name, {
         try {
             child = spawnImpl(executable, args, {
                 cwd,
-                env,
+                env: childEnv,
                 stdio: ['ignore', 'pipe', 'pipe'],
             })
         } catch (error) {
@@ -94,6 +98,19 @@ export function runYarnCheck (name, {
             signal,
         }))
     })
+}
+
+export function parityEnvironment ({
+    platform = process.platform,
+    env = process.env,
+    manifestPath = windowsManifestPath,
+} = {}) {
+    const result = { ...env }
+    if (platform === 'win32') {
+        const manifestFlags = `-C link-arg=/MANIFESTINPUT:${manifestPath} -C link-arg=/MANIFEST:EMBED`
+        result.RUSTFLAGS = [env.RUSTFLAGS, manifestFlags].filter(Boolean).join(' ')
+    }
+    return result
 }
 
 export function yarnInvocation (name, {

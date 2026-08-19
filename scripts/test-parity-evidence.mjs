@@ -5,7 +5,7 @@ import path from 'node:path'
 import { PassThrough } from 'node:stream'
 import { fileURLToPath } from 'node:url'
 
-import { createEvidenceReport, executeChecks, runYarnCheck, selectParityChecks, yarnInvocation } from './collect-parity-evidence.mjs'
+import { createEvidenceReport, executeChecks, parityEnvironment, runYarnCheck, selectParityChecks, yarnInvocation } from './collect-parity-evidence.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
@@ -33,6 +33,14 @@ assert.deepEqual(yarnInvocation('alpha', { platform: 'linux' }), {
     args: ['run', 'test:alpha'],
     command: 'yarn run test:alpha',
 })
+assert.deepEqual(parityEnvironment({
+    platform: 'win32',
+    env: { RUSTFLAGS: '-C target-cpu=native', PATH: 'C:\\Windows\\System32' },
+    manifestPath: 'D:\\work\\src-tauri\\windows-app-manifest.xml',
+}), {
+    RUSTFLAGS: '-C target-cpu=native -C link-arg=/MANIFESTINPUT:D:\\work\\src-tauri\\windows-app-manifest.xml -C link-arg=/MANIFEST:EMBED',
+    PATH: 'C:\\Windows\\System32',
+})
 
 const spawnCalls = []
 const spawnedChild = new EventEmitter()
@@ -50,6 +58,27 @@ const runResult = await spawnedResult
 assert.deepEqual(spawnCalls[0].slice(0, 2), ['yarn', ['run', 'test:alpha']])
 assert.equal(runResult.passed, true)
 assert.equal(runResult.command, 'yarn run test:alpha')
+
+const windowsSpawnCalls = []
+const windowsChild = new EventEmitter()
+windowsChild.stdout = new PassThrough()
+windowsChild.stderr = new PassThrough()
+const windowsResult = runYarnCheck('alpha', {
+    platform: 'win32',
+    env: { RUSTFLAGS: '-C target-cpu=native' },
+    manifestPath: 'D:\\work\\src-tauri\\windows-app-manifest.xml',
+    spawnImpl: (...args) => {
+        windowsSpawnCalls.push(args)
+        queueMicrotask(() => windowsChild.emit('close', 0, null))
+        return windowsChild
+    },
+    output: { stdout: { write () {} }, stderr: { write () {} } },
+})
+const windowsRunResult = await windowsResult
+assert.deepEqual(windowsSpawnCalls[0].slice(0, 2), ['cmd.exe', ['/d', '/s', '/c', 'yarn.cmd run test:alpha']])
+assert.match(windowsSpawnCalls[0][2].env.RUSTFLAGS, /MANIFESTINPUT:D:\\work\\src-tauri\\windows-app-manifest\.xml/)
+assert.match(windowsSpawnCalls[0][2].env.RUSTFLAGS, /MANIFEST:EMBED/)
+assert.equal(windowsRunResult.passed, true)
 
 const executed = []
 const results = await executeChecks(['alpha', 'shared'], {
