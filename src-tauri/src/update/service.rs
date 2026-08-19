@@ -1,6 +1,7 @@
 use std::time::Duration;
 use std::{io::Write, sync::Mutex};
 
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use minisign_verify::{PublicKey, Signature};
 use serde::Serialize;
 use tauri::{AppHandle, Runtime};
@@ -499,7 +500,7 @@ pub fn verify_signature(
     signature_text: &str,
     public_key_text: &str,
 ) -> Result<(), AppError> {
-    let public_key = PublicKey::decode(public_key_text)
+    let public_key = decode_public_key(public_key_text)
         .map_err(|_| AppError::InvalidData("updater public key is invalid".into()))?;
     let signature = Signature::decode(signature_text)
         .map_err(|_| AppError::InvalidData("updater signature is invalid".into()))?;
@@ -507,6 +508,18 @@ pub fn verify_signature(
     public_key
         .verify(bytes, &signature, true)
         .map_err(|_| AppError::InvalidData("updater signature does not match artifact".into()))
+}
+
+fn decode_public_key(public_key_text: &str) -> Result<PublicKey, ()> {
+    if let Ok(public_key) = PublicKey::decode(public_key_text) {
+        return Ok(public_key);
+    }
+
+    let decoded = BASE64_STANDARD
+        .decode(public_key_text.trim())
+        .map_err(|_| ())?;
+    let decoded = String::from_utf8(decoded).map_err(|_| ())?;
+    PublicKey::decode(&decoded).map_err(|_| ())
 }
 
 pub fn channel_name(channel: &UpdateChannel) -> &'static str {
@@ -621,6 +634,7 @@ mod tests {
         storage::state_file::UpdateChannel,
         update::manifest::{UpdateManifest, MAX_ARTIFACT_BYTES},
     };
+    use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
     use tokio::sync::watch;
 
     fn manifest(hash: &str, size: Option<u64>) -> UpdateManifest {
@@ -680,6 +694,8 @@ mod tests {
              QtKMXWyYcwdpZAlPF7tE2ENJkRd1ujvKjlj1m9RtHTBnZPa5WKU5uWRs5GoP5M/VqE81QFuMKI5k/SfNQUaOAA==";
 
         assert!(verify_signature(b"test", &signature, &public_key).is_ok());
+        let encoded_public_key = BASE64_STANDARD.encode(public_key);
+        assert!(verify_signature(b"test", &signature, &encoded_public_key).is_ok());
         assert!(verify_signature(b"Test", &signature, &public_key).is_err());
         assert!(verify_signature(b"test", &signature, "wrong").is_err());
     }
