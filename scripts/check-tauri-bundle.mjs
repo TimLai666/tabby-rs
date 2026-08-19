@@ -39,8 +39,8 @@ const requiredFiles = [
     { id: 'updater-signature', pattern: /\.sig$/i },
 ]
 
-const evidenceReportPaths = new Set([
-    'dependency-audit.json',
+const evidenceReportRuleExclusions = new Map([
+    ['dependency-audit.json', new Set(['electron-runtime-import'])],
 ])
 
 function walkFiles (directory, relative = '') {
@@ -103,15 +103,13 @@ export function auditBundle (bundlePath, { release = false } = {}) {
                 findings.push({ rule: rule.id, path: file.relativePath })
             }
         }
-        const content = evidenceReportPaths.has(file.relativePath)
-            ? null
-            : readAuditContent(file.absolutePath)
-        if (content !== null) {
-            for (const rule of forbiddenContentRules) {
-                if (rule.binaryOnly && !content.binary) continue
-                if (rule.pattern.test(content.text)) {
-                    findings.push({ rule: rule.id, path: file.relativePath })
-                }
+        const content = readAuditContent(file.absolutePath)
+        const excludedRules = evidenceReportRuleExclusions.get(file.relativePath) || new Set()
+        for (const rule of forbiddenContentRules) {
+            if (excludedRules.has(rule.id)) continue
+            if (rule.binaryOnly && !content.binary) continue
+            if (rule.pattern.test(content.text)) {
+                findings.push({ rule: rule.id, path: file.relativePath })
             }
         }
     }

@@ -24,6 +24,21 @@ function createReleaseFixture () {
     return directory
 }
 
+const evidenceFixture = createReleaseFixture()
+fs.writeFileSync(
+    path.join(evidenceFixture, 'dependency-audit.json'),
+    JSON.stringify({
+        excluded: [{ package: 'electron-updater' }],
+        secret: 'TAURI_SIGNING_PRIVATE_KEY',
+    }),
+)
+const evidenceReport = auditBundle(evidenceFixture, { release: true })
+assert.equal(evidenceReport.passed, false)
+assert.ok(evidenceReport.findings.some(finding => finding.rule === 'private-key-material'))
+assert.equal(evidenceReport.findings.some(finding => finding.path === 'dependency-audit.json' && finding.rule === 'electron-runtime-import'), false)
+assert.equal(evidenceReport.files.find(file => file.path === 'LICENSE').sha256.length, 64)
+assert.deepEqual(evidenceReport.missing, [])
+
 const passingFixture = createReleaseFixture()
 fs.writeFileSync(
     path.join(passingFixture, 'dependency-audit.json'),
@@ -31,8 +46,6 @@ fs.writeFileSync(
 )
 const passingReport = auditBundle(passingFixture, { release: true })
 assert.equal(passingReport.passed, true)
-assert.equal(passingReport.files.find(file => file.path === 'LICENSE').sha256.length, 64)
-assert.deepEqual(passingReport.missing, [])
 
 const forbiddenFixture = createReleaseFixture()
 fs.writeFileSync(path.join(forbiddenFixture, 'node.exe'), 'node')
