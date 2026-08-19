@@ -3,12 +3,13 @@ import { execFile } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 
 import { validateBenchmarkReport } from './benchmark/schema.mjs'
 
 const execFileAsync = promisify(execFile)
-const root = path.resolve(new URL('..', import.meta.url).pathname)
+const root = fileURLToPath(new URL('..', import.meta.url))
 const fixture = path.join(root, 'scripts', 'fixtures', 'benchmark-process.mjs')
 const runner = path.join(root, 'scripts', 'run-benchmarks.mjs')
 const work = fs.mkdtempSync(path.join(os.tmpdir(), 'tabby-rs-benchmark-test-'))

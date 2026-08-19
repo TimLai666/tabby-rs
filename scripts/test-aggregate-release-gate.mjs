@@ -3,10 +3,11 @@ import { execFile } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 
 const execFileAsync = promisify(execFile)
-const root = path.resolve(new URL('..', import.meta.url).pathname)
+const root = fileURLToPath(new URL('..', import.meta.url))
 const script = path.join(root, 'scripts', 'aggregate-release-gate.mjs')
 const work = fs.mkdtempSync(path.join(os.tmpdir(), 'tabby-rs-aggregate-gate-test-'))
 const revision = '0123456789abcdef0123456789abcdef01234567'
