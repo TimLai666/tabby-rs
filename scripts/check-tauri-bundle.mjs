@@ -39,6 +39,10 @@ const requiredFiles = [
     { id: 'updater-signature', pattern: /\.sig$/i },
 ]
 
+const evidenceReportPaths = new Set([
+    'dependency-audit.json',
+])
+
 function walkFiles (directory, relative = '') {
     const entries = fs.readdirSync(directory, { withFileTypes: true })
     const files = []
@@ -99,7 +103,9 @@ export function auditBundle (bundlePath, { release = false } = {}) {
                 findings.push({ rule: rule.id, path: file.relativePath })
             }
         }
-        const content = readAuditContent(file.absolutePath)
+        const content = evidenceReportPaths.has(file.relativePath)
+            ? null
+            : readAuditContent(file.absolutePath)
         if (content !== null) {
             for (const rule of forbiddenContentRules) {
                 if (rule.binaryOnly && !content.binary) continue

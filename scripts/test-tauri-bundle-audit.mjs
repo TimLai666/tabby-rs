@@ -25,6 +25,10 @@ function createReleaseFixture () {
 }
 
 const passingFixture = createReleaseFixture()
+fs.writeFileSync(
+    path.join(passingFixture, 'dependency-audit.json'),
+    JSON.stringify({ excluded: [{ package: 'electron-updater' }] }),
+)
 const passingReport = auditBundle(passingFixture, { release: true })
 assert.equal(passingReport.passed, true)
 assert.equal(passingReport.files.find(file => file.path === 'LICENSE').sha256.length, 64)
