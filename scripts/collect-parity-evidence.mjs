@@ -7,6 +7,15 @@ import yaml from 'js-yaml'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const windowsManifestPath = path.join(root, 'src-tauri', 'windows-app-manifest.xml')
+const windowsManifestChecks = new Set([
+    'rust-host',
+    'ssh-config-parser',
+    'ssh-import',
+    'ssh-manager-auth',
+    'ssh-known-hosts',
+    'ssh-forwarding',
+    'vault-v1',
+])
 
 function uniqueChecks (features, platform = null) {
     const checks = new Set()
@@ -47,12 +56,13 @@ export function runYarnCheck (name, {
     env = process.env,
     platform = process.platform,
     manifestPath = windowsManifestPath,
+    checkName = name,
     spawnImpl = spawn,
     output = process,
 } = {}) {
     const invocation = yarnInvocation(name, { platform })
     const { executable, args, command } = invocation
-    const childEnv = parityEnvironment({ platform, env, manifestPath })
+    const childEnv = parityEnvironment({ platform, env, manifestPath, checkName })
     const started = Date.now()
     const stdout = hashStream()
     const stderr = hashStream()
@@ -104,9 +114,12 @@ export function parityEnvironment ({
     platform = process.platform,
     env = process.env,
     manifestPath = windowsManifestPath,
+    checkName = null,
 } = {}) {
-    const result = { ...env }
-    if (platform === 'win32') {
+    const result = platform === 'win32'
+        ? Object.fromEntries(Object.entries(env).filter(([key]) => !key.startsWith('=')))
+        : { ...env }
+    if (platform === 'win32' && windowsManifestChecks.has(checkName)) {
         const manifestFlags = `-C link-arg=/MANIFESTINPUT:${manifestPath} -C link-arg=/MANIFEST:EMBED`
         result.RUSTFLAGS = [env.RUSTFLAGS, manifestFlags].filter(Boolean).join(' ')
     }

@@ -4,9 +4,10 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const source = fs.readFileSync(path.join(root, 'tabby-tauri/src/services/updater.service.ts'), 'utf8')
-const updateCommand = fs.readFileSync(path.join(root, 'src-tauri/src/commands/update.rs'), 'utf8')
-const updateService = fs.readFileSync(path.join(root, 'src-tauri/src/update/service.rs'), 'utf8')
+const readSource = file => fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n')
+const source = readSource(path.join(root, 'tabby-tauri/src/services/updater.service.ts'))
+const updateCommand = readSource(path.join(root, 'src-tauri/src/commands/update.rs'))
+const updateService = readSource(path.join(root, 'src-tauri/src/update/service.rs'))
 
 assert.match(source, /PlatformService, TranslateService/)
 assert.match(source, /await this\.platform\.showMessageBox\(\{[\s\S]*buttons:/)
