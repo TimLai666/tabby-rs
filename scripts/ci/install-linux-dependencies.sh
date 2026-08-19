@@ -25,6 +25,23 @@ if (( $# == 0 )); then
   exit 2
 fi
 
+rewrite_unreachable_ubuntu_mirror() {
+  local apt_source
+
+  for apt_source in \
+    /etc/apt/apt-mirrors.txt \
+    /etc/apt/sources.list \
+    /etc/apt/sources.list.d/*.list \
+    /etc/apt/sources.list.d/*.sources; do
+    if [[ -f "$apt_source" ]] && sudo grep -q 'azure\.archive\.ubuntu\.com' "$apt_source"; then
+      sudo sed -E -i \
+        's#https?://azure\.archive\.ubuntu\.com/ubuntu#https://archive.ubuntu.com/ubuntu#g' \
+        "$apt_source"
+      echo "Rewrote unreachable Ubuntu mirror in ${apt_source}"
+    fi
+  done
+}
+
 run_apt() {
   local operation="$1"
   shift
@@ -53,5 +70,6 @@ run_apt() {
   return "$status"
 }
 
+rewrite_unreachable_ubuntu_mirror
 run_apt update update
 run_apt install install --yes --no-install-recommends "$@"

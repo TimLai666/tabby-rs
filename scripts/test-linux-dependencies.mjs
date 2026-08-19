@@ -14,6 +14,7 @@ const workflows = [
 assert.match(installer, /set -Eeuo pipefail/)
 assert.match(installer, /timeout --signal=TERM --kill-after=30s/)
 assert.match(installer, /Acquire::Retries=3/)
+assert.match(installer, /archive\.ubuntu\.com\/ubuntu/)
 assert.match(installer, /apt_retries/)
 assert.match(installer, /apt_retry_delay_seconds/)
 assert.match(installer, /::error::apt-get/)
