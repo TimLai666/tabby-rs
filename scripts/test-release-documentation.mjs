@@ -4,6 +4,7 @@ const readme = await readFile(new URL('../README.md', import.meta.url), 'utf8');
 const pluginCompatibility = await readFile(new URL('../docs/plugin-compatibility.md', import.meta.url), 'utf8');
 const hacking = await readFile(new URL('../HACKING.md', import.meta.url), 'utf8');
 const release = await readFile(new URL('../docs/release.md', import.meta.url), 'utf8');
+const releaseAcceptance = await readFile(new URL('../docs/release-acceptance.md', import.meta.url), 'utf8');
 const requiredDocuments = [
   'CONTRIBUTING.md',
   'SECURITY.md',
@@ -11,6 +12,7 @@ const requiredDocuments = [
   'docs/migration.md',
   'docs/plugin-compatibility.md',
   'docs/release.md',
+  'docs/release-acceptance.md',
   'docs/unsupported-signing.md',
 ];
 
@@ -55,6 +57,19 @@ for (const text of [
 
 if (!release.includes('`evidence_only`') || !release.includes('skips publishing') || !release.includes('ephemeral updater key') || !release.includes('evidence.invalid')) {
     throw new Error('docs/release.md is missing evidence-only workflow guidance');
+}
+
+for (const text of [
+    'tabby-rs-manual-platform-acceptance',
+    'sourceRevision',
+    'requiredChecks',
+    'side-by-side',
+    'Do not use a cached DMG',
+    'structured limitation',
+]) {
+    if (!releaseAcceptance.includes(text)) {
+        throw new Error(`docs/release-acceptance.md is missing acceptance guidance: ${text}`);
+    }
 }
 
 for (const keyword of ['tabby-plugin', 'tabby-builtin-plugin', 'terminus-*']) {
