@@ -57,10 +57,12 @@ jobs:
       - name: Test Tauri dependency metadata audit
         run: yarn test:tauri:dependencies
 
+      - name: Test Linux dependency installer contract
+        run: node scripts/test-linux-dependencies.mjs
+
       - name: Install Linux build dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends \
+          bash scripts/ci/install-linux-dependencies.sh \
             cmake \
             libarchive-tools \
             libayatana-appindicator3-dev \
