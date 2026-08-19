@@ -89,6 +89,7 @@ assert.match(evidenceSigning?.run || '', /cargo tauri signer generate --ci --pas
 assert.match(evidenceSigning?.run || '', /cygpath -w/, 'evidence-only signing key path must be Windows-compatible')
 assert.match(evidenceSigning?.run || '', /echo "public_key<<EOF"/, 'evidence-only public key output must use GitHub Actions multiline output syntax')
 assert.match(evidenceSigning?.run || '', /cat "\$key_path\.pub"/, 'evidence-only public key output must preserve the minisign key file contents')
+assert.match(evidenceSigning?.run || '', /cat "\$key_path\.pub"\n\s*echo\n\s*echo "EOF"/, 'evidence-only public key output must terminate the key value on its own line')
 assert.doesNotMatch(evidenceSigning?.run || '', /tr -d ['"]\\r\\n['"]/, 'evidence-only public key output must not collapse the minisign key into one line')
 assert.match(releaseConfiguration?.env?.TABBY_RS_UPDATE_PUBLIC_KEY || '', /steps\.evidence-signing\.outputs\.public_key/, 'evidence-only release config must use the ephemeral public key')
 assert.match(releaseConfiguration?.env?.TABBY_RS_UPDATE_ENDPOINT || '', /evidence\.invalid/, 'evidence-only release config must use a non-publishable endpoint')
