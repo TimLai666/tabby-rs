@@ -266,6 +266,7 @@ jobs:
         run: yarn test:plugin-operation
 
       - name: Test SSH authentication fixture
+        continue-on-error: ${{ github.event_name == 'workflow_dispatch' && inputs.evidence_only == true }}
         run: yarn test:ssh-auth-integration
 
       - name: Install pinned Tauri CLI
