@@ -33,6 +33,7 @@ the environment or attach evidence files.
   "kind": "tabby-rs-manual-platform-acceptance",
   "sourceRevision": "<git sha>",
   "platform": "windows-x64",
+  "architecture": "x86_64",
   "target": "x86_64-pc-windows-msvc",
   "environment": {
     "os": "<name and version>",
