@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process'
+import { createSshIntegrationEnv } from './ssh-integration-env.mjs'
 
 const result = spawnSync('cargo', [
     'test',
@@ -11,7 +12,7 @@ const result = spawnSync('cargo', [
     '--test-threads=1',
     '--nocapture',
 ], {
-    env: { ...process.env, TABBY_RS_SSH_INTEGRATION: '1' },
+    env: createSshIntegrationEnv(),
     stdio: 'inherit',
 })
 

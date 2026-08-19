@@ -164,6 +164,14 @@ features:
     issues: [17]
     platforms: [windows, macos, linux]
     tests:
+      manual: [ssh-sftp]
+    status: pending
+    evidence: []
+  - id: ssh.sftp.open-ssh-fixture
+    title: OpenSSH SFTP lifecycle fixture on Unix hosts
+    issues: [17]
+    platforms: [macos, linux]
+    tests:
       automated: [ssh-integration]
       manual: [ssh-sftp]
     status: pending

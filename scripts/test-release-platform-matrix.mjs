@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import yaml from 'js-yaml'
+import { createSshIntegrationEnv } from './ssh-integration-env.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const platformManifest = yaml.load(fs.readFileSync(path.join(root, 'parity/platform-matrix.yaml'), 'utf8'))
@@ -69,6 +70,14 @@ const evidenceCondition = "github.event_name == 'workflow_dispatch' && inputs.ev
 const evidenceContinueOnError = `\${{ ${evidenceCondition} }}`
 const evidenceUploadCondition = `\${{ always() && ((${evidenceCondition}) || success()) }}`
 const evidenceMissingFilesPolicy = `\${{ ${evidenceCondition} && 'warn' || 'error' }}`
+const windowsSshEnv = createSshIntegrationEnv({
+    platform: 'win32',
+    env: { RUSTFLAGS: 'fixture-flags' },
+    manifestPath: 'C:\\workspace\\windows-app-manifest.xml',
+})
+assert.match(windowsSshEnv.RUSTFLAGS, /fixture-flags/)
+assert.match(windowsSshEnv.RUSTFLAGS, /MANIFESTINPUT:C:\\workspace\\windows-app-manifest\.xml/)
+assert.match(windowsSshEnv.RUSTFLAGS, /MANIFEST:EMBED/)
 assert.equal(stableIssueGate?.if, "github.event_name != 'workflow_dispatch' || inputs.evidence_only != true", 'evidence-only runs must skip the stable issue gate')
 assert.match(linuxDependencies?.run || '', /openssh-server/, 'release Web gate must install OpenSSH for the real remote smoke')
 assert.match(linuxDependencies?.run || '', /xvfb/, 'release Web gate must install xvfb for the browser smoke')

@@ -182,6 +182,7 @@
     "test:ssh-manager-auth": "cargo test --manifest-path src-tauri/Cargo.toml --lib manager_authenticator",
     "test:ssh-known-hosts": "cargo test --manifest-path src-tauri/Cargo.toml --lib ssh::known_hosts::tests",
     "test:ssh-forwarding": "cargo test --manifest-path src-tauri/Cargo.toml --lib ssh::forwarding",
+    "test:ssh-integration-env": "node scripts/test-ssh-integration-env.mjs",
     "test:ssh-auth-integration": "node scripts/test-ssh-auth-integration.mjs",
     "test:ssh-integration": "node scripts/test-ssh-integration.mjs",
     "test:electron-updater": "node scripts/test-electron-updater-policy.mjs",
