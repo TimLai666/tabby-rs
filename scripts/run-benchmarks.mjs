@@ -1,15 +1,17 @@
 #!/usr/bin/env node
 
 import crypto from 'node:crypto'
-import { execFileSync, spawn } from 'node:child_process'
+import { execFile, execFileSync, spawn } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { promisify } from 'node:util'
 
 import { assertBenchmarkReport, BENCHMARK_METRICS, MIN_LARGE_OUTPUT_BYTES } from './benchmark/schema.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const execFileAsync = promisify(execFile)
 
 function parseArguments (argv) {
     const options = {}
@@ -114,13 +116,30 @@ async function waitForFile (filePath, timeoutMs, child, diagnostics) {
 }
 
 async function terminate (child) {
+    if (child.pid) {
+        if (process.platform === 'win32') {
+            try {
+                await execFileAsync('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true })
+            } catch {
+                // The process may have exited between the benchmark and cleanup.
+            }
+        } else {
+            try {
+                process.kill(-child.pid, 'SIGTERM')
+            } catch {
+                if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM')
+            }
+            await new Promise(resolve => setTimeout(resolve, 1000))
+            try {
+                process.kill(-child.pid, 'SIGKILL')
+            } catch {
+                if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+            }
+        }
+    }
     if (child.exitCode !== null || child.signalCode !== null) return
-    child.kill()
     await new Promise(resolve => {
-        const timer = setTimeout(() => {
-            child.kill('SIGKILL')
-            resolve()
-        }, 2000)
+        const timer = setTimeout(resolve, 2000)
         child.once('close', () => {
             clearTimeout(timer)
             resolve()
@@ -142,6 +161,7 @@ async function readySample (command, args, timeoutMs, configFixturePath) {
             TABBY_RS_BENCHMARK_DATA_DIR: dataDirectory,
         },
         stdio: ['ignore', 'ignore', 'pipe'],
+        detached: process.platform !== 'win32',
     })
     const diagnostics = attachChildDiagnostics(child)
     try {
@@ -197,6 +217,7 @@ async function memorySample (command, args, waitMs, timeoutMs, configFixturePath
             TABBY_RS_BENCHMARK_DATA_DIR: dataDirectory,
         },
         stdio: ['ignore', 'ignore', 'pipe'],
+        detached: process.platform !== 'win32',
     })
     const diagnostics = attachChildDiagnostics(child)
     try {
