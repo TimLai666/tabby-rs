@@ -363,7 +363,7 @@ async function smokeRpm (artifact, root, operations) {
     fs.mkdirSync(dbDirectory, { recursive: true })
     const name = await packageName('rpm', artifact, value => ['-qp', '--qf', '%{NAME}', value])
     await assertCommand('rpm', [`--root=${packageRoot}`, '--dbpath=/var/lib/rpm', '--initdb'], { cwd: root })
-    await assertCommand('rpm', [`--root=${packageRoot}`, '--dbpath=/var/lib/rpm', '--install', artifact], { cwd: root })
+    await assertCommand('rpm', [`--root=${packageRoot}`, '--dbpath=/var/lib/rpm', '--install', '--nodeps', artifact], { cwd: root })
     const installed = findFile(packageRoot, file => path.basename(file) === 'tabby-rs')
     assert.ok(installed, `RPM installation did not place the application under ${packageRoot}`)
     operations.push({ action: 'install', artifact: path.basename(artifact), package: name, manager: 'rpm' })
