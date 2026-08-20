@@ -63,6 +63,7 @@ jobs:
         run: |
           bash scripts/ci/install-linux-dependencies.sh \
             cmake \
+            desktop-file-utils \
             libarchive-tools \
             libayatana-appindicator3-dev \
             libfontconfig1-dev \
@@ -193,7 +194,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           bash scripts/ci/install-linux-dependencies.sh \
-            libayatana-appindicator3-dev libfontconfig1-dev librsvg2-dev \
+            desktop-file-utils libayatana-appindicator3-dev libfontconfig1-dev librsvg2-dev \
             libsecret-1-dev libudev-dev libwebkit2gtk-4.1-dev patchelf xvfb
 
       - name: Build hardened UAC helper
