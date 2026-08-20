@@ -20,6 +20,15 @@ const configFixture = path.join(work, 'config.json')
 const childPidFile = path.join(work, 'child-pids.txt')
 const childCleanupFile = path.join(work, 'child-cleanup.txt')
 
+function isProcessAlive (pid) {
+    try {
+        process.kill(pid, 0)
+        return true
+    } catch (error) {
+        return error?.code === 'EPERM'
+    }
+}
+
 fs.mkdirSync(bundleDir, { recursive: true })
 fs.writeFileSync(path.join(bundleDir, 'app.bin'), 'benchmark bundle\n')
 fs.writeFileSync(frameReport, JSON.stringify({
@@ -133,6 +142,7 @@ assert.ok(timedOutBeforeReady)
 assert.match(timedOutBeforeReady.stderr, /did not write ready marker within 100ms \(still running\)/)
 
 let processTreeCleanup
+let processTreeChildPids
 try {
     await execFileAsync(process.execPath, [runner,
         '--output-dir', path.join(work, 'process-tree-cleanup'),
@@ -152,7 +162,8 @@ try {
         '--arch', 'x86_64',
         '--target', 'fixture-target',
     ], { cwd: root })
-    processTreeCleanup = fs.readFileSync(childCleanupFile, 'utf8')
+    processTreeChildPids = fs.readFileSync(childPidFile, 'utf8').trim().split(/\s+/).filter(Boolean).map(Number)
+    if (process.platform !== 'win32') processTreeCleanup = fs.readFileSync(childCleanupFile, 'utf8')
 } finally {
     if (fs.existsSync(childPidFile)) {
         for (const value of fs.readFileSync(childPidFile, 'utf8').trim().split(/\s+/).filter(Boolean)) {
@@ -160,6 +171,12 @@ try {
         }
     }
 }
-assert.equal(processTreeCleanup?.trim().split('\n').length, 4, 'benchmark cleanup must terminate every descendant process')
+assert.equal(processTreeChildPids?.length, 4, 'benchmark must record every descendant process')
+if (process.platform === 'win32') {
+    await new Promise(resolve => setTimeout(resolve, 100))
+    assert.ok(processTreeChildPids.every(pid => !isProcessAlive(pid)), 'benchmark cleanup must terminate every Windows descendant process')
+} else {
+    assert.equal(processTreeCleanup?.trim().split('\n').length, 4, 'benchmark cleanup must terminate every descendant process')
+}
 
 console.log('Benchmark harness fixtures passed')
