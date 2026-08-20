@@ -43,6 +43,19 @@ const evidenceReportRuleExclusions = new Map([
     ['dependency-audit.json', new Set(['electron-runtime-import'])],
 ])
 
+const allowedBinaryContentFindings = [
+    {
+        path: 'appimage/Tabby RS.AppDir/usr/lib/libgnutls.so.30',
+        rule: 'private-key-material',
+        sha256: '1333e5627c3e0c9c67079abf8f46df1e9369e4d6aed800723e852b657467fbb9',
+    },
+]
+
+function isAllowedBinaryContentFinding (file, rule, sha256) {
+    return allowedBinaryContentFindings.some(allowed =>
+        allowed.path === file.relativePath && allowed.rule === rule.id && allowed.sha256 === sha256)
+}
+
 function walkFiles (directory, relative = '') {
     const entries = fs.readdirSync(directory, { withFileTypes: true })
     const files = []
@@ -90,7 +103,8 @@ export function auditBundle (bundlePath, { release = false } = {}) {
             continue
         }
         const size = fs.statSync(file.absolutePath).size
-        manifest.push({ path: file.relativePath, size, sha256: sha256(file.absolutePath) })
+        const fileSha256 = sha256(file.absolutePath)
+        manifest.push({ path: file.relativePath, size, sha256: fileSha256 })
         for (const rule of forbiddenFileRules) {
             if (rule.pattern.test(file.relativePath)) {
                 findings.push({ rule: rule.id, path: file.relativePath })
@@ -102,6 +116,7 @@ export function auditBundle (bundlePath, { release = false } = {}) {
             if (excludedRules.has(rule.id)) continue
             if (rule.binaryOnly && !content.binary) continue
             if (rule.pattern.test(content.text)) {
+                if (content.binary && isAllowedBinaryContentFinding(file, rule, fileSha256)) continue
                 findings.push({ rule: rule.id, path: file.relativePath })
             }
         }
