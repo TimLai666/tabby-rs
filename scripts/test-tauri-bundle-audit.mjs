@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-import { auditBundle, resolveSafeSymlink } from './check-tauri-bundle.mjs'
+import { auditBundle, isAllowedBinaryContentFinding, resolveSafeSymlink } from './check-tauri-bundle.mjs'
 
 function createReleaseFixture () {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'tabby-rs-bundle-audit-'))
@@ -106,6 +106,16 @@ fs.writeFileSync(vendorLibraryPath, '-----BEGIN PRIVATE KEY-----\n' + 'A'.repeat
 const vendorKeyReport = auditBundle(vendorKeyFixture, { release: true })
 assert.ok(vendorKeyReport.findings.some(finding =>
     finding.path === 'appimage/Tabby RS.AppDir/usr/lib/libgnutls.so.30' && finding.rule === 'private-key-material'))
+assert.equal(isAllowedBinaryContentFinding(
+    { relativePath: 'usr/lib/libgnutls.so.30' },
+    { id: 'private-key-material' },
+    '1333e5627c3e0c9c67079abf8f46df1e9369e4d6aed800723e852b657467fbb9',
+), true)
+assert.equal(isAllowedBinaryContentFinding(
+    { relativePath: 'usr/lib/libgnutls.so.30' },
+    { id: 'private-key-material' },
+    'not-the-known-vendor-library',
+), false)
 
 const largeBinaryFixture = createReleaseFixture()
 const largeBinary = Buffer.alloc(16 * 1024 * 1024 + 1)

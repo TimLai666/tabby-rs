@@ -45,15 +45,18 @@ const evidenceReportRuleExclusions = new Map([
 
 const allowedBinaryContentFindings = [
     {
-        path: 'appimage/Tabby RS.AppDir/usr/lib/libgnutls.so.30',
+        paths: [
+            'appimage/Tabby RS.AppDir/usr/lib/libgnutls.so.30',
+            'usr/lib/libgnutls.so.30',
+        ],
         rule: 'private-key-material',
         sha256: '1333e5627c3e0c9c67079abf8f46df1e9369e4d6aed800723e852b657467fbb9',
     },
 ]
 
-function isAllowedBinaryContentFinding (file, rule, sha256) {
+export function isAllowedBinaryContentFinding (file, rule, sha256) {
     return allowedBinaryContentFindings.some(allowed =>
-        allowed.path === file.relativePath && allowed.rule === rule.id && allowed.sha256 === sha256)
+        allowed.paths.includes(file.relativePath) && allowed.rule === rule.id && allowed.sha256 === sha256)
 }
 
 function isPathInsideRoot (rootDirectory, candidate) {
