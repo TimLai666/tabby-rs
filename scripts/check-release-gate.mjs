@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import yaml from 'js-yaml'
 
 import { BENCHMARK_METRICS, validateBenchmarkReport } from './benchmark/schema.mjs'
+import { validateManualPlatformAcceptance } from './check-manual-platform-acceptance.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const args = process.argv.slice(2)
@@ -19,6 +20,7 @@ const benchmarksDirectory = path.resolve(argument('--benchmarks-dir') || path.jo
 const installerSmokePath = path.resolve(argument('--installer-smoke') || path.join(root, 'installer-smoke.json'))
 const parityReportPath = path.resolve(argument('--parity-report') || path.join(root, 'parity-report.json'))
 const parityEvidencePath = argument('--parity-evidence') ? path.resolve(argument('--parity-evidence')) : null
+const manualAcceptanceDirectory = argument('--manual-acceptance-dir') ? path.resolve(argument('--manual-acceptance-dir')) : null
 const outputPath = path.resolve(argument('--output') || path.join(root, 'release-gate.json'))
 const expectedRevision = argument('--source-revision') || process.env.GITHUB_SHA || null
 const expectedPlatform = argument('--platform') || null
@@ -99,6 +101,29 @@ for (const platform of platformDocument?.platforms || []) {
     if (!platform.evidence?.length) {
         failures.push(`platform ${platform.id} has no evidence`)
     }
+}
+
+const expectedPlatformEntry = (platformDocument?.platforms || []).find(platform =>
+    (expectedTarget && platform.target === expectedTarget) || (expectedPlatform && platform.id === expectedPlatform))
+const manualAcceptanceRequired = expectedPlatformEntry?.status === 'passed'
+if (manualAcceptanceDirectory && fs.existsSync(manualAcceptanceDirectory)) {
+    if (!expectedPlatformEntry) {
+        failures.push('manual platform acceptance cannot resolve the expected platform matrix entry')
+    } else {
+        const manualAcceptancePath = path.join(manualAcceptanceDirectory, `${expectedPlatformEntry.id}.json`)
+        const manualAcceptance = readJson(manualAcceptancePath, `manual platform acceptance ${expectedPlatformEntry.id}`)
+        if (manualAcceptance) {
+            const validation = validateManualPlatformAcceptance(manualAcceptance, {
+                platformEntry: expectedPlatformEntry,
+                expectedRevision,
+                expectedArchitecture: expectedArch,
+                expectedTarget,
+            })
+            for (const failure of validation.failures) failures.push(`manual acceptance ${expectedPlatformEntry.id}: ${failure}`)
+        }
+    }
+} else if (manualAcceptanceRequired) {
+    failures.push('missing manual platform acceptance directory')
 }
 
 const parityReport = readJson(parityReportPath, 'parity report')
