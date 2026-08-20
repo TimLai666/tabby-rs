@@ -115,6 +115,8 @@ if (manualAcceptanceDirectory && fs.existsSync(manualAcceptanceDirectory)) {
         if (manualAcceptance) {
             const validation = validateManualPlatformAcceptance(manualAcceptance, {
                 platformEntry: expectedPlatformEntry,
+                featureEntries: (featuresDocument?.features || []).filter(feature =>
+                    (feature.platforms || []).includes(expectedPlatformEntry.id.split('-')[0]) && (feature.tests?.manual || []).length > 0),
                 expectedRevision,
                 expectedArchitecture: expectedArch,
                 expectedTarget,

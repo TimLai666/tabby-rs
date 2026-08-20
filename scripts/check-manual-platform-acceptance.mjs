@@ -74,8 +74,37 @@ function validateArtifacts (artifacts, failures) {
     }
 }
 
+function validateFeatureRecords (records, requiredFeatures, failures) {
+    if (!Array.isArray(records)) {
+        failures.push('features must be an array')
+        return
+    }
+    const ids = records.map(feature => feature?.id).filter(isNonEmptyString)
+    if (new Set(ids).size !== ids.length) failures.push('features contain duplicate ids')
+    const required = new Set(requiredFeatures.map(feature => feature.id))
+    for (const id of ids) {
+        if (!required.has(id)) failures.push(`unknown manual feature: ${id}`)
+    }
+    for (const feature of requiredFeatures) {
+        const matches = records.filter(record => record?.id === feature.id)
+        if (matches.length === 0) {
+            failures.push(`missing manual feature: ${feature.id}`)
+            continue
+        }
+        const record = matches[0]
+        if (record.status !== 'passed') failures.push(`manual feature ${feature.id} is ${record.status || 'missing'}`)
+        if (!Array.isArray(record.steps) || record.steps.length === 0 || record.steps.some(step => !isNonEmptyString(step))) {
+            failures.push(`manual feature ${feature.id} has no observable steps`)
+        }
+        if (!Array.isArray(record.evidence) || record.evidence.length === 0 || record.evidence.some(file => !isRelativeEvidencePath(file))) {
+            failures.push(`manual feature ${feature.id} has invalid evidence paths`)
+        }
+    }
+}
+
 export function validateManualPlatformAcceptance (record, {
     platformEntry,
+    featureEntries = [],
     expectedRevision = null,
     expectedArchitecture = null,
     expectedTarget = null,
@@ -90,6 +119,7 @@ export function validateManualPlatformAcceptance (record, {
         if (record.target !== platformEntry.target) failures.push(`target must be ${platformEntry.target}`)
         validateChecks(record.checks, platformEntry.requiredChecks || [], failures)
     }
+    validateFeatureRecords(record?.features, featureEntries, failures)
     if (!isNonEmptyString(record?.sourceRevision)) failures.push('sourceRevision is missing')
     if (expectedRevision && record.sourceRevision !== expectedRevision) failures.push(`sourceRevision must match ${expectedRevision}`)
     if (!isNonEmptyString(record?.architecture)) failures.push('architecture is missing')
@@ -119,8 +149,10 @@ async function main () {
         return
     }
     let matrix
+    let features
     try {
         matrix = yaml.load(fs.readFileSync(path.resolve(featuresPath), 'utf8'))
+        features = yaml.load(fs.readFileSync(path.join(root, 'parity/features.yaml'), 'utf8'))
     } catch (error) {
         console.error(`Unable to read platform matrix: ${error.message}`)
         process.exitCode = 2
@@ -133,8 +165,11 @@ async function main () {
         return
     }
     const platformEntry = (matrix?.platforms || []).find(entry => entry.id === record.platform)
+    const platformFamily = platformEntry?.id?.split('-')[0]
     const result = validateManualPlatformAcceptance(record, {
         platformEntry,
+        featureEntries: (features?.features || []).filter(feature =>
+            platformFamily && (feature.platforms || []).includes(platformFamily) && (feature.tests?.manual || []).length > 0),
         expectedRevision: argument(args, '--source-revision'),
         expectedArchitecture: argument(args, '--architecture'),
         expectedTarget: argument(args, '--target'),
