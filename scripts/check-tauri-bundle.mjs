@@ -56,16 +56,50 @@ function isAllowedBinaryContentFinding (file, rule, sha256) {
         allowed.path === file.relativePath && allowed.rule === rule.id && allowed.sha256 === sha256)
 }
 
-function walkFiles (directory, relative = '') {
+function isPathInsideRoot (rootDirectory, candidate) {
+    const relativeTarget = path.relative(path.resolve(rootDirectory), path.resolve(candidate))
+    return relativeTarget === '' || (!relativeTarget.startsWith(`..${path.sep}`) && !path.isAbsolute(relativeTarget))
+}
+
+function isRealPathInsideRoot (rootDirectory, candidate) {
+    return isPathInsideRoot(fs.realpathSync(rootDirectory), fs.realpathSync(candidate))
+}
+
+export function resolveSafeSymlink (rootDirectory, symlinkPath, target) {
+    if (path.isAbsolute(target)) return null
+    const resolvedTarget = path.resolve(path.dirname(symlinkPath), target)
+    return isPathInsideRoot(rootDirectory, resolvedTarget) ? resolvedTarget : null
+}
+
+function walkFiles (directory, relative = '', rootDirectory = path.resolve(directory)) {
     const entries = fs.readdirSync(directory, { withFileTypes: true })
     const files = []
     for (const entry of entries) {
         const relativePath = path.join(relative, entry.name)
         const absolutePath = path.join(directory, entry.name)
         if (entry.isDirectory()) {
-            files.push(...walkFiles(absolutePath, relativePath))
+            files.push(...walkFiles(absolutePath, relativePath, rootDirectory))
         } else if (entry.isFile()) {
             files.push({ absolutePath, relativePath: relativePath.split(path.sep).join('/') })
+        } else if (entry.isSymbolicLink()) {
+            const target = fs.readlinkSync(absolutePath)
+            const resolvedTarget = resolveSafeSymlink(rootDirectory, absolutePath, target)
+            let symlinkRule = 'symlink-outside-bundle'
+            if (resolvedTarget !== null) {
+                try {
+                    symlinkRule = isRealPathInsideRoot(rootDirectory, resolvedTarget)
+                        ? null
+                        : 'symlink-outside-bundle'
+                } catch {
+                    symlinkRule = 'broken-symlink'
+                }
+            }
+            files.push({
+                absolutePath,
+                relativePath: relativePath.split(path.sep).join('/'),
+                symlink: true,
+                symlinkRule,
+            })
         } else {
             files.push({ absolutePath, relativePath: relativePath.split(path.sep).join('/'), special: true })
         }
@@ -98,6 +132,17 @@ export function auditBundle (bundlePath, { release = false } = {}) {
     const findings = []
     const manifest = []
     for (const file of files) {
+        if (file.symlink) {
+            for (const rule of forbiddenFileRules) {
+                if (rule.pattern.test(file.relativePath)) {
+                    findings.push({ rule: rule.id, path: file.relativePath })
+                }
+            }
+            if (file.symlinkRule) {
+                findings.push({ rule: file.symlinkRule, path: file.relativePath })
+            }
+            continue
+        }
         if (file.special) {
             findings.push({ rule: 'special-file', path: file.relativePath })
             continue

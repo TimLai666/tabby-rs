@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-import { auditBundle } from './check-tauri-bundle.mjs'
+import { auditBundle, resolveSafeSymlink } from './check-tauri-bundle.mjs'
 
 function createReleaseFixture () {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'tabby-rs-bundle-audit-'))
@@ -46,6 +46,31 @@ fs.writeFileSync(
 )
 const passingReport = auditBundle(passingFixture, { release: true })
 assert.equal(passingReport.passed, true)
+
+const symlinkRoot = path.join(os.tmpdir(), 'tabby-rs-symlink-audit-root')
+const symlinkPath = path.join(symlinkRoot, 'link')
+assert.equal(resolveSafeSymlink(symlinkRoot, symlinkPath, 'LICENSE'), path.join(symlinkRoot, 'LICENSE'))
+assert.equal(resolveSafeSymlink(symlinkRoot, symlinkPath, '../outside'), null)
+assert.equal(resolveSafeSymlink(symlinkRoot, symlinkPath, '/tmp/outside'), null)
+
+const symlinkFixture = createReleaseFixture()
+try {
+    fs.symlinkSync('LICENSE', path.join(symlinkFixture, 'LICENSE.link'))
+    const symlinkReport = auditBundle(symlinkFixture, { release: true })
+    assert.equal(symlinkReport.passed, true)
+    assert.equal(symlinkReport.findings.some(finding => finding.rule === 'special-file'), false)
+    fs.symlinkSync('missing', path.join(symlinkFixture, 'broken.link'))
+    const outsideTarget = path.join(path.dirname(symlinkFixture), `${path.basename(symlinkFixture)}-outside`)
+    fs.writeFileSync(outsideTarget, 'outside')
+    fs.symlinkSync(`../${path.basename(outsideTarget)}`, path.join(symlinkFixture, 'outside.link'))
+    fs.symlinkSync('outside.link', path.join(symlinkFixture, 'chained-outside.link'))
+    const unsafeSymlinkReport = auditBundle(symlinkFixture, { release: true })
+    assert.ok(unsafeSymlinkReport.findings.some(finding => finding.rule === 'broken-symlink'))
+    assert.equal(unsafeSymlinkReport.findings.filter(finding => finding.rule === 'symlink-outside-bundle').length, 2)
+} catch (error) {
+    if (process.platform !== 'win32') throw error
+    console.log(`Skipping filesystem symlink fixture on ${process.platform}: ${error.message}`)
+}
 
 const forbiddenFixture = createReleaseFixture()
 fs.writeFileSync(path.join(forbiddenFixture, 'node.exe'), 'node')
