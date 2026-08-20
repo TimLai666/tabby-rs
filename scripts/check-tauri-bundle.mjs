@@ -67,18 +67,11 @@ function sha256 (filePath) {
 function readAuditContent (filePath) {
     const bytes = fs.readFileSync(filePath)
     if (bytes.includes(0)) {
-        const strings = []
-        let current = []
-        for (const byte of bytes) {
-            if (byte >= 0x20 && byte <= 0x7e) {
-                current.push(byte)
-            } else {
-                if (current.length >= 4) strings.push(Buffer.from(current).toString('ascii'))
-                current = []
-            }
-        }
-        if (current.length >= 4) strings.push(Buffer.from(current).toString('ascii'))
-        return { text: strings.join('\n'), binary: true }
+        // Keep a one-to-one byte mapping while letting Node perform the
+        // conversion natively. Iterating large Linux AppImage/package files
+        // byte by byte in JavaScript makes the release audit unnecessarily
+        // expensive without improving the forbidden-content checks.
+        return { text: bytes.toString('latin1'), binary: true }
     }
     return { text: bytes.toString('utf8'), binary: false }
 }
