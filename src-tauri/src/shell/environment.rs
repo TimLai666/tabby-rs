@@ -49,6 +49,13 @@ pub fn merge_environment(
         let value = value.into_string().map_err(|_| {
             AppError::InvalidData("system environment contains a non-Unicode value".into())
         })?;
+        #[cfg(windows)]
+        if key.starts_with('=') {
+            // Windows keeps drive-current-directory entries such as `=C:` in
+            // the process environment block. They are not regular variables
+            // and cannot be passed through the shell environment map.
+            continue;
+        }
         validate_environment_entry(&key, &value)?;
         insert_environment(&mut merged, key, value);
     }
