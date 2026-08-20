@@ -74,6 +74,14 @@ assert.equal(binaryReport.passed, false)
 assert.ok(binaryReport.findings.some(finding => finding.rule === 'electron-runtime-binary'))
 assert.equal(binaryReport.findings.some(finding => finding.rule === 'node-runtime-binary'), false)
 
+const vendorKeyFixture = createReleaseFixture()
+const vendorLibraryPath = path.join(vendorKeyFixture, 'appimage/Tabby RS.AppDir/usr/lib/libgnutls.so.30')
+fs.mkdirSync(path.dirname(vendorLibraryPath), { recursive: true })
+fs.writeFileSync(vendorLibraryPath, '-----BEGIN PRIVATE KEY-----\n' + 'A'.repeat(32) + '\n-----END PRIVATE KEY-----')
+const vendorKeyReport = auditBundle(vendorKeyFixture, { release: true })
+assert.ok(vendorKeyReport.findings.some(finding =>
+    finding.path === 'appimage/Tabby RS.AppDir/usr/lib/libgnutls.so.30' && finding.rule === 'private-key-material'))
+
 const largeBinaryFixture = createReleaseFixture()
 const largeBinary = Buffer.alloc(16 * 1024 * 1024 + 1)
 Buffer.from('electron.asar').copy(largeBinary, 16 * 1024 * 1024 - 16)
