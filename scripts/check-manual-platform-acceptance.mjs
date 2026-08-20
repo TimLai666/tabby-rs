@@ -1,0 +1,146 @@
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import yaml from 'js-yaml'
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const sha256Pattern = /^[0-9a-f]{64}$/i
+const allowedStatuses = new Set(['passed', 'failed', 'not-run'])
+
+function argument (args, name) {
+    const index = args.indexOf(name)
+    return index === -1 ? null : args[index + 1]
+}
+
+function isRelativeEvidencePath (value) {
+    if (typeof value !== 'string' || value.length === 0 || path.isAbsolute(value)) return false
+    return !value.split(/[\\/]+/).includes('..')
+}
+
+function isNonEmptyString (value) {
+    return typeof value === 'string' && value.trim().length > 0
+}
+
+function validateEnvironment (environment, failures) {
+    if (!environment || typeof environment !== 'object') {
+        failures.push('environment is missing')
+        return
+    }
+    for (const field of ['os', 'webview', 'toolchain']) {
+        if (!isNonEmptyString(environment[field])) failures.push(`environment ${field} is missing`)
+    }
+    if (!isNonEmptyString(environment.testedAt) || Number.isNaN(Date.parse(environment.testedAt))) {
+        failures.push('environment testedAt must be an RFC 3339 timestamp')
+    }
+}
+
+function validateChecks (checks, requiredChecks, failures) {
+    if (!Array.isArray(checks)) {
+        failures.push('checks must be an array')
+        return
+    }
+    const ids = checks.map(check => check?.id).filter(isNonEmptyString)
+    if (new Set(ids).size !== ids.length) failures.push('checks contain duplicate ids')
+    const required = new Set(requiredChecks)
+    for (const id of ids) {
+        if (!required.has(id)) failures.push(`unknown manual platform check: ${id}`)
+    }
+    for (const id of requiredChecks) {
+        const matches = checks.filter(check => check?.id === id)
+        if (matches.length === 0) {
+            failures.push(`missing manual platform check: ${id}`)
+            continue
+        }
+        const check = matches[0]
+        if (!allowedStatuses.has(check.status)) failures.push(`manual platform check ${id} has invalid status`)
+        if (check.status !== 'passed') failures.push(`manual platform check ${id} is ${check.status || 'missing'}`)
+        if (!Array.isArray(check.steps) || check.steps.length === 0 || check.steps.some(step => !isNonEmptyString(step))) {
+            failures.push(`manual platform check ${id} has no observable steps`)
+        }
+        if (!Array.isArray(check.evidence) || check.evidence.length === 0 || check.evidence.some(file => !isRelativeEvidencePath(file))) {
+            failures.push(`manual platform check ${id} has invalid evidence paths`)
+        }
+    }
+}
+
+function validateArtifacts (artifacts, failures) {
+    if (!Array.isArray(artifacts) || artifacts.length === 0) {
+        failures.push('artifacts must be a non-empty array')
+        return
+    }
+    for (const [index, artifact] of artifacts.entries()) {
+        if (!isRelativeEvidencePath(artifact?.path)) failures.push(`artifact ${index} has an invalid relative path`)
+        if (!sha256Pattern.test(artifact?.sha256 || '')) failures.push(`artifact ${index} has an invalid SHA-256`)
+    }
+}
+
+export function validateManualPlatformAcceptance (record, {
+    platformEntry,
+    expectedRevision = null,
+    expectedArchitecture = null,
+    expectedTarget = null,
+} = {}) {
+    const failures = []
+    if (record?.schemaVersion !== 1) failures.push('schemaVersion must be 1')
+    if (record?.kind !== 'tabby-rs-manual-platform-acceptance') failures.push('kind is invalid')
+    if (!platformEntry || typeof platformEntry !== 'object') {
+        failures.push('platform matrix entry is missing')
+    } else {
+        if (record.platform !== platformEntry.id) failures.push(`platform must be ${platformEntry.id}`)
+        if (record.target !== platformEntry.target) failures.push(`target must be ${platformEntry.target}`)
+        validateChecks(record.checks, platformEntry.requiredChecks || [], failures)
+    }
+    if (!isNonEmptyString(record?.sourceRevision)) failures.push('sourceRevision is missing')
+    if (expectedRevision && record.sourceRevision !== expectedRevision) failures.push(`sourceRevision must match ${expectedRevision}`)
+    if (!isNonEmptyString(record?.architecture)) failures.push('architecture is missing')
+    if (expectedArchitecture && record.architecture !== expectedArchitecture) failures.push(`architecture must match ${expectedArchitecture}`)
+    if (!isNonEmptyString(record?.target)) failures.push('target is missing')
+    if (expectedTarget && record.target !== expectedTarget) failures.push(`target must match ${expectedTarget}`)
+    validateEnvironment(record?.environment, failures)
+    validateArtifacts(record?.artifacts, failures)
+    return { passed: failures.length === 0, failures }
+}
+
+function readJson (filePath) {
+    try {
+        return JSON.parse(fs.readFileSync(filePath, 'utf8'))
+    } catch (error) {
+        return { __error: error.message }
+    }
+}
+
+async function main () {
+    const args = process.argv.slice(2)
+    const recordPath = argument(args, '--record')
+    const featuresPath = argument(args, '--platform-matrix') || path.join(root, 'parity/platform-matrix.yaml')
+    if (!recordPath) {
+        console.error('Usage: node scripts/check-manual-platform-acceptance.mjs --record <path> [--source-revision <sha>]')
+        process.exitCode = 2
+        return
+    }
+    let matrix
+    try {
+        matrix = yaml.load(fs.readFileSync(path.resolve(featuresPath), 'utf8'))
+    } catch (error) {
+        console.error(`Unable to read platform matrix: ${error.message}`)
+        process.exitCode = 2
+        return
+    }
+    const record = readJson(path.resolve(recordPath))
+    if (record.__error) {
+        console.error(`Unable to read manual acceptance record: ${record.__error}`)
+        process.exitCode = 2
+        return
+    }
+    const platformEntry = (matrix?.platforms || []).find(entry => entry.id === record.platform)
+    const result = validateManualPlatformAcceptance(record, {
+        platformEntry,
+        expectedRevision: argument(args, '--source-revision'),
+        expectedArchitecture: argument(args, '--architecture'),
+        expectedTarget: argument(args, '--target'),
+    })
+    console.log(JSON.stringify(result, null, 2))
+    if (!result.passed) process.exitCode = 1
+}
+
+if (fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) await main()

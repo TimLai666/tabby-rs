@@ -59,6 +59,22 @@ The record must identify the same `sourceRevision`, platform, architecture, and
 target as the parity manifest and release artifact reports. A report that only
 says “smoke passed” is insufficient.
 
+Validate each record before adding it to a release staging directory:
+
+```text
+node scripts/check-manual-platform-acceptance.mjs \
+  --record release-staging/manual-acceptance/windows-x64.json \
+  --source-revision "$GITHUB_SHA" \
+  --architecture x86_64 \
+  --target x86_64-pc-windows-msvc
+```
+
+The release gate accepts a manual record only when every platform-matrix check
+is present, marked `passed`, backed by observable steps and relative evidence
+paths, and bound to the same revision, architecture, and target. If a platform
+manifest is changed to `passed`, the gate requires its record under
+`release-staging/manual-acceptance/<platform-id>.json`.
+
 ## Windows x64
 
 Run on a real Windows 11 host with the fresh NSIS installer and the exact

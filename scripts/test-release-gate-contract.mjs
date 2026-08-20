@@ -136,6 +136,29 @@ await assert.rejects(
 const manualOnlyEvidenceReport = JSON.parse(fs.readFileSync(manualOnlyEvidenceOutput, 'utf8'))
 assert.ok(!manualOnlyEvidenceReport.failures.some(error => error.startsWith('parity automated evidence has unverified required checks:')))
 
+const manualAcceptanceDirectory = path.join(work, 'manual-acceptance')
+const manualAcceptanceOutput = path.join(work, 'manual-acceptance-release-gate.json')
+fs.mkdirSync(manualAcceptanceDirectory)
+fs.writeFileSync(path.join(manualAcceptanceDirectory, 'windows-x64.json'), JSON.stringify({ schemaVersion: 1 }))
+await assert.rejects(
+    execFileAsync(process.execPath, [gate,
+        '--bundle-audit', bundleAudit,
+        '--dependency-audit', dependencyAudit,
+        '--license-report', licenseReport,
+        '--installer-smoke', installerSmoke,
+        '--parity-report', parityReport,
+        '--parity-evidence', manualOnlyParityEvidence,
+        '--manual-acceptance-dir', manualAcceptanceDirectory,
+        '--platform', 'windows',
+        '--arch', 'x86_64',
+        '--target', 'x86_64-pc-windows-msvc',
+        '--source-revision', expectedRevision,
+        '--output', manualAcceptanceOutput,
+    ], { cwd: root }),
+)
+const manualAcceptanceReport = JSON.parse(fs.readFileSync(manualAcceptanceOutput, 'utf8'))
+assert.ok(manualAcceptanceReport.failures.includes('manual acceptance windows-x64: kind is invalid'))
+
 const missingUserDataEvidenceSmoke = path.join(work, 'missing-user-data-evidence-smoke.json')
 const missingUserDataEvidenceOutput = path.join(work, 'missing-user-data-evidence-release-gate.json')
 fs.writeFileSync(missingUserDataEvidenceSmoke, JSON.stringify({

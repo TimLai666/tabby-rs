@@ -160,6 +160,7 @@
     "create:license-report": "node scripts/create-license-report.mjs",
     "test:release-gate": "node scripts/check-release-gate.mjs",
     "test:release-gate-contract": "node scripts/test-release-gate-contract.mjs",
+    "test:manual-platform-acceptance": "node scripts/test-manual-platform-acceptance.mjs",
     "test:release-gate-aggregate": "node scripts/test-aggregate-release-gate.mjs",
     "test:release-platform-matrix": "node scripts/test-release-platform-matrix.mjs",
     "test:linux-dependencies": "node scripts/test-linux-dependencies.mjs",
