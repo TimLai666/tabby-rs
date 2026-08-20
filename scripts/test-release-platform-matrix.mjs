@@ -55,6 +55,8 @@ const releaseConfiguration = buildSteps.find(step => step.name === 'Generate rel
 const signedBundle = buildSteps.find(step => step.name === 'Build signed Tauri bundle')
 const releaseMetadata = buildSteps.find(step => step.name === 'Prepare release metadata')
 const stagedArtifacts = buildSteps.find(step => step.name === 'Stage release artifacts')
+const benchmark = buildSteps.find(step => step.name === 'Measure Tauri release')
+const installerSmoke = buildSteps.find(step => step.name === 'Smoke test release installer')
 const rustHostTest = buildSteps.find(step => step.name === 'Test Rust host')
 const windowsRustTest = buildSteps.find(step => step.name === 'Test Rust host on Windows')
 const publishSteps = releaseWorkflow?.jobs?.publish?.steps || []
@@ -114,6 +116,7 @@ assert.deepEqual(
 )
 assert.match(releaseMetadata?.env?.TABBY_RS_EVIDENCE_ONLY || '', /inputs\.evidence_only/, 'release metadata must record evidence-only signing mode')
 assert.match(stagedArtifacts?.env?.TABBY_RS_UPDATE_ARTIFACT_URL || '', /evidence\.invalid/, 'evidence-only updater manifests must use a non-publishable artifact URL')
+assert.ok(benchmark && installerSmoke && buildSteps.indexOf(benchmark) < buildSteps.indexOf(installerSmoke), 'release benchmarks must run before installer smoke to avoid a stale single-instance process being mistaken for the benchmark process')
 assert.equal(rustHostTest?.if, "runner.os != 'Windows'", 'release Rust tests must not execute Tauri test binaries on Windows')
 assert.equal(windowsRustTest?.if, "runner.os == 'Windows'", 'release Windows Rust coverage must execute library tests')
 assert.equal(windowsRustTest?.run, 'cargo test --manifest-path src-tauri/Cargo.toml --lib', 'release Windows Rust coverage must execute the library tests')

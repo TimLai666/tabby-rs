@@ -386,24 +386,6 @@ jobs:
       - name: Audit release bundle
         run: node scripts/check-tauri-bundle.mjs release-staging --release --output release-staging/bundle-audit.json
 
-      - name: Smoke test release installer
-        shell: bash
-        run: |
-          if [ "${{ matrix.platform }}" = "linux" ]; then
-            xvfb-run -a node scripts/smoke-tauri-release.mjs --staging release-staging --platform "${{ matrix.platform }}" --output release-staging/installer-smoke.json
-          else
-            node scripts/smoke-tauri-release.mjs --staging release-staging --platform "${{ matrix.platform }}" --output release-staging/installer-smoke.json
-          fi
-
-      - name: Test parity automated check links
-        run: yarn test:parity-links
-
-      - name: Collect parity automated evidence
-        run: node scripts/collect-parity-evidence.mjs --platform "${{ matrix.platform }}" --arch "${{ matrix.arch }}" --target "${{ matrix.target }}" --source-revision "${{ github.sha }}" --output release-staging/parity-automated-evidence.json
-
-      - name: Generate parity report
-        run: node scripts/compare-parity.mjs --report-only --output release-staging/parity-report.json --html-output release-staging/parity-report.html
-
       - name: Measure Tauri release
         shell: bash
         env:
@@ -436,6 +418,24 @@ jobs:
             --ui-frame-report release-staging/benchmarks/ui-frames.json \
             --config-fixture-path scripts/fixtures/benchmark-config.json \
             --config-fixture release-default
+
+      - name: Smoke test release installer
+        shell: bash
+        run: |
+          if [ "${{ matrix.platform }}" = "linux" ]; then
+            xvfb-run -a node scripts/smoke-tauri-release.mjs --staging release-staging --platform "${{ matrix.platform }}" --output release-staging/installer-smoke.json
+          else
+            node scripts/smoke-tauri-release.mjs --staging release-staging --platform "${{ matrix.platform }}" --output release-staging/installer-smoke.json
+          fi
+
+      - name: Test parity automated check links
+        run: yarn test:parity-links
+
+      - name: Collect parity automated evidence
+        run: node scripts/collect-parity-evidence.mjs --platform "${{ matrix.platform }}" --arch "${{ matrix.arch }}" --target "${{ matrix.target }}" --source-revision "${{ github.sha }}" --output release-staging/parity-automated-evidence.json
+
+      - name: Generate parity report
+        run: node scripts/compare-parity.mjs --report-only --output release-staging/parity-report.json --html-output release-staging/parity-report.html
 
       - name: Write incomplete evidence fallback
         if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.evidence_only == true }}
