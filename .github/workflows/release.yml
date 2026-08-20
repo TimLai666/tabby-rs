@@ -387,7 +387,12 @@ jobs:
 
       - name: Smoke test release installer
         shell: bash
-        run: node scripts/smoke-tauri-release.mjs --staging release-staging --platform "${{ matrix.platform }}" --output release-staging/installer-smoke.json
+        run: |
+          if [ "${{ matrix.platform }}" = "linux" ]; then
+            xvfb-run -a node scripts/smoke-tauri-release.mjs --staging release-staging --platform "${{ matrix.platform }}" --output release-staging/installer-smoke.json
+          else
+            node scripts/smoke-tauri-release.mjs --staging release-staging --platform "${{ matrix.platform }}" --output release-staging/installer-smoke.json
+          fi
 
       - name: Test parity automated check links
         run: yarn test:parity-links
