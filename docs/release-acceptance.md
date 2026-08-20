@@ -49,6 +49,14 @@ the environment or attach evidence files.
       "evidence": ["manual/windows-x64/local-shell.txt"]
     }
   ],
+  "features": [
+    {
+      "id": "local-shell.profiles-and-pty",
+      "status": "passed",
+      "steps": ["started a shell, resized the terminal, interrupted it, and verified clean exit"],
+      "evidence": ["manual/windows-x64/local-shell.profiles-and-pty.txt"]
+    }
+  ],
   "artifacts": [
     { "path": "<relative artifact path>", "sha256": "<digest>" }
   ]
@@ -56,8 +64,9 @@ the environment or attach evidence files.
 ```
 
 The record must identify the same `sourceRevision`, platform, architecture, and
-target as the parity manifest and release artifact reports. A report that only
-says “smoke passed” is insufficient.
+target as the parity manifest and release artifact reports. Its `features`
+array must cover every feature with a manual test for that platform. A report
+that only says “smoke passed” is insufficient.
 
 Validate each record before adding it to a release staging directory:
 
@@ -70,9 +79,9 @@ node scripts/check-manual-platform-acceptance.mjs \
 ```
 
 The release gate accepts a manual record only when every platform-matrix check
-is present, marked `passed`, backed by observable steps and relative evidence
-paths, and bound to the same revision, architecture, and target. If a platform
-manifest is changed to `passed`, the gate requires its record under
+and every platform-scoped manual feature is present, marked `passed`, backed by
+observable steps and relative evidence paths, and bound to the same revision,
+architecture, and target. If a platform manifest is changed to `passed`, the gate requires its record under
 `release-staging/manual-acceptance/<platform-id>.json`.
 
 ## Windows x64

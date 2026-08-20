@@ -8,8 +8,11 @@ import { validateManualPlatformAcceptance } from './check-manual-platform-accept
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const matrix = yaml.load(fs.readFileSync(path.join(root, 'parity/platform-matrix.yaml'), 'utf8'))
+const featuresDocument = yaml.load(fs.readFileSync(path.join(root, 'parity/features.yaml'), 'utf8'))
 const platformEntry = matrix.platforms.find(platform => platform.id === 'windows-x64')
 const requiredChecks = platformEntry.requiredChecks
+const requiredFeatures = featuresDocument.features.filter(feature =>
+    feature.platforms.includes('windows') && feature.tests?.manual?.length > 0)
 const validRecord = {
     schemaVersion: 1,
     kind: 'tabby-rs-manual-platform-acceptance',
@@ -29,11 +32,18 @@ const validRecord = {
         steps: ['verified ' + id],
         evidence: ['manual/' + platformEntry.id + '/' + id + '.txt'],
     })),
+    features: requiredFeatures.map(feature => ({
+        id: feature.id,
+        status: 'passed',
+        steps: ['verified ' + feature.id],
+        evidence: ['manual/' + platformEntry.id + '/' + feature.id + '.txt'],
+    })),
     artifacts: [{ path: 'artifacts/Tabby-RS-setup.exe', sha256: 'a'.repeat(64) }],
 }
 
 const valid = validateManualPlatformAcceptance(validRecord, {
     platformEntry,
+    featureEntries: requiredFeatures,
     expectedRevision: validRecord.sourceRevision,
     expectedArchitecture: validRecord.architecture,
     expectedTarget: validRecord.target,
@@ -44,6 +54,11 @@ const missingCheck = structuredClone(validRecord)
 missingCheck.checks = missingCheck.checks.slice(1)
 const missingResult = validateManualPlatformAcceptance(missingCheck, { platformEntry })
 assert.ok(missingResult.failures.includes('missing manual platform check: ' + requiredChecks[0]))
+
+const missingFeature = structuredClone(validRecord)
+missingFeature.features = missingFeature.features.slice(1)
+const missingFeatureResult = validateManualPlatformAcceptance(missingFeature, { platformEntry, featureEntries: requiredFeatures })
+assert.ok(missingFeatureResult.failures.includes('missing manual feature: ' + requiredFeatures[0].id))
 
 const failedCheck = structuredClone(validRecord)
 failedCheck.checks[0].status = 'not-run'
