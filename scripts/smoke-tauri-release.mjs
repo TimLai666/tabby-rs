@@ -126,12 +126,16 @@ async function terminate (child) {
     })
 }
 
-function waitForReadyOrExit (child, marker) {
+function waitForReadyOrExit (child, marker, processOutput) {
     const exited = new Promise((_, reject) => {
         child.once('error', reject)
         child.once('close', (code, signal) => {
             reject(new Error(
-                `installed application exited before writing ready marker (code=${code ?? 'null'}, signal=${signal ?? 'null'}, marker=${marker})`,
+                [
+                    `installed application exited before writing ready marker (code=${code ?? 'null'}, signal=${signal ?? 'null'}, marker=${marker})`,
+                    `stdout=${processOutput.stdout.trim() || '<empty>'}`,
+                    `stderr=${processOutput.stderr.trim() || '<empty>'}`,
+                ].join('\n'),
             ))
         })
     })
@@ -146,6 +150,15 @@ async function launchAndCheck (executable, cwd, environment, { preserveUserData 
     const marker = path.join(markerDirectory, 'ready.marker')
     const dataDirectory = path.join(markerDirectory, 'data')
     const userDataSentinel = path.join(dataDirectory, 'user-data-preservation-sentinel.txt')
+    const processOutput = { stdout: '', stderr: '' }
+    const appendOutput = (stream, chunk) => {
+        const maxOutputLength = 12000
+        if (processOutput[stream].length >= maxOutputLength) return
+        processOutput[stream] += chunk
+        if (processOutput[stream].length > maxOutputLength) {
+            processOutput[stream] = `${processOutput[stream].slice(0, maxOutputLength)}\n[output truncated]`
+        }
+    }
     if (environment.HOME) {
         fs.mkdirSync(environment.HOME, { recursive: true })
     }
@@ -158,11 +171,15 @@ async function launchAndCheck (executable, cwd, environment, { preserveUserData 
             TABBY_RS_INSTALLER_SMOKE_READY_FILE: marker,
             TABBY_RS_INSTALLER_SMOKE_DATA_DIR: dataDirectory,
         },
-        stdio: 'ignore',
+        stdio: ['ignore', 'pipe', 'pipe'],
         windowsHide: true,
     })
+    child.stdout.setEncoding('utf8')
+    child.stderr.setEncoding('utf8')
+    child.stdout.on('data', chunk => appendOutput('stdout', chunk))
+    child.stderr.on('data', chunk => appendOutput('stderr', chunk))
     try {
-        const readyReport = await waitForReadyOrExit(child, marker)
+        const readyReport = await waitForReadyOrExit(child, marker, processOutput)
         const identity = readyReport.identity
         assert.equal(identity.productName, 'Tabby RS')
         assert.equal(identity.appIdentifier, 'io.tabbyrs.app')
