@@ -17,6 +17,8 @@ const outputDir = path.join(work, 'benchmarks')
 const bundleDir = path.join(work, 'bundle')
 const frameReport = path.join(work, 'frames.json')
 const configFixture = path.join(work, 'config.json')
+const childPidFile = path.join(work, 'child-pids.txt')
+const childCleanupFile = path.join(work, 'child-cleanup.txt')
 
 fs.mkdirSync(bundleDir, { recursive: true })
 fs.writeFileSync(path.join(bundleDir, 'app.bin'), 'benchmark bundle\n')
@@ -129,5 +131,35 @@ try {
 }
 assert.ok(timedOutBeforeReady)
 assert.match(timedOutBeforeReady.stderr, /did not write ready marker within 100ms \(still running\)/)
+
+let processTreeCleanup
+try {
+    await execFileAsync(process.execPath, [runner,
+        '--output-dir', path.join(work, 'process-tree-cleanup'),
+        '--samples', '1',
+        '--warmup-samples', '1',
+        '--memory-wait-ms', '10',
+        '--binary', process.execPath,
+        '--binary-path', process.execPath,
+        '--binary-args', JSON.stringify([fixture, '--ready-with-child', childPidFile, childCleanupFile]),
+        '--output-command', process.execPath,
+        '--output-args', JSON.stringify([fixture, '--output', '131072']),
+        '--bundle', bundleDir,
+        '--ui-frame-report', frameReport,
+        '--config-fixture-path', configFixture,
+        '--config-fixture', 'benchmark-process-tree',
+        '--platform', 'linux',
+        '--arch', 'x86_64',
+        '--target', 'fixture-target',
+    ], { cwd: root })
+    processTreeCleanup = fs.readFileSync(childCleanupFile, 'utf8')
+} finally {
+    if (fs.existsSync(childPidFile)) {
+        for (const value of fs.readFileSync(childPidFile, 'utf8').trim().split(/\s+/).filter(Boolean)) {
+            try { process.kill(Number(value), 'SIGKILL') } catch {}
+        }
+    }
+}
+assert.equal(processTreeCleanup?.trim().split('\n').length, 4, 'benchmark cleanup must terminate every descendant process')
 
 console.log('Benchmark harness fixtures passed')
