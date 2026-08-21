@@ -164,6 +164,23 @@ export function validateManualPlatformAcceptance (record, {
     return { passed: failures.length === 0, failures }
 }
 
+export function validateManualFeatureAcceptance (record, {
+    featureEntries = [],
+    expectedRevision = null,
+    evidenceRoot = root,
+} = {}) {
+    const failures = []
+    if (record?.schemaVersion !== 1) failures.push('schemaVersion must be 1')
+    if (record?.kind !== 'tabby-rs-manual-feature-acceptance') failures.push('kind is invalid')
+    if (record?.platform !== 'web') failures.push('platform must be web')
+    validateFeatureRecords(record?.features, featureEntries, evidenceRoot, failures)
+    if (!isNonEmptyString(record?.sourceRevision)) failures.push('sourceRevision is missing')
+    if (expectedRevision && record.sourceRevision !== expectedRevision) failures.push(`sourceRevision must match ${expectedRevision}`)
+    validateEnvironment(record?.environment, failures)
+    validateArtifacts(record?.artifacts, evidenceRoot, failures)
+    return { passed: failures.length === 0, failures }
+}
+
 function readJson (filePath) {
     try {
         return JSON.parse(fs.readFileSync(filePath, 'utf8'))

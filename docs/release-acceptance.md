@@ -25,9 +25,13 @@ human platform result.
 
 ## Evidence record
 
-Create one JSON record per platform under the release staging directory. The
-following shape is the minimum required record; additional fields may describe
-the environment or attach evidence files.
+Create one JSON record per desktop platform under the release staging directory.
+For Web, create `manual-acceptance/web.json` using the same `environment`,
+`features`, and `artifacts` fields but with `kind` set to
+`tabby-rs-manual-feature-acceptance` and `platform` set to `web`; Web has no
+desktop platform-matrix checks. The following shape is the minimum required
+desktop record; additional fields may describe the environment or attach
+evidence files.
 
 ```json
 {
@@ -83,11 +87,15 @@ node scripts/check-manual-platform-acceptance.mjs \
   --target x86_64-pc-windows-msvc
 ```
 
-The release gate accepts a manual record only when every platform-matrix check
-and every platform-scoped manual feature is present, marked `passed`, backed by
-observable steps and relative evidence paths, and bound to the same revision,
-architecture, and target. If a platform manifest is changed to `passed`, the gate requires its record under
-`release-staging/manual-acceptance/<platform-id>.json`.
+The release gate accepts a desktop manual record only when every
+platform-matrix check and every platform-scoped manual feature is present,
+marked `passed`, backed by observable steps and relative evidence paths, and
+bound to the same revision, architecture, and target. The Web record applies
+the same evidence rules to every Web-scoped manual feature, without desktop
+architecture or target fields. If a platform manifest is changed to `passed`,
+the gate requires its record under
+`release-staging/manual-acceptance/<platform-id>.json`; a passed Web feature
+requires `release-staging/manual-acceptance/web.json`.
 
 ## Windows x64
 
@@ -97,7 +105,8 @@ the exact artifact under test:
 
 - `local-shell`: start and close the configured local shell, send input,
   resize, interrupt, and verify clean process exit.
-- `powershell`, `cmd`, `wsl`, and `git-bash`: start each shell, run a command,
+- `powershell`, `cmd`, `wsl`, `git-bash`, and `visual-studio-developer-shell`:
+  start each shell, run a command,
   verify output and resize, then close it without leaving a child process.
 - `clink` and `uac`: verify the configured integration and an elevated session;
   record the Windows build and integration versions.

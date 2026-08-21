@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import yaml from 'js-yaml'
 
 import { BENCHMARK_METRICS, validateBenchmarkReport } from './benchmark/schema.mjs'
-import { validateManualPlatformAcceptance } from './check-manual-platform-acceptance.mjs'
+import { validateManualFeatureAcceptance, validateManualPlatformAcceptance } from './check-manual-platform-acceptance.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const args = process.argv.slice(2)
@@ -21,6 +21,7 @@ const installerSmokePath = path.resolve(argument('--installer-smoke') || path.jo
 const parityReportPath = path.resolve(argument('--parity-report') || path.join(root, 'parity-report.json'))
 const parityEvidencePath = argument('--parity-evidence') ? path.resolve(argument('--parity-evidence')) : null
 const manualAcceptanceDirectory = argument('--manual-acceptance-dir') ? path.resolve(argument('--manual-acceptance-dir')) : null
+const evidenceRoot = path.resolve(argument('--evidence-root') || root)
 const outputPath = path.resolve(argument('--output') || path.join(root, 'release-gate.json'))
 const expectedRevision = argument('--source-revision') || process.env.GITHUB_SHA || null
 const expectedPlatform = argument('--platform') || null
@@ -77,7 +78,7 @@ function validateManifestEvidence (entry, label) {
             failures.push(`${label} has invalid evidence path: ${evidence}`)
             continue
         }
-        const evidencePath = path.resolve(root, evidence)
+        const evidencePath = path.resolve(evidenceRoot, evidence)
         if (!fs.existsSync(evidencePath) || !fs.statSync(evidencePath).isFile()) {
             failures.push(`${label} evidence file is missing: ${evidence}`)
         }
@@ -110,6 +111,8 @@ function manifestMetadata (relativePath, entries) {
 
 const featuresDocument = readYaml('parity/features.yaml')
 const platformDocument = readYaml('parity/platform-matrix.yaml')
+const webFeatureEntries = (featuresDocument?.features || []).filter(feature =>
+    (feature.platforms || []).includes('web') && (feature.tests?.manual || []).length > 0)
 if (!Array.isArray(featuresDocument?.features) || featuresDocument.features.length === 0) {
     failures.push('parity/features.yaml has no features')
 }
@@ -158,13 +161,30 @@ if (manualAcceptanceDirectory && fs.existsSync(manualAcceptanceDirectory)) {
                 expectedRevision,
                 expectedArchitecture: expectedArch,
                 expectedTarget,
-                evidenceRoot: path.dirname(manualAcceptanceDirectory),
+                evidenceRoot,
             })
             for (const failure of validation.failures) failures.push(`manual acceptance ${expectedPlatformEntry.id}: ${failure}`)
         }
     }
-} else if (manualAcceptanceRequired) {
-    failures.push('missing manual platform acceptance directory')
+    const webManualAcceptancePath = path.join(manualAcceptanceDirectory, 'web.json')
+    const webManualAcceptance = fs.existsSync(webManualAcceptancePath)
+        ? readJson(webManualAcceptancePath, 'manual feature acceptance web')
+        : null
+    if (webManualAcceptance) {
+        const validation = validateManualFeatureAcceptance(webManualAcceptance, {
+            featureEntries: webFeatureEntries,
+            expectedRevision,
+            evidenceRoot,
+        })
+        for (const failure of validation.failures) failures.push(`manual acceptance web: ${failure}`)
+    } else if (webFeatureEntries.some(feature => ['passed', 'accepted-difference'].includes(feature.status))) {
+        failures.push('missing manual feature acceptance web')
+    }
+} else {
+    if (manualAcceptanceRequired) failures.push('missing manual platform acceptance directory')
+    if (webFeatureEntries.some(feature => ['passed', 'accepted-difference'].includes(feature.status))) {
+        failures.push('missing manual feature acceptance web')
+    }
 }
 
 const parityReport = readJson(parityReportPath, 'parity report')
