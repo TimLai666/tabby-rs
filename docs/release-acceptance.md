@@ -15,7 +15,9 @@ human platform result.
    `not-run` check blocks the corresponding manifest entry.
 3. A manifest entry may change from `pending` to `passed` only when its evidence
    points to the captured report, screenshot, log, or artifact. Use
-   `accepted-difference` only with a written reason and an explicit approval.
+   `accepted-difference` only with a written reason, evidence files that exist
+   in the release checkout, and an approval object containing
+   `decision: accepted-difference`, `approver`, and an RFC 3339 `approvedAt`.
 4. Do not put passwords, private keys, tokens, personal data, or full config
    files in evidence. Redact terminal output and screenshots before upload.
 5. Keep the original Tabby installation and data directory untouched during
@@ -64,15 +66,18 @@ the environment or attach evidence files.
 ```
 
 The record must identify the same `sourceRevision`, platform, architecture, and
-target as the parity manifest and release artifact reports. Its `features`
-array must cover every feature with a manual test for that platform. A report
-that only says “smoke passed” is insufficient.
+target as the parity manifest and release artifact reports. Evidence and
+artifact paths are relative to the release staging directory, must point to
+existing files, and artifact SHA-256 values are recomputed by the validator.
+Its `features` array must cover every feature with a manual test for that
+platform. A report that only says “smoke passed” is insufficient.
 
 Validate each record before adding it to a release staging directory:
 
 ```text
 node scripts/check-manual-platform-acceptance.mjs \
   --record release-staging/manual-acceptance/windows-x64.json \
+  --evidence-root release-staging \
   --source-revision "$GITHUB_SHA" \
   --architecture x86_64 \
   --target x86_64-pc-windows-msvc
@@ -86,8 +91,9 @@ architecture, and target. If a platform manifest is changed to `passed`, the gat
 
 ## Windows x64
 
-Run on a real Windows 11 host with the fresh NSIS installer and the exact
-artifact under test:
+Run on a real Windows host matching the currently supported Tauri/CI
+environment, record its actual OS version, and use the fresh NSIS installer and
+the exact artifact under test:
 
 - `local-shell`: start and close the configured local shell, send input,
   resize, interrupt, and verify clean process exit.
@@ -145,4 +151,4 @@ After review, add the evidence record paths to the affected `evidence` arrays
 and change status only for entries whose complete scope passed. Keep failed or
 unverified entries as `pending` or `failed`; run `yarn test:parity-report` and
 the aggregate release gate again. The stable workflow remains blocked while
-Epic #1 child issues #26 or #27 are open.
+Epic #1 child issues #2 through #27 are open.

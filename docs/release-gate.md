@@ -1,6 +1,6 @@
 # Tabby RS release gate
 
-`parity/features.yaml` and `parity/platform-matrix.yaml` are acceptance contracts, not status claims. Every entry needs evidence before it can change from `pending` to `passed` or a documented `accepted-difference`.
+`parity/features.yaml` and `parity/platform-matrix.yaml` are acceptance contracts, not status claims. Every entry needs existing evidence files before it can change from `pending` to `passed` or a documented `accepted-difference`. An `accepted-difference` also requires a reason and an approval object with the decision, approver, and approval timestamp.
 
 Each feature entry represents one user-facing capability and must identify its owning issue numbers, platform scope, and at least one automated or manual test. Each platform entry must identify its runner, compilation target, and non-empty `requiredChecks` list. These fields describe coverage responsibilities; they do not count as evidence until the named check actually runs and its result is recorded.
 

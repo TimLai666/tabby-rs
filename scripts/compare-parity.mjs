@@ -32,6 +32,43 @@ function nonEmptyStringArray (value) {
     return Array.isArray(value) && value.length > 0 && value.every(item => typeof item === 'string' && item.trim().length > 0)
 }
 
+function isRelativeEvidencePath (value) {
+    if (typeof value !== 'string' || value.trim().length === 0 || path.isAbsolute(value)) return false
+    return !value.split(/[\\/]+/).includes('..')
+}
+
+function validateEvidence (entry, label, evidenceRoot, failures) {
+    if (!nonEmptyStringArray(entry?.evidence)) return
+    for (const evidence of entry.evidence) {
+        if (!isRelativeEvidencePath(evidence)) {
+            failures.push(`${label} has invalid evidence path: ${evidence}`)
+            continue
+        }
+        const evidencePath = path.resolve(evidenceRoot, evidence)
+        if (!fs.existsSync(evidencePath) || !fs.statSync(evidencePath).isFile()) {
+            failures.push(`${label} evidence file is missing: ${evidence}`)
+        }
+    }
+}
+
+function validateAcceptedDifference (entry, label, evidenceRoot, failures) {
+    if (entry?.status !== 'accepted-difference') return
+    if (typeof entry.reason !== 'string' || !entry.reason.trim()) {
+        failures.push(`${label} accepted-difference has no reason`)
+    }
+    validateEvidence(entry, label, evidenceRoot, failures)
+    const approval = entry.approval
+    if (!approval || typeof approval !== 'object') {
+        failures.push(`${label} accepted-difference has no approval`)
+        return
+    }
+    if (approval.decision !== 'accepted-difference') failures.push(`${label} accepted-difference approval decision is invalid`)
+    if (typeof approval.approver !== 'string' || !approval.approver.trim()) failures.push(`${label} accepted-difference approval has no approver`)
+    if (typeof approval.approvedAt !== 'string' || Number.isNaN(Date.parse(approval.approvedAt))) {
+        failures.push(`${label} accepted-difference approval must have an RFC 3339 approvedAt`)
+    }
+}
+
 function issueNumberArray (value) {
     return Array.isArray(value) && value.length > 0 && value.every(item => Number.isInteger(item) && item > 0)
 }
@@ -48,7 +85,7 @@ function manifestMetadata (filePath, logicalPath, entries) {
     }
 }
 
-export function compareParity ({ featuresPath = defaultFeaturesPath, platformsPath = defaultPlatformsPath } = {}) {
+export function compareParity ({ featuresPath = defaultFeaturesPath, platformsPath = defaultPlatformsPath, evidenceRoot = root } = {}) {
     const featuresDocument = readYaml(featuresPath)
     const platformsDocument = readYaml(platformsPath)
     const failures = []
@@ -80,9 +117,8 @@ export function compareParity ({ featuresPath = defaultFeaturesPath, platformsPa
         if ((feature?.status === 'passed' || feature?.status === 'accepted-difference') && !nonEmptyStringArray(feature.evidence)) {
             failures.push(`feature ${feature.id} has no evidence for ${feature.status}`)
         }
-        if (feature?.status === 'accepted-difference' && (typeof feature.reason !== 'string' || !feature.reason.trim())) {
-            failures.push(`feature ${feature.id} accepted-difference has no reason`)
-        }
+        if (feature?.status === 'passed' || feature?.status === 'accepted-difference') validateEvidence(feature, `feature ${feature.id}`, evidenceRoot, failures)
+        validateAcceptedDifference(feature, `feature ${feature.id}`, evidenceRoot, failures)
         if (!issueNumberArray(feature?.issues)) {
             failures.push(`feature ${feature?.id || '<unnamed>'} has no issue ownership`)
         }
@@ -110,9 +146,8 @@ export function compareParity ({ featuresPath = defaultFeaturesPath, platformsPa
         if ((platform?.status === 'passed' || platform?.status === 'accepted-difference') && !nonEmptyStringArray(platform.evidence)) {
             failures.push(`platform ${platform.id} has no evidence for ${platform.status}`)
         }
-        if (platform?.status === 'accepted-difference' && (typeof platform.reason !== 'string' || !platform.reason.trim())) {
-            failures.push(`platform ${platform.id} accepted-difference has no reason`)
-        }
+        if (platform?.status === 'passed' || platform?.status === 'accepted-difference') validateEvidence(platform, `platform ${platform.id}`, evidenceRoot, failures)
+        validateAcceptedDifference(platform, `platform ${platform.id}`, evidenceRoot, failures)
         if (!nonEmptyStringArray(platform?.requiredChecks)) {
             failures.push(`platform ${platform?.id || '<unnamed>'} has no required checks`)
         }
@@ -199,6 +234,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     const report = compareParity({
         featuresPath: path.resolve(argument(args, '--features') || defaultFeaturesPath),
         platformsPath: path.resolve(argument(args, '--platforms') || defaultPlatformsPath),
+        evidenceRoot: path.resolve(argument(args, '--evidence-root') || root),
     })
     const outputPath = argument(args, '--output')
     if (outputPath) fs.writeFileSync(path.resolve(outputPath), `${JSON.stringify(report, null, 2)}\n`)
