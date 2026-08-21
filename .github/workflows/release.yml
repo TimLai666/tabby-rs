@@ -88,6 +88,7 @@ jobs:
 
       - name: Test release gate contracts
         run: |
+          yarn test:release-workflow-contract
           yarn test:release-gate-contract
           yarn test:manual-platform-acceptance
           yarn test:release-gate-aggregate
@@ -440,9 +441,6 @@ jobs:
       - name: Collect parity automated evidence
         run: node scripts/collect-parity-evidence.mjs --platform "${{ matrix.platform }}" --arch "${{ matrix.arch }}" --target "${{ matrix.target }}" --source-revision "${{ github.sha }}" --output release-staging/parity-automated-evidence.json
 
-      - name: Generate parity report
-        run: node scripts/compare-parity.mjs --report-only --evidence-root release-staging --output release-staging/parity-report.json --html-output release-staging/parity-report.html
-
       - name: Include manual platform acceptance evidence
         if: ${{ always() }}
         shell: bash
@@ -451,6 +449,9 @@ jobs:
             mkdir -p release-staging/manual-acceptance
             cp -R manual-acceptance/. release-staging/manual-acceptance/
           fi
+
+      - name: Generate parity report
+        run: node scripts/compare-parity.mjs --report-only --evidence-root release-staging --output release-staging/parity-report.json --html-output release-staging/parity-report.html
 
       - name: Write incomplete evidence fallback
         if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.evidence_only == true }}
