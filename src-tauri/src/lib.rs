@@ -193,12 +193,16 @@ pub fn run() {
 
     #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
     {
-        builder = builder
-            .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-            .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
+        let benchmark_mode = std::env::var_os("TABBY_RS_BENCHMARK_READY_FILE")
+            .filter(|value| !value.is_empty())
+            .is_some();
+        builder = builder.plugin(tauri_plugin_global_shortcut::Builder::new().build());
+        if !benchmark_mode {
+            builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
                 let context = parse_launch_context(&argv, cwd, true);
                 present_and_dispatch(app, context);
             }));
+        }
     }
 
     builder = builder.plugin(tauri_plugin_deep_link::init());
