@@ -398,6 +398,7 @@ jobs:
         env:
           TABBY_RS_BENCHMARK_FRAME_REPORT: ${{ github.workspace }}/release-staging/benchmarks/ui-frames.json
           TABBY_RS_TOOLCHAIN: ${{ matrix.target }}
+          WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: ${{ matrix.platform == 'windows' && '--disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows' || '' }}
         run: |
           mkdir -p release-staging/benchmarks
           binary="src-tauri/target/${{ matrix.target }}/release/tabby-rs"
