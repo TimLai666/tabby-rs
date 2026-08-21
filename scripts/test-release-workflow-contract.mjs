@@ -13,6 +13,11 @@ assert.ok(parityReportIndex >= 0, 'release workflow must generate a parity repor
 assert.ok(includeEvidenceIndex < parityReportIndex, 'manual evidence must be staged before parity report generation')
 assert.match(workflow, /compare-parity\.mjs --report-only --evidence-root release-staging/)
 assert.match(workflow, /check-release-gate\.mjs --evidence-root release-staging/)
+assert.match(
+    workflow,
+    /WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:.*disable-background-timer-throttling.*disable-renderer-backgrounding.*disable-backgrounding-occluded-windows/,
+    'Windows release benchmarks must disable WebView2 background throttling',
+)
 for (const command of ['test:release-gate-contract', 'test:manual-platform-acceptance', 'test:release-gate-aggregate']) {
     assert.match(workflow, new RegExp(`yarn ${command}`), `release workflow must run ${command}`)
 }
