@@ -6,7 +6,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import yaml from 'js-yaml'
 
-import { validateManualPlatformAcceptance } from './check-manual-platform-acceptance.mjs'
+import { validateManualFeatureAcceptance, validateManualPlatformAcceptance } from './check-manual-platform-acceptance.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const matrix = yaml.load(fs.readFileSync(path.join(root, 'parity/platform-matrix.yaml'), 'utf8'))
@@ -98,5 +98,40 @@ const mismatchedArtifact = structuredClone(validRecord)
 mismatchedArtifact.artifacts[0].sha256 = 'f'.repeat(64)
 const mismatchedArtifactResult = validateManualPlatformAcceptance(mismatchedArtifact, { platformEntry, featureEntries: requiredFeatures, evidenceRoot })
 assert.ok(mismatchedArtifactResult.failures.includes('artifact 0 SHA-256 does not match file: artifacts/Tabby-RS-setup.exe'))
+
+const webFeatures = featuresDocument.features.filter(feature =>
+    feature.platforms.includes('web') && feature.tests?.manual?.length > 0)
+const webEvidenceDirectory = path.join(evidenceRoot, 'manual', 'web')
+fs.mkdirSync(webEvidenceDirectory, { recursive: true })
+for (const feature of webFeatures) fs.writeFileSync(path.join(webEvidenceDirectory, `${feature.id}.txt`), `verified ${feature.id}\n`)
+const webArtifactPath = path.join(evidenceRoot, 'artifacts', 'tabby-web.zip')
+fs.writeFileSync(webArtifactPath, 'fixture web bundle\n')
+const webArtifactSha256 = crypto.createHash('sha256').update(fs.readFileSync(webArtifactPath)).digest('hex')
+const validWeb = validateManualFeatureAcceptance({
+    schemaVersion: 1,
+    kind: 'tabby-rs-manual-feature-acceptance',
+    sourceRevision: validRecord.sourceRevision,
+    platform: 'web',
+    environment: validRecord.environment,
+    features: webFeatures.map(feature => ({
+        id: feature.id,
+        status: 'passed',
+        steps: ['verified ' + feature.id],
+        evidence: ['manual/web/' + feature.id + '.txt'],
+    })),
+    artifacts: [{ path: 'artifacts/tabby-web.zip', sha256: webArtifactSha256 }],
+}, { featureEntries: webFeatures, expectedRevision: validRecord.sourceRevision, evidenceRoot })
+assert.deepEqual(validWeb, { passed: true, failures: [] })
+
+const missingWebFeature = validateManualFeatureAcceptance({
+    schemaVersion: 1,
+    kind: 'tabby-rs-manual-feature-acceptance',
+    sourceRevision: validRecord.sourceRevision,
+    platform: 'web',
+    environment: validRecord.environment,
+    features: [],
+    artifacts: [{ path: 'artifacts/tabby-web.zip', sha256: webArtifactSha256 }],
+}, { featureEntries: webFeatures, evidenceRoot })
+assert.ok(missingWebFeature.failures.includes('missing manual feature: ' + webFeatures[0].id))
 
 console.log('Manual platform acceptance contract passed')

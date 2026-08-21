@@ -63,7 +63,7 @@ fs.writeFileSync(manualOnlyParityEvidence, JSON.stringify({
     platform: 'windows',
     arch: 'x86_64',
     target: 'x86_64-pc-windows-msvc',
-    platformRequiredChecks: ['local-shell', 'powershell', 'cmd', 'wsl', 'git-bash', 'clink', 'uac', 'ssh', 'serial', 'nsis', 'side-by-side'],
+    platformRequiredChecks: ['local-shell', 'powershell', 'cmd', 'wsl', 'git-bash', 'visual-studio-developer-shell', 'clink', 'uac', 'ssh', 'serial', 'nsis', 'side-by-side'],
     unverifiedRequiredChecks: ['powershell'],
     expectedChecks: ['fixture-check'],
     checks: [{ name: 'fixture-check', passed: true }],

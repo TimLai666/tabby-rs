@@ -86,6 +86,12 @@ jobs:
       - name: Test release platform matrix contract
         run: yarn test:release-platform-matrix
 
+      - name: Test release gate contracts
+        run: |
+          yarn test:release-gate-contract
+          yarn test:manual-platform-acceptance
+          yarn test:release-gate-aggregate
+
       - name: Build shared plugin bundles
         run: yarn build
 
@@ -435,7 +441,7 @@ jobs:
         run: node scripts/collect-parity-evidence.mjs --platform "${{ matrix.platform }}" --arch "${{ matrix.arch }}" --target "${{ matrix.target }}" --source-revision "${{ github.sha }}" --output release-staging/parity-automated-evidence.json
 
       - name: Generate parity report
-        run: node scripts/compare-parity.mjs --report-only --output release-staging/parity-report.json --html-output release-staging/parity-report.html
+        run: node scripts/compare-parity.mjs --report-only --evidence-root release-staging --output release-staging/parity-report.json --html-output release-staging/parity-report.html
 
       - name: Include manual platform acceptance evidence
         if: ${{ always() }}
@@ -458,7 +464,7 @@ jobs:
 
       - name: Enforce release gate
         continue-on-error: ${{ github.event_name == 'workflow_dispatch' && inputs.evidence_only == true }}
-        run: node scripts/check-release-gate.mjs --bundle-audit release-staging/bundle-audit.json --dependency-audit release-staging/dependency-audit.json --license-report release-staging/license-report.json --installer-smoke release-staging/installer-smoke.json --parity-report release-staging/parity-report.json --parity-evidence release-staging/parity-automated-evidence.json --manual-acceptance-dir release-staging/manual-acceptance --benchmarks-dir release-staging/benchmarks --source-revision "${{ github.sha }}" --platform "${{ matrix.platform }}" --arch "${{ matrix.arch }}" --target "${{ matrix.target }}" --output release-staging/release-gate.json
+        run: node scripts/check-release-gate.mjs --evidence-root release-staging --bundle-audit release-staging/bundle-audit.json --dependency-audit release-staging/dependency-audit.json --license-report release-staging/license-report.json --installer-smoke release-staging/installer-smoke.json --parity-report release-staging/parity-report.json --parity-evidence release-staging/parity-automated-evidence.json --manual-acceptance-dir release-staging/manual-acceptance --benchmarks-dir release-staging/benchmarks --source-revision "${{ github.sha }}" --platform "${{ matrix.platform }}" --arch "${{ matrix.arch }}" --target "${{ matrix.target }}" --output release-staging/release-gate.json
 
       - name: Create release checksums
         run: node scripts/create-release-checksums.mjs release-staging

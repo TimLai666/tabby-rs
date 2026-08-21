@@ -2,7 +2,7 @@ platforms:
   - id: windows-x64
     runner: windows-2022
     target: x86_64-pc-windows-msvc
-    requiredChecks: [local-shell, powershell, cmd, wsl, git-bash, clink, uac, ssh, serial, nsis, side-by-side]
+    requiredChecks: [local-shell, powershell, cmd, wsl, git-bash, visual-studio-developer-shell, clink, uac, ssh, serial, nsis, side-by-side]
     status: pending
     evidence: []
   - id: macos-x64

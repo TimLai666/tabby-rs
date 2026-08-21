@@ -52,7 +52,7 @@ features:
     status: pending
     evidence: []
   - id: local-shell.platform-shells
-    title: PowerShell, PowerShell Core, CMD, WSL, Git Bash, Cygwin, MSYS2, Cmder, and POSIX shells
+    title: PowerShell, PowerShell Core, CMD, WSL, Git Bash, Cygwin, MSYS2, Cmder, Visual Studio Developer Shell, and POSIX shells
     issues: [1, 7]
     platforms: [windows, macos, linux]
     tests:
