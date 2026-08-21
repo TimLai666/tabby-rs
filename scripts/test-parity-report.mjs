@@ -58,14 +58,17 @@ assert.equal(malformed.status, 1)
 assert.match(malformed.stdout, /feature shell has invalid automated or manual test list/)
 assert.match(malformed.stdout, /platform linux has no evidence for accepted-difference/)
 assert.match(malformed.stdout, /platform linux accepted-difference has no reason/)
+assert.match(malformed.stdout, /platform linux accepted-difference has no approval/)
 
 fs.writeFileSync(features, `baseline:\n  repository: example/tabby\n  commit: abc123\n  version: 1.0.0\nfeatures:\n  - id: shell\n    title: Local shell\n    issues: [7]\n    platforms: [linux]\n    tests:\n      automated: [fixture-test]\n    status: passed\n    evidence: [fixture-test]\n`)
 fs.writeFileSync(platforms, `platforms:\n  - id: linux\n    runner: ubuntu\n    target: x86_64-unknown-linux-gnu\n    requiredChecks: [local-shell]\n    status: passed\n    evidence: [fixture-test]\n`)
+fs.writeFileSync(path.join(work, 'fixture-test'), 'fixture evidence\n')
 
 const passed = execFileSync(process.execPath, [
     path.join(root, 'scripts/compare-parity.mjs'),
     '--features', features,
     '--platforms', platforms,
+    '--evidence-root', work,
     '--html-output', htmlOutput,
 ], { cwd: root, encoding: 'utf8' })
 assert.match(passed, /"passed": true/)

@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
+import crypto from 'node:crypto'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import yaml from 'js-yaml'
@@ -13,6 +15,16 @@ const platformEntry = matrix.platforms.find(platform => platform.id === 'windows
 const requiredChecks = platformEntry.requiredChecks
 const requiredFeatures = featuresDocument.features.filter(feature =>
     feature.platforms.includes('windows') && feature.tests?.manual?.length > 0)
+const evidenceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tabby-rs-manual-acceptance-evidence-'))
+const evidenceDirectory = path.join(evidenceRoot, 'manual', platformEntry.id)
+fs.mkdirSync(evidenceDirectory, { recursive: true })
+for (const id of [...requiredChecks, ...requiredFeatures.map(feature => feature.id)]) {
+    fs.writeFileSync(path.join(evidenceDirectory, `${id}.txt`), `verified ${id}\n`)
+}
+const artifactPath = path.join(evidenceRoot, 'artifacts', 'Tabby-RS-setup.exe')
+fs.mkdirSync(path.dirname(artifactPath), { recursive: true })
+fs.writeFileSync(artifactPath, 'fixture installer\n')
+const artifactSha256 = crypto.createHash('sha256').update(fs.readFileSync(artifactPath)).digest('hex')
 const validRecord = {
     schemaVersion: 1,
     kind: 'tabby-rs-manual-platform-acceptance',
@@ -38,7 +50,7 @@ const validRecord = {
         steps: ['verified ' + feature.id],
         evidence: ['manual/' + platformEntry.id + '/' + feature.id + '.txt'],
     })),
-    artifacts: [{ path: 'artifacts/Tabby-RS-setup.exe', sha256: 'a'.repeat(64) }],
+    artifacts: [{ path: 'artifacts/Tabby-RS-setup.exe', sha256: artifactSha256 }],
 }
 
 const valid = validateManualPlatformAcceptance(validRecord, {
@@ -47,6 +59,7 @@ const valid = validateManualPlatformAcceptance(validRecord, {
     expectedRevision: validRecord.sourceRevision,
     expectedArchitecture: validRecord.architecture,
     expectedTarget: validRecord.target,
+    evidenceRoot,
 })
 assert.deepEqual(valid, { passed: true, failures: [] })
 
@@ -75,5 +88,15 @@ const wrongRevision = validateManualPlatformAcceptance(validRecord, {
     expectedRevision: 'f'.repeat(40),
 })
 assert.ok(wrongRevision.failures.includes('sourceRevision must match ' + 'f'.repeat(40)))
+
+const missingEvidenceFile = structuredClone(validRecord)
+missingEvidenceFile.features[0].evidence = ['manual/windows-x64/missing.txt']
+const missingEvidenceResult = validateManualPlatformAcceptance(missingEvidenceFile, { platformEntry, featureEntries: requiredFeatures, evidenceRoot })
+assert.ok(missingEvidenceResult.failures.includes('manual feature ' + requiredFeatures[0].id + ' evidence file is missing: manual/windows-x64/missing.txt'))
+
+const mismatchedArtifact = structuredClone(validRecord)
+mismatchedArtifact.artifacts[0].sha256 = 'f'.repeat(64)
+const mismatchedArtifactResult = validateManualPlatformAcceptance(mismatchedArtifact, { platformEntry, featureEntries: requiredFeatures, evidenceRoot })
+assert.ok(mismatchedArtifactResult.failures.includes('artifact 0 SHA-256 does not match file: artifacts/Tabby-RS-setup.exe'))
 
 console.log('Manual platform acceptance contract passed')

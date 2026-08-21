@@ -1,3 +1,4 @@
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -21,6 +22,19 @@ function isNonEmptyString (value) {
     return typeof value === 'string' && value.trim().length > 0
 }
 
+function evidenceFilePath (evidenceRoot, relativePath) {
+    return path.resolve(evidenceRoot, relativePath)
+}
+
+function validateEvidenceFiles (files, label, evidenceRoot, failures) {
+    for (const file of files || []) {
+        const resolved = evidenceFilePath(evidenceRoot, file)
+        if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) {
+            failures.push(`${label} evidence file is missing: ${file}`)
+        }
+    }
+}
+
 function validateEnvironment (environment, failures) {
     if (!environment || typeof environment !== 'object') {
         failures.push('environment is missing')
@@ -34,7 +48,7 @@ function validateEnvironment (environment, failures) {
     }
 }
 
-function validateChecks (checks, requiredChecks, failures) {
+function validateChecks (checks, requiredChecks, evidenceRoot, failures) {
     if (!Array.isArray(checks)) {
         failures.push('checks must be an array')
         return
@@ -59,22 +73,34 @@ function validateChecks (checks, requiredChecks, failures) {
         }
         if (!Array.isArray(check.evidence) || check.evidence.length === 0 || check.evidence.some(file => !isRelativeEvidencePath(file))) {
             failures.push(`manual platform check ${id} has invalid evidence paths`)
+        } else {
+            validateEvidenceFiles(check.evidence, `manual platform check ${id}`, evidenceRoot, failures)
         }
     }
 }
 
-function validateArtifacts (artifacts, failures) {
+function validateArtifacts (artifacts, evidenceRoot, failures) {
     if (!Array.isArray(artifacts) || artifacts.length === 0) {
         failures.push('artifacts must be a non-empty array')
         return
     }
     for (const [index, artifact] of artifacts.entries()) {
         if (!isRelativeEvidencePath(artifact?.path)) failures.push(`artifact ${index} has an invalid relative path`)
-        if (!sha256Pattern.test(artifact?.sha256 || '')) failures.push(`artifact ${index} has an invalid SHA-256`)
+        if (!sha256Pattern.test(artifact?.sha256 || '')) {
+            failures.push(`artifact ${index} has an invalid SHA-256`)
+            continue
+        }
+        if (!isRelativeEvidencePath(artifact?.path)) continue
+        const artifactPath = evidenceFilePath(evidenceRoot, artifact.path)
+        if (!fs.existsSync(artifactPath) || !fs.statSync(artifactPath).isFile()) {
+            failures.push(`artifact ${index} file is missing: ${artifact.path}`)
+        } else if (sha256Pattern.test(artifact.sha256) && sha256(artifactPath) !== artifact.sha256.toLowerCase()) {
+            failures.push(`artifact ${index} SHA-256 does not match file: ${artifact.path}`)
+        }
     }
 }
 
-function validateFeatureRecords (records, requiredFeatures, failures) {
+function validateFeatureRecords (records, requiredFeatures, evidenceRoot, failures) {
     if (!Array.isArray(records)) {
         failures.push('features must be an array')
         return
@@ -98,8 +124,14 @@ function validateFeatureRecords (records, requiredFeatures, failures) {
         }
         if (!Array.isArray(record.evidence) || record.evidence.length === 0 || record.evidence.some(file => !isRelativeEvidencePath(file))) {
             failures.push(`manual feature ${feature.id} has invalid evidence paths`)
+        } else {
+            validateEvidenceFiles(record.evidence, `manual feature ${feature.id}`, evidenceRoot, failures)
         }
     }
+}
+
+function sha256 (filePath) {
+    return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex')
 }
 
 export function validateManualPlatformAcceptance (record, {
@@ -108,6 +140,7 @@ export function validateManualPlatformAcceptance (record, {
     expectedRevision = null,
     expectedArchitecture = null,
     expectedTarget = null,
+    evidenceRoot = root,
 } = {}) {
     const failures = []
     if (record?.schemaVersion !== 1) failures.push('schemaVersion must be 1')
@@ -117,9 +150,9 @@ export function validateManualPlatformAcceptance (record, {
     } else {
         if (record.platform !== platformEntry.id) failures.push(`platform must be ${platformEntry.id}`)
         if (record.target !== platformEntry.target) failures.push(`target must be ${platformEntry.target}`)
-        validateChecks(record.checks, platformEntry.requiredChecks || [], failures)
+        validateChecks(record.checks, platformEntry.requiredChecks || [], evidenceRoot, failures)
     }
-    validateFeatureRecords(record?.features, featureEntries, failures)
+    validateFeatureRecords(record?.features, featureEntries, evidenceRoot, failures)
     if (!isNonEmptyString(record?.sourceRevision)) failures.push('sourceRevision is missing')
     if (expectedRevision && record.sourceRevision !== expectedRevision) failures.push(`sourceRevision must match ${expectedRevision}`)
     if (!isNonEmptyString(record?.architecture)) failures.push('architecture is missing')
@@ -127,7 +160,7 @@ export function validateManualPlatformAcceptance (record, {
     if (!isNonEmptyString(record?.target)) failures.push('target is missing')
     if (expectedTarget && record.target !== expectedTarget) failures.push(`target must match ${expectedTarget}`)
     validateEnvironment(record?.environment, failures)
-    validateArtifacts(record?.artifacts, failures)
+    validateArtifacts(record?.artifacts, evidenceRoot, failures)
     return { passed: failures.length === 0, failures }
 }
 
@@ -158,7 +191,8 @@ async function main () {
         process.exitCode = 2
         return
     }
-    const record = readJson(path.resolve(recordPath))
+    const resolvedRecordPath = path.resolve(recordPath)
+    const record = readJson(resolvedRecordPath)
     if (record.__error) {
         console.error(`Unable to read manual acceptance record: ${record.__error}`)
         process.exitCode = 2
@@ -173,6 +207,7 @@ async function main () {
         expectedRevision: argument(args, '--source-revision'),
         expectedArchitecture: argument(args, '--architecture'),
         expectedTarget: argument(args, '--target'),
+        evidenceRoot: path.resolve(argument(args, '--evidence-root') || path.dirname(path.dirname(resolvedRecordPath))),
     })
     console.log(JSON.stringify(result, null, 2))
     if (!result.passed) process.exitCode = 1

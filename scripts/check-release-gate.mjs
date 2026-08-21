@@ -65,6 +65,40 @@ function sha256 (filePath) {
     return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex')
 }
 
+function isRelativeEvidencePath (value) {
+    if (typeof value !== 'string' || value.trim().length === 0 || path.isAbsolute(value)) return false
+    return !value.split(/[\\/]+/).includes('..')
+}
+
+function validateManifestEvidence (entry, label) {
+    if (!Array.isArray(entry?.evidence) || entry.evidence.length === 0) return
+    for (const evidence of entry.evidence) {
+        if (!isRelativeEvidencePath(evidence)) {
+            failures.push(`${label} has invalid evidence path: ${evidence}`)
+            continue
+        }
+        const evidencePath = path.resolve(root, evidence)
+        if (!fs.existsSync(evidencePath) || !fs.statSync(evidencePath).isFile()) {
+            failures.push(`${label} evidence file is missing: ${evidence}`)
+        }
+    }
+}
+
+function validateAcceptedDifference (entry, label) {
+    if (entry?.status !== 'accepted-difference') return
+    if (!entry.reason || !String(entry.reason).trim()) failures.push(`${label} accepted-difference lacks reason or evidence`)
+    const approval = entry.approval
+    if (!approval || typeof approval !== 'object') {
+        failures.push(`${label} accepted-difference has no approval`)
+        return
+    }
+    if (approval.decision !== 'accepted-difference') failures.push(`${label} accepted-difference approval decision is invalid`)
+    if (typeof approval.approver !== 'string' || !approval.approver.trim()) failures.push(`${label} accepted-difference approval has no approver`)
+    if (typeof approval.approvedAt !== 'string' || Number.isNaN(Date.parse(approval.approvedAt))) {
+        failures.push(`${label} accepted-difference approval must have an RFC 3339 approvedAt`)
+    }
+}
+
 function manifestMetadata (relativePath, entries) {
     const filePath = path.join(root, relativePath)
     return {
@@ -93,14 +127,18 @@ for (const feature of featuresDocument?.features || []) {
     if (feature.status === 'passed' && !feature.evidence?.length) {
         failures.push(`feature ${feature.id} has no evidence`)
     }
+    if (feature.status === 'passed' || feature.status === 'accepted-difference') validateManifestEvidence(feature, `feature ${feature.id}`)
+    validateAcceptedDifference(feature, `feature ${feature.id}`)
 }
 for (const platform of platformDocument?.platforms || []) {
-    if (platform.status !== 'passed') {
+    if (!['passed', 'accepted-difference'].includes(platform.status)) {
         failures.push(`platform ${platform.id || '<unnamed>'} is ${platform.status || 'missing status'}`)
     }
     if (!platform.evidence?.length) {
         failures.push(`platform ${platform.id} has no evidence`)
     }
+    if (platform.status === 'passed' || platform.status === 'accepted-difference') validateManifestEvidence(platform, `platform ${platform.id}`)
+    validateAcceptedDifference(platform, `platform ${platform.id}`)
 }
 
 const expectedPlatformEntry = (platformDocument?.platforms || []).find(platform =>
@@ -120,6 +158,7 @@ if (manualAcceptanceDirectory && fs.existsSync(manualAcceptanceDirectory)) {
                 expectedRevision,
                 expectedArchitecture: expectedArch,
                 expectedTarget,
+                evidenceRoot: path.dirname(manualAcceptanceDirectory),
             })
             for (const failure of validation.failures) failures.push(`manual acceptance ${expectedPlatformEntry.id}: ${failure}`)
         }
