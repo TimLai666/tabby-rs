@@ -19,6 +19,14 @@ const frameReport = path.join(work, 'frames.json')
 const configFixture = path.join(work, 'config.json')
 const childPidFile = path.join(work, 'child-pids.txt')
 const childCleanupFile = path.join(work, 'child-cleanup.txt')
+const tauriEntry = fs.readFileSync(path.join(root, 'src-tauri', 'src', 'lib.rs'), 'utf8')
+
+assert.match(tauriEntry, /TABBY_RS_BENCHMARK_READY_FILE/)
+assert.match(
+    tauriEntry,
+    /if\s+!benchmark_mode\s*\{[\s\S]*?tauri_plugin_single_instance::init/,
+    'benchmark mode must isolate the Tauri single-instance plugin',
+)
 
 function isProcessAlive (pid) {
     try {
