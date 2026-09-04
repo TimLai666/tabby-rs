@@ -2,6 +2,7 @@ import 'zone.js'
 import 'core-js/proposals/reflect-metadata'
 
 import './global.scss'
+import './preload.scss'
 import './toastr.scss'
 
 import * as AngularAnimations from '@angular/animations'
