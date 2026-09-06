@@ -8,11 +8,13 @@ import { fileURLToPath } from 'node:url'
 const root = path.resolve(fileURLToPath(new URL('..', import.meta.url)))
 const smoke = path.join(root, 'scripts', 'smoke-tauri-release.mjs')
 const releaseWorkflow = path.join(root, '.github', 'workflows', 'release.yml')
+const tauriEntry = path.join(root, 'src-tauri', 'src', 'lib.rs')
 const work = fs.mkdtempSync(path.join(os.tmpdir(), 'tabby-rs-release-smoke-test-'))
 const staging = path.join(work, 'release-staging')
 fs.mkdirSync(staging)
 const smokeSource = fs.readFileSync(smoke, 'utf8')
 const releaseWorkflowSource = fs.readFileSync(releaseWorkflow, 'utf8')
+const tauriSource = fs.readFileSync(tauriEntry, 'utf8')
 const smokeStepStart = releaseWorkflowSource.indexOf('      - name: Smoke test release installer')
 const smokeStepEnd = releaseWorkflowSource.indexOf('      - name:', smokeStepStart + 1)
 assert.ok(smokeStepStart >= 0, 'release workflow is missing installer smoke step')
@@ -35,6 +37,12 @@ assert.match(smokeSource, /uninstall removed user data/)
 assert.match(smokeSource, /uninstall changed user data/)
 assert.match(smokeSource, /waitForPathGone/)
 assert.match(smokeSource, /path\.basename\(file\) === 'tabby-rs'/)
+assert.match(tauriSource, /TABBY_RS_INSTALLER_SMOKE_READY_FILE/)
+assert.match(
+    tauriSource,
+    /if\s+!release_probe_mode\(\)\s*\{[\s\S]*?tauri_plugin_single_instance::init/,
+    'installer smoke must isolate the Tauri single-instance plugin',
+)
 assert.match(smokeSource, /--force-not-root/)
 assert.match(smokeSource, /--nodeps/)
 assert.match(smokeSource, /icon-audit/)
