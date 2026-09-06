@@ -15,6 +15,7 @@ assert.doesNotMatch(entrySource, /tabby:terminal-ready/)
 assert.match(entrySource, /updateProgress\(100\)[\s\S]*if \(runtimeInfo\.benchmarkReadyFile\)[\s\S]*app\.benchmarkReady/)
 assert.match(entrySource, /import \* as AngularLocalize from '@angular\/localize'/)
 assert.match(entrySource, /import \* as AngularLocalizeInit from '@angular\/localize\/init'/)
+assert.match(entrySource, /import '\.\/preload\.scss'/)
 assert.match(entrySource, /registry\.register\('@angular\/localize', AngularLocalize\)/)
 assert.match(entrySource, /registry\.register\('@angular\/localize\/init', AngularLocalizeInit\)/)
 const compiled = ts.transpileModule(source, {
