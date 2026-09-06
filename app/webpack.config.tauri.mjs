@@ -138,7 +138,12 @@ export default () => ({
             { test: /\.css$/, use: ['@tabby-gang/to-string-loader', 'css-loader'], include: /component\.css/ },
             { test: /\.css$/, use: ['style-loader', 'css-loader'], exclude: /component\.css/ },
             { test: /\.yaml$/, use: ['yaml-loader'] },
-            { test: /\.svg$/, use: ['svg-inline-loader'] },
+            {
+                test: /logo\.svg$/,
+                include: path.resolve(__dirname, 'assets/logo.svg'),
+                type: 'asset/resource',
+            },
+            { test: /\.svg$/, use: ['svg-inline-loader'], exclude: /logo\.svg$/ },
             {
                 test: /\.(eot|otf|woff|woff2|ogg)(\?v=[0-9]\.[0-9]\.[0-9])?$/,
                 type: 'asset',
