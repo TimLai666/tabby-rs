@@ -61,6 +61,9 @@ export class TauriHostAppService extends HostAppService {
     }
 
     emitReady (): void {
+        void this.bridge.invoke('window.applyState', { visible: true }).catch(error => {
+            this.logger.warn('Failed to show ready window:', error)
+        })
         this.ready = true
         const pending = this.pendingLaunches.splice(0)
         for (const context of pending) {

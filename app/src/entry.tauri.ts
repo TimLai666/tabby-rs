@@ -52,8 +52,9 @@ function updateProgress (percent: number): void {
     }
 }
 
-function showBootstrapError (error: unknown): void {
+async function showBootstrapError (error: unknown): Promise<void> {
     console.error('Tauri Angular bootstrapping error:', error)
+    await new TauriHostBridge().invoke('window.applyState', { visible: true }).catch(() => undefined)
     const root = document.querySelector('app-root')
     if (root) {
         root.textContent = `Tabby RS failed to start: ${String(error)}`
