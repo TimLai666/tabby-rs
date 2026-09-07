@@ -65,8 +65,9 @@ pub fn window_new(
     let window =
         tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::App("index.html".into()))
             .title("Tabby RS")
-            .inner_size(1200.0, 800.0)
+            .inner_size(1100.0, 720.0)
             .min_inner_size(640.0, 480.0)
+            .title_bar_style(tauri::TitleBarStyle::Overlay)
             .on_page_load(move |window, payload| {
                 if !matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
                     return;

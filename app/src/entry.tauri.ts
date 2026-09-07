@@ -1,6 +1,8 @@
 import './tauri-polyfills'
 import 'zone.js'
 import 'core-js/proposals/reflect-metadata'
+import 'source-sans-pro/source-sans-pro.css'
+import 'source-code-pro/source-code-pro.css'
 
 import './global.scss'
 import './preload.scss'

@@ -28,11 +28,11 @@ Tabby RS is the Rust desktop variant of the existing Tabby mark. The icon keeps 
 
 ## Typography
 
-The icon has no display typography. The existing RS badge lettering is preserved as part of the source artwork.
+The icon has no display typography. The existing RS badge lettering is preserved as part of the source artwork. The application UI uses the bundled Source Sans Pro family with the operating system's CJK fallback. Terminal content and code previews use the bundled Source Code Pro family, with a monospace fallback.
 
 ## Layout
 
-The mark remains centered in a square canvas. The original proportions, arrow geometry, and RS badge placement are unchanged.
+The mark remains centered in a square canvas. The original proportions, arrow geometry, and RS badge placement are unchanged. The Tauri window opens at 1100×720 logical pixels with a 640×480 minimum, preserving a compact terminal-first workspace. On macOS, the title bar is an overlay so the dark tab strip forms one continuous top chrome instead of a separate white native band.
 
 ## Elevation & Depth
 
