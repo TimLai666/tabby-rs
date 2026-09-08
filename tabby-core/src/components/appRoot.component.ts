@@ -209,6 +209,9 @@ export class AppRootComponent {
 
     async ngOnInit () {
         this.config.ready$.toPromise().then(() => {
+            // Recovery can open tabs before this component receives the tabOpened event.
+            // Hydrate the content list from the authoritative tab list before rendering.
+            this.unsortedTabs = [...this.app.tabs]
             this.ready = true
             this.app.emitReady()
         })

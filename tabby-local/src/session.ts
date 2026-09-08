@@ -64,6 +64,7 @@ export class Session extends BaseSession {
                     COLORTERM: 'truecolor',
                     TERM: 'xterm-256color',
                     TERM_PROGRAM: 'Tabby',
+                    ...(this.hostApp.platform === Platform.macOS ? { CLICOLOR: '1' } : {}),
                 },
                 substituteEnv(options.env),
                 this.config.store.terminal.environment || {},

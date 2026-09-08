@@ -28,6 +28,8 @@ const FIXTURE_LINES = [
     'Powerline \ue0b0 \ue0b1 \ue0b2',
 ]
 
+const COLOR_FIXTURE = '\u001b[31mANSI_RED\u001b[0m \u001b[32mANSI_GREEN\u001b[0m'
+
 function assert (condition: unknown, message: string): asserts condition {
     if (!condition) {
         throw new Error(message)
@@ -111,6 +113,23 @@ function findCellWidth (terminal: Terminal, character: string): number | undefin
     return undefined
 }
 
+function findCellForeground (terminal: Terminal, lineText: string, character: string): { mode: number; color: number } | undefined {
+    const buffer = terminal.buffer.active
+    for (let row = 0; row < buffer.length; row++) {
+        const line = buffer.getLine(row)
+        if (!line || !line.translateToString(true).includes(lineText)) {
+            continue
+        }
+        for (let column = 0; column < line.length; column++) {
+            const cell = line.getCell(column)
+            if (cell?.getChars() === character) {
+                return { mode: cell.getFgColorMode(), color: cell.getFgColor() }
+            }
+        }
+    }
+    return undefined
+}
+
 function hashBytes (bytes: Uint8ClampedArray): number {
     let hash = 2166136261
     for (const byte of bytes) {
@@ -120,7 +139,7 @@ function hashBytes (bytes: Uint8ClampedArray): number {
     return hash >>> 0
 }
 
-function canvasSnapshot (container: HTMLElement): Array<{ width: number; height: number; hash: number }> {
+function canvasSnapshot (container: HTMLElement): { width: number; height: number; hash: number }[] {
     return [...container.querySelectorAll('canvas')].map(canvas => {
         const context = canvas.getContext('2d')
         assert(context, 'Canvas renderer did not expose a 2D context')
@@ -179,7 +198,7 @@ async function run (): Promise<ParityResult> {
     baseline.resize(80, 12)
     adapter.resize(80, 12)
 
-    let resizeEvent: { columns: number; rows: number } | undefined
+    let resizeEvent: { columns: number; rows: number } | undefined = undefined
     const resizeSubscription = adapter.events.resize$.subscribe(event => {
         resizeEvent = event
     })
@@ -188,7 +207,7 @@ async function run (): Promise<ParityResult> {
     assert(resizeEvent?.columns === 72 && resizeEvent.rows === 10, 'Renderer resize event did not match requested size')
     checks.push('resize-event')
 
-    const payload = `${FIXTURE_LINES.join('\r\n')}\r\n`
+    const payload = `${FIXTURE_LINES.join('\r\n')}\r\n${COLOR_FIXTURE}\r\n`
     const binaryPayload = new TextEncoder().encode('Binary UTF-8: 台灣 🙂\r\n')
     await Promise.all([
         writeRaw(baseline, payload),
@@ -216,7 +235,13 @@ async function run (): Promise<ParityResult> {
     assert(findCellWidth(adapterTerminal, 'é') === findCellWidth(baseline, 'é'), 'Combining character width differs from xterm baseline')
     checks.push('cell-width-parity')
 
-    const legacy = adapter.getLegacyRendererHandle() as Terminal
+    const baselineRed = findCellForeground(baseline, 'ANSI_RED', 'A')
+    const adapterRed = findCellForeground(adapterTerminal, 'ANSI_RED', 'A')
+    assert(baselineRed && adapterRed && baselineRed.mode !== 0, 'ANSI color fixture was not parsed as a colored cell')
+    assert(JSON.stringify(adapterRed) === JSON.stringify(baselineRed), 'ANSI foreground color differs from xterm baseline')
+    checks.push('ansi-color-parity')
+
+    const legacy = adapter.getLegacyRendererHandle() as Partial<Terminal>
     assert(legacy.buffer && legacy.options && typeof legacy.write === 'function', 'Legacy renderer accessor is not xterm-compatible')
     assert(legacy.options.cursorStyle === 'bar', 'Cursor option mapping failed')
     assert(legacy.options.fontFamily === options.fontFamily, 'Font fallback mapping failed')
