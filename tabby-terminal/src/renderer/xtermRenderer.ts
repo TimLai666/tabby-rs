@@ -394,6 +394,11 @@ export class XtermRenderer extends TerminalRenderer {
     }
 
     dispose (): void {
+        // xterm 5.4 queues viewport synchronization without cancelling it on disposal.
+        // A tab closed immediately after opening must not read the disposed renderer.
+        if (this.core.viewport) {
+            this.core.viewport.syncScrollArea = () => undefined
+        }
         this.writeQueue.dispose()
         for (const addon of this.linkAddons) {
             addon.dispose()

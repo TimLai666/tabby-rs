@@ -141,6 +141,7 @@
     "test:auto-sudo": "node scripts/ci/test-auto-sudo.mjs",
     "test:terminal-renderer": "node scripts/ci/test-terminal-renderer.mjs",
     "test:terminal-renderer-browser": "node scripts/ci/test-terminal-renderer-browser.mjs",
+    "test:context-menu-browser": "node scripts/ci/test-context-menu-browser.mjs",
     "test:paste-policy": "node scripts/ci/test-paste-policy.mjs",
     "test:uri-policy": "node scripts/ci/test-uri-policy.mjs",
     "test:progress-detector": "node scripts/ci/test-progress-detector.mjs",

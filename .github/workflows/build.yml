@@ -115,6 +115,9 @@ jobs:
       - name: Test terminal renderer browser parity
         run: node scripts/ci/test-terminal-renderer-browser.mjs
 
+      - name: Test context menu browser parity
+        run: node scripts/ci/test-context-menu-browser.mjs
+
       - name: Test sudo prompt detector
         run: node scripts/ci/test-auto-sudo.mjs
 

@@ -293,6 +293,19 @@ async function run (): Promise<ParityResult> {
     completionSubscription.unsubscribe()
     checks.push('renderer-dispose')
 
+    // Closing a newly opened tab must be safe before xterm's queued viewport sync runs.
+    for (let index = 0; index < 3; index++) {
+        const host = document.createElement('div')
+        host.className = 'fixture'
+        document.body.appendChild(host)
+        const renderer = new XtermRenderer({ webgl: false, sixel: false })
+        renderer.open(host)
+        renderer.dispose()
+        host.remove()
+    }
+    await new Promise(resolve => setTimeout(resolve, 100))
+    checks.push('immediate-tab-close')
+
     return { ok: true, checks }
 }
 

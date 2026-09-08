@@ -364,6 +364,7 @@ pub fn clipboard_read_text(
 #[serde(rename_all = "camelCase")]
 pub struct ClipboardWriteRequest {
     pub text: String,
+    pub html: Option<String>,
 }
 
 #[tauri::command]
@@ -371,7 +372,11 @@ pub fn clipboard_write_text(
     app: tauri::AppHandle,
     request: ClipboardWriteRequest,
 ) -> Result<(), AppError> {
-    app.clipboard().write_text(request.text).map_err(io_error)
+    match request.html {
+        Some(html) => app.clipboard().write_html(html, Some(request.text)),
+        None => app.clipboard().write_text(request.text),
+    }
+    .map_err(io_error)
 }
 
 #[tauri::command]
@@ -537,4 +542,24 @@ fn file_path_to_string(path: tauri_plugin_dialog::FilePath) -> Result<String, Ap
     path.into_path()
         .map(|path| path.to_string_lossy().into_owned())
         .map_err(io_error)
+}
+
+#[cfg(test)]
+mod clipboard_tests {
+    use super::ClipboardWriteRequest;
+
+    #[test]
+    fn clipboard_accepts_plain_text_and_formatted_requests() {
+        let plain: ClipboardWriteRequest =
+            serde_json::from_value(serde_json::json!({ "text": "台灣" })).unwrap();
+        assert_eq!(plain.text, "台灣");
+        assert_eq!(plain.html, None);
+
+        let formatted: ClipboardWriteRequest = serde_json::from_value(serde_json::json!({
+            "text": "台灣", "html": "<b>台灣</b>"
+        }))
+        .unwrap();
+        assert_eq!(formatted.text, "台灣");
+        assert_eq!(formatted.html.as_deref(), Some("<b>台灣</b>"));
+    }
 }

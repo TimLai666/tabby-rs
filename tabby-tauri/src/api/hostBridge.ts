@@ -1,5 +1,5 @@
 import { InjectionToken } from '@angular/core'
-import { BootstrapData, NodeToolchainStatus, PluginInfo, StoredVault, TransferDescriptor } from 'tabby-core'
+import { BootstrapData, MessageBoxOptions, MessageBoxResult, NodeToolchainStatus, PluginInfo, StoredVault, TransferDescriptor } from 'tabby-core'
 
 export type UpdateChannel = 'stable' | 'nightly'
 
@@ -21,6 +21,16 @@ export type UpdateStateDto =
     | { status: 'readyToInstall'; version: string }
     | { status: 'installing'; version: string }
     | { status: 'failed'; stage: string; publicError: string }
+
+export interface ContextMenuItem {
+    id: number
+    type: 'normal' | 'separator' | 'submenu' | 'checkbox' | 'radio'
+    label: string
+    sublabel?: string
+    enabled: boolean
+    checked: boolean
+    submenu?: ContextMenuItem[]
+}
 
 export interface RuntimeInfo {
     host: 'tauri'
@@ -966,12 +976,20 @@ export interface HostRequestMap {
         response: string
     }
     'clipboard.writeText': {
-        request: { text: string }
+        request: { text: string; html?: string }
         response: null
     }
     'dialog.open': {
         request: OpenDialogOptions
         response: string[]
+    }
+    'dialog.message': {
+        request: MessageBoxOptions
+        response: MessageBoxResult
+    }
+    'menu.popup': {
+        request: { items: ContextMenuItem[] }
+        response: { selectedId: number | null }
     }
     'dialog.save': {
         request: SaveDialogOptions

@@ -1,10 +1,12 @@
 mod commands;
+mod context_menu;
 mod desktop;
 mod diagnostics;
 mod error;
 mod font;
 mod identity;
 mod launch;
+mod message_box;
 mod platform;
 mod plugins;
 mod pty;
@@ -20,6 +22,8 @@ mod transfer;
 pub mod update;
 mod windows_integration;
 
+use context_menu::menu_popup;
+use message_box::dialog_message;
 use std::sync::Arc;
 
 use commands::{
@@ -308,6 +312,8 @@ pub fn run() {
             desktop_reveal_path,
             dialog_open,
             dialog_save,
+            dialog_message,
+            menu_popup,
             hotkey_replace,
             identity_get,
             identity_alias_status,

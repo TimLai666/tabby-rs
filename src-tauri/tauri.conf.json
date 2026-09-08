@@ -41,6 +41,7 @@
     ],
     "resources": {
       "../extras/UAC.exe": "extras/UAC.exe",
+      "src/context_menu/empty_submenu_labels.NOTICE.md": "licenses/chromium-menu-translations.md",
       "../extras/clink/*": "extras/clink/"
     }
   },

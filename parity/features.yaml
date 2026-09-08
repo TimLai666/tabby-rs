@@ -20,7 +20,7 @@ features:
     issues: [1]
     platforms: [windows, macos, linux]
     tests:
-      automated: [runtime-capabilities]
+      automated: [runtime-capabilities, tauri-platform]
       manual: [desktop-appearance-integration]
     status: pending
     evidence: []
@@ -92,7 +92,7 @@ features:
     issues: [1, 10]
     platforms: [windows, macos, linux]
     tests:
-      automated: [paste-policy, uri-policy]
+      automated: [paste-policy, uri-policy, tauri-platform, context-menu-browser]
       manual: [terminal-workspace-interactions]
     status: pending
     evidence: []

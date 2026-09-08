@@ -54,6 +54,15 @@ html, body { margin: 0; padding: 0; background: #202024; }
 <div id="baseline" class="fixture"></div>
 <div id="adapter" class="fixture"></div>
 <div id="fallback" class="fixture"></div>
+<script>
+window.__TABBY_RENDERER_ERRORS__ = []
+window.addEventListener('error', event => {
+    window.__TABBY_RENDERER_ERRORS__.push(event.error?.stack || event.message)
+})
+window.addEventListener('unhandledrejection', event => {
+    window.__TABBY_RENDERER_ERRORS__.push(event.reason?.stack || String(event.reason))
+})
+</script>
 <script src="fixture.js"></script>
 </body>
 </html>`, 'utf8')
@@ -89,6 +98,11 @@ app.whenReady().then(async () => {
   try {
     await window.loadFile(path.join(__dirname, 'index.html'))
     const result = await window.webContents.executeJavaScript(POLL_SCRIPT)
+    const errors = await window.webContents.executeJavaScript('new Promise(resolve => setTimeout(() => resolve(window.__TABBY_RENDERER_ERRORS__), 100))')
+    if (errors.length) {
+      result.ok = false
+      result.error = errors.join('\u005cn')
+    }
     console.log(RESULT_PREFIX + JSON.stringify(result))
     if (!result || !result.ok) {
       process.exitCode = 1
