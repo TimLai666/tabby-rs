@@ -665,6 +665,21 @@ export interface SshImportReport {
     path: string
 }
 
+/** A private key as the front end hands it over, and as it comes back converted. */
+export interface WinSCPKeyInput {
+    content: string
+    passphrase?: string | null
+}
+
+/** One end of a WinSCP session, which the host turns into a session URL. */
+export interface WinSCPConnectionOptions {
+    host: string
+    port: number
+    username: string
+    password?: string | null
+    privateKey?: WinSCPKeyInput | null
+}
+
 export interface HostRequestMap {
     'app.bootstrap': {
         request: Record<string, never>
@@ -1121,6 +1136,14 @@ export interface HostRequestMap {
     'ssh.forwardingList': {
         request: Record<string, never>
         response: SshForwardingInfo[]
+    }
+    'winscp.convertKey': {
+        request: { executable: string, key: WinSCPKeyInput }
+        response: WinSCPKeyInput|null
+    }
+    'winscp.launch': {
+        request: { executable: string, target: WinSCPConnectionOptions, jump?: WinSCPConnectionOptions|null }
+        response: null
     }
     'sftp.open': {
         request: { id: string }

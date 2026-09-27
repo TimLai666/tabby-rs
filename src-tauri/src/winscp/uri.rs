@@ -20,7 +20,7 @@ pub(crate) struct ConnectionOptions {
     pub username: String,
     pub password: Option<String>,
     #[serde(default)]
-    pub private_keys: Vec<super::key::KeyInput>,
+    pub private_key: Option<super::key::KeyInput>,
 }
 
 /// Builds the session URL for a target and an optional jump host.
@@ -180,7 +180,7 @@ mod tests {
             port,
             username: username.into(),
             password: password.map(str::to_owned),
-            private_keys: Vec::new(),
+            private_key: None,
         }
     }
 
@@ -347,15 +347,14 @@ mod tests {
         assert_eq!(parsed.port, 22);
         assert_eq!(parsed.username, "alice");
         assert_eq!(parsed.password, None);
-        assert!(parsed.private_keys.is_empty());
+        assert!(parsed.private_key.is_none());
 
         let parsed: ConnectionOptions = serde_json::from_str(
-            r#"{"host":"h","port":22,"username":"u","password":"p","privateKeys":[{"content":"k"}]}"#,
+            r#"{"host":"h","port":22,"username":"u","password":"p","privateKey":{"content":"k"}}"#,
         )
         .unwrap();
         assert_eq!(parsed.password.as_deref(), Some("p"));
-        assert_eq!(parsed.private_keys.len(), 1);
-        assert_eq!(parsed.private_keys[0].content, "k");
+        assert_eq!(parsed.private_key.unwrap().content, "k");
     }
 
     #[test]

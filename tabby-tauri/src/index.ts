@@ -14,6 +14,7 @@ import {
     NotificationsService,
     ProfileProvider,
     RuntimeCapabilitiesService,
+    TabContextMenuItemProvider,
     TabRecoveryProvider,
     UpdaterService,
     VaultService,
@@ -25,6 +26,8 @@ import {
     ShellProvider,
     UACService,
 } from '../../tabby-local/src/api'
+import { SSHConfigProvider } from '../../tabby-ssh/src/config'
+import { SSHHotkeyProvider } from '../../tabby-ssh/src/hotkeys'
 import { PasswordStorageService } from '../../tabby-ssh/src/services/passwordStorage.service'
 import { HostBridge } from './api/hostBridge'
 import './api/keychain'
@@ -134,7 +137,7 @@ function initializeDesktop (service: TauriDesktopIntegrationService): () => Prom
         { provide: HotkeyProvider, useClass: TauriHotkeyProvider, multi: true },
         { provide: TerminalDecorator, useClass: TauriPathDropDecorator, multi: true },
         { provide: TerminalContextMenuItemProvider, useClass: TauriExportTerminalContextMenu, multi: true },
-        { provide: TerminalContextMenuItemProvider, useClass: TauriSftpContextMenu, multi: true },
+        { provide: TabContextMenuItemProvider, useClass: TauriSftpContextMenu, multi: true },
         { provide: FileProvider, useClass: TauriFileProvider, multi: true },
         TauriDesktopIntegrationService,
         TauriDiagnosticsService,
@@ -151,6 +154,8 @@ function initializeDesktop (service: TauriDesktopIntegrationService): () => Prom
         { provide: ProfileProvider, useExisting: TauriSshProfilesService, multi: true },
         TauriSshTabRecoveryProvider,
         { provide: TabRecoveryProvider, useExisting: TauriSshTabRecoveryProvider, multi: true },
+        { provide: ConfigProvider, useClass: SSHConfigProvider, multi: true },
+        { provide: HotkeyProvider, useClass: SSHHotkeyProvider, multi: true },
         TauriTelnetProfilesService,
         { provide: ProfileProvider, useExisting: TauriTelnetProfilesService, multi: true },
         TauriTelnetTabRecoveryProvider,

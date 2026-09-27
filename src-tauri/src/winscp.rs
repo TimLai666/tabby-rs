@@ -8,6 +8,7 @@
 
 pub(crate) mod key;
 pub(crate) mod launch;
+pub(crate) mod prepare;
 pub(crate) mod uri;
 
 use std::mem::size_of;

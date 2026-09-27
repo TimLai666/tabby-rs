@@ -10,7 +10,7 @@ use std::path::Path;
 use crate::error::AppError;
 
 /// A private key as the front end hands it over.
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct KeyInput {
     pub content: String,
@@ -70,6 +70,16 @@ pub(crate) fn convert(
 
 /// Writes key material to a private temporary file and returns the handle that
 /// deletes it again.
+pub(super) fn stage_prepared(key: &KeyInput) -> Result<ConvertedKey, AppError> {
+    Ok(ConvertedKey {
+        path: stage(&key.content)?,
+        passphrase: key
+            .passphrase
+            .clone()
+            .unwrap_or_else(|| DEFAULT_PASSPHRASE.into()),
+    })
+}
+
 fn stage(content: &str) -> Result<tempfile::TempPath, AppError> {
     let file = tempfile::NamedTempFile::new().map_err(|_| preparation_failed())?;
     // The file handle has to be released before the content is written and

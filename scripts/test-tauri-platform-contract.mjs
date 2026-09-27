@@ -161,4 +161,8 @@ assert.deepEqual(selectedMenus, ['blue', 'second'], 'Dismissal and disabled desc
 provider.bridge.invoke = async () => { throw new Error('Native dialog unavailable') }
 await assert.rejects(provider.showMessageBox({ type: 'error', message: 'Test', buttons: ['OK'] }), /Native dialog unavailable/)
 
+await import('./test-tauri-ssh-providers.mjs')
+await import('./test-tauri-ssh-actions.mjs')
+await import('./test-tauri-winscp-service.mjs')
+
 console.log('Tauri platform, clipboard, native dialog, and context menu contracts passed')

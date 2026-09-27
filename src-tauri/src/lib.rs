@@ -105,6 +105,7 @@ use storage::{paths::StoragePaths, state_file::save_state};
 use tauri::{Emitter, Manager};
 use telnet::TelnetManager;
 use winscp::launch::winscp_launch;
+use winscp::prepare::winscp_convert_key;
 
 fn initial_launch_context() -> LaunchContext {
     let cwd = std::env::current_dir()
@@ -438,6 +439,7 @@ pub fn run() {
             window_toggle_maximize,
             window_toggle_quake,
             windows_integration_status,
+            winscp_convert_key,
             winscp_launch,
         ])
         .run(tauri::generate_context!())

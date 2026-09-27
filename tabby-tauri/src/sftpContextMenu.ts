@@ -1,21 +1,32 @@
 import { Injectable } from '@angular/core'
-import { MenuItemOptions, TranslateService } from 'tabby-core'
-import { BaseTerminalTabComponent, TerminalContextMenuItemProvider } from 'tabby-terminal'
+import { BaseTabComponent, HostAppService, MenuItemOptions, Platform, TabContextMenuItemProvider, TranslateService } from 'tabby-core'
+import { TauriWinSCPService } from './services/winscp.service'
+import { TauriSshTabComponent } from './ssh/tab.component'
 
 @Injectable()
-export class TauriSftpContextMenu extends TerminalContextMenuItemProvider {
+export class TauriSftpContextMenu extends TabContextMenuItemProvider {
     weight = 10
 
-    constructor (private translate: TranslateService) {
+    constructor (
+        private hostApp: HostAppService,
+        private winscp: TauriWinSCPService,
+        private translate: TranslateService,
+    ) {
         super()
     }
 
-    async getItems (tab: BaseTerminalTabComponent<any>): Promise<MenuItemOptions[]> {
-        const sshTab = tab as BaseTerminalTabComponent<any> & { openSFTP?: () => Promise<void>; session?: { open?: boolean } }
-        if (!sshTab.session.open || !sshTab.openSFTP) { return [] }
-        return [{
+    async getItems (tab: BaseTabComponent): Promise<MenuItemOptions[]> {
+        if (!(tab instanceof TauriSshTabComponent)) { return [] }
+        const items: MenuItemOptions[] = [{
             label: this.translate.instant('Open SFTP panel'),
-            click: () => void sshTab.openSFTP?.(),
+            click: () => void tab.openSFTP(),
         }]
+        if (this.hostApp.platform === Platform.Windows && this.winscp.getWinSCPPath()) {
+            items.push({
+                label: this.translate.instant('Launch WinSCP'),
+                click: () => void tab.launchWinSCP(),
+            })
+        }
+        return items
     }
 }

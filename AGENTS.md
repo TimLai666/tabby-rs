@@ -13,9 +13,23 @@
   `TempPath` never drops and the converted keys stay in the temp directory.
 - Before WinSCP acceptance is signed off: implement and verify cleanup on application exit
   and on crash recovery, without deleting key files that another process is still using.
+- `src-tauri/src/winscp/prepare.rs` also stages a source key while waiting for
+  `WinSCP.com /keygen`; include that conversion phase in the cleanup verification.
 - Also open: the existing-instance hand-off is unverified. `launch.rs:4-9` notes that a
   running WinSCP may take the session over, so the only process lifetime relied on is the one
   this module waits for. That path needs Windows evidence.
+
+## Pending — WinSCP reuse of SSH keys and prompted passphrases
+
+- `tabby-tauri/src/ssh/session.ts` can authenticate with keys from
+  `ssh.listPrivateKeys` when the profile has no configured keys.
+- `tabby-tauri/src/services/winscp.service.ts` converts only configured keys, so
+  such sessions open WinSCP without a key. Verify this flow against the fixed
+  upstream baseline before claiming WinSCP parity.
+- `src-tauri/src/ssh/mod.rs` uses and zeroizes a prompted key passphrase without
+  saving it. WinSCP conversion reads only saved passphrases, so a key unlocked by
+  that prompt can fail conversion. Check upstream reuse and consent behavior
+  before changing passphrase persistence.
 
 ## Pending — full-repo lint fails on `tabby-local/src/session.ts`
 

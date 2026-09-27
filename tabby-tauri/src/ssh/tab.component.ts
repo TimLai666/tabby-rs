@@ -5,6 +5,7 @@ import { ConnectableTerminalTabComponent, BaseTerminalTabComponent } from 'tabby
 import { SSHProfile } from '../../../tabby-ssh/src/api/interfaces'
 
 import { HostBridge } from '../api/hostBridge'
+import { TauriWinSCPService } from '../services/winscp.service'
 import { TauriSshAuthPromptModalComponent } from './authPromptModal.component'
 import { TauriSshSession } from './session'
 
@@ -26,8 +27,32 @@ export class TauriSshTabComponent extends ConnectableTerminalTabComponent<SSHPro
         private bridge: HostBridge,
         private vault: VaultService,
         private modals: NgbModal,
+        private winscp: TauriWinSCPService,
     ) {
         super(injector)
+    }
+
+    ngOnInit (): void {
+        this.subscribeUntilDestroyed(this.hotkeys.hotkey$, hotkey => {
+            if (!this.hasFocus) { return }
+            switch (hotkey) {
+                case 'home': this.sendInput('\x1bOH'); break
+                case 'end': this.sendInput('\x1bOF'); break
+                case 'restart-ssh-session': void this.reconnect(); break
+                case 'open-sftp': void this.openSFTP(); break
+                case 'launch-winscp': void this.launchWinSCP(); break
+            }
+        })
+        super.ngOnInit()
+    }
+
+    async launchWinSCP (): Promise<void> {
+        if (!this.session) { return }
+        try {
+            await this.winscp.launchWinSCP(this.session)
+        } catch {
+            this.notifications.error(this.translate.instant('Could not launch WinSCP'))
+        }
     }
 
     async initializeSession (): Promise<void> {
