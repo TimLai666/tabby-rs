@@ -1561,3 +1561,8 @@ Each package remains under its own license. The package manifest path is include
 | npm | yauzl | 2.10.0 | MIT | node_modules/yauzl/package.json |
 | npm | yocto-queue | 0.1.0 | MIT | node_modules/yocto-queue/package.json |
 | npm | zone.js | 0.13.3 | MIT | node_modules/zone.js/package.json |
+
+## Vendored renderer code
+
+The browser readline adapter includes Node.js code under the MIT license and character-width data derived from ICU under Unicode License V3. Versions and source hashes are recorded in `app/src/shims/readline/provenance.json`.
+License texts: `app/src/shims/readline/LICENSE` and `app/src/shims/readline/UNICODE-LICENSE`. Both notices are retained in the renderer bundle.

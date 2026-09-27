@@ -96,7 +96,7 @@ export default () => ({
             module: false,
             net: false,
             os: false,
-            readline: false,
+            readline: path.resolve(__dirname, 'src/shims/readline.cjs'),
             tls: false,
             tty: false,
             vm: false,
@@ -162,7 +162,7 @@ export default () => ({
         new wp.DefinePlugin({
             global: 'globalThis',
             'process.type': JSON.stringify('renderer'),
-            'process.platform': '(window.__TABBY_PLATFORM__ || "browser")',
+            'process.platform': '({ windows: "win32", macos: "darwin" }[window.__TABBY_PLATFORM__] || window.__TABBY_PLATFORM__ || "browser")',
             'process.arch': '(window.__TABBY_ARCH__ || "unknown")',
             'process.env.TABBY_DEV': JSON.stringify(false),
             'process.env.TABBY_FORCE_ANGULAR_PROD': JSON.stringify(false),

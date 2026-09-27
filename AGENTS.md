@@ -348,13 +348,34 @@
   settings components render. macOS desktop checks show the login-script rows,
   input/stream controls, and serial reconnect toggle. Search and terminal-toolbar
   interactions still need desktop acceptance.
-- Desktop connection verification is blocked by the existing `readline: false`
-  fallback in `app/webpack.config.tauri.mjs:99`. Telnet startup throws
-  `readline.clearLine is not a function` in cli-spinner before native connection.
-  Serial uses the same spinner, and stream processing also requires readline.
-  The Node session tests use real Node readline and cannot detect this bundle gap.
-  Fix browser readline support and verify actual Telnet/serial script exchanges
-  before accepting connector parity. The macOS fixture has no successful exchange.
+- The browser readline adapter restores the spinner and stream editor using the
+  fixed upstream lock's Electron 38.8.6 / Node 22.22.0 editing modules. Retain their
+  MIT notices and the Unicode License V3 for the ICU-derived width table. The
+  checked-in regeneration script and provenance hashes identify the exact source.
+  The bundle test reproduces the original missing-clearLine failure and compares
+  12 editing scenarios with the pinned Electron runtime, including output bytes,
+  history, Unicode input, and cleanup. It also checks all 1,114,112 code point
+  widths against that runtime's ICU and verifies Windows/macOS Ctrl+Z remains usable.
+  The renderer now maps native `windows`/`macos` to Node `win32`/`darwin` names.
+- macOS desktop Telnet checks against a loopback server that processes Telnet
+  negotiation verify both login scripts, a visible SCRIPT_OK response, line
+  editing with cursor movement/deletion, history resend, and hex input sending
+  exact bytes. Closing the isolated app closes all three tested connections.
+  A final-build macOS desktop check also sends `ab`, Ctrl+Z, `cd`, Enter and
+  receives `ECHO:abcd`; the server records exactly `abcd\n` and clean closure.
+  This fixture does not establish complete Telnet protocol or platform parity.
+  Serial desktop acceptance remains pending: opening a macOS pseudo-terminal
+  fails with `Not a typewriter` in the native serial backend. The terminal shows
+  `[object Object]` instead of that diagnostic; fix error presentation separately.
+- Linux Ctrl+Z remains a known adapter gap: Node readline requests renderer
+  process suspension, but the WebView process shim has no `kill` API. This can
+  throw and stall the input stream. Verify the original Linux desktop
+  behavior and implement the corresponding host integration before acceptance;
+  do not silently substitute Windows' no-op behavior on Linux. A macOS method-level
+  probe in Electron 38.8.6 with the original BrowserWindow preferences confirms
+  SIGTSTP is ignored in that launch environment: input after Ctrl+Z completes
+  normally without an external SIGCONT. The adapter preserves that observable
+  behavior on macOS. Other launch/process-group environments remain unverified.
 - Script deletion persistence, serial automatic-reconnect script behavior, original
   serial slow-send support, and other platforms remain unaccepted. Do not infer
   full connector parity from the session tests or rendered settings controls.

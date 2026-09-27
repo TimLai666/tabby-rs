@@ -96,6 +96,11 @@ const lines = [
     '| --- | --- | --- | --- | --- |',
     ...packages.map(packageInfo => `| ${packageInfo.ecosystem} | ${packageInfo.name} | ${packageInfo.version} | ${packageInfo.license} | ${packageInfo.path} |`),
     '',
+    '## Vendored renderer code',
+    '',
+    'The browser readline adapter includes Node.js code under the MIT license and character-width data derived from ICU under Unicode License V3. Versions and source hashes are recorded in `app/src/shims/readline/provenance.json`.',
+    'License texts: `app/src/shims/readline/LICENSE` and `app/src/shims/readline/UNICODE-LICENSE`. Both notices are retained in the renderer bundle.',
+    '',
 ]
 const destination = outputPath(process.argv.slice(2))
 fs.mkdirSync(path.dirname(destination), { recursive: true })

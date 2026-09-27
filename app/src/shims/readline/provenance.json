@@ -1,0 +1,13 @@
+{
+  "electron": "38.8.6",
+  "node": "22.22.0",
+  "icu": "74.2",
+  "unicode": "15.1",
+  "sourceHashes": {
+    "interface": "986b576839b9b02eb8de5b39dcc517387762aa53f8005bb6aaaf810c5a9b57e4",
+    "utils": "e5965e819576a5d07bcbc36497dc5b59904daf69dc7444547e8cb6abb659228f",
+    "callbacks": "af9b691f147976bca019361b7be1095c7ef8c059353cd948e518327f2b3d6f8f",
+    "emitKeypressEvents": "a4e22146ea0a66703c8f9d1861f3fe6e860adc06fb5cfb40919d0c002cba974b"
+  },
+  "widthsHash": "643cbc6c18e9da7573c842c5dcdd355ec45f8bbe87027cc612293a00a4197fc6"
+}
