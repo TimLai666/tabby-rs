@@ -64,7 +64,7 @@ async function fixture (options = {}) {
         },
     }
     const bridge = {
-        listen: async (name, callback) => { handlers.set(name, callback); return () => handlers.delete(name) },
+        listen: async (name, callback) => { handlers.set(name, callback); if (options.listening) await options.listening.promise; if (name === 'ssh:connecting' && options.registering) await options.registering.promise; return () => handlers.delete(name) },
         invoke: async (command, request) => {
             calls.push({ command, request })
             if (command === 'ssh.connect') return connect.promise
@@ -86,7 +86,8 @@ async function fixture (options = {}) {
         throw new Error(`Unexpected token ${token.name}`)
     } }, bridge, { isEnabled: () => false }, profile, {
         open: component => {
-            assert.equal(component, fakes['tabby-core'].PromptModalComponent)
+            if (options.modalFails) throw new Error('private modal failure')
+            assert.equal(component, options.hostKey ? fakes['./hostKeyPromptModal.component'].TauriSshHostKeyPromptModalComponent : fakes['tabby-core'].PromptModalComponent)
             const result = deferred()
             const instance = {}
             let visible = true
@@ -103,6 +104,10 @@ async function fixture (options = {}) {
     session.authForOptions = async () => [{ type: 'promptPassword' }]
     session.jumpChain = async () => []
     session.startForwardings = async () => {}
+    if (options.preparing) {
+        const connectRequest = session.connectRequest.bind(session)
+        session.connectRequest = async () => { await options.preparing.promise; return connectRequest() }
+    }
     session.serviceMessage$.subscribe(message => messages.push(message))
     const started = session.start()
     started.catch(() => {})
@@ -120,6 +125,80 @@ async function fixture (options = {}) {
         responses: () => calls.filter(c => c.command === 'ssh.authResponse').map(c => plain(c.request)),
         finish: async () => { connect.resolve({ id: 'ssh-1', username: 'alice', usedPrivateKey: false }); await started },
     }
+}
+
+{
+    const f = await fixture({ modalFails: true })
+    f.show(); await settle()
+    assert.deepEqual(f.responses(), [{ requestId: 'auth-1', responses: [], abort: true }], 'a broken prompt must abort, not skip authentication')
+    assert.ok(f.messages.some(message => /prompt could not be opened/.test(message)))
+    assert.ok(f.messages.every(message => !message.includes('private modal failure')))
+    f.connect.reject({ code: 'io', details: 'SSH session is closed' })
+    await f.started.catch(() => {})
+    await settle()
+    assert.equal(f.passwordDeletes.length, 0)
+    await f.session.destroy()
+}
+{
+    const f = await fixture()
+    f.show(); await settle(); f.modals[0].dismiss(); await settle()
+    assert.deepEqual(f.responses(), [{ requestId: 'auth-1', responses: [] }], 'Escape only dismisses the current password candidate')
+    f.connect.reject({ code: 'permissionDenied', passwordDeletionTarget: f.prompt.password })
+    await f.started.catch(() => {})
+    await settle()
+    assert.equal(f.passwordDeletes.length, 1, 'final exhaustion after Escape removes the failed account password')
+    await f.session.destroy()
+}
+
+for (const phase of ['listening', 'preparing', 'registering']) {
+    const wait = deferred(), f = await fixture({ [phase]: wait })
+    await f.session.destroy()
+    wait.resolve()
+    await settle()
+    assert.equal(f.calls.filter(call => call.command === 'ssh.connect').length, 0, `destroy during ${phase} must prevent native connect`)
+    await f.started
+    assert.equal(f.handlers.size, 0, 'late listener installation must be cleaned up')
+}
+{
+    const f = await fixture()
+    await f.session.destroy()
+    assert.deepEqual(f.calls.filter(call => call.command === 'ssh.cancelConnect').map(call => plain(call.request)), [{ connectionId: 'connection-1' }])
+    assert.equal(f.handlers.size, 1, 'only native registration acknowledgement may remain while closing a pending connection')
+    f.handlers.get('ssh:connecting')({ connectionId: 'another-connection' })
+    await settle()
+    assert.equal(f.calls.filter(call => call.command === 'ssh.cancelConnect').length, 1)
+    f.handlers.get('ssh:connecting')({ connectionId: 'connection-1' })
+    await settle()
+    assert.equal(f.calls.filter(call => call.command === 'ssh.cancelConnect').length, 2, 'native registration after early cancel must trigger cancellation again')
+    f.connect.reject({ code: 'io', details: 'SSH session is closed' })
+    await f.started.catch(() => {})
+    assert.equal(f.handlers.size, 0)
+    assert.equal(f.passwordDeletes.length, 0)
+}
+
+{
+    const f = await fixture({ hostKey: true })
+    const handler = f.handlers.get('ssh:hostKeyPrompt')
+    handler({ requestId: 'host-1', connectionId: 'connection-1' })
+    await settle()
+    assert.equal(f.modals.length, 1)
+    await f.session.destroy()
+    await settle()
+    assert.equal(f.modals[0].componentInstance, undefined, 'closing the tab dismisses its host-key dialog')
+    assert.equal(f.calls.filter(call => call.command === 'ssh.cancelConnect').length, 1)
+    handler({ requestId: 'host-2', connectionId: 'connection-1' })
+    await settle()
+    assert.equal(f.modals.length, 1, 'a queued host-key event cannot open a dialog after destroy')
+    f.connect.reject({ code: 'io', details: 'closed' })
+    await f.started.catch(() => {})
+    assert.equal(f.handlers.size, 0)
+}
+{
+    const f = await fixture()
+    await f.session.destroy()
+    await f.finish()
+    assert.deepEqual(f.calls.filter(call => call.command === 'ssh.close').map(call => plain(call.request)), [{ id: 'ssh-1' }], 'a connection that wins the cancel race is still closed')
+    assert.equal(f.handlers.size, 0)
 }
 
 // Only a final native rejection identifies a password to delete, even without a prompt event.
@@ -276,7 +355,7 @@ for (const result of [null, { value: '', remember: false }, { value: 'wrong', re
     await f.session.destroy()
     prefill.resolve('saved'); await settle()
     assert.equal(f.modals.length, 0, 'destroy during prefill must not resurrect a modal')
-    assert.deepEqual(f.responses(), [{ requestId: 'auth-1', responses: [] }])
+    assert.deepEqual(f.responses(), [{ requestId: 'auth-1', responses: [], abort: true }])
     f.connect.reject(new Error('closed')); await assert.rejects(f.started)
 }
 {
@@ -291,7 +370,7 @@ for (const result of [null, { value: '', remember: false }, { value: 'wrong', re
 {
     const f = await fixture()
     f.show(); await settle(); await f.session.destroy(); await settle()
-    assert.deepEqual(f.responses(), [{ requestId: 'auth-1', responses: [] }], 'closing a visible prompt cancels once')
+    assert.deepEqual(f.responses(), [{ requestId: 'auth-1', responses: [], abort: true }], 'closing a visible prompt aborts once')
     f.connect.reject(new Error('closed')); await assert.rejects(f.started)
 }
 console.log('SSH password prompt lifecycle, consent, and persistence tests passed')
@@ -334,7 +413,7 @@ for (const result of [null, { value: 'passphrase', remember: false }]) {
     keyPrompt(f); f.show(); f.show(); await settle(); await f.session.destroy()
     deletion.resolve(); await settle()
     assert.equal(f.modals.length, 0)
-    assert.deepEqual(f.responses(), [{ requestId: 'auth-1', responses: [] }])
+    assert.deepEqual(f.responses(), [{ requestId: 'auth-1', responses: [], abort: true }])
     f.connect.reject(new Error('closed')); await assert.rejects(f.started)
 }
 for (const options of [{ saveFails: true, unlockDuringResponse: true }, { deleteFails: true }, { responseFails: true }]) {
@@ -371,7 +450,7 @@ for (const response of [{ value: 'bob', remember: true }, null]) {
     f.handlers.get('ssh:authPrompt')({ ...f.prompt, connectionId: 'another-connection' })
     await settle(); assert.equal(f.modals.length, 0)
     f.show(); await settle(); await f.session.destroy(); await settle()
-    assert.deepEqual(f.responses(), [{ requestId: 'auth-1', responses: [] }])
+    assert.deepEqual(f.responses(), [{ requestId: 'auth-1', responses: [], abort: true }])
     f.connect.reject(new Error('closed')); await assert.rejects(f.started)
 }
 console.log('SSH username prompt visibility, cancellation, and connection isolation passed')
@@ -386,7 +465,7 @@ console.log('SSH username prompt visibility, cancellation, and connection isolat
         'tabby-terminal': {
             BaseTerminalTabComponent: {},
             ConnectableTerminalTabComponent: class {
-                async initializeSession () {} setSession () {} attachSessionHandler () {}
+                async initializeSession () {} setSession (session) { this.session = session } attachSessionHandler () {}
             },
         },
         '../services/winscp.service': {},

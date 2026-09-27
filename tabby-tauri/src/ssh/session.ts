@@ -22,6 +22,7 @@ import { TauriPasswordStorageService } from '../services/passwordStorage.service
 export class TauriSshSession extends BaseSession {
     private id: string|null = null
     private destroying = false
+    private connecting = false
     authUsername: string|null = null
     activePrivateKey = false
     private readonly connectionId = window.crypto.randomUUID()
@@ -33,11 +34,16 @@ export class TauriSshSession extends BaseSession {
     private forwardingIds: string[] = []
     private sftp: TauriSftpSession|null = null
     private credentialModals = new Map<string, NgbModalRef|null>()
+    private hostKeyModals = new Set<NgbModalRef>()
     private pendingPasswords = new Map<string, { profile: SSHProfile; value: string; username: string }>()
     private pendingPassphrases = new Map<string, { hash: string; value: string }>()
 
     get authPrompt$ (): Observable<SshAuthPrompt> {
         return this.authPrompt.asObservable()
+    }
+
+    get isClosing (): boolean {
+        return this.destroying
     }
 
     get serviceMessage$ (): Observable<string> {
@@ -61,7 +67,7 @@ export class TauriSshSession extends BaseSession {
         if (this.open || this.destroying) {
             return
         }
-        this.unlisteners.push(...await Promise.all([
+        const unlisteners = await Promise.all([
             this.bridge.listen('ssh:output', event => {
                 if (event.connectionId === this.connectionId) {
                     if (!this.id) {
@@ -105,12 +111,36 @@ export class TauriSshSession extends BaseSession {
                     void this.saveUnlockedPassphrase(event.requestId)
                 }
             }),
-        ]))
+        ])
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+        if (this.destroying) {
+            for (const unlisten of unlisteners) { unlisten() }
+            return
+        }
+        this.unlisteners.push(...unlisteners)
 
-        const info = await this.bridge.invoke('ssh.connect', await this.connectRequest()).catch(error => {
+        const request = await this.connectRequest()
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+        if (this.destroying) { return }
+        const unlistenConnecting = await this.bridge.listen('ssh:connecting', event => {
+            if (event.connectionId === this.connectionId && this.destroying) {
+                void this.cancelPendingConnection()
+            }
+        })
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+        if (this.destroying) {
+            unlistenConnecting()
+            return
+        }
+
+        this.connecting = true
+        const info = await this.bridge.invoke('ssh.connect', request).catch(error => {
             this.clearCredentialPrompts()
             void this.removeRejectedPassword(error)
             throw error
+        }).finally(() => {
+            this.connecting = false
+            unlistenConnecting()
         })
         // The session can be destroyed while the bridge connection is still opening.
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
@@ -175,6 +205,9 @@ export class TauriSshSession extends BaseSession {
         }
         this.destroying = true
         this.clearCredentialPrompts()
+        for (const modal of this.hostKeyModals) { modal.dismiss() }
+        this.hostKeyModals.clear()
+        if (this.connecting) { await this.cancelPendingConnection() }
         const id = this.id
         this.id = null
         // Keep the last authenticated username and key flag for launching file transfers
@@ -376,6 +409,7 @@ export class TauriSshSession extends BaseSession {
         }
         this.credentialModals.set(prompt.requestId, null)
         let responses: string[] = []
+        let abort = false
         try {
             const target = prompt.password
             const profile: SSHProfile|undefined = target ? {
@@ -415,10 +449,11 @@ export class TauriSshSession extends BaseSession {
                 }
             }
         } catch {
+            abort = true
             this.serviceMessage.next('SSH credential prompt could not be opened')
         } finally {
             if (this.credentialModals.delete(prompt.requestId)) {
-                await this.bridge.invoke('ssh.authResponse', { requestId: prompt.requestId, responses }).catch(() => {
+                await this.bridge.invoke('ssh.authResponse', { requestId: prompt.requestId, responses, ...abort ? { abort: true } : {} }).catch(() => {
                     this.pendingPasswords.delete(prompt.requestId)
                     this.pendingPassphrases.delete(prompt.requestId)
                     this.logger.warn('SSH credential response could not be sent')
@@ -463,7 +498,7 @@ export class TauriSshSession extends BaseSession {
         this.pendingPassphrases.clear()
         for (const [requestId, modal] of this.credentialModals) {
             modal?.dismiss()
-            void this.bridge.invoke('ssh.authResponse', { requestId, responses: [] }).catch(() => undefined)
+            void this.bridge.invoke('ssh.authResponse', { requestId, responses: [], abort: true }).catch(() => undefined)
         }
         this.credentialModals.clear()
     }
@@ -480,12 +515,21 @@ export class TauriSshSession extends BaseSession {
     }
 
     private async handleHostKeyPrompt (prompt: SshHostKeyPrompt): Promise<void> {
+        if (this.destroying) { return }
         const modal = this.modals.open(TauriSshHostKeyPromptModalComponent)
+        this.hostKeyModals.add(modal)
         modal.componentInstance.prompt = prompt
         const decision = await modal.result.catch(() => 'reject') as 'once'|'save'|'reject'
+        this.hostKeyModals.delete(modal)
         await this.bridge.invoke('ssh.hostKeyDecision', {
             requestId: prompt.requestId,
             decision,
         }).catch(error => this.logger.warn('SSH host key decision failed', error))
+    }
+
+    private async cancelPendingConnection (): Promise<void> {
+        await this.bridge.invoke('ssh.cancelConnect', { connectionId: this.connectionId }).catch(error => {
+            this.logger.debug('SSH pending connection cancellation failed', error)
+        })
     }
 }

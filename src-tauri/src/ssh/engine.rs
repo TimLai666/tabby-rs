@@ -214,6 +214,7 @@ pub trait SshChannel: Send + Sync {
 pub struct RusshEngine {
     config: Arc<russh::client::Config>,
     connect_timeout: Duration,
+    cancellation: super::pending::CancelSignal,
 }
 
 impl RusshEngine {
@@ -221,6 +222,7 @@ impl RusshEngine {
         Self {
             config: Arc::new(config),
             connect_timeout,
+            cancellation: Default::default(),
         }
     }
 
@@ -231,7 +233,13 @@ impl RusshEngine {
         Self {
             config,
             connect_timeout,
+            cancellation: Default::default(),
         }
+    }
+
+    pub(super) fn with_cancellation(mut self, signal: super::pending::CancelSignal) -> Self {
+        self.cancellation = signal;
+        self
     }
 
     pub(crate) async fn connect_with_handler<H>(
@@ -246,11 +254,17 @@ impl RusshEngine {
     {
         let mut handle = match tokio::time::timeout(
             self.connect_timeout,
-            russh::client::connect(
-                Arc::clone(&self.config),
-                (target.host.clone(), target.port),
-                handler,
-            ),
+            async {
+                let stream = tokio::net::TcpStream::connect((target.host.as_str(), target.port)).await?;
+                if self.config.nodelay {
+                    if let Err(error) = stream.set_nodelay(true) {
+                        eprintln!("SSH TCP_NODELAY failed: {error}");
+                    }
+                }
+                russh::client::connect_stream(
+                    Arc::clone(&self.config), self.cancellation.wrap(stream), handler,
+                ).await
+            },
         )
         .await
         {

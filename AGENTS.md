@@ -169,9 +169,27 @@
   it does not complete upstream parity. Upstream loads passwords after resolving the account
   and before authentication. Align Vault unlocking and candidate preparation, including
   explicit key-only modes, before accepting this flow.
-- Password prompt cancellation currently exits with Closed; upstream continues to later
-  candidates and can delete the stored password on final exhaustion. Keyboard-interactive
-  cancellation and tab closure also need exact baseline comparison and acceptance.
+- Password prompt dismissal now skips that candidate, matching upstream, and can delete
+  the stored password on final exhaustion. An explicit abort response distinguishes prompt
+  setup failure and session teardown from dismissal; abort closes the native waiter without
+  carrying a password-deletion target. Tests cover missing/false/true abort fields, duplicate
+  replies, empty-password submission, modal failure, and teardown during credential loading.
+  macOS desktop direct and first-hop checks verify saved-password rejection followed by Esc,
+  no extra password attempt, clean transport closure, and deletion of only the failed account's
+  Keychain item. The destination credential survives hop cancellation; synthetic items and the
+  test server were cleaned up. Vault and other platforms still need desktop acceptance.
+  Keyboard-interactive cancellation still needs exact baseline comparison and acceptance.
+  Closing a pending SSH tab now cancels native setup and aborts its registered prompts.
+  A registration acknowledgement repeats cancellation if tab closure preceded native setup.
+  Each direct/jump transport observes cancellation during reads and writes, including russh's
+  background key-exchange task; failed setup also signals cancellation. Waiter guards remove
+  pending host-key/auth replies. Renderer tests cover closure during listener installation,
+  request preparation, registration, prompts, and the successful-connect race. Native tests
+  verify cancellation isolation, waiter removal, transport I/O, and socket EOF during stalled
+  key exchange. macOS desktop checks verify tab closure before the server identification and
+  during key exchange, with socket closure while another authenticated SSH session remains
+  connected. Normal password login and closing the established session also pass. Modal tab closure,
+  multi-hop cancellation, Vault behavior, and other platforms still need desktop acceptance.
   Agent errors continue to fall through as in upstream; a disconnect swallowed by that path
   can reach exhaustion, unlike an error propagated out of authentication.
   Upstream also catches failures inside prompted-password and private-key attempts, whereas

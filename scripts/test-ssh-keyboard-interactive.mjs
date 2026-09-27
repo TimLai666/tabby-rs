@@ -38,6 +38,7 @@ const { TauriSshTabComponent } = load('../tabby-tauri/src/ssh/tab.component.ts',
     '@angular/core': { Component: value => { metadata = value; return decorator() } },
     'tabby-terminal': { BaseTerminalTabComponent: { template: '<terminal />' }, ConnectableTerminalTabComponent: class {
         async disconnect () {} ngOnDestroy () {} onSessionDestroyed () {}
+        async destroy () { if (this.session?.open) await this.session.destroy() }
         async initializeSession () {} setSession (session) { this.session = session } attachSessionHandler () {}
     } },
     '../../../tabby-ssh/src/api/keyboardInteractivePrompt': { KeyboardInteractivePrompt },
@@ -83,6 +84,7 @@ oldPrompt.respond()
 assert.equal(tab.activeKIPrompt, null)
 assert.equal(calls.length, 2)
 assert.deepEqual(Array.from(calls[1].request.responses), [])
+assert.equal(calls[1].request.abort, true, 'disconnect must abort rather than reject an authentication candidate')
 await tab.showAuthPrompt({ ...event, requestId: 'stale' }, {})
 assert.equal(tab.activeKIPrompt, null)
 assert.equal(calls.length, 2)
@@ -109,6 +111,26 @@ assert.equal(tab.activeKIPrompt, null, 'A failed initial connection must clear i
 await timedOutPrompt
 assert.deepEqual(Array.from(calls.at(-1).request.responses), [])
 console.log('Initial SSH connection failure clears the interactive panel and cancels its response')
+
+{
+    let destroyed = false
+    tab.session = { open: false, destroy: async () => { destroyed = true } }
+    const pending = tab.showAuthPrompt({ ...event, requestId: 'closing-tab' }, tab.session)
+    await tab.destroy()
+    await pending
+    assert.equal(destroyed, true, 'closing a pending tab must destroy its session')
+    assert.equal(calls.at(-1).request.abort, true, 'closing a pending tab aborts its inline prompt')
+}
+{
+    const errors = []
+    tab.write = text => errors.push(text)
+    startImplementation = async session => { session.isClosing = true; throw new Error('closed') }
+    await tab.initializeSession()
+    assert.deepEqual(errors, [], 'an intentionally cancelled connection must not print a failure')
+    startImplementation = async () => { tab.session = {}; throw new Error('stale') }
+    await tab.initializeSession()
+    assert.deepEqual(errors, [], 'a replaced connection must not print into its replacement')
+}
 
 const { KeyboardInteractiveAuthComponent } = load('../tabby-ssh/src/components/keyboardInteractiveAuthPanel.component.ts', {
     '@angular/core': {

@@ -312,6 +312,14 @@ pub struct SshAuthPromptItem {
 pub struct SshAuthResponseRequest {
     pub request_id: String,
     pub responses: Vec<String>,
+    #[serde(default)]
+    pub abort: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SshConnectionIdRequest {
+    pub connection_id: String,
 }
 
 #[derive(Debug, thiserror::Error)]

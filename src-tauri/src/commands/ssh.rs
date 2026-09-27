@@ -133,6 +133,14 @@ pub async fn ssh_connect(
 }
 
 #[tauri::command]
+pub fn ssh_cancel_connect(
+    request: ssh::model::SshConnectionIdRequest,
+    manager: State<'_, Arc<SshManager>>,
+) {
+    manager.cancel_connect(&request.connection_id);
+}
+
+#[tauri::command]
 pub async fn ssh_host_key_decision(
     request: HostKeyDecisionRequest,
     manager: State<'_, Arc<SshManager>>,

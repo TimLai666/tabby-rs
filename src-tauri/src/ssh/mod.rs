@@ -6,6 +6,7 @@ mod forwarding;
 mod import;
 mod known_hosts;
 pub mod model;
+mod pending;
 pub mod sftp;
 
 use std::{
@@ -80,6 +81,7 @@ pub struct SshManager {
     sessions: Arc<Mutex<HashMap<String, SshSession>>>,
     host_key_waiters: Arc<Mutex<HashMap<String, HostKeySender>>>,
     auth_waiters: Arc<Mutex<HashMap<String, AuthSender>>>,
+    pending_connections: pending::PendingConnections,
     forwardings: Arc<Mutex<HashMap<String, ForwardingRuntime>>>,
     remote_routes: Arc<Mutex<HashMap<(String, String, u32), RemoteForwardRoute>>>,
     next_id: Arc<AtomicU64>,
@@ -185,6 +187,7 @@ enum SshControl {
 
 struct SshHandler {
     manager: SshManager,
+    cancellation: pending::CancelSignal,
     host: String,
     port: u16,
     connection_id: String,
@@ -219,7 +222,7 @@ impl Handler for SshHandler {
                 return Ok(false);
             }
         };
-        match verifier.verify(&self.host, self.port, &key).await {
+        match self.cancellation.run(verifier.verify(&self.host, self.port, &key)).await {
             Ok(accepted) => Ok(accepted),
             Err(error) => {
                 *self
@@ -709,7 +712,7 @@ async fn authenticate_password_response(
 ) -> Result<bool, SshError> {
     let mut responses = zeroize::Zeroizing::new(responses);
     if responses.is_empty() {
-        return Err(SshError::Closed);
+        return Ok(false);
     }
     if responses.len() != 1 {
         return Err(SshError::InvalidRequest(
@@ -746,6 +749,7 @@ impl SshManager {
             sessions: Arc::new(Mutex::new(HashMap::new())),
             host_key_waiters: Arc::new(Mutex::new(HashMap::new())),
             auth_waiters: Arc::new(Mutex::new(HashMap::new())),
+            pending_connections: pending::PendingConnections::default(),
             forwardings: Arc::new(Mutex::new(HashMap::new())),
             remote_routes: Arc::new(Mutex::new(HashMap::new())),
             next_id: Arc::new(AtomicU64::new(0)),
@@ -763,6 +767,7 @@ impl SshManager {
     ) -> SshHandler {
         SshHandler {
             manager: self.clone(),
+            cancellation: self.pending_connections.signal(connection_id).unwrap_or_default(),
             host,
             port,
             connection_id: connection_id.into(),
@@ -794,7 +799,15 @@ impl SshManager {
         );
         match timeout(
             Duration::from_secs(30),
-            client::connect(config, (request.host.clone(), request.port), handler),
+            async {
+                let stream = tokio::net::TcpStream::connect((request.host.as_str(), request.port)).await?;
+                if config.nodelay {
+                    if let Err(error) = stream.set_nodelay(true) {
+                        eprintln!("SSH TCP_NODELAY failed: {error}");
+                    }
+                }
+                client::connect_stream(config, handler.cancellation.wrap(stream), handler).await
+            },
         )
         .await
         {
@@ -835,7 +848,8 @@ impl SshManager {
             used_private_key: Mutex::new(false),
             resolved_username: Mutex::new(None),
         });
-        let engine = RusshEngine::from_shared_config(config, Duration::from_secs(30));
+        let engine = RusshEngine::from_shared_config(config, Duration::from_secs(30))
+            .with_cancellation(handler.cancellation.clone());
         let handle = engine
             .connect_with_handler(
                 &SshTarget {
@@ -870,7 +884,7 @@ impl SshManager {
         );
         match timeout(
             Duration::from_secs(30),
-            client::connect_stream(config, channel.into_stream(), handler),
+            client::connect_stream(config, handler.cancellation.wrap(channel.into_stream()), handler),
         )
         .await
         {
@@ -892,11 +906,34 @@ impl SshManager {
         credentials: CredentialState,
     ) -> Result<SshSessionInfo, SshError> {
         validate_request(&request)?;
-        let username;
         let connection_id = request
             .connection_id
             .clone()
             .unwrap_or_else(|| request.profile_id.clone());
+        let pending = self.pending_connections.begin(&connection_id)?;
+        // The acknowledgement lets a renderer that closed before registration cancel again.
+        app.emit("ssh:connecting", SshConnectionIdRequest { connection_id: connection_id.clone() })
+            .map_err(|_| SshError::Closed)?;
+        let result = pending.signal.run(self.connect_inner(app, request, secrets, credentials, connection_id)).await;
+        if result.is_err() {
+            pending.signal.cancel();
+        }
+        result
+    }
+
+    pub fn cancel_connect(&self, connection_id: &str) {
+        self.pending_connections.cancel(connection_id);
+    }
+
+    async fn connect_inner(
+        &self,
+        app: AppHandle,
+        request: SshConnectRequest,
+        secrets: Arc<SecretState>,
+        credentials: CredentialState,
+        connection_id: String,
+    ) -> Result<SshSessionInfo, SshError> {
+        let username;
         let config = client::Config {
             inactivity_timeout: request.keepalive.as_ref().map(|options| {
                 Duration::from_millis(
@@ -1370,7 +1407,7 @@ impl SshManager {
         sender.send(request.decision).map_err(|_| SshError::Closed)
     }
 
-    pub async fn auth_response(&self, request: SshAuthResponseRequest) -> Result<(), SshError> {
+    pub async fn auth_response(&self, mut request: SshAuthResponseRequest) -> Result<(), SshError> {
         if request.responses.len() > 32
             || request
                 .responses
@@ -1389,6 +1426,11 @@ impl SshManager {
             .ok_or_else(|| {
                 SshError::InvalidRequest("authentication request is unknown or expired".into())
             })?;
+        if request.abort {
+            request.responses.zeroize();
+            drop(sender);
+            return Ok(());
+        }
         sender.send(request.responses).map_err(|_| SshError::Closed)
     }
 
@@ -1874,10 +1916,7 @@ impl SshManager {
         };
         let request_id = self.new_id("host-key");
         let (sender, receiver) = oneshot::channel();
-        self.host_key_waiters
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .insert(request_id.clone(), sender);
+        let _reply = pending::ReplyGuard::insert(&self.host_key_waiters, request_id.clone(), sender);
         if app
             .emit(
                 "ssh:hostKeyPrompt",
@@ -1894,17 +1933,9 @@ impl SshManager {
             )
             .is_err()
         {
-            self.host_key_waiters
-                .lock()
-                .unwrap_or_else(|error| error.into_inner())
-                .remove(&request_id);
             return Err(SshError::HostKeyRejected);
         }
         let decision = timeout(HOST_KEY_TIMEOUT, receiver).await;
-        self.host_key_waiters
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .remove(&request_id);
         let Ok(Ok(decision)) = decision else {
             return Err(SshError::Timeout);
         };
@@ -1950,22 +1981,11 @@ impl SshManager {
         };
         prompt.request_id = request_id.clone();
         let (sender, receiver) = oneshot::channel();
-        self.auth_waiters
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .insert(request_id.clone(), sender);
+        let _reply = pending::ReplyGuard::insert(&self.auth_waiters, request_id, sender);
         if app.emit("ssh:authPrompt", prompt).is_err() {
-            self.auth_waiters
-                .lock()
-                .unwrap_or_else(|error| error.into_inner())
-                .remove(&request_id);
             return Err(SshError::Closed);
         }
         let result = timeout(AUTH_PROMPT_TIMEOUT, receiver).await;
-        self.auth_waiters
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .remove(&request_id);
         match result {
             Ok(Ok(response)) => Ok(response),
             Ok(Err(_)) => Err(SshError::Closed),
@@ -3711,13 +3731,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn auth_response_distinguishes_prompt_dismissal_from_connection_abort() {
+        let directory = tempdir().unwrap();
+        let manager = SshManager::new(directory.path().join("known_hosts"));
+        for (abort, responses) in [(None, vec![]), (Some(false), vec![""]), (Some(true), vec![])] {
+            let (sender, receiver) = tokio::sync::oneshot::channel();
+            manager.auth_waiters.lock().unwrap().insert("auth-test".into(), sender);
+            let mut value = serde_json::json!({ "requestId": "auth-test", "responses": responses });
+            if let Some(abort) = abort { value["abort"] = serde_json::json!(abort); }
+            let request = serde_json::from_value(value).unwrap();
+            manager.auth_response(request).await.unwrap();
+            if abort == Some(true) {
+                assert!(receiver.await.is_err(), "aborting must close the waiter rather than skip a candidate");
+            } else {
+                assert_eq!(receiver.await.unwrap(), responses);
+            }
+            assert!(manager.auth_waiters.lock().unwrap().is_empty());
+            let duplicate = serde_json::from_value(serde_json::json!({
+                "requestId": "auth-test", "responses": [], "abort": true,
+            })).unwrap();
+            assert!(matches!(manager.auth_response(duplicate).await, Err(SshError::InvalidRequest(_))));
+        }
+    }
+
+    #[tokio::test]
     async fn password_response_preserves_cancellation_and_password_results() {
         let mut context = recording_context(false);
         assert!(matches!(
             super::authenticate_password_response(&mut context, "alice", vec![]).await,
-            Err(SshError::Closed)
+            Ok(false)
         ));
-        assert!(context.calls.is_empty());
+        assert!(context.calls.is_empty(), "dismissing the prompt skips this candidate without sending an empty password");
         assert!(matches!(
             super::authenticate_password_response(&mut context, "alice", vec!["a".into(), "b".into()]).await,
             Err(SshError::InvalidRequest(_))

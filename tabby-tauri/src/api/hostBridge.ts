@@ -1126,7 +1126,11 @@ export interface HostRequestMap {
         response: string | null
     }
     'ssh.authResponse': {
-        request: { requestId: string; responses: string[] }
+        request: { requestId: string; responses: string[]; abort?: boolean }
+        response: null
+    }
+    'ssh.cancelConnect': {
+        request: { connectionId: string }
         response: null
     }
     'ssh.write': {
@@ -1278,6 +1282,7 @@ export interface HostRequestMap {
 }
 
 export interface HostEventMap {
+    'ssh:connecting': { connectionId: string }
     'app:start': BootstrapData
     'app:launch': LaunchContext
     'update:state': UpdateStateDto

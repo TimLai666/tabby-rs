@@ -73,7 +73,7 @@ use commands::{
     },
     shell::{shell_detect, shell_prepare_spawn},
     ssh::{
-        ssh_auth_response, ssh_close, ssh_connect, ssh_forwarding_list, ssh_forwarding_start,
+        ssh_auth_response, ssh_cancel_connect, ssh_close, ssh_connect, ssh_forwarding_list, ssh_forwarding_start,
         ssh_forwarding_stop, ssh_host_key_decision, ssh_import_apply, ssh_import_preview,
         ssh_list_private_keys, ssh_resize, ssh_resolve_agent_socket, ssh_write,
     },
@@ -375,6 +375,7 @@ pub fn run() {
             sftp_cancel_transfer,
             sftp_close,
             ssh_connect,
+            ssh_cancel_connect,
             ssh_host_key_decision,
             ssh_import_apply,
             ssh_import_preview,

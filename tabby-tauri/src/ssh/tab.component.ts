@@ -82,6 +82,10 @@ export class TauriSshTabComponent extends ConnectableTerminalTabComponent<SSHPro
             this.reconnectAttempts = 0
             this.cancelReconnectTimer()
         } catch (error) {
+            if (session.isClosing || this.session !== session) {
+                await session.destroy()
+                return
+            }
             if (this.session === session) {
                 this.clearAuthPrompt()
             }
@@ -139,6 +143,15 @@ export class TauriSshTabComponent extends ConnectableTerminalTabComponent<SSHPro
         this.clearAuthPrompt()
         this.cancelReconnectTimer()
         await super.disconnect()
+    }
+
+    async destroy (): Promise<void> {
+        this.isDisconnectedByHand = true
+        this.cancelReconnectTimer()
+        const pending = !this.session?.open ? this.session?.destroy() : undefined
+        this.clearAuthPrompt()
+        await super.destroy()
+        await pending
     }
 
     ngOnDestroy (): void {
@@ -199,6 +212,7 @@ export class TauriSshTabComponent extends ConnectableTerminalTabComponent<SSHPro
         await this.bridge.invoke('ssh.authResponse', {
             requestId: prompt.requestId,
             responses: isCurrent ? responses ?? [] : [],
+            ...!isCurrent ? { abort: true } : {},
         }).catch(error => this.logger.warn('SSH authentication response failed', error))
     }
 
