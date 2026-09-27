@@ -39,13 +39,23 @@
   is empty), so the failure is pre-existing.
 - Unrelated to the current WinSCP/SSH changes; still pending.
 
-## P2 — SSH agent forwarding and jump authentication still have parity gaps
+## P1 — unsolicited SSH agent channels bypass the forwarding toggle
 
-- `src-tauri/src/ssh/mod.rs` builds `SshHandler.agent_socket` only from agent entries
-  in `request.auth`. Password, private-key-only, and keyboard-interactive profiles
-  therefore ignore configured agent paths when `agentForward` is enabled.
-- Before SSH forwarding acceptance: resolve the forwarding agent independently from
-  the login method and test a custom socket with password and private-key login.
+- `src-tauri/src/ssh/mod.rs:279` handles `server_channel_open_agent_forward` without
+  checking whether the connection enabled agent forwarding. It connects to the selected
+  or environment agent even when `agent_forward` is false, including on jump hosts.
+- russh 0.54.4 accepts server-initiated agent channels before invoking this handler.
+  A connected server can therefore request local agent operations without forwarding
+  consent. This behavior predates the independent forwarding socket configuration.
+- Store the forwarding permission in the handler and close unsolicited channels when
+  it is disabled. Verify both disabled and enabled cases against a real server before
+  SSH forwarding acceptance.
+
+## P2 — SSH agent routing and forwarding acceptance remain incomplete
+
+- Renderer and native request tests cover selecting a forwarding socket independently
+  of password, private-key, and keyboard-interactive login. Real-server forwarding with
+  a custom socket still needs end-to-end verification.
 - The Windows `connect_agent(None)` helper used by jump authentication and forwarding
   tries `SSH_AUTH_SOCK` before Pageant, while direct authentication routes `None` to
   Pageant. Verify explicit Pageant mode with `SSH_AUTH_SOCK` set and align both paths

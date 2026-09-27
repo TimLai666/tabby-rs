@@ -388,6 +388,10 @@ export interface DesktopNotification {
     body?: string | null
 }
 
+export interface AgentForwardingOptions {
+    socket: string|null
+}
+
 export interface SshConnectRequest {
     profileId: string
     connectionId?: string|null
@@ -401,6 +405,7 @@ export interface SshConnectRequest {
     x11?: boolean
     x11Display?: string|null
     agentForward?: boolean
+    agentForwarding?: AgentForwardingOptions|null
     jumpChain?: SshJumpRequest[]
 }
 

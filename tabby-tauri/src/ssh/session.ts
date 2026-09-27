@@ -212,9 +212,24 @@ export class TauriSshSession extends BaseSession {
         return this.sftp
     }
 
+    private async resolveAgentSocket (): Promise<string|null> {
+        const configService = this.injector.get(ConfigService)
+        const agentType = configService.store.ssh.agentType ?? null
+        const agentPath = configService.store.ssh.agentPath ?? null
+        return this.bridge.invoke('ssh.resolveAgentSocket', { agentType, agentPath })
+    }
+
     private async connectRequest (): Promise<SshConnectRequest> {
         const options = this.profile.options
         const auth = await this.authForOptions(options)
+        let agentForwarding: SshConnectRequest['agentForwarding'] = null
+        if (options.agentForward) {
+            const existingAgent = auth.find(a => a.type === 'agent')
+            const socket = existingAgent?.type === 'agent'
+                ? existingAgent.socket ?? null
+                : await this.resolveAgentSocket()
+            agentForwarding = { socket }
+        }
         return {
             profileId: this.profile.id,
             connectionId: this.connectionId,
@@ -237,6 +252,7 @@ export class TauriSshSession extends BaseSession {
             x11: !!options.x11,
             x11Display: this.injector.get(ConfigService).store.ssh.x11Display || null,
             agentForward: !!options.agentForward,
+            agentForwarding,
             jumpChain: await this.jumpChain(options.jumpHost),
         }
     }
@@ -251,10 +267,7 @@ export class TauriSshSession extends BaseSession {
             for (const fileRef of privateKeys) {
                 auth.push({ type: 'privateKey', fileRef, passphraseRef: null })
             }
-            const configService = this.injector.get(ConfigService)
-            const agentType = configService.store.ssh.agentType ?? null
-            const agentPath = configService.store.ssh.agentPath ?? null
-            const socket = await this.bridge.invoke('ssh.resolveAgentSocket', { agentType, agentPath })
+            const socket = await this.resolveAgentSocket()
             auth.push({ type: 'agent', socket })
             auth.push({ type: 'keyboardInteractive' })
         } else if (options.auth === 'password') {
@@ -267,10 +280,7 @@ export class TauriSshSession extends BaseSession {
                 auth.push({ type: 'privateKey', fileRef, passphraseRef: null })
             }
         } else if (options.auth === 'agent') {
-            const configService = this.injector.get(ConfigService)
-            const agentType = configService.store.ssh.agentType ?? null
-            const agentPath = configService.store.ssh.agentPath ?? null
-            const socket = await this.bridge.invoke('ssh.resolveAgentSocket', { agentType, agentPath })
+            const socket = await this.resolveAgentSocket()
             auth.push({ type: 'agent', socket })
         } else if (authMode === 'keyboardInteractive') {
             auth.push({ type: 'keyboardInteractive' })

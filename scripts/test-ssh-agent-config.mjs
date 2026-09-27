@@ -247,6 +247,48 @@ async function runAllTests () {
     }
 
     console.log('All SSH agent config resolver tests passed')
+
+    // ===== AGENT FORWARDING TESTS (real connectRequest) =====
+
+    const forwardingOptions = (auth, agentForward) => ({ host: 'h', port: 22, user: 'u', input: {}, privateKeys: [], forwardedPorts: [], keepaliveInterval: 0, keepaliveCountMax: 0, jumpHost: null, auth, ...agentForward === undefined ? {} : { agentForward } })
+    const passwordAuth = [{ type: 'password', secretRef: 'keychain://ssh@h:22/u' }]
+    const keyAuth = { type: 'privateKey', fileRef: '/k', passphraseRef: null }
+    const customAgent = { agentType: 'pipe', agentPath: '/custom.sock' }
+    const autoAgent = { agentType: 'auto', agentPath: null }
+    const forwardingCases = [
+        { name: 'password+forward', auth: 'password', forward: true, config: customAgent, resolved: '/custom.sock', expectedAuth: passwordAuth, forwarding: { socket: '/custom.sock' }, resolverCalls: 1 },
+        { name: 'publicKey+forward', auth: 'publicKey', forward: true, config: customAgent, resolved: '/custom.sock', expectedAuth: [keyAuth], forwarding: { socket: '/custom.sock' }, resolverCalls: 1 },
+        { name: 'keyboardInteractive+forward', auth: 'keyboardInteractive', forward: true, config: customAgent, resolved: '/custom.sock', expectedAuth: [{ type: 'keyboardInteractive' }], forwarding: { socket: '/custom.sock' }, resolverCalls: 1 },
+        { name: 'auto+forward reuses socket', auth: null, forward: true, config: autoAgent, resolved: '/auto.sock', expectedAuth: [keyAuth, { type: 'agent', socket: '/auto.sock' }, { type: 'keyboardInteractive' }], forwarding: { socket: '/auto.sock' }, resolverCalls: 1 },
+        { name: 'auto+forward reuses null', auth: null, forward: true, config: autoAgent, resolved: null, expectedAuth: [keyAuth, { type: 'agent', socket: null }, { type: 'keyboardInteractive' }], forwarding: { socket: null }, resolverCalls: 1 },
+        { name: 'agent(Pageant)+forward reuses null', auth: 'agent', forward: true, config: { agentType: 'pageant', agentPath: null }, resolved: null, expectedAuth: [{ type: 'agent', socket: null }], forwarding: { socket: null }, resolverCalls: 1 },
+        { name: 'password+forward false', auth: 'password', forward: false, config: autoAgent, expectedAuth: passwordAuth, forwarding: null, resolverCalls: 0 },
+        { name: 'password+forward absent', auth: 'password', forward: undefined, config: autoAgent, expectedAuth: passwordAuth, forwarding: null, resolverCalls: 0 },
+    ]
+    for (const c of forwardingCases) {
+        const profile = { id: 'target', options: forwardingOptions(c.auth, c.forward) }
+        const config = { store: { ssh: { ...c.config, x11Display: null } } }
+        const bridge = { calls: [], invoke: async (cmd, req) => { bridge.calls.push({ cmd, req }); if (cmd === 'ssh.resolveAgentSocket') { if (!c.resolverCalls) throw new Error('should not call'); return c.resolved } if (cmd === 'ssh.listPrivateKeys') return ['/k']; return {} } }
+        const request = await createSession(profile, config, bridge).connectRequest()
+        const resolveCalls = bridge.calls.filter(x => x.cmd === 'ssh.resolveAgentSocket')
+        assert.equal(resolveCalls.length, c.resolverCalls, `${c.name}: resolver call count`)
+        if (c.resolverCalls) assert.deepEqual(normalize(resolveCalls[0].req), c.config, `${c.name}: resolver args`)
+        assert.deepEqual(normalize(request.agentForwarding), c.forwarding, `${c.name}: agentForwarding`)
+        assert.deepEqual(normalize(request.auth), c.expectedAuth, `${c.name}: auth unchanged`)
+        assert.equal(request.agentForward, !!c.forward, `${c.name}: agentForward flag`)
+        console.log(`  PASS: ${c.name}`)
+    }
+
+    // forwarding resolver rejection propagates from connectRequest
+    {
+        const profile = { id: 'target', options: forwardingOptions('password', true) }
+        const config = { store: { ssh: { ...autoAgent, x11Display: null } } }
+        const bridge = { invoke: async cmd => { if (cmd === 'ssh.resolveAgentSocket') throw new Error('Resolver failed'); return {} } }
+        await assert.rejects(createSession(profile, config, bridge).connectRequest(), /Resolver failed/, 'forwarding rejection propagates')
+        console.log('  PASS: forwarding rejection propagates')
+    }
+
+    console.log('All SSH agent forwarding tests passed')
 }
 
 runAllTests().catch(err => { console.error('Test failed:', err); process.exit(1) })

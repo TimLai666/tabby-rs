@@ -21,7 +21,26 @@ pub struct SshConnectRequest {
     #[serde(default)]
     pub agent_forward: bool,
     #[serde(default)]
+    pub agent_forwarding: Option<AgentForwardingOptions>,
+    #[serde(default)]
     pub jump_chain: Vec<SshJumpRequest>,
+}
+
+impl SshConnectRequest {
+    pub fn forwarding_agent_socket(&self) -> Option<String> {
+        if let Some(forwarding) = &self.agent_forwarding {
+            return forwarding.socket.clone();
+        }
+        self.auth.iter().find_map(|method| match method {
+            AuthMethodRef::Agent { socket } => socket.clone(),
+            _ => None,
+        })
+    }
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct AgentForwardingOptions {
+    pub socket: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]

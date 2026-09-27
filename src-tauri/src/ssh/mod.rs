@@ -713,10 +713,7 @@ impl SshManager {
             app: app.clone(),
             host_key_error,
             remote_routes: Arc::clone(&self.remote_routes),
-            agent_socket: request.auth.iter().find_map(|method| match method {
-                AuthMethodRef::Agent { socket } => socket.clone(),
-                _ => None,
-            }),
+            agent_socket: request.forwarding_agent_socket(),
             x11_display: request.x11_display.clone(),
         }
     }
@@ -2616,6 +2613,7 @@ fn jump_request(
         x11: false,
         x11_display: None,
         agent_forward: false,
+        agent_forwarding: None,
         jump_chain: Vec::new(),
     }
 }
@@ -2885,8 +2883,90 @@ mod tests {
             x11: false,
             x11_display: None,
             agent_forward: false,
+            agent_forwarding: None,
             jump_chain: Vec::new(),
         }
+    }
+
+    fn request_with_agent_auth(socket: Option<&str>) -> SshConnectRequest {
+        let mut value = request();
+        value.auth = vec![
+            AuthMethodRef::KeyboardInteractive,
+            AuthMethodRef::Agent {
+                socket: socket.map(Into::into),
+            },
+        ];
+        value
+    }
+
+    #[test]
+    fn forwarding_agent_explicit_path_overrides_auth() {
+        let mut value = request_with_agent_auth(Some("/auth.sock"));
+        value.agent_forwarding = Some(AgentForwardingOptions {
+            socket: Some("/forward.sock".into()),
+        });
+        assert_eq!(
+            value.forwarding_agent_socket().as_deref(),
+            Some("/forward.sock")
+        );
+
+        let mut value = request();
+        value.agent_forwarding = Some(AgentForwardingOptions {
+            socket: Some("/forward.sock".into()),
+        });
+        assert_eq!(
+            value.forwarding_agent_socket().as_deref(),
+            Some("/forward.sock")
+        );
+    }
+
+    #[test]
+    fn forwarding_agent_explicit_null_overrides_auth_path() {
+        let mut value = request_with_agent_auth(Some("/auth.sock"));
+        value.agent_forwarding = Some(AgentForwardingOptions { socket: None });
+        assert_eq!(value.forwarding_agent_socket(), None);
+    }
+
+    #[test]
+    fn forwarding_agent_legacy_request_derives_from_auth() {
+        let value = request_with_agent_auth(Some("/auth.sock"));
+        assert_eq!(value.forwarding_agent_socket().as_deref(), Some("/auth.sock"));
+        assert_eq!(request().forwarding_agent_socket(), None);
+    }
+
+    #[test]
+    fn forwarding_agent_wire_field_is_optional() {
+        let base = serde_json::json!({
+            "profileId": "ssh:test",
+            "host": "example.test",
+            "port": 22,
+            "username": "alice",
+            "auth": [{ "type": "agent", "socket": "/auth.sock" }],
+            "terminal": { "term": "xterm-256color", "columns": 80, "rows": 24, "pixelWidth": null, "pixelHeight": null },
+            "keepalive": null,
+            "agentForward": true
+        });
+        let omitted: SshConnectRequest = serde_json::from_value(base.clone()).unwrap();
+        assert!(omitted.agent_forwarding.is_none());
+        assert_eq!(omitted.forwarding_agent_socket().as_deref(), Some("/auth.sock"));
+
+        let mut null_field = base.clone();
+        null_field["agentForwarding"] = serde_json::Value::Null;
+        let null_field: SshConnectRequest = serde_json::from_value(null_field).unwrap();
+        assert!(null_field.agent_forwarding.is_none());
+
+        let mut explicit_null = base.clone();
+        explicit_null["agentForwarding"] = serde_json::json!({ "socket": null });
+        let explicit_null: SshConnectRequest = serde_json::from_value(explicit_null).unwrap();
+        assert_eq!(explicit_null.forwarding_agent_socket(), None);
+
+        let mut explicit_path = base;
+        explicit_path["agentForwarding"] = serde_json::json!({ "socket": "/forward.sock" });
+        let explicit_path: SshConnectRequest = serde_json::from_value(explicit_path).unwrap();
+        assert_eq!(
+            explicit_path.forwarding_agent_socket().as_deref(),
+            Some("/forward.sock")
+        );
     }
 
     #[test]
