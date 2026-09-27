@@ -50,7 +50,7 @@ function createSession (profile, config, bridge, profiles = []) {
     session.injector = {
         get: (token) => {
             if (token.name === 'ConfigService') return config
-            if (token.name === 'ProfilesService') return { getProfiles: async () => profiles }
+            if (token.name === 'ProfilesService') return { getProfiles: async () => profiles, getConfigProxyForProfile: profile => profile }
             if (token.name === 'LogService') return { create: () => ({ debug: () => {}, info: () => {}, warn: () => {}, error: () => {} }) }
             if (token.name === 'VaultService') return vault
             throw new Error(`Unexpected token: ${token.name}`)
@@ -341,6 +341,84 @@ async function runAllTests () {
         assert.ok(!JSON.stringify(request.jumpChain).includes('target-secret'))
     }
     console.log('Configured SSH password selection, ordering, and hop isolation passed')
+
+    {
+        const profile = { id: 'target', options: forwardingOptions('password', false) }
+        const config = { store: { ssh: { ...autoAgent, x11Display: null } } }
+        const session = createSession(profile, config, { invoke: async () => null })
+        const originalGet = session.injector.get
+        session.injector.get = token => {
+            if (token.name === 'ProfilesService') throw new Error('Direct SSH must not enumerate profile providers')
+            return originalGet(token)
+        }
+        assert.deepEqual(normalize((await session.connectRequest()).jumpChain), [])
+    }
+
+    // Profiles point toward their immediate jump host; transport starts at the outermost.
+    for (const count of [0, 1, 2, 3, 4, 8]) {
+        const hops = Array.from({ length: count }, (_, index) => ({
+            id: `jump-${index}`, type: 'ssh',
+            options: {
+                ...forwardingOptions('password', false), host: `hop-${index}.test`, port: 2200 + index,
+                user: `user-${index}`, password: `secret-${index}`,
+                jumpHost: index + 1 < count ? `jump-${index + 1}` : null,
+            },
+        }))
+        const profile = { id: 'target', options: { ...forwardingOptions('password', false), password: 'target-secret', jumpHost: count ? 'jump-0' : null } }
+        const config = { store: { ssh: { ...autoAgent, x11Display: null } } }
+        const session = createSession(profile, config, { invoke: async () => null }, hops)
+        const before = JSON.stringify([profile, hops])
+        const request = normalize(await session.connectRequest())
+        assert.deepEqual(request.jumpChain, Array.from({ length: count }, (_, offset) => {
+            const index = count - offset - 1
+            return {
+                host: `hop-${index}.test`, port: 2200 + index, username: `user-${index}`,
+                auth: [{ type: 'providedPassword', password: `secret-${index}` }, ...passwordAuth],
+            }
+        }), `${count} hops must connect outermost first with their own credentials`)
+        assert.equal(request.host, 'h'); assert.equal(request.username, 'u')
+        assert.deepEqual(request.auth, [{ type: 'providedPassword', password: 'target-secret' }, ...passwordAuth])
+        assert.equal(JSON.stringify([profile, hops]), before, 'chain construction must not mutate profiles')
+        assert.deepEqual(normalize((await session.connectRequest()).jumpChain), request.jumpChain, 'repeated requests keep the same order')
+    }
+    for (const invalid of ['target', 'cycle', 'missing', 'non-ssh']) {
+        const profile = { id: 'target', options: { ...forwardingOptions('password', false), jumpHost: invalid } }
+        const hops = [
+            { id: 'cycle', type: 'ssh', options: { ...forwardingOptions('password', false), jumpHost: 'cycle-2' } },
+            { id: 'cycle-2', type: 'ssh', options: { ...forwardingOptions('password', false), jumpHost: 'cycle' } },
+            { id: 'non-ssh', type: 'local', options: forwardingOptions('password', false) },
+        ]
+        const config = { store: { ssh: { ...autoAgent, x11Display: null } } }
+        await assert.rejects(createSession(profile, config, { invoke: async () => null }, hops).connectRequest(),
+            invalid === 'target' || invalid === 'cycle' ? /contains a cycle/ : /was not found/)
+    }
+    console.log('SSH multi-hop transport order, identity isolation, and invalid chains passed')
+
+    // Jump hosts use the same effective profile/default resolution as direct sessions.
+    {
+        const profile = { id: 'target', options: { ...forwardingOptions('password', false), jumpHost: 'inherited' } }
+        const raw = { id: 'inherited', type: 'ssh', group: 'ops', options: { host: 'inner.test' } }
+        const builtin = { id: 'builtin-hop', type: 'ssh', isBuiltin: true, options: { host: 'outer.test' } }
+        const effective = {
+            inherited: { ...raw, options: { ...forwardingOptions('password', false), host: 'inner.test', port: 2222, user: 'group-user', password: 'group-secret', jumpHost: 'builtin-hop' } },
+            'builtin-hop': { ...builtin, options: { ...forwardingOptions('password', false), host: 'outer.test', user: 'default-user', password: 'default-secret' } },
+        }
+        const config = { store: { ssh: { ...autoAgent, x11Display: null } } }
+        const session = createSession(profile, config, { invoke: async () => null })
+        const originalGet = session.injector.get
+        const resolved = []
+        session.injector.get = token => token.name === 'ProfilesService' ? {
+            getProfiles: async options => options?.includeBuiltin === false ? [raw] : [raw, builtin],
+            getConfigProxyForProfile: partial => { resolved.push(partial.id); return effective[partial.id] },
+        } : originalGet(token)
+        const request = normalize(await session.connectRequest())
+        assert.deepEqual(resolved, ['inherited', 'builtin-hop'])
+        assert.deepEqual(request.jumpChain, [
+            { host: 'outer.test', port: 22, username: 'default-user', auth: [{ type: 'providedPassword', password: 'default-secret' }, ...passwordAuth] },
+            { host: 'inner.test', port: 2222, username: 'group-user', auth: [{ type: 'providedPassword', password: 'group-secret' }, ...passwordAuth] },
+        ])
+    }
+    console.log('SSH jump hosts resolve inherited settings and built-in profiles')
 }
 
 runAllTests().catch(err => { console.error('Test failed:', err); process.exit(1) })

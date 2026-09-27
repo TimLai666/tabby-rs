@@ -949,3 +949,83 @@ async fn manager_provided_password_authenticates_or_tries_saved_password() {
         assert_eq!(attempts, expected_attempts);
     }
 }
+
+#[cfg(unix)]
+#[tokio::test]
+#[ignore = "requires SSH authentication fixture; run yarn test:ssh-auth-integration"]
+async fn manager_keyboard_interactive_empty_challenges_use_real_transport() {
+    use crate::security::{CredentialState, SecretState};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct EmptyChallengeServer {
+        responses: Arc<AtomicUsize>,
+        accept: bool,
+    }
+    impl ServerHandler for EmptyChallengeServer {
+        type Error = russh::Error;
+
+        async fn auth_keyboard_interactive<'a>(
+            &'a mut self, user: &str, _: &str, response: Option<Response<'a>>,
+        ) -> Result<Auth, Self::Error> {
+            assert_eq!(user, "fixture-user");
+            if let Some(response) = response {
+                assert_eq!(response.count(), 0, "empty challenge must receive zero answers");
+                if self.responses.fetch_add(1, Ordering::SeqCst) == 1 {
+                    return Ok(if self.accept { Auth::Accept } else { Auth::reject() });
+                }
+            }
+            Ok(Auth::Partial {
+                name: Cow::Borrowed("No input needed"),
+                instructions: Cow::Borrowed("Continue without displaying a prompt"),
+                prompts: Cow::Owned(vec![]),
+            })
+        }
+    }
+
+    for accept in [true, false] {
+        const IO: Duration = Duration::from_secs(10);
+        let directory = tempdir().unwrap();
+        let host_key = HostKeyAlgorithm::Ed25519.generate();
+        let pinned_key = host_key.public_key().clone();
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let responses = Arc::new(AtomicUsize::new(0));
+        let handler = EmptyChallengeServer { responses: Arc::clone(&responses), accept };
+        let mut config = server::Config::default();
+        config.keys.push(host_key);
+        let mut tasks = tokio::task::JoinSet::new();
+        tasks.spawn(async move {
+            let (tcp, _) = listener.accept().await.unwrap();
+            let session = server::run_stream(Arc::new(config), tcp, handler).await.unwrap();
+            let _ = session.await;
+        });
+        let secrets = SecretState::default();
+        let credentials = CredentialState::default();
+        let authenticator = super::ManagerAuthenticator {
+            manager: super::SshManager::new(directory.path().join("known_hosts")),
+            app: None,
+            request: serde_json::from_value(serde_json::json!({
+                "profileId": "ssh:empty-challenge", "host": "127.0.0.1", "port": port,
+                "username": "fixture-user", "auth": [{ "type": "keyboardInteractive" }],
+                "terminal": { "term": "xterm-256color", "columns": 80, "rows": 24 },
+            })).unwrap(),
+            secrets: &secrets, credentials: &credentials,
+            used_private_key: std::sync::Mutex::new(false),
+            resolved_username: std::sync::Mutex::new(None),
+        };
+        let engine = super::engine::RusshEngine::new(client::Config::default(), IO);
+        let connected = tokio::time::timeout(IO, engine.connect_with_handler(
+            &SshTarget { host: "127.0.0.1".into(), port, username: "fixture-user".into() },
+            PinnedHostKeyClient(pinned_key), Arc::new(std::sync::Mutex::new(None)), &authenticator,
+        )).await.expect("empty challenge must not wait for user input");
+        if accept {
+            let handle = connected.expect("empty challenges should authenticate without an app");
+            tokio::time::timeout(IO, handle.disconnect(russh::Disconnect::ByApplication, "", "en"))
+                .await.unwrap().unwrap();
+        } else {
+            assert!(matches!(connected, Err(crate::ssh::SshError::AuthenticationRejected)));
+        }
+        assert_eq!(responses.load(Ordering::SeqCst), 2);
+        tokio::time::timeout(IO, tasks.join_next()).await.unwrap().unwrap().unwrap();
+    }
+}

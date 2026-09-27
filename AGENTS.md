@@ -71,13 +71,25 @@
   tests cover ordering and separate jump-host passwords; manual macOS desktop loopback
   checks verify both modes authenticate with the configured password.
   Keyboard-interactive prefill from configured and stored passwords remains pending.
+- Keyboard-interactive challenges with no prompts now receive an empty response
+  automatically, matching `14e2d60:tabby-ssh/src/session/ssh.ts`. Unit tests cover
+  repeated empty rounds, rejection/fallback, non-empty prompts, and transport errors.
+  Loopback integration tests cover acceptance and rejection after two empty rounds.
+  A direct macOS desktop connection verifies two automatic rounds followed by a
+  masked password prompt and successful login. Jump-host desktop acceptance remains
+  pending; the latest attempt expired while waiting for host-key confirmation.
+- Keyboard-interactive UI parity remains pending: the current modal does not submit
+  on Enter in the direct macOS check. Compare the upstream inline panel's Enter,
+  Previous/Next/Finish, and Save password behavior before accepting this flow.
 - Empty usernames now prompt after host-key verification; `$VAR` expands before
   authentication and saved-password lookup. Native tests cover cancellation, invalid
   responses, environment fallback, and Keychain/Vault identity isolation. Manual macOS
   desktop checks verify visible username input, Enter, Esc without an auth attempt,
   environment expansion, and Keychain password reuse under the resolved username.
   A single-hop desktop check verifies distinct hop/target usernames and target Keychain
-  reuse. Multiple hops, Vault desktop behavior, and other platforms still need acceptance.
+  reuse. A four-hop macOS desktop check verifies each hop's username prompt and configured
+  password, second-hop cancellation, and cleanup without disturbing another connection.
+  Vault desktop behavior and other platforms still need acceptance.
 - Private-key passphrases now use the shared masked prompt with Remember and retry.
   Renderer tests cover cancellation, consent, retries, stale events, and storage errors.
   A manual macOS desktop loopback check verifies wrong-then-correct passphrase entry and
@@ -102,6 +114,14 @@
   SSH authentication parity.
 
 ## Pending — SSH credential and username follow-through
+
+- Jump chains now connect outermost first, without the former three-hop limit, and use
+  effective profile settings including group defaults and built-in profiles. Renderer
+  tests cover 0/1/2/3/4/8 hops, credential association, cycles, missing profiles,
+  and profile resolution. Native validation checks every hop. A four-hop macOS desktop
+  connection using inherited group settings succeeds; closing its tab leaves no open
+  connections on the five loopback servers. Built-in profile desktop behavior, mixed
+  authentication methods, forwarding, and other platforms still need acceptance.
 
 - `tabby-tauri/src/services/winscp.service.ts` uses the original profile username for
   jump options, matching `14e2d60:tabby-ssh/src/services/ssh.service.ts`. Verify prompted

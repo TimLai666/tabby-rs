@@ -311,25 +311,26 @@ export class TauriSshSession extends BaseSession {
     }
 
     private async jumpChain (jumpHost: string|null): Promise<SshJumpRequest[]> {
+        if (!jumpHost) {
+            return []
+        }
         const chain: SshJumpRequest[] = []
         const seen = new Set<string>()
-        let current = jumpHost
-        const profiles = (await this.injector.get(ProfilesService).getProfiles({ includeBuiltin: false }))
+        let current: string|null = jumpHost
+        const profilesService = this.injector.get(ProfilesService)
+        const profiles = (await profilesService.getProfiles())
             .filter(profile => profile.type === 'ssh')
         while (current) {
             if (seen.has(current) || current === this.profile.id) {
                 throw new Error('SSH jump host configuration contains a cycle')
             }
             seen.add(current)
-            if (chain.length >= 3) {
-                throw new Error('SSH jump host configuration supports at most three hops')
-            }
             const currentId = current
             const jump = profiles.find(profile => profile.id === currentId)
             if (!jump) {
                 throw new Error(`SSH jump host "${currentId}" was not found in the profile list`)
             }
-            const jumpOptions = jump.options as SSHProfile['options']
+            const jumpOptions = profilesService.getConfigProxyForProfile<SSHProfile>(jump).options
             chain.push({
                 host: jumpOptions.host,
                 port: jumpOptions.port ?? 22,
@@ -338,7 +339,7 @@ export class TauriSshSession extends BaseSession {
             })
             current = jumpOptions.jumpHost
         }
-        return chain
+        return chain.reverse()
     }
 
     private async startForwardings (sessionId: string): Promise<void> {

@@ -746,6 +746,12 @@ impl SshAuthenticator for ManagerAuthenticator<'_> {
                             KeyboardInteractiveResponse::Success => break Ok(true),
                             KeyboardInteractiveResponse::Failure => break Ok(false),
                             KeyboardInteractiveResponse::Prompt(prompt) => {
+                                if prompt.prompts.is_empty() {
+                                    response = context
+                                        .authenticate_keyboard_interactive_respond(Vec::new())
+                                        .await?;
+                                    continue;
+                                }
                                 let mut responses = self
                                     .manager
                                     .prompt_for_responses(
@@ -2705,11 +2711,6 @@ async fn connect_agent(socket: Option<String>) -> Result<PlatformAgentClient, Ss
 }
 
 fn validate_request(request: &SshConnectRequest) -> Result<(), SshError> {
-    if request.jump_chain.len() > 3 {
-        return Err(SshError::InvalidRequest(
-            "at most three SSH jump hosts are supported".into(),
-        ));
-    }
     if request.connection_id.as_deref().is_some_and(|value| {
         value.is_empty() || value.len() > 256 || value.chars().any(char::is_control)
     }) {
@@ -3276,13 +3277,13 @@ mod tests {
     }
 
     #[test]
-    fn accepts_x11_and_rejects_excessive_jump_chain_before_connecting() {
+    fn accepts_x11_and_valid_long_jump_chains() {
         let mut value = request();
         value.x11 = true;
         assert!(validate_request(&value).is_ok());
 
         let mut value = request();
-        value.jump_chain = (0..4)
+        value.jump_chain = (0..8)
             .map(|index| SshJumpRequest {
                 host: format!("jump-{index}.example.test"),
                 port: 22,
@@ -3290,7 +3291,9 @@ mod tests {
                 auth: Vec::new(),
             })
             .collect();
-        assert!(validate_request(&value).is_err());
+        assert!(validate_request(&value).is_ok());
+        value.jump_chain[7].host = "bad host".into();
+        assert!(validate_request(&value).is_err(), "every hop must still be validated");
     }
 
     #[test]
@@ -3523,6 +3526,78 @@ mod tests {
             private_key_result,
             private_key_accepted: false,
             agent_error: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn keyboard_interactive_empty_challenges_continue_without_ui() {
+        use super::engine::{KeyboardInteractivePrompt, KeyboardInteractivePromptItem};
+        use std::collections::VecDeque;
+
+        struct ChallengeContext {
+            states: VecDeque<Result<KeyboardInteractiveResponse, SshError>>,
+            answers: Vec<Vec<String>>,
+            password_attempts: usize,
+        }
+
+        #[async_trait]
+        impl SshAuthContext for ChallengeContext {
+            async fn authenticate_none(&mut self, _: &str) -> Result<bool, SshError> {
+                panic!("unexpected none authentication")
+            }
+            async fn authenticate_password(&mut self, user: &str, password: &SecretString) -> Result<bool, SshError> {
+                assert_eq!(user, "alice");
+                assert_eq!(password.expose_secret(), "fallback");
+                self.password_attempts += 1;
+                Ok(true)
+            }
+            async fn authenticate_private_key(&mut self, _: &str, _: PrivateKeyMaterial) -> Result<bool, SshError> {
+                panic!("unexpected private-key authentication")
+            }
+            async fn authenticate_agent(&mut self, _: &str, _: Option<&str>) -> Result<bool, SshError> {
+                panic!("unexpected agent authentication")
+            }
+            async fn authenticate_keyboard_interactive_start(&mut self, user: &str) -> Result<KeyboardInteractiveResponse, SshError> {
+                assert_eq!(user, "alice");
+                self.states.pop_front().expect("start state")
+            }
+            async fn authenticate_keyboard_interactive_respond(&mut self, responses: Vec<String>) -> Result<KeyboardInteractiveResponse, SshError> {
+                self.answers.push(responses);
+                self.states.pop_front().expect("response state")
+            }
+        }
+
+        let empty = || Ok(KeyboardInteractiveResponse::Prompt(KeyboardInteractivePrompt {
+            name: "Server notice".into(), instructions: "No input is required".into(), prompts: vec![],
+        }));
+        let interactive = || Ok(KeyboardInteractiveResponse::Prompt(KeyboardInteractivePrompt {
+            name: "Second factor".into(), instructions: String::new(),
+            prompts: vec![KeyboardInteractivePromptItem { text: "Code".into(), echo: false }],
+        }));
+        let cases = [
+            (vec![empty(), Ok(KeyboardInteractiveResponse::Success)], false, "accepted", 1, 0),
+            (vec![empty(), empty(), Ok(KeyboardInteractiveResponse::Failure)], false, "rejected", 2, 0),
+            (vec![empty(), empty(), Ok(KeyboardInteractiveResponse::Failure)], true, "accepted", 2, 1),
+            (vec![empty(), interactive()], true, "closed", 1, 0),
+            (vec![empty(), Err(SshError::Timeout)], true, "timeout", 1, 0),
+            (vec![Err(SshError::Connection)], true, "connection", 0, 0),
+        ];
+        let directory = tempdir().unwrap();
+        let secrets = SecretState::default();
+        let credentials = CredentialState::with_store(Arc::new(TestCredentialStore::default()));
+        for (states, fallback, expected, answers, password_attempts) in cases {
+            let mut methods = vec![AuthMethodRef::KeyboardInteractive];
+            if fallback {
+                methods.push(AuthMethodRef::ProvidedPassword { password: SecretString::new("fallback".into()) });
+            }
+            let authenticator = authenticator_for(directory.path(), &secrets, &credentials, methods);
+            let mut context = ChallengeContext { states: states.into(), answers: vec![], password_attempts: 0 };
+            let outcome = authenticator.authenticate(&mut context, "alice", &[]).await;
+            let actual = match outcome { Ok(true) => "accepted", Ok(false) => "rejected", Err(ref error) => error.code() };
+            assert_eq!(actual, expected);
+            assert_eq!(context.answers, vec![Vec::<String>::new(); answers]);
+            assert_eq!(context.password_attempts, password_attempts);
+            assert!(context.states.is_empty());
         }
     }
 
