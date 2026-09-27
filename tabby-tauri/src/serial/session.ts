@@ -65,6 +65,7 @@ export class TauriSerialSession extends BaseSession {
             stopBits: options.stopBits,
             parity: options.parity,
             flowControl: options.flowControl,
+            slowSend: options.slowSend ?? false,
             readTimeoutMs: options.readTimeoutMs,
             reconnect: options.reconnect,
         }

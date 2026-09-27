@@ -50,6 +50,11 @@ ul.nav-tabs(ngbNav, #nav='ngbNav')
                     option(value='hardware') Hardware
             .form-line
                 .header
+                    .title(translate) Slow feed
+                    .description(translate) Sends data one byte at a time
+                toggle([(ngModel)]='profile.options.slowSend')
+            .form-line
+                .header
                     .title(translate) Read timeout (ms)
                 input.form-control(type='number', [(ngModel)]='profile.options.readTimeoutMs')
             .form-line

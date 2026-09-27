@@ -261,7 +261,7 @@ fn run_session(
     loop {
         match controls.try_recv() {
             Ok(control) => {
-                if handle_control(&mut port, control) {
+                if handle_control(&mut port, control, request.slow_send) {
                     emit_state(&app, &id, &request, "closed", Some(&current_path), None);
                     return;
                 }
@@ -377,10 +377,10 @@ fn run_session(
     }
 }
 
-fn handle_control(port: &mut Box<dyn SerialPort>, control: SerialControl) -> bool {
+fn handle_control(port: &mut Box<dyn SerialPort>, control: SerialControl, slow_send: bool) -> bool {
     match control {
         SerialControl::Write(data, sender) => {
-            let result = port.write_all(&data).map_err(AppError::from);
+            let result = write_serial_data(port.as_mut(), &data, slow_send).map_err(AppError::from);
             let _ = sender.send(result);
             false
         }
@@ -468,3 +468,26 @@ fn emit_state(
 fn serial_error(error: serialport::Error) -> AppError {
     AppError::Io(error.to_string())
 }
+
+fn write_serial_data<W: Write + ?Sized>(
+    port: &mut W,
+    data: &[u8],
+    slow_send: bool,
+) -> std::io::Result<()> {
+    if slow_send {
+        // On an idle upstream SerialPortStream, SlowFeedMiddleware sends the
+        // first byte immediately and _writev batches the queued remainder.
+        // Keep both writes within one control to avoid an extra read timeout.
+        if !data.is_empty() {
+            port.write_all(&data[..1])?;
+            port.write_all(&data[1..])?;
+        }
+        Ok(())
+    } else {
+        port.write_all(data)
+    }
+}
+
+#[cfg(test)]
+#[path = "tests.rs"]
+mod tests;

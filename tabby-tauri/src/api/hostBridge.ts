@@ -543,6 +543,7 @@ export interface SerialOpenRequest {
     stopBits: number
     parity: SerialParity
     flowControl: SerialFlowControl
+    slowSend?: boolean
     readTimeoutMs: number
     reconnect: SerialReconnectPolicy
 }

@@ -7,6 +7,8 @@ import { HostBridge } from '../api/hostBridge'
 import { TauriTelnetProfile } from './profile'
 import { TauriTelnetSession } from './session'
 
+const colors = require('ansi-colors')
+
 @Component({
     selector: 'tauri-telnet-tab',
     template: `${BaseTerminalTabComponent.template} ${require('./tab.component.pug')}`,
@@ -52,7 +54,9 @@ export class TauriTelnetTabComponent extends ConnectableTerminalTabComponent<Tau
             this.write('\r\n TELNET  Unencrypted connection\r\n')
         } catch (error) {
             this.stopSpinner()
-            this.write(' X  ' + String(error) + '\r\n')
+            const message = typeof error?.details === 'string' ? error.details
+                : typeof error?.message === 'string' ? error.message : String(error)
+            this.write(colors.black.bgRed(' X ') + ' ' + colors.red(message) + '\r\n')
             await session.destroy()
         }
     }

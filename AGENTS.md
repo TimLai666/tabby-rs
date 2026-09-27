@@ -365,8 +365,14 @@
   receives `ECHO:abcd`; the server records exactly `abcd\n` and clean closure.
   This fixture does not establish complete Telnet protocol or platform parity.
   Serial desktop acceptance remains pending: opening a macOS pseudo-terminal
-  fails with `Not a typewriter` in the native serial backend. The terminal shows
-  `[object Object]` instead of that diagnostic; fix error presentation separately.
+  fails with `Not a typewriter` in the native serial backend. Telnet and serial
+  startup errors now extract native `details`, then JavaScript `message`, with
+  string conversion as a fallback. Their error badge and text use the original
+  ANSI colors. Component tests cover nine error shapes per connector, spinner
+  shutdown, and awaited session cleanup; they reproduce `[object Object]` before
+  the fix. Verify the rendered diagnostic and retry flow in the macOS desktop:
+  the current check cannot proceed while the Mac is locked. Serial hardware
+  exchanges and supported-platform acceptance remain pending.
 - Linux Ctrl+Z remains a known adapter gap: Node readline requests renderer
   process suspension, but the WebView process shim has no `kill` API. This can
   throw and stall the input stream. Verify the original Linux desktop
@@ -376,6 +382,20 @@
   SIGTSTP is ignored in that launch environment: input after Ctrl+Z completes
   normally without an external SIGCONT. The adapter preserves that observable
   behavior on macOS. Other launch/process-group environments remain unverified.
-- Script deletion persistence, serial automatic-reconnect script behavior, original
-  serial slow-send support, and other platforms remain unaccepted. Do not infer
+- Serial profiles now expose the original Slow feed toggle. The renderer passes
+  `slowSend` at connection startup; missing values default to false on both sides.
+  For enabled writes, the native handler writes the first byte and then the
+  remainder. A probe using the pinned Electron 38.8.6 / Node 22.22.0 runtime and
+  upstream SerialPortStream confirms an idle 256-byte slow-feed write reaches
+  the binding as 1 + 255 bytes: `_writev` batches the middleware's queued bytes.
+  Both native writes run within one control, avoiding a read timeout between them.
+  Seven native tests cover byte order, partial/interrupted writes, write failures,
+  empty input, and legacy requests. Renderer tests cover enabled, disabled, and
+  missing options before login scripts run. Concurrent upstream writes can also
+  batch across input calls; native controls currently remain separate. Compare
+  that behavior before accepting full slow-feed parity. Toggle persistence,
+  reconnect behavior, rendered controls, and physical serial exchanges still
+  need desktop acceptance.
+- Script deletion persistence, serial automatic-reconnect script behavior,
+  and other platforms remain unaccepted. Do not infer
   full connector parity from the session tests or rendered settings controls.

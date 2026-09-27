@@ -309,6 +309,9 @@ jobs:
       - name: Test Telnet and serial login scripts
         run: yarn test:connector-login-scripts
 
+      - name: Test Telnet and serial connection errors
+        run: yarn test:connector-errors
+
       - name: Test browser readline compatibility
         run: yarn test:tauri-readline
 
@@ -437,6 +440,9 @@ jobs:
 
       - name: Test Telnet and serial login scripts
         run: yarn test:connector-login-scripts
+
+      - name: Test Telnet and serial connection errors
+        run: yarn test:connector-errors
 
       - name: Test browser readline compatibility
         run: yarn test:tauri-readline

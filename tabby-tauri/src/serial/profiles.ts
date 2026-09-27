@@ -18,6 +18,7 @@ export class TauriSerialProfilesService extends QuickConnectProfileProvider<Taur
             stopBits: 1,
             parity: 'none',
             flowControl: 'none',
+            slowSend: false,
             readTimeoutMs: 250,
             reconnect: { enabled: false, maxAttempts: 5, maxDelayMs: 30_000 },
             inputMode: null,

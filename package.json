@@ -154,6 +154,7 @@
     "test:profile-tree": "node scripts/test-profile-tree-contract.mjs",
     "test:login-scripts-settings": "node scripts/test-login-scripts-settings-contract.mjs",
     "test:connector-login-scripts": "node scripts/test-connector-login-scripts.mjs",
+    "test:connector-errors": "node scripts/test-connector-errors.mjs",
     "test:tauri-readline": "node scripts/test-tauri-readline.mjs",
     "test:plugin-search": "node scripts/test-plugin-search-contract.mjs",
     "test:plugin-npm-lifecycle": "node scripts/test-plugin-npm-lifecycle.mjs",

@@ -107,6 +107,8 @@ pub struct SerialOpenRequest {
     #[serde(default)]
     pub flow_control: SerialFlowControl,
     #[serde(default)]
+    pub slow_send: bool,
+    #[serde(default)]
     pub read_timeout_ms: u64,
     #[serde(default)]
     pub reconnect: SerialReconnectPolicy,

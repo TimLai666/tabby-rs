@@ -11,6 +11,7 @@ export interface TauriSerialProfileOptions extends StreamProcessingOptions, Logi
     stopBits: 1|1.5|2
     parity: 'none'|'even'|'odd'|'mark'|'space'
     flowControl: 'none'|'software'|'hardware'
+    slowSend?: boolean
     readTimeoutMs: number
     reconnect: {
         enabled: boolean

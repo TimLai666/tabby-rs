@@ -42,7 +42,7 @@ function load (file) {
     return module.exports
 }
 
-function fixture (protocol, mode = 'normal', scripts = []) {
+function fixture (protocol, mode = 'normal', scripts = [], options = {}) {
     const Session = load(`tabby-tauri/src/${protocol}/session.ts`)[protocol === 'telnet' ? 'TauriTelnetSession' : 'TauriSerialSession']
     const callbacks = new Map()
     const writes = []
@@ -66,7 +66,7 @@ function fixture (protocol, mode = 'normal', scripts = []) {
     const profile = { id: 'test', options: {
         host: 'localhost', port: protocol === 'telnet' ? 23 : '/fixture', input: {},
         inputMode: null, outputMode: null, inputNewlines: null, outputNewlines: null,
-        reconnect: { enabled: false }, scripts,
+        reconnect: { enabled: false }, scripts, ...options,
     } }
     if (mode === 'legacy') delete profile.options.scripts
     const session = new Session({ get: () => ({ create: () => logger }) }, bridge, profile)
@@ -114,3 +114,16 @@ for (const protocol of ['telnet', 'serial']) {
     }
     console.log(`${protocol}: initial, prompt, early output, once-only, failure, cancellation, legacy passed`)
 }
+
+for (const options of [{}, { slowSend: false }, { slowSend: true }]) {
+    const f = fixture('serial', 'normal', [{ expect: '', send: 'BEGIN' }], options)
+    try {
+        const started = f.session.start()
+        const request = await f.connecting
+        assert.equal(request.slowSend, options.slowSend ?? false, 'slow feed reaches the native session')
+        f.finishConnect()
+        await started
+        assert.deepEqual(f.writes, ['BEGIN\n'], 'native session receives one complete login-script write')
+    } finally { await f.session.destroy() }
+}
+console.log('serial: slow feed flag and legacy fallback reach the native session before login scripts')
