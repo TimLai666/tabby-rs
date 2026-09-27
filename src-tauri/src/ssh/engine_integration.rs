@@ -495,3 +495,224 @@ async fn classifies_dns_and_tcp_faults_with_bounded_timeouts() {
     assert!(matches!(timeout, Err(crate::ssh::SshError::Timeout)));
     server.abort();
 }
+
+#[cfg(unix)]
+#[derive(Clone, Copy)]
+enum ForwardedChannel {
+    Agent,
+    X11,
+}
+
+#[cfg(unix)]
+struct ForwardingConsentClient {
+    host_key: PublicKey,
+    socket: String,
+    enabled: bool,
+    forwards: tokio::sync::mpsc::UnboundedSender<tokio::task::JoinHandle<Result<(), russh::Error>>>,
+}
+
+#[cfg(unix)]
+impl client::Handler for ForwardingConsentClient {
+    type Error = russh::Error;
+
+    async fn check_server_key(&mut self, key: &PublicKey) -> Result<bool, Self::Error> {
+        Ok(key.key_data() == self.host_key.key_data())
+    }
+
+    fn server_channel_open_agent_forward(
+        &mut self,
+        channel: russh::Channel<client::Msg>,
+        _session: &mut client::Session,
+    ) -> impl std::future::Future<Output = Result<(), Self::Error>> + Send {
+        let _ = self
+            .forwards
+            .send(tokio::spawn(super::forward_agent_channel(
+                channel,
+                Some(self.socket.clone()),
+                self.enabled,
+            )));
+        async { Ok(()) }
+    }
+
+    fn server_channel_open_x11(
+        &mut self,
+        channel: russh::Channel<client::Msg>,
+        _originator_address: &str,
+        _originator_port: u32,
+        _session: &mut client::Session,
+    ) -> impl std::future::Future<Output = Result<(), Self::Error>> + Send {
+        let _ = self.forwards.send(tokio::spawn(super::forward_x11_channel(
+            channel,
+            Some(self.socket.clone()),
+            self.enabled,
+        )));
+        async { Ok(()) }
+    }
+}
+
+#[cfg(unix)]
+async fn run_forwarding_consent(forwarded: ForwardedChannel, kind: AuthFixtureKind, enabled: bool) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    const IO: Duration = Duration::from_secs(5);
+    const REQUEST_IDENTITIES: [u8; 5] = [0, 0, 0, 1, 11];
+    const IDENTITIES_ANSWER: [u8; 9] = [0, 0, 0, 5, 12, 0, 0, 0, 0];
+
+    let mut tasks = tokio::task::JoinSet::new();
+    let directory = tempdir().expect("create agent consent directory");
+    let socket = directory.path().join("forward.sock");
+    let agent = tokio::net::UnixListener::bind(&socket).expect("bind custom local socket");
+    let accepted = Arc::new(AtomicUsize::new(0));
+    let agent_accepted = Arc::clone(&accepted);
+    tasks.spawn(async move {
+        let (mut stream, _) = agent.accept().await.expect("accept custom agent socket");
+        agent_accepted.fetch_add(1, Ordering::SeqCst);
+        let mut request = [0; 5];
+        stream
+            .read_exact(&mut request)
+            .await
+            .expect("read agent request");
+        assert_eq!(request, REQUEST_IDENTITIES);
+        stream
+            .write_all(&IDENTITIES_ANSWER)
+            .await
+            .expect("write agent answer");
+        let _ = stream.read(&mut [0; 1]).await;
+    });
+
+    let host_key = HostKeyAlgorithm::Ed25519.generate();
+    let host_public_key = host_key.public_key().clone();
+    let client_key = PrivateKey::random(&mut rand::rngs::OsRng, russh::keys::Algorithm::Ed25519)
+        .expect("generate agent consent client key");
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .expect("bind agent consent fixture");
+    let port = listener.local_addr().expect("read fixture address").port();
+    let mut config = server::Config::default();
+    config.keys.push(host_key);
+    let mut server = AuthFixtureServer {
+        kind,
+        expected: "fixture-secret".into(),
+        authorized_public_key: Some(client_key.public_key().to_openssh().expect("encode key")),
+    };
+    let (server_handle, server_handle_rx) = tokio::sync::oneshot::channel();
+    tasks.spawn(async move {
+        let (tcp, _) = listener
+            .accept()
+            .await
+            .expect("accept agent consent fixture");
+        let session = server::run_stream(Arc::new(config), tcp, server.new_client(None))
+            .await
+            .expect("start agent consent fixture");
+        let _ = server_handle.send(session.handle());
+        let _ = session.await;
+    });
+
+    let (forwards, mut forward_tasks) = tokio::sync::mpsc::unbounded_channel();
+    let tcp = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .expect("connect agent consent fixture");
+    let handler = ForwardingConsentClient {
+        host_key: host_public_key,
+        socket: socket.to_string_lossy().into_owned(),
+        enabled,
+        forwards,
+    };
+    let mut client = tokio::time::timeout(
+        IO,
+        client::connect_stream(Arc::new(client::Config::default()), tcp, handler),
+    )
+    .await
+    .expect("client handshake timed out")
+    .expect("client handshake failed");
+    let authenticated = match kind {
+        AuthFixtureKind::Password => {
+            tokio::time::timeout(
+                IO,
+                client.authenticate_password("fixture-user", "fixture-secret"),
+            )
+            .await
+        }
+        AuthFixtureKind::PrivateKey => {
+            let key = russh::keys::PrivateKeyWithHashAlg::new(Arc::new(client_key), None);
+            tokio::time::timeout(IO, client.authenticate_publickey("fixture-user", key)).await
+        }
+        _ => unreachable!("agent consent covers password and private-key login"),
+    };
+    assert!(authenticated
+        .expect("authentication timed out")
+        .expect("authentication failed")
+        .success());
+
+    let server_handle = tokio::time::timeout(IO, server_handle_rx)
+        .await
+        .expect("server handle timed out")
+        .expect("server handle dropped");
+    let channel = match forwarded {
+        ForwardedChannel::Agent => {
+            tokio::time::timeout(IO, server_handle.channel_open_agent()).await
+        }
+        ForwardedChannel::X11 => {
+            tokio::time::timeout(IO, server_handle.channel_open_x11("127.0.0.1", 0)).await
+        }
+    }
+    .expect("open unsolicited channel timed out")
+    .expect("open unsolicited channel failed");
+    let mut stream = channel.into_stream();
+    let written = stream.write_all(&REQUEST_IDENTITIES).await;
+    if enabled {
+        written.expect("send agent request over channel");
+        let mut answer = [0; 9];
+        tokio::time::timeout(IO, stream.read_exact(&mut answer))
+            .await
+            .expect("agent answer timed out")
+            .expect("read agent answer");
+        assert_eq!(answer, IDENTITIES_ANSWER);
+        assert_eq!(accepted.load(Ordering::SeqCst), 1);
+    } else {
+        let mut buffer = [0; 16];
+        let read = tokio::time::timeout(IO, stream.read(&mut buffer))
+            .await
+            .expect("disabled forwarding must close the channel, not time out");
+        assert!(
+            matches!(read, Ok(0) | Err(_)),
+            "disabled forwarding reached the local socket: {:?}",
+            read.map(|count| buffer[..count].to_vec())
+        );
+        assert_eq!(accepted.load(Ordering::SeqCst), 0);
+    }
+
+    let _ = tokio::time::timeout(
+        IO,
+        client.disconnect(russh::Disconnect::ByApplication, "", "en"),
+    )
+    .await;
+    forward_tasks.close();
+    while let Ok(forward) = forward_tasks.try_recv() {
+        forward.abort();
+    }
+    tasks.shutdown().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+#[ignore = "requires SSH authentication fixture; run yarn test:ssh-auth-integration"]
+async fn agent_forwarding_consent() {
+    for kind in [AuthFixtureKind::Password, AuthFixtureKind::PrivateKey] {
+        for enabled in [false, true] {
+            run_forwarding_consent(ForwardedChannel::Agent, kind, enabled).await;
+        }
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+#[ignore = "requires SSH authentication fixture; run yarn test:ssh-auth-integration"]
+async fn x11_forwarding_consent() {
+    for kind in [AuthFixtureKind::Password, AuthFixtureKind::PrivateKey] {
+        for enabled in [false, true] {
+            run_forwarding_consent(ForwardedChannel::X11, kind, enabled).await;
+        }
+    }
+}

@@ -193,7 +193,9 @@ struct SshHandler {
     app: AppHandle,
     host_key_error: Arc<Mutex<Option<SshError>>>,
     remote_routes: Arc<Mutex<HashMap<(String, String, u32), RemoteForwardRoute>>>,
+    agent_forward: bool,
     agent_socket: Option<String>,
+    x11: bool,
     x11_display: Option<String>,
 }
 
@@ -282,19 +284,7 @@ impl Handler for SshHandler {
         _session: &mut client::Session,
     ) -> impl std::future::Future<Output = Result<(), Self::Error>> + Send {
         let socket = self.agent_socket.clone();
-        let task = async move {
-            let Ok(mut agent) = connect_agent(socket)
-                .await
-                .map(|client| client.into_inner())
-            else {
-                let _ = channel.close().await;
-                return Ok::<(), russh::Error>(());
-            };
-            let mut ssh_stream = channel.into_stream();
-            let _ = copy_bidirectional(&mut agent, &mut ssh_stream).await;
-            Ok::<(), russh::Error>(())
-        };
-        tokio::spawn(task);
+        tokio::spawn(forward_agent_channel(channel, socket, self.agent_forward));
         async { Ok(()) }
     }
 
@@ -305,38 +295,49 @@ impl Handler for SshHandler {
         _originator_port: u32,
         _session: &mut client::Session,
     ) -> impl std::future::Future<Output = Result<(), Self::Error>> + Send {
-        let display = self
-            .x11_display
-            .clone()
-            .or_else(|| std::env::var("DISPLAY").ok())
-            .unwrap_or_else(|| ":0".into());
-        let task = async move {
-            #[cfg(unix)]
-            {
-                match connect_x11_display(&display).await {
-                    Ok(X11Target::Unix(mut target)) => {
-                        let mut ssh_stream = channel.into_stream();
-                        let _ = copy_bidirectional(&mut target, &mut ssh_stream).await;
-                    }
-                    Ok(X11Target::Tcp(mut target)) => {
-                        let mut ssh_stream = channel.into_stream();
-                        let _ = copy_bidirectional(&mut target, &mut ssh_stream).await;
-                    }
-                    Err(_) => {
-                        let _ = channel.close().await;
-                    }
-                }
-            }
-            #[cfg(not(unix))]
-            {
-                let _ = display;
-                let _ = channel.close().await;
-            }
-            Ok::<(), russh::Error>(())
-        };
-        tokio::spawn(task);
+        tokio::spawn(forward_x11_channel(
+            channel,
+            self.x11_display.clone(),
+            self.x11,
+        ));
         async { Ok(()) }
     }
+}
+
+async fn forward_x11_channel(
+    channel: russh::Channel<client::Msg>,
+    display: Option<String>,
+    enabled: bool,
+) -> Result<(), russh::Error> {
+    if !enabled {
+        let _ = channel.close().await;
+        return Ok(());
+    }
+    let display = display
+        .or_else(|| std::env::var("DISPLAY").ok())
+        .unwrap_or_else(|| ":0".into());
+    #[cfg(unix)]
+    {
+        match connect_x11_display(&display).await {
+            Ok(X11Target::Unix(mut target)) => {
+                let mut ssh_stream = channel.into_stream();
+                let _ = copy_bidirectional(&mut target, &mut ssh_stream).await;
+            }
+            Ok(X11Target::Tcp(mut target)) => {
+                let mut ssh_stream = channel.into_stream();
+                let _ = copy_bidirectional(&mut target, &mut ssh_stream).await;
+            }
+            Err(_) => {
+                let _ = channel.close().await;
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = display;
+        let _ = channel.close().await;
+    }
+    Ok(())
 }
 
 struct ManagerHostKeyVerifier {
@@ -713,7 +714,9 @@ impl SshManager {
             app: app.clone(),
             host_key_error,
             remote_routes: Arc::clone(&self.remote_routes),
+            agent_forward: request.agent_forward,
             agent_socket: request.forwarding_agent_socket(),
+            x11: request.x11,
             x11_display: request.x11_display.clone(),
         }
     }
@@ -2468,6 +2471,27 @@ async fn wait_for_channel_confirmation(
     }
 }
 
+async fn forward_agent_channel(
+    channel: russh::Channel<client::Msg>,
+    socket: Option<String>,
+    enabled: bool,
+) -> Result<(), russh::Error> {
+    if !enabled {
+        let _ = channel.close().await;
+        return Ok(());
+    }
+    let Ok(mut agent) = connect_agent(socket)
+        .await
+        .map(|client| client.into_inner())
+    else {
+        let _ = channel.close().await;
+        return Ok(());
+    };
+    let mut ssh_stream = channel.into_stream();
+    let _ = copy_bidirectional(&mut agent, &mut ssh_stream).await;
+    Ok(())
+}
+
 async fn connect_agent(socket: Option<String>) -> Result<PlatformAgentClient, SshError> {
     #[cfg(unix)]
     {
@@ -2485,12 +2509,7 @@ async fn connect_agent(socket: Option<String>) -> Result<PlatformAgentClient, Ss
             Some(path) => AgentClient::connect_named_pipe(path)
                 .await
                 .map(|client| client.dynamic()),
-            None => match std::env::var_os("SSH_AUTH_SOCK") {
-                Some(path) => AgentClient::connect_named_pipe(path)
-                    .await
-                    .map(|client| client.dynamic()),
-                None => Ok(AgentClient::connect_pageant().await.dynamic()),
-            },
+            None => Ok(AgentClient::connect_pageant().await.dynamic()),
         }
         .map_err(|_| SshError::AuthenticationRejected)?;
         return Ok(client);

@@ -39,27 +39,21 @@
   is empty), so the failure is pre-existing.
 - Unrelated to the current WinSCP/SSH changes; still pending.
 
-## P1 — unsolicited SSH agent channels bypass the forwarding toggle
-
-- `src-tauri/src/ssh/mod.rs:279` handles `server_channel_open_agent_forward` without
-  checking whether the connection enabled agent forwarding. It connects to the selected
-  or environment agent even when `agent_forward` is false, including on jump hosts.
-- russh 0.54.4 accepts server-initiated agent channels before invoking this handler.
-  A connected server can therefore request local agent operations without forwarding
-  consent. This behavior predates the independent forwarding socket configuration.
-- Store the forwarding permission in the handler and close unsolicited channels when
-  it is disabled. Verify both disabled and enabled cases against a real server before
-  SSH forwarding acceptance.
-
-## P2 — SSH agent routing and forwarding acceptance remain incomplete
+## Pending — SSH forwarding desktop and Windows acceptance
 
 - Renderer and native request tests cover selecting a forwarding socket independently
-  of password, private-key, and keyboard-interactive login. Real-server forwarding with
-  a custom socket still needs end-to-end verification.
-- The Windows `connect_agent(None)` helper used by jump authentication and forwarding
-  tries `SSH_AUTH_SOCK` before Pageant, while direct authentication routes `None` to
-  Pageant. Verify explicit Pageant mode with `SSH_AUTH_SOCK` set and align both paths
-  with upstream `14e2d60` before claiming full agent parity.
+  of password, private-key, and keyboard-interactive login.
+- `src-tauri/src/ssh/engine_integration.rs` verifies unsolicited agent and X11 channels
+  against a loopback SSH server, with password/private-key login and forwarding on/off.
+  The production forwarding helpers reject disabled channels before connecting to the
+  local socket. Actual Tauri handler wiring, desktop controls, and multi-hop forwarding
+  still need end-to-end acceptance.
+- `src-tauri/src/ssh/engine.rs` now shares `connect_agent` with jump authentication and
+  forwarding. On Windows, `None` selects Pageant and an explicit path selects a named pipe.
+  Verify Pageant with `SSH_AUTH_SOCK` set and verify named-pipe connections on Windows.
+- Local `cargo check --target x86_64-pc-windows-msvc` stops in the `ring` dependency
+  because the host lacks Windows C headers (`assert.h`). It does not establish that the
+  Windows application code compiles; Windows compilation and runtime checks are pending.
 
 ## Pending — X11 transport parity and desktop acceptance
 
