@@ -21,6 +21,7 @@ mod telnet;
 mod transfer;
 pub mod update;
 mod windows_integration;
+mod winscp;
 
 use context_menu::menu_popup;
 use message_box::dialog_message;
