@@ -1,7 +1,9 @@
 import { Component, Input, Output, EventEmitter, ViewChild, ElementRef, ChangeDetectionStrategy, OnInit, ChangeDetectorRef } from '@angular/core'
-import { PlatformService } from 'tabby-core'
-import { KeyboardInteractivePrompt } from '../session/ssh'
-import { SSHProfile } from '../api'
+import { CommonModule } from '@angular/common'
+import { FormsModule } from '@angular/forms'
+import TabbyCoreModule, { NotificationsService, PlatformService, TranslateService } from 'tabby-core'
+import { KeyboardInteractivePrompt } from '../api/keyboardInteractivePrompt'
+import { SSHProfile } from '../api/interfaces'
 import { PasswordStorageService } from '../services/passwordStorage.service'
 
 const PROMPT_URL_REGEX = /https?:\/\/[^\s<>"']+/g
@@ -13,6 +15,8 @@ interface PromptPart {
 }
 
 @Component({
+    standalone: true,
+    imports: [CommonModule, FormsModule, TabbyCoreModule],
     selector: 'keyboard-interactive-auth-panel',
     templateUrl: './keyboardInteractiveAuthPanel.component.pug',
     styleUrls: ['./keyboardInteractiveAuthPanel.component.scss'],
@@ -30,10 +34,12 @@ export class KeyboardInteractiveAuthComponent implements OnInit {
         private passwordStorage: PasswordStorageService,
         private platform: PlatformService,
         private cdr: ChangeDetectorRef,
+        private notifications: NotificationsService,
+        private translate: TranslateService,
     ) {}
 
     async ngOnInit (): Promise<void> {
-        const savedPassword = await this.passwordStorage.loadPassword(this.profile)
+        const savedPassword = await this.passwordStorage.loadPassword(this.profile).catch(() => null)
         if (savedPassword) {
             for (let i = 0; i < this.prompt.prompts.length; i++) {
                 if (this.prompt.isAPasswordPrompt(i) && !this.prompt.responses[i]) {
@@ -107,7 +113,8 @@ export class KeyboardInteractiveAuthComponent implements OnInit {
 
     next (): void {
         if (this.isPassword() && this.remember) {
-            this.passwordStorage.savePassword(this.profile, this.prompt.responses[this.step])
+            void this.passwordStorage.savePassword(this.profile, this.prompt.responses[this.step])
+                .catch(() => this.notifications.error(this.translate.instant('Could not save password')))
         }
 
         if (this.step === this.prompt.prompts.length - 1) {

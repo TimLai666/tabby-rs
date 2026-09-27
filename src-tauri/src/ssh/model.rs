@@ -260,6 +260,8 @@ pub struct SshAuthPrompt {
     pub password: Option<SshPasswordPromptTarget>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub private_key_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub keyboard_interactive: Option<SshPasswordPromptTarget>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]

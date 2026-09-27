@@ -267,7 +267,7 @@ console.log('SSH username prompt visibility, cancellation, and connection isolat
             },
         },
         '../services/winscp.service': {},
-        './authPromptModal.component': {},
+        '../../../tabby-ssh/src/api/keyboardInteractivePrompt': {},
         './session': { TauriSshSession: class {
             async start () { throw failure }
             async destroy () {}

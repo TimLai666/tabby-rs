@@ -69,7 +69,7 @@ import { TauriVaultService } from './services/vault.service'
 import { TauriPathDropDecorator } from './pathDrop'
 import { TauriExportTerminalContextMenu } from './terminalContextMenu'
 import { TerminalContextMenuItemProvider, TerminalDecorator } from 'tabby-terminal'
-import { TauriSshAuthPromptModalComponent } from './ssh/authPromptModal.component'
+import { KeyboardInteractiveAuthComponent } from '../../tabby-ssh/src/components/keyboardInteractiveAuthPanel.component'
 import { TauriSshHostKeyPromptModalComponent } from './ssh/hostKeyPromptModal.component'
 import { TauriSshImportModalComponent } from './ssh/importModal.component'
 import { TauriSshProfileSettingsComponent } from './ssh/profileSettings.component'
@@ -106,11 +106,10 @@ function initializeDesktop (service: TauriDesktopIntegrationService): () => Prom
 }
 
 @NgModule({
-    imports: [CommonModule, FormsModule, NgbModule],
+    imports: [CommonModule, FormsModule, NgbModule, KeyboardInteractiveAuthComponent],
     declarations: [
         IdentitySettingsTabComponent,
         TauriDiagnosticsSettingsTabComponent,
-        TauriSshAuthPromptModalComponent,
         TauriSshHostKeyPromptModalComponent,
         TauriSshImportModalComponent,
         TauriSshProfileSettingsComponent,

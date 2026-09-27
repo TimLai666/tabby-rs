@@ -6,12 +6,16 @@ import { SSHProfile } from '../../../tabby-ssh/src/api/interfaces'
 
 import { HostBridge } from '../api/hostBridge'
 import { TauriWinSCPService } from '../services/winscp.service'
-import { TauriSshAuthPromptModalComponent } from './authPromptModal.component'
+import { KeyboardInteractivePrompt } from '../../../tabby-ssh/src/api/keyboardInteractivePrompt'
 import { TauriSshSession } from './session'
 
 @Component({
     selector: 'tauri-ssh-tab',
-    template: `${BaseTerminalTabComponent.template}<tauri-sftp-panel *ngIf="sftpPanelVisible" [session]="session" [(path)]="sftpPath" (close)="sftpPanelVisible = false"></tauri-sftp-panel>`,
+    template: `${BaseTerminalTabComponent.template}<tauri-sftp-panel *ngIf="sftpPanelVisible" [session]="session" [(path)]="sftpPath" (close)="sftpPanelVisible = false"></tauri-sftp-panel>
+        <keyboard-interactive-auth-panel class="bg-dark" *ngIf="activeKIPrompt"
+            [prompt]="activeKIPrompt" [profile]="activeKIProfile"
+            (click)="$event.stopPropagation()" (done)="frontend?.focus()">
+        </keyboard-interactive-auth-panel>`,
     styles: BaseTerminalTabComponent.styles,
     animations: BaseTerminalTabComponent.animations,
 })
@@ -19,6 +23,9 @@ export class TauriSshTabComponent extends ConnectableTerminalTabComponent<SSHPro
     declare session: TauriSshSession|null
     sftpPanelVisible = false
     sftpPath = '/'
+    activeKIPrompt: KeyboardInteractivePrompt|null = null
+    activeKIProfile: SSHProfile|null = null
+    private activeKIRequestId: string|null = null
     private reconnectAttempts = 0
     private reconnectTimer: ReturnType<typeof setTimeout>|null = null
 
@@ -56,6 +63,7 @@ export class TauriSshTabComponent extends ConnectableTerminalTabComponent<SSHPro
     }
 
     async initializeSession (): Promise<void> {
+        this.clearAuthPrompt()
         this.cancelReconnectTimer()
         await super.initializeSession()
         const session = new TauriSshSession(
@@ -66,7 +74,7 @@ export class TauriSshTabComponent extends ConnectableTerminalTabComponent<SSHPro
             this.modals,
         )
         this.setSession(session)
-        this.attachSessionHandler(session.authPrompt$, prompt => void this.showAuthPrompt(prompt))
+        this.attachSessionHandler(session.authPrompt$, prompt => void this.showAuthPrompt(prompt, session))
         this.attachSessionHandler(session.serviceMessage$, message => this.write(`\r\n${message}\r\n`))
         try {
             await session.start()
@@ -74,6 +82,9 @@ export class TauriSshTabComponent extends ConnectableTerminalTabComponent<SSHPro
             this.reconnectAttempts = 0
             this.cancelReconnectTimer()
         } catch (error) {
+            if (this.session === session) {
+                this.clearAuthPrompt()
+            }
             const message = typeof error?.details === 'string' ? error.details : String(error)
             this.write(`\r\nSSH connection failed: ${message}\r\n`)
             await session.destroy()
@@ -81,6 +92,7 @@ export class TauriSshTabComponent extends ConnectableTerminalTabComponent<SSHPro
     }
 
     protected onSessionDestroyed (): void {
+        this.clearAuthPrompt()
         if (this.frontend && this.profile.behaviorOnSessionEnd === 'reconnect' && !this.isDisconnectedByHand) {
             if (this.reconnectAttempts < 5) {
                 const delay = Math.min(30_000, 1_000 * 2 ** this.reconnectAttempts)
@@ -124,11 +136,13 @@ export class TauriSshTabComponent extends ConnectableTerminalTabComponent<SSHPro
     }
 
     async disconnect (): Promise<void> {
+        this.clearAuthPrompt()
         this.cancelReconnectTimer()
         await super.disconnect()
     }
 
     ngOnDestroy (): void {
+        this.clearAuthPrompt()
         this.cancelReconnectTimer()
         super.ngOnDestroy()
     }
@@ -149,14 +163,43 @@ export class TauriSshTabComponent extends ConnectableTerminalTabComponent<SSHPro
         return token
     }
 
-    private async showAuthPrompt (prompt: import('../api/hostBridge').SshAuthPrompt): Promise<void> {
-        const modal = this.modals.open(TauriSshAuthPromptModalComponent)
-        modal.componentInstance.prompt = prompt
-        const responses = await modal.result.catch(() => null) as string[]|null
+    private async showAuthPrompt (prompt: import('../api/hostBridge').SshAuthPrompt, session: TauriSshSession): Promise<void> {
+        if (session !== this.session || prompt.requestId === this.activeKIRequestId) {
+            return
+        }
+        this.clearAuthPrompt()
+        const target = prompt.keyboardInteractive
+        if (!target) {
+            await this.bridge.invoke('ssh.authResponse', { requestId: prompt.requestId, responses: [] })
+                .catch(error => this.logger.warn('SSH authentication response failed', error))
+            return
+        }
+        const interactive = new KeyboardInteractivePrompt(prompt.name, prompt.instructions,
+            prompt.prompts.map(item => ({ prompt: item.text, echo: item.echo })))
+        this.activeKIProfile = {
+            ...this.profile,
+            options: { ...this.profile.options, host: target.host, port: target.port, user: target.username, password: undefined },
+        }
+        this.activeKIPrompt = interactive
+        this.activeKIRequestId = prompt.requestId
+        const responses = await interactive.promise.catch(() => null)
+        const isCurrent = this.activeKIPrompt === interactive && this.session === session
+        if (this.activeKIPrompt === interactive) {
+            this.activeKIPrompt = null
+            this.activeKIProfile = null
+            this.activeKIRequestId = null
+        }
         await this.bridge.invoke('ssh.authResponse', {
             requestId: prompt.requestId,
-            responses: responses ?? [],
+            responses: isCurrent ? responses ?? [] : [],
         }).catch(error => this.logger.warn('SSH authentication response failed', error))
+    }
+
+    private clearAuthPrompt (): void {
+        this.activeKIPrompt?.reject()
+        this.activeKIPrompt = null
+        this.activeKIProfile = null
+        this.activeKIRequestId = null
     }
 
     private cancelReconnectTimer (): void {

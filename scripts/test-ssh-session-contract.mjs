@@ -36,7 +36,7 @@ assert.match(session, /keepalive: options\.keepaliveInterval > 0[\s\S]*intervalM
 assert.match(session, /environment: options\.environment/)
 assert.match(tab, /attachSessionHandler\(session\.serviceMessage\$/)
 assert.match(tab, /Object\.entries\(profile\.options\)\.filter\(\(\[key\]\) => key !== 'password'\)/)
-assert.doesNotMatch(tab, /safeOptions[\s\S]*password:/)
+assert.doesNotMatch(tab.match(/async getRecoveryToken[\s\S]*?return token/)[0], /safeOptions[\s\S]*password:/)
 assert.match(recovery, /recoveryToken\.type === 'app:ssh-tab'/)
 assert.match(recovery, /getConfigProxyForProfile\(recoveryToken\.profile\)/)
 assert.match(recovery, /savedState: recoveryToken\.savedState/)

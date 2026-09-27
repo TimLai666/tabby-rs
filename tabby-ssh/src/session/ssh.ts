@@ -17,13 +17,10 @@ import { ForwardedPort } from './forwards'
 import { X11Socket } from './x11'
 import { supportedAlgorithms } from '../algorithms'
 import * as russh from 'russh'
+import { KeyboardInteractivePrompt } from '../api/keyboardInteractivePrompt'
+export { Prompt, KeyboardInteractivePrompt } from '../api/keyboardInteractivePrompt'
 
 const WINDOWS_OPENSSH_AGENT_PIPE = '\\\\.\\pipe\\openssh-ssh-agent'
-
-export interface Prompt {
-    prompt: string
-    echo?: boolean
-}
 
 type AuthMethod = {
     type: 'none'|'prompt-password'|'hostbased'
@@ -59,37 +56,6 @@ function sshAuthTypeForMethod (m: AuthMethod): string {
         case 'keyboard-interactive': return 'keyboard-interactive'
         case 'publickey': return 'publickey'
         case 'agent': return 'publickey'
-    }
-}
-
-export class KeyboardInteractivePrompt {
-    readonly responses: string[] = []
-
-    private _resolve: (value: string[]) => void
-    private _reject: (reason: any) => void
-    readonly promise = new Promise<string[]>((resolve, reject) => {
-        this._resolve = resolve
-        this._reject = reject
-    })
-
-    constructor (
-        public name: string,
-        public instruction: string,
-        public prompts: Prompt[],
-    ) {
-        this.responses = new Array(this.prompts.length).fill('')
-    }
-
-    isAPasswordPrompt (index: number): boolean {
-        return this.prompts[index].prompt.toLowerCase().includes('password') && !this.prompts[index].echo
-    }
-
-    respond (): void {
-        this._resolve(this.responses)
-    }
-
-    reject (): void {
-        this._reject(new Error('Keyboard-interactive auth rejected'))
     }
 }
 

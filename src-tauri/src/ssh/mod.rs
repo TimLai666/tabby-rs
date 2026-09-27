@@ -543,6 +543,7 @@ impl SshAuthenticator for ManagerAuthenticator<'_> {
                     instructions: String::new(),
                     prompts: vec![SshAuthPromptItem { text: "Username".into(), echo: true }],
                     username: true,
+                    keyboard_interactive: None,
                     password: None,
                     private_key_hash: None,
                 }).await
@@ -608,6 +609,7 @@ impl SshAuthenticator for ManagerAuthenticator<'_> {
                                     username: username.into(),
                                 }),
                                 username: false,
+                                keyboard_interactive: None,
                                 private_key_hash: None,
                             },
                         )
@@ -667,6 +669,7 @@ impl SshAuthenticator for ManagerAuthenticator<'_> {
                                             name: "Private key passphrase".into(),
                                             password: None,
                                             username: false,
+                                            keyboard_interactive: None,
                                             private_key_hash: Some(hex::encode(Sha512::digest(
                                                 &material.openssh,
                                             ))),
@@ -756,28 +759,7 @@ impl SshAuthenticator for ManagerAuthenticator<'_> {
                                     .manager
                                     .prompt_for_responses(
                                         self.app.as_ref().ok_or(SshError::Closed)?,
-                                        SshAuthPrompt {
-                                            request_id: String::new(),
-                                            id: self.request.profile_id.clone(),
-                                            connection_id: self
-                                                .request
-                                                .connection_id
-                                                .clone()
-                                                .unwrap_or_else(|| self.request.profile_id.clone()),
-                                            name: prompt.name,
-                                            password: None,
-                                            username: false,
-                                            private_key_hash: None,
-                                            instructions: prompt.instructions,
-                                            prompts: prompt
-                                                .prompts
-                                                .into_iter()
-                                                .map(|prompt| SshAuthPromptItem {
-                                                    text: prompt.text,
-                                                    echo: prompt.echo,
-                                                })
-                                                .collect(),
-                                        },
+                                        keyboard_interactive_prompt(&self.request, username, prompt),
                                     )
                                     .await?;
                                 let result = context
@@ -2710,6 +2692,29 @@ async fn connect_agent(socket: Option<String>) -> Result<PlatformAgentClient, Ss
     }
 }
 
+fn keyboard_interactive_prompt(
+    request: &SshConnectRequest,
+    username: &str,
+    prompt: engine::KeyboardInteractivePrompt,
+) -> SshAuthPrompt {
+    SshAuthPrompt {
+        request_id: String::new(),
+        id: request.profile_id.clone(),
+        connection_id: request.connection_id.clone().unwrap_or_else(|| request.profile_id.clone()),
+        name: prompt.name,
+        instructions: prompt.instructions,
+        prompts: prompt.prompts.into_iter().map(|item| SshAuthPromptItem { text: item.text, echo: item.echo }).collect(),
+        username: false,
+        password: None,
+        private_key_hash: None,
+        keyboard_interactive: Some(SshPasswordPromptTarget {
+            host: request.host.clone(),
+            port: request.port,
+            username: username.into(),
+        }),
+    }
+}
+
 fn validate_request(request: &SshConnectRequest) -> Result<(), SshError> {
     if request.connection_id.as_deref().is_some_and(|value| {
         value.is_empty() || value.len() > 256 || value.chars().any(char::is_control)
@@ -3599,6 +3604,28 @@ mod tests {
             assert_eq!(context.password_attempts, password_attempts);
             assert!(context.states.is_empty());
         }
+    }
+
+    #[test]
+    fn keyboard_interactive_prompt_carries_resolved_connection_identity() {
+        let mut target = request();
+        target.username = Some("$USER".into());
+        target.host = "jump.test".into();
+        target.port = 2222;
+        target.connection_id = Some("connection-1".into());
+        let prompt = super::keyboard_interactive_prompt(&target, "resolved-user", super::engine::KeyboardInteractivePrompt {
+            name: "Challenge".into(), instructions: "Instructions".into(),
+            prompts: vec![super::engine::KeyboardInteractivePromptItem { text: "Password: ".into(), echo: false }],
+        });
+        let value = serde_json::to_value(prompt).unwrap();
+        assert_eq!(value["keyboardInteractive"], serde_json::json!({ "host": "jump.test", "port": 2222, "username": "resolved-user" }));
+        assert_eq!(value["connectionId"], "connection-1");
+        assert_eq!(value["name"], "Challenge");
+        assert_eq!(value["instructions"], "Instructions");
+        assert_eq!(value["prompts"], serde_json::json!([{ "text": "Password: ", "echo": false }]));
+        assert!(value.get("password").is_none());
+        assert!(value.get("privateKeyHash").is_none());
+        assert_eq!(value["username"], false);
     }
 
     fn authenticator_for<'a>(

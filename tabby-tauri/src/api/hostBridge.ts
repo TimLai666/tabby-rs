@@ -629,6 +629,7 @@ export interface SshAuthPrompt {
     username?: boolean
     password?: { host: string; port: number; username: string }
     privateKeyHash?: string
+    keyboardInteractive?: { host: string; port: number; username: string }
 }
 
 export interface SshOutputEvent {

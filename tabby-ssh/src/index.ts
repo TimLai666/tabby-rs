@@ -38,6 +38,7 @@ import { SFTPCreateDirectoryModalComponent } from './components/sftpCreateDirect
         ToastrModule,
         TabbyCoreModule,
         TabbyTerminalModule,
+        KeyboardInteractiveAuthComponent,
     ],
     providers: [
         { provide: ConfigProvider, useClass: SSHConfigProvider, multi: true },
@@ -57,7 +58,6 @@ import { SFTPCreateDirectoryModalComponent } from './components/sftpCreateDirect
         SSHSettingsTabComponent,
         SSHTabComponent,
         SFTPPanelComponent,
-        KeyboardInteractiveAuthComponent,
         HostKeyPromptModalComponent,
     ],
 })

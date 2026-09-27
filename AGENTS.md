@@ -70,17 +70,25 @@
   supplied value. Repeated configured/stored passwords are tried only once. Renderer
   tests cover ordering and separate jump-host passwords; manual macOS desktop loopback
   checks verify both modes authenticate with the configured password.
-  Keyboard-interactive prefill from configured and stored passwords remains pending.
+  Keyboard-interactive prefill from configured passwords and authentication retry
+  ordering remain pending.
 - Keyboard-interactive challenges with no prompts now receive an empty response
   automatically, matching `14e2d60:tabby-ssh/src/session/ssh.ts`. Unit tests cover
   repeated empty rounds, rejection/fallback, non-empty prompts, and transport errors.
   Loopback integration tests cover acceptance and rejection after two empty rounds.
-  A direct macOS desktop connection verifies two automatic rounds followed by a
-  masked password prompt and successful login. Jump-host desktop acceptance remains
-  pending; the latest attempt expired while waiting for host-key confirmation.
-- Keyboard-interactive UI parity remains pending: the current modal does not submit
-  on Enter in the direct macOS check. Compare the upstream inline panel's Enter,
-  Previous/Next/Finish, and Save password behavior before accepting this flow.
+  Direct and single-hop macOS desktop connections verify two automatic rounds
+  followed by a two-field challenge and successful login.
+- Tauri keyboard-interactive authentication now uses the upstream inline panel with
+  unchanged template and styles. Native metadata supplies the actual host, port, and
+  resolved account for stored-password lookup and saving. Renderer tests cover field
+  navigation, consent, storage errors, duplicate events, cancellation, stale sessions,
+  and initial connection failure. An independent review's failure-cleanup finding is
+  fixed and regression-tested. macOS desktop checks verify Enter, previous/next/finish,
+  masked and echoed fields, Keychain saving, restart prefill, and reuse through a jump
+  host. The synthetic Keychain entry and test servers were cleaned up afterward.
+  Vault, keyboard-interactive authentication on the jump host itself, other supported
+  platforms, and configured-password/retry behavior still need acceptance. Preserve
+  upstream's save-on-consent behavior when aligning rejected-password deletion below.
 - Empty usernames now prompt after host-key verification; `$VAR` expands before
   authentication and saved-password lookup. Native tests cover cancellation, invalid
   responses, environment fallback, and Keychain/Vault identity isolation. Manual macOS

@@ -38,7 +38,7 @@ const fakes = {
     '../api/hostBridge': {},
     '../services/winscp.service': {},
     './services/winscp.service': {},
-    './authPromptModal.component': {},
+    '../../../tabby-ssh/src/api/keyboardInteractivePrompt': {},
     './session': { TauriSshSession: class {} },
 }
 function load (relative) {
