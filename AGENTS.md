@@ -86,10 +86,27 @@
   these are method-level probes, not original desktop UI acceptance.
   macOS desktop checks verify EOF termination, continued input after status/signal,
   retained output and reconnect prompts on transport disconnect with or without prior
-  CLOSE, and closing a CLOSE-only tab without disrupting another SSH tab. Stalled-input
-  cancellation is covered by native tests; its desktop paste flow remains unverified. SFTP and
-  forwarding teardown, stalled writes, and other platforms still need acceptance.
-  PTY approval waiting remains unchanged and needs comparison with upstream.
+  CLOSE, and closing a CLOSE-only tab without disrupting another SSH tab. SFTP and
+  forwarding teardown, transport backpressure, and other platforms still need acceptance.
+- PTY setup shares `request_shell_pty` between the manager and engine. It does not request
+  approval or wait for a reply, so rejecting or ignoring PTY cannot prevent later shell
+  requests. The exact `14e2d60` shell method with the locked binding also proceeds under
+  accept/reject/silent policies and round-trips input. Native real-SSH tests exercise the
+  engine caller with all three policies, with and without an environment variable, and
+  verify terminal parameters, diagnostic order, and input. The production manager path
+  has macOS desktop evidence for all three policies without environment variables,
+  including visible diagnostics, keyboard input, and tab closure. These fixtures echo
+  data; they do not demonstrate execution of a remote shell after PTY rejection.
+  Environment confirmation and send-error cleanup remain unchanged. Original wire-level
+  `want_reply` and noncompliant unsolicited PTY replies have not been verified.
+  Initial shell requests now use `xterm-256color` at 80x24 with zero pixel dimensions,
+  matching the exact original method and locked binding. The renderer previously sent
+  80x30. Both tab components resize after shell startup. macOS desktop and real SSH
+  evidence verify the initial 80x24 request, then 132x40, zoom to 235x55, and restoration
+  to 132x40, with input after resizing and clean tab closure. The native request API
+  still preserves supplied terminal parameters; the fixed default belongs to the renderer.
+  Do not claim full SSH parity until environment behavior, teardown,
+  and supported-platform acceptance have been compared and verified.
 - Shell input uses a separate bounded worker so waiting for the peer's channel window
   cannot block output or session controls. Keep ordered `ChannelWriteHalf` writes:
   `Handle::data` can leave pending data that prevents russh 0.54.4 from acknowledging CLOSE.
@@ -101,8 +118,13 @@
   upstream binding retains pending write promises while delivering output and lifecycle
   events; its disconnect call completes for live transports. Native cancellation releases
   write callers with Closed; the renderer only logs write errors and does not close the tab
-  or display a service message for them. Desktop paste and teardown
-  acceptance remains pending because the Mac was locked during verification.
+  or display a service message for them. macOS desktop checks with a one-byte peer window
+  verify visible output during stalled input, local tab closure, retained output after
+  remote CLOSE, EOF/disconnect reconnect prompts, and successful reconnection. The test
+  server observes each transport closing. Two 8 KiB paste attempts reached the server
+  and displayed its one-byte-received diagnostic, but the UI tool timed out observing
+  clipboard reads; exact desktop paste byte counts remain unverified. Native tests
+  verify the full 8 KiB write and blocked queue explicitly.
   Sustained input against a stalled peer and transport-level backpressure need separate
   resource and responsiveness checks before accepting full SSH parity.
 - Security-sensitive parity decision pending: the exact upstream incoming-channel handlers

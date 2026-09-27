@@ -604,19 +604,15 @@ impl SshConnection for RusshConnection {
             .channel_open_session()
             .await
             .map_err(|_| SshError::ChannelOpen)?;
-        channel
-            .request_pty(
-                true,
-                &request.term,
-                request.columns,
-                request.rows,
-                request.pixel_width,
-                request.pixel_height,
-                &[],
-            )
-            .await
-            .map_err(|_| SshError::ChannelOpen)?;
-        pending.extend(super::wait_for_channel_confirmation(&mut channel).await?);
+        super::request_shell_pty(
+            &channel,
+            &request.term,
+            request.columns,
+            request.rows,
+            request.pixel_width,
+            request.pixel_height,
+        )
+        .await?;
         for (name, value) in request.environment {
             channel
                 .set_env(true, name, value)

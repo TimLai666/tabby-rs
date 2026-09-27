@@ -9,6 +9,8 @@ mod known_hosts;
 mod lifecycle;
 pub mod model;
 mod pending;
+#[cfg(test)]
+mod pty_tests;
 pub mod sftp;
 #[cfg(test)]
 mod shell_start_tests;
@@ -1197,18 +1199,16 @@ impl SshManager {
         let mut channel = channel;
         let mut pending = VecDeque::new();
         let terminal = &request.terminal;
-        if channel
-            .request_pty(
-                true,
-                &terminal.term,
-                terminal.columns,
-                terminal.rows,
-                terminal.pixel_width.unwrap_or_default(),
-                terminal.pixel_height.unwrap_or_default(),
-                &[],
-            )
-            .await
-            .is_err()
+        if request_shell_pty(
+            &channel,
+            &terminal.term,
+            terminal.columns,
+            terminal.rows,
+            terminal.pixel_width.unwrap_or_default(),
+            terminal.pixel_height.unwrap_or_default(),
+        )
+        .await
+        .is_err()
         {
             disconnect_connection(
                 &mut handle,
@@ -1218,19 +1218,6 @@ impl SshManager {
             )
             .await;
             return Err(SshError::ChannelOpen);
-        }
-        match wait_for_channel_confirmation(&mut channel).await {
-            Ok(messages) => pending.extend(messages),
-            Err(_) => {
-                disconnect_connection(
-                    &mut handle,
-                    &mut jump_handles,
-                    Disconnect::ByApplication,
-                    "PTY request confirmation failed",
-                )
-                .await;
-                return Err(SshError::ChannelOpen);
-            }
         }
         for (name, value) in &request.environment {
             if channel.set_env(true, name, value).await.is_err() {
@@ -2506,6 +2493,22 @@ type PlatformAgentClient = AgentClient<tokio::net::UnixStream>;
 
 #[cfg(windows)]
 type PlatformAgentClient = AgentClient<Box<dyn AgentStream + Send + Unpin + 'static>>;
+
+async fn request_shell_pty(
+    channel: &russh::Channel<client::Msg>,
+    term: &str,
+    columns: u32,
+    rows: u32,
+    pixel_width: u32,
+    pixel_height: u32,
+) -> Result<(), SshError> {
+    // Like the fixed upstream binding, proceed without waiting for PTY approval.
+    // Leave any diagnostics queued for the shell reader or environment setup.
+    channel
+        .request_pty(false, term, columns, rows, pixel_width, pixel_height, &[])
+        .await
+        .map_err(|_| SshError::ChannelOpen)
+}
 
 async fn start_shell_channel(
     channel: &mut russh::Channel<client::Msg>,

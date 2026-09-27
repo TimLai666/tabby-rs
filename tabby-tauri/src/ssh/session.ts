@@ -293,7 +293,7 @@ export class TauriSshSession extends BaseSession {
             terminal: {
                 term: 'xterm-256color',
                 columns: 80,
-                rows: 30,
+                rows: 24,
                 pixelWidth: null,
                 pixelHeight: null,
             },
