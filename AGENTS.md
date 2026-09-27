@@ -49,8 +49,38 @@
 - `src-tauri/src/ssh/engine_integration.rs` verifies unsolicited agent and X11 channels
   against a loopback SSH server, with password/private-key login and forwarding on/off.
   The production forwarding helpers reject disabled channels before connecting to the
-  local socket. macOS Tauri X11 TCP wiring has desktop evidence below. Agent forwarding
-  in the desktop app, forwarding controls, and multi-hop forwarding still need acceptance.
+  local socket. macOS desktop checks through two SSH jump hosts cover all four target
+  agent/X11 setting combinations, an exact synthetic agent identities exchange, and a
+  16 KiB X11 TCP round trip. Enabled jump-profile flags do not enable a disabled target.
+  Closing a tab closes its target and both hops without disrupting another tab's forwarding.
+  These checks use synthetic endpoints, not agent signing or a graphical multi-hop X server.
+  Forwarding controls, real-agent signing, graphical multi-hop X11, and other platforms
+  still need acceptance.
+- Shell setup sends X11 before agent forwarding, matching `14e2d60`. Optional forwarding
+  requests do not ask for replies or wait for approval, so their rejection cannot abort
+  shell setup or consume the shell request's confirmation. Send errors still tear down
+  the connection. Real two-hop macOS desktop checks verify usable terminal input after
+  X11 or agent rejection, matching the exact upstream shell method and locked russh binding.
+  The npm archive matches the upstream lock integrity; installed native and JS bindings
+  match the archive. `shell_start_tests.rs` exercises the helper called by production
+  `SshManager::connect_inner` over real loopback SSH channels; `RusshConnection::open_shell`
+  also uses it. Its 21 cases cover all four forwarding flag combinations, server policies
+  that accept/reject/ignore optional requests, output before shell confirmation, terminal
+  input, and shell rejection/EOF/close. With `want_reply=false`, the fixture suppresses
+  optional channel replies as required by SSH; unsolicited replies from a noncompliant
+  server are not covered. Restoring the old request order or mandatory forwarding approval
+  makes the tests fail. This does not replace desktop or cross-platform acceptance.
+- Shell rejection parity remains open: against a real loopback server that rejects the
+  shell request, the exact upstream `openShellChannel` method with its locked binding
+  resolves, while native setup returns `ChannelOpen`. The rejection/EOF/close tests
+  preserve existing native behavior; they do not establish upstream parity for those
+  outcomes. Compare the resulting desktop behavior before changing shell confirmation.
+- Security-sensitive parity decision pending: the exact upstream incoming-channel handlers
+  with the locked russh binding forward unsolicited agent and X11 channels even when both
+  target options are false. A real two-hop fixture confirms both local synthetic endpoints
+  are reached. Native handlers close disabled channels before opening local endpoints.
+  Preserve that protection until the user explicitly decides whether this is an accepted
+  safety exception; do not mark this behavior as full parity or an approved exception yet.
 - `src-tauri/src/ssh/engine.rs` now shares `connect_agent` with jump authentication and
   forwarding. On Windows, `None` selects Pageant and an explicit path selects a named pipe.
   Verify Pageant with `SSH_AUTH_SOCK` set and verify named-pipe connections on Windows.
@@ -75,7 +105,7 @@
   port. The existing real SSH forwarding fixture also passes with forwarding enabled
   and disabled under password and private-key login. macOS desktop TCP forwarding displays
   xclock on a disposable Xvfb server that allows connections without cookie validation.
-  Windows TCP forwarding acceptance and multi-hop desktop acceptance remain pending.
+  Windows TCP forwarding acceptance and graphical multi-hop desktop acceptance remain pending.
 - DISPLAY parsing follows the fixed upstream regex, including fallback for screenless
   values such as `host:12`, the wildcard separator, and the greedy `host:100` result
   (`host:6001`). Hostless `:N` and `:N.screen` also fall back to the platform default.
@@ -112,7 +142,7 @@
   a direct connection using the server's cookie succeeds. The native SSH shell stays usable.
   This matches the fixed upstream behavior, but changes the prior native local-cookie path;
   do not claim support for cookie-protected displays from the successful xclock check.
-  XQuartz, other X servers, other client platforms, and multi-hop X11 still need acceptance.
+  XQuartz, other X servers, other client platforms, and graphical multi-hop X11 still need acceptance.
 
 ## Pending — SSH password prompts and automatic authentication parity
 

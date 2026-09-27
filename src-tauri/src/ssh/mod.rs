@@ -8,6 +8,8 @@ mod known_hosts;
 pub mod model;
 mod pending;
 pub mod sftp;
+#[cfg(test)]
+mod shell_start_tests;
 
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
@@ -1253,83 +1255,17 @@ impl SshManager {
                 }
             }
         }
-        if request.agent_forward {
-            if channel.agent_forward(true).await.is_err() {
-                disconnect_connection(
-                    &mut handle,
-                    &mut jump_handles,
-                    Disconnect::ByApplication,
-                    "agent forwarding setup failed",
-                )
-                .await;
-                return Err(SshError::ChannelOpen);
-            }
-            match wait_for_channel_confirmation(&mut channel).await {
-                Ok(messages) => pending.extend(messages),
-                Err(_) => {
-                    disconnect_connection(
-                        &mut handle,
-                        &mut jump_handles,
-                        Disconnect::ByApplication,
-                        "agent forwarding confirmation failed",
-                    )
-                    .await;
-                    return Err(SshError::ChannelOpen);
-                }
-            }
-        }
-        if request.x11 {
-            let cookie = x11_cookie();
-            if channel
-                .request_x11(true, false, "MIT-MAGIC-COOKIE-1", cookie, 0)
-                .await
-                .is_err()
-            {
-                disconnect_connection(
-                    &mut handle,
-                    &mut jump_handles,
-                    Disconnect::ByApplication,
-                    "X11 forwarding setup failed",
-                )
-                .await;
-                return Err(SshError::ChannelOpen);
-            }
-            match wait_for_channel_confirmation(&mut channel).await {
-                Ok(messages) => pending.extend(messages),
-                Err(_) => {
-                    disconnect_connection(
-                        &mut handle,
-                        &mut jump_handles,
-                        Disconnect::ByApplication,
-                        "X11 forwarding confirmation failed",
-                    )
-                    .await;
-                    return Err(SshError::ChannelOpen);
-                }
-            }
-        }
-        if channel.request_shell(true).await.is_err() {
-            disconnect_connection(
-                &mut handle,
-                &mut jump_handles,
-                Disconnect::ByApplication,
-                "shell request failed",
-            )
-            .await;
-            return Err(SshError::ChannelOpen);
-        }
-
-        match wait_for_channel_confirmation(&mut channel).await {
+        match start_shell_channel(&mut channel, request.x11, request.agent_forward).await {
             Ok(messages) => pending.extend(messages),
-            Err(_) => {
+            Err(error) => {
                 disconnect_connection(
                     &mut handle,
                     &mut jump_handles,
                     Disconnect::ByApplication,
-                    "shell request confirmation failed",
+                    "shell setup failed",
                 )
                 .await;
-                return Err(SshError::ChannelOpen);
+                return Err(error);
             }
         }
 
@@ -2600,6 +2536,32 @@ type PlatformAgentClient = AgentClient<tokio::net::UnixStream>;
 
 #[cfg(windows)]
 type PlatformAgentClient = AgentClient<Box<dyn AgentStream + Send + Unpin + 'static>>;
+
+async fn start_shell_channel(
+    channel: &mut russh::Channel<client::Msg>,
+    x11: bool,
+    agent_forward: bool,
+) -> Result<Vec<ChannelMsg>, SshError> {
+    // Upstream sends optional forwarding requests before the shell without waiting
+    // for approval. Do not let their replies consume the shell confirmation.
+    if x11 {
+        channel
+            .request_x11(false, false, "MIT-MAGIC-COOKIE-1", x11_cookie(), 0)
+            .await
+            .map_err(|_| SshError::ChannelOpen)?;
+    }
+    if agent_forward {
+        channel
+            .agent_forward(false)
+            .await
+            .map_err(|_| SshError::ChannelOpen)?;
+    }
+    channel
+        .request_shell(true)
+        .await
+        .map_err(|_| SshError::ChannelOpen)?;
+    wait_for_channel_confirmation(channel).await
+}
 
 async fn wait_for_channel_confirmation(
     channel: &mut russh::Channel<client::Msg>,
