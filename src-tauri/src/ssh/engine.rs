@@ -624,7 +624,7 @@ impl SshConnection for RusshConnection {
                 .map_err(|_| SshError::ChannelOpen)?;
             pending.extend(super::wait_for_channel_confirmation(&mut channel).await?);
         }
-        pending.extend(super::start_shell_channel(&mut channel, false, false).await?);
+        super::start_shell_channel(&mut channel, false, false).await?;
         let (reader, writer) = channel.split();
         Ok(Box::new(RusshChannel {
             reader: AsyncMutex::new(reader),

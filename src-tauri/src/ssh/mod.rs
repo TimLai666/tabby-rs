@@ -5,6 +5,7 @@ mod engine_integration;
 mod forwarding;
 mod import;
 mod known_hosts;
+mod lifecycle;
 pub mod model;
 mod pending;
 pub mod sftp;
@@ -1255,18 +1256,17 @@ impl SshManager {
                 }
             }
         }
-        match start_shell_channel(&mut channel, request.x11, request.agent_forward).await {
-            Ok(messages) => pending.extend(messages),
-            Err(error) => {
-                disconnect_connection(
-                    &mut handle,
-                    &mut jump_handles,
-                    Disconnect::ByApplication,
-                    "shell setup failed",
-                )
-                .await;
-                return Err(error);
-            }
+        if let Err(error) =
+            start_shell_channel(&mut channel, request.x11, request.agent_forward).await
+        {
+            disconnect_connection(
+                &mut handle,
+                &mut jump_handles,
+                Disconnect::ByApplication,
+                "shell setup failed",
+            )
+            .await;
+            return Err(error);
         }
 
         let id = self.new_id("session");
@@ -1280,24 +1280,25 @@ impl SshManager {
         let task_manager = self.clone();
         let mut jump_handles = jump_handles;
         let task_id_for_task = task_id.clone();
+        self.sessions
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .insert(id.clone(), SshSession { control });
         tauri::async_runtime::spawn(async move {
             let mut pending = pending;
             let mut sftp = None;
-            let mut exit_event_emitted = false;
-            loop {
-                tokio::select! {
-                    message = async {
-                        if let Some(message) = pending.pop_front() {
-                            Some(message)
-                        } else {
-                            reader.wait().await
-                        }
-                    } => {
-                        let Some(message) = message else { break };
-                        let is_exit_message = matches!(
-                            &message,
-                            ChannelMsg::ExitStatus { .. } | ChannelMsg::ExitSignal { .. }
-                        );
+            let mut channel_closed = false;
+            while let Some(event) = lifecycle::next_shell_event(
+                &mut reader,
+                &mut pending,
+                &mut controls,
+                &mut handle,
+                &mut channel_closed,
+            )
+            .await
+            {
+                match event {
+                    lifecycle::ShellEvent::Channel(message) => {
                         if !emit_channel_message(
                             &task_app,
                             &task_id_for_task,
@@ -1307,10 +1308,8 @@ impl SshManager {
                         ) {
                             break;
                         }
-                        exit_event_emitted |= is_exit_message;
                     }
-                    control_message = controls.recv() => {
-                        let Some(control_message) = control_message else { break };
+                    lifecycle::ShellEvent::Control(control_message) => {
                         if !handle_control(
                             &mut handle,
                             &writer,
@@ -1318,7 +1317,9 @@ impl SshManager {
                             &task_connection_id,
                             &task_manager.remote_routes,
                             control_message,
-                        ).await {
+                        )
+                        .await
+                        {
                             break;
                         }
                     }
@@ -1331,18 +1332,16 @@ impl SshManager {
                 .lock()
                 .unwrap_or_else(|error| error.into_inner())
                 .remove(&task_id_for_task);
-            if !exit_event_emitted {
-                let _ = task_app.emit(
-                    "ssh:exit",
-                    SshExitEvent {
-                        id: task_id_for_task.clone(),
-                        connection_id: task_connection_id.clone(),
-                        profile_id: task_profile_id,
-                        exit_code: None,
-                        signal: None,
-                    },
-                );
-            }
+            let _ = task_app.emit(
+                "ssh:exit",
+                SshExitEvent {
+                    id: task_id_for_task.clone(),
+                    connection_id: task_connection_id.clone(),
+                    profile_id: task_profile_id,
+                    exit_code: None,
+                    signal: None,
+                },
+            );
             task_manager.stop_forwardings_for_session(&task_id_for_task, &task_connection_id);
             let _ = handle
                 .disconnect(Disconnect::ByApplication, "session closed", "")
@@ -1354,10 +1353,6 @@ impl SshManager {
             }
         });
 
-        self.sessions
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .insert(id.clone(), SshSession { control });
         Ok(SshSessionInfo {
             id,
             profile_id: request.profile_id,
@@ -2485,29 +2480,6 @@ fn emit_channel_message(
                 extended: true,
             },
         ),
-        ChannelMsg::ExitStatus { exit_status } => app.emit(
-            "ssh:exit",
-            SshExitEvent {
-                id: id.into(),
-                connection_id: connection_id.into(),
-                profile_id: profile_id.into(),
-                exit_code: Some(exit_status),
-                signal: None,
-            },
-        ),
-        ChannelMsg::ExitSignal { signal_name, .. } => app.emit(
-            "ssh:exit",
-            SshExitEvent {
-                id: id.into(),
-                connection_id: connection_id.into(),
-                profile_id: profile_id.into(),
-                exit_code: None,
-                signal: Some(format!("{signal_name:?}")),
-            },
-        ),
-        ChannelMsg::Eof | ChannelMsg::Close => {
-            return true;
-        }
         _ => return true,
     };
     event.is_ok()
@@ -2541,9 +2513,9 @@ async fn start_shell_channel(
     channel: &mut russh::Channel<client::Msg>,
     x11: bool,
     agent_forward: bool,
-) -> Result<Vec<ChannelMsg>, SshError> {
-    // Upstream sends optional forwarding requests before the shell without waiting
-    // for approval. Do not let their replies consume the shell confirmation.
+) -> Result<(), SshError> {
+    // Upstream sends forwarding and shell requests without waiting for approval.
+    // Leave output and lifecycle messages for the channel reader.
     if x11 {
         channel
             .request_x11(false, false, "MIT-MAGIC-COOKIE-1", x11_cookie(), 0)
@@ -2557,10 +2529,9 @@ async fn start_shell_channel(
             .map_err(|_| SshError::ChannelOpen)?;
     }
     channel
-        .request_shell(true)
+        .request_shell(false)
         .await
-        .map_err(|_| SshError::ChannelOpen)?;
-    wait_for_channel_confirmation(channel).await
+        .map_err(|_| SshError::ChannelOpen)
 }
 
 async fn wait_for_channel_confirmation(

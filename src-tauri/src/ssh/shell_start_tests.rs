@@ -5,7 +5,7 @@ use std::{
 
 use russh::{client, server, Channel, ChannelId, ChannelMsg, CryptoVec};
 
-use super::{start_shell_channel, SshError};
+use super::start_shell_channel;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Reply {
@@ -32,8 +32,8 @@ impl Fixture {
     ) -> Result<(), russh::Error> {
         self.requests.lock().unwrap().push(name);
         s.data(ch, CryptoVec::from_slice(name.as_bytes()))?;
-        // The SSH server respects want_reply, so these policies emit no optional
-        // channel replies unless a regression starts requesting them again.
+        // The server respects want_reply, so these policies emit no request
+        // replies unless a regression starts requesting them again.
         match reply {
             Reply::Accept => s.channel_success(ch),
             Reply::Reject => s.channel_failure(ch),
@@ -159,7 +159,9 @@ async fn run_case(x11: bool, agent: bool, optional: Reply, shell: Reply) {
             .unwrap()
             .success());
         let mut channel = connection.channel_open_session().await.unwrap();
-        let result = start_shell_channel(&mut channel, x11, agent).await;
+        start_shell_channel(&mut channel, x11, agent)
+            .await
+            .expect("request rejection must not prevent opening the channel");
         let mut expected = Vec::new();
         if x11 {
             expected.push("x11");
@@ -168,25 +170,22 @@ async fn run_case(x11: bool, agent: bool, optional: Reply, shell: Reply) {
             expected.push("agent");
         }
         expected.push("shell");
+        let expected_data = expected.concat();
+        let mut data = Vec::new();
+        while data.len() < expected_data.len() {
+            match channel.wait().await.unwrap() {
+                ChannelMsg::Data { data: chunk } => data.extend_from_slice(&chunk),
+                other => panic!("unexpected message before request output: {other:?}"),
+            }
+        }
+        assert_eq!(data, expected_data.as_bytes(), "preserve request output");
+        // Receiving shell output proves all request handlers ran before this check.
         assert_eq!(
             *requests.lock().unwrap(),
             expected,
             "optional={optional:?}, shell={shell:?}"
         );
-        if shell == Reply::Accept {
-            let pending = result.expect("optional forwarding rejection must not prevent a shell");
-            let data: Vec<u8> = pending
-                .into_iter()
-                .flat_map(|message| match message {
-                    ChannelMsg::Data { data } => data.to_vec(),
-                    other => panic!("unexpected pending message: {other:?}"),
-                })
-                .collect();
-            assert_eq!(
-                data,
-                expected.concat().as_bytes(),
-                "preserve output before shell confirmation"
-            );
+        if matches!(shell, Reply::Accept | Reply::Reject | Reply::Silent) {
             channel
                 .data(&b"terminal input after forwarding"[..])
                 .await
@@ -198,10 +197,12 @@ async fn run_case(x11: bool, agent: bool, optional: Reply, shell: Reply) {
                 other => panic!("expected terminal echo, got {other:?}"),
             }
         } else {
-            assert!(
-                matches!(result, Err(SshError::ChannelOpen)),
-                "failed or closed shell must not succeed: {result:?}"
-            );
+            let message = channel.wait().await;
+            // russh exposes remote CLOSE by ending the receiver, not as a message.
+            assert!(matches!(
+                (shell, message),
+                (Reply::Eof, Some(ChannelMsg::Eof)) | (Reply::Close, None)
+            ));
         }
         connection
             .disconnect(russh::Disconnect::ByApplication, "fixture complete", "en")
@@ -210,22 +211,24 @@ async fn run_case(x11: bool, agent: bool, optional: Reply, shell: Reply) {
         tasks.join_next().await.unwrap().unwrap();
     })
     .await
-    .expect("shell setup and fixture cleanup must finish without waiting for optional replies");
+    .expect("shell setup and fixture cleanup must finish without waiting for request replies");
 }
 
 #[tokio::test]
-async fn optional_forwarding_preserves_order_output_and_usable_shell() {
+async fn shell_requests_preserve_order_output_and_input_without_approval() {
     for optional in [Reply::Accept, Reply::Reject, Reply::Silent] {
         for (x11, agent) in [(false, false), (true, false), (false, true), (true, true)] {
-            run_case(x11, agent, optional, Reply::Accept).await;
+            for shell in [Reply::Reject, Reply::Silent, Reply::Accept] {
+                run_case(x11, agent, optional, shell).await;
+            }
         }
     }
 }
 
 #[tokio::test]
-async fn shell_failure_or_close_is_not_accepted_after_optional_requests() {
+async fn shell_eof_and_close_remain_available_after_setup() {
     for optional in [Reply::Accept, Reply::Reject, Reply::Silent] {
-        for shell in [Reply::Reject, Reply::Eof, Reply::Close] {
+        for shell in [Reply::Eof, Reply::Close] {
             run_case(true, true, optional, shell).await;
         }
     }

@@ -56,25 +56,45 @@
   These checks use synthetic endpoints, not agent signing or a graphical multi-hop X server.
   Forwarding controls, real-agent signing, graphical multi-hop X11, and other platforms
   still need acceptance.
-- Shell setup sends X11 before agent forwarding, matching `14e2d60`. Optional forwarding
-  requests do not ask for replies or wait for approval, so their rejection cannot abort
-  shell setup or consume the shell request's confirmation. Send errors still tear down
+- Shell setup sends X11 before agent forwarding, matching `14e2d60`. Forwarding and shell
+  requests do not ask for replies or wait for approval. Rejected or unanswered requests
+  leave the channel available for subsequent data and input. Send errors still tear down
   the connection. Real two-hop macOS desktop checks verify usable terminal input after
   X11 or agent rejection, matching the exact upstream shell method and locked russh binding.
   The npm archive matches the upstream lock integrity; installed native and JS bindings
   match the archive. `shell_start_tests.rs` exercises the helper called by production
   `SshManager::connect_inner` over real loopback SSH channels; `RusshConnection::open_shell`
-  also uses it. Its 21 cases cover all four forwarding flag combinations, server policies
-  that accept/reject/ignore optional requests, output before shell confirmation, terminal
-  input, and shell rejection/EOF/close. With `want_reply=false`, the fixture suppresses
-  optional channel replies as required by SSH; unsolicited replies from a noncompliant
-  server are not covered. Restoring the old request order or mandatory forwarding approval
-  makes the tests fail. This does not replace desktop or cross-platform acceptance.
-- Shell rejection parity remains open: against a real loopback server that rejects the
-  shell request, the exact upstream `openShellChannel` method with its locked binding
-  resolves, while native setup returns `ChannelOpen`. The rejection/EOF/close tests
-  preserve existing native behavior; they do not establish upstream parity for those
-  outcomes. Compare the resulting desktop behavior before changing shell confirmation.
+  also uses it. Its 42 cases cover all four forwarding flag combinations, server policies
+  that accept/reject/ignore forwarding and shell requests, ordered output, terminal input,
+  and subsequent EOF/close. With `want_reply=false`, the fixture suppresses request replies
+  as required by SSH; unsolicited replies from a noncompliant server are not covered.
+  The tests fail when setup waits for shell approval. This does not replace desktop or
+  cross-platform acceptance.
+  macOS desktop checks cover accepted, rejected, and unanswered shell requests: all show
+  the fixture's diagnostic and round-trip terminal input, matching the original methods.
+  The rejection check previously displayed a shell-channel error instead. These synthetic
+  exchanges verify the channel, not execution of a remote shell after rejection.
+- Shell lifecycle follows the original shell method: EOF or transport disconnection ends
+  the shell; standalone CLOSE, exit status, and exit signal do not. The native event loop
+  drains queued output before observing transport completion, retains tab controls after
+  channel CLOSE, and registers sessions before spawning their reader to avoid stale entries
+  when EOF arrives immediately. Real loopback tests cover these events, buffered output,
+  a second channel after CLOSE, tab controls, and disconnection with or without prior CLOSE.
+  Queued closure is processed before writes; writes and resizes after CLOSE return Closed
+  without ending the transport or blocking tab closure. Tests include an 8 MiB write.
+  The exact upstream methods with the locked binding verify seven reference scenarios;
+  these are method-level probes, not original desktop UI acceptance.
+  macOS desktop checks verify EOF termination, continued input after status/signal,
+  retained output and reconnect prompts on transport disconnect with or without prior
+  CLOSE, and closing a CLOSE-only tab without disrupting another SSH tab. The large-write
+  guard is covered by native tests; its desktop paste flow remains unverified. SFTP and
+  forwarding teardown, stalled writes, and other platforms still need acceptance.
+  PTY approval waiting remains unchanged and needs comparison with upstream.
+- Investigate writes already waiting for SSH window replenishment when the peer stops
+  reading or closes the channel. `handle_control` awaits each write in the session loop,
+  so teardown can be delayed before the lifecycle reader observes closure. The queued-CLOSE
+  guard does not cover an in-flight write. Verify with a stalled-window loopback fixture
+  before choosing cancellation or timeout behavior against the fixed upstream version.
 - Security-sensitive parity decision pending: the exact upstream incoming-channel handlers
   with the locked russh binding forward unsolicited agent and X11 channels even when both
   target options are false. A real two-hop fixture confirms both local synthetic endpoints
