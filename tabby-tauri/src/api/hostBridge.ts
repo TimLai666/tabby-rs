@@ -434,6 +434,7 @@ export interface SshForwardingInfo extends SshForwardingRequest {
 }
 
 export type SshAuthMethodRef =
+    | { type: 'providedPassword'; password: string }
     | { type: 'password'; secretRef: string }
     | { type: 'promptPassword' }
     | { type: 'privateKey'; fileRef: string; passphraseRef?: string | null }

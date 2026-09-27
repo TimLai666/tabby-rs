@@ -532,11 +532,23 @@ impl SshAuthenticator for ManagerAuthenticator<'_> {
         if methods.is_empty() {
             return context.authenticate_none(username).await;
         }
-        for method in methods {
+        for (index, method) in methods.iter().enumerate() {
             let result = match method {
+                AuthMethodRef::ProvidedPassword { password } => {
+                    context.authenticate_password(username, password).await
+                }
                 AuthMethodRef::Password { secret_ref } => {
                     match resolve_secret_ref(secret_ref, self.secrets, self.credentials) {
-                        Ok(password) => context.authenticate_password(username, &password).await,
+                        Ok(password) => {
+                            let already_tried = methods[..index].iter().any(|method| {
+                                matches!(method, AuthMethodRef::ProvidedPassword { password: provided }
+                                    if provided.expose_secret() == password.expose_secret())
+                            });
+                            if already_tried {
+                                continue;
+                            }
+                            context.authenticate_password(username, &password).await
+                        }
                         Err(SshError::AuthenticationRejected) => Ok(false),
                         Err(error) => Err(error),
                     }
@@ -3414,6 +3426,59 @@ mod tests {
                 expected
             );
             assert_eq!(context.calls, ["password"]);
+        }
+    }
+
+    #[tokio::test]
+    async fn provided_password_authenticates_and_falls_back_without_exposing_secrets() {
+        let credentials = CredentialState::with_store(Arc::new(TestCredentialStore {
+            value: Some(("ssh".into(), "alice".into(), "secret-password".into())),
+        }));
+        let secrets = SecretState::default();
+        let directory = tempdir().unwrap();
+        for (password, fallback, accepted, attempts) in [
+            ("secret-password", false, true, 1),
+            ("wrong-password", false, false, 1),
+            ("wrong-password", true, true, 2),
+            ("secret-password", true, true, 1),
+        ] {
+            let method: AuthMethodRef = serde_json::from_value(serde_json::json!({
+                "type": "providedPassword", "password": password,
+            })).expect("decode configured password");
+            let mut methods = vec![method];
+            if fallback {
+                methods.push(AuthMethodRef::Password { secret_ref: "keychain://ssh/alice".into() });
+            }
+            let authenticator = authenticator_for(directory.path(), &secrets, &credentials, methods);
+            let debug = format!("{:?}", authenticator.request);
+            assert!(!debug.contains(password), "request Debug must redact configured passwords");
+            let mut context = recording_context(false);
+            context.password_accepted = true;
+            assert_eq!(authenticator.authenticate(&mut context, "alice", &[]).await.unwrap(), accepted);
+            assert_eq!(context.password_valid, accepted);
+            assert_eq!(context.calls, vec!["password"; attempts]);
+            assert!(!used_private_key(&authenticator));
+        }
+    }
+
+    #[tokio::test]
+    async fn provided_password_is_not_retried_from_the_credential_store() {
+        let credentials = CredentialState::with_store(Arc::new(TestCredentialStore {
+            value: Some(("ssh".into(), "alice".into(), "expired-password".into())),
+        }));
+        let secrets = SecretState::default();
+        let directory = tempdir().unwrap();
+        for fallback in [false, true] {
+            let mut methods = vec![
+                AuthMethodRef::ProvidedPassword { password: SecretString::new("expired-password".into()) },
+                AuthMethodRef::Password { secret_ref: "keychain://ssh/alice".into() },
+            ];
+            if fallback { methods.push(AuthMethodRef::KeyboardInteractive); }
+            let authenticator = authenticator_for(directory.path(), &secrets, &credentials, methods);
+            let mut context = recording_context(false);
+            context.password_accepted = true;
+            assert_eq!(authenticator.authenticate(&mut context, "alice", &[]).await.unwrap(), fallback);
+            assert_eq!(context.calls, if fallback { vec!["password", "keyboard-interactive"] } else { vec!["password"] });
         }
     }
 

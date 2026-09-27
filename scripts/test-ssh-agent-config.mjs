@@ -309,6 +309,41 @@ async function runAllTests () {
     }
 
     console.log('All SSH agent forwarding tests passed')
+
+    // The configured password precedes keyboard-interactive and stored passwords.
+    for (const mode of [null, 'password', 'agent', 'publicKey', 'keyboardInteractive']) {
+        for (const password of ['configured-password', '', undefined]) {
+            const options = { ...forwardingOptions(mode, false), password }
+            const profile = { id: 'target', options }
+            const config = { store: { ssh: { ...autoAgent, x11Display: null } } }
+            const bridge = { invoke: async cmd => cmd === 'ssh.listPrivateKeys' ? ['/k'] : null }
+            const session = createSession(profile, config, bridge)
+            const auth = normalize(await session.authForOptions(options))
+            const usesPassword = !mode || mode === 'password'
+            assert.deepEqual(auth.filter(method => method.type === 'providedPassword'),
+                usesPassword && password ? [{ type: 'providedPassword', password }] : [])
+            if (usesPassword && password) {
+                assert.ok(auth.findIndex(method => method.type === 'providedPassword') < auth.findIndex(method => method.type === 'password'))
+                if (!mode) {
+                    assert.ok(auth.findIndex(method => method.type === 'providedPassword') > auth.findIndex(method => method.type === 'agent'))
+                    assert.ok(auth.findIndex(method => method.type === 'providedPassword') < auth.findIndex(method => method.type === 'keyboardInteractive'))
+                }
+            }
+            assert.equal(options.password, password, 'request construction must not mutate the profile')
+        }
+    }
+    {
+        const profile = { id: 'target', options: { ...forwardingOptions('password', false), password: 'target-secret', jumpHost: 'jump' } }
+        const jump = { id: 'jump', type: 'ssh', options: { ...forwardingOptions('password', false), host: 'jump.test', password: 'hop-secret' } }
+        const config = { store: { ssh: { ...autoAgent, x11Display: null } } }
+        const bridge = { invoke: async () => null }
+        const request = normalize(await createSession(profile, config, bridge, [jump]).connectRequest())
+        assert.deepEqual(request.auth[0], { type: 'providedPassword', password: 'target-secret' })
+        assert.deepEqual(request.jumpChain[0].auth[0], { type: 'providedPassword', password: 'hop-secret' })
+        assert.ok(!JSON.stringify(request.auth).includes('hop-secret'))
+        assert.ok(!JSON.stringify(request.jumpChain).includes('target-secret'))
+    }
+    console.log('Configured SSH password selection, ordering, and hop isolation passed')
 }
 
 runAllTests().catch(err => { console.error('Test failed:', err); process.exit(1) })

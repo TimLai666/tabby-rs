@@ -762,8 +762,9 @@ impl client::Handler for PinnedHostKeyClient {
 
 #[cfg(unix)]
 async fn run_manager_auth_fallback(
-    with_password: bool,
+    saved_password: Option<&str>,
     with_unavailable_keys: bool,
+    provided_password: Option<&str>,
 ) -> (Result<(), crate::ssh::SshError>, usize) {
     use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
     use crate::security::{CredentialState, SecretState, VaultSnapshot, VaultSnapshotSecret};
@@ -781,7 +782,7 @@ async fn run_manager_auth_fallback(
                 secrets: vec![VaultSnapshotSecret {
                     r#type: "password".into(),
                     key: key.as_object().expect("vault key object").clone(),
-                    value: "fixture-secret".into(),
+                    value: saved_password.unwrap_or_default().into(),
                 }],
             },
             SecretString::new("vault-passphrase".into()),
@@ -803,7 +804,10 @@ async fn run_manager_auth_fallback(
         }
     }
     auth.push(serde_json::json!({ "type": "agent", "socket": missing_socket }));
-    if with_password {
+    if let Some(password) = provided_password {
+        auth.push(serde_json::json!({ "type": "providedPassword", "password": password }));
+    }
+    if saved_password.is_some() {
         auth.push(serde_json::json!({ "type": "keyboardInteractive" }));
         auth.push(serde_json::json!({
             "type": "password",
@@ -895,11 +899,11 @@ async fn run_manager_auth_fallback(
 #[tokio::test]
 #[ignore = "requires SSH authentication fixture; run yarn test:ssh-auth-integration"]
 async fn manager_authenticator_missing_agent_falls_back_to_password() {
-    let (result, attempts) = run_manager_auth_fallback(true, false).await;
+    let (result, attempts) = run_manager_auth_fallback(Some("fixture-secret"), false, None).await;
     assert!(result.is_ok(), "missing agent must fall back: {result:?}");
     assert_eq!(attempts, 1);
 
-    let (result, attempts) = run_manager_auth_fallback(false, false).await;
+    let (result, attempts) = run_manager_auth_fallback(None, false, None).await;
     assert!(
         matches!(result, Err(crate::ssh::SshError::AuthenticationRejected)),
         "missing agent without password must be rejected: {result:?}"
@@ -911,11 +915,32 @@ async fn manager_authenticator_missing_agent_falls_back_to_password() {
 #[tokio::test]
 #[ignore = "requires SSH authentication fixture; run yarn test:ssh-auth-integration"]
 async fn manager_authenticator_unavailable_keys_fall_back_to_password() {
-    let (result, attempts) = run_manager_auth_fallback(true, true).await;
+    let (result, attempts) = run_manager_auth_fallback(Some("fixture-secret"), true, None).await;
     assert!(result.is_ok(), "unavailable keys must fall back: {result:?}");
     assert_eq!(attempts, 1);
 
-    let (result, attempts) = run_manager_auth_fallback(false, true).await;
+    let (result, attempts) = run_manager_auth_fallback(None, true, None).await;
     assert!(matches!(result, Err(crate::ssh::SshError::AuthenticationRejected)));
     assert_eq!(attempts, 0);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+#[ignore = "requires SSH authentication fixture; run yarn test:ssh-auth-integration"]
+async fn manager_provided_password_authenticates_or_tries_saved_password() {
+    for (password, saved, expected_success, expected_attempts) in [
+        ("fixture-secret", None, true, 1),
+        ("fixture-wrong", None, false, 1),
+        ("fixture-wrong", Some("fixture-secret"), true, 2),
+        ("fixture-secret", Some("fixture-secret"), true, 1),
+        ("fixture-wrong", Some("fixture-wrong"), false, 1),
+    ] {
+        let (result, attempts) = run_manager_auth_fallback(saved, false, Some(password)).await;
+        if expected_success {
+            assert!(result.is_ok(), "configured password authentication failed: {result:?}");
+        } else {
+            assert!(matches!(result, Err(crate::ssh::SshError::AuthenticationRejected)));
+        }
+        assert_eq!(attempts, expected_attempts);
+    }
 }

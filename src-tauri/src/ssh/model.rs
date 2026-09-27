@@ -104,6 +104,10 @@ pub enum SshForwardingStatus {
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum AuthMethodRef {
+    ProvidedPassword {
+        #[serde(deserialize_with = "deserialize_password")]
+        password: secrecy::SecretString,
+    },
     Password {
         #[serde(rename = "secretRef")]
         secret_ref: String,
@@ -119,6 +123,13 @@ pub enum AuthMethodRef {
         socket: Option<String>,
     },
     KeyboardInteractive,
+}
+
+fn deserialize_password<'de, D>(deserializer: D) -> Result<secrecy::SecretString, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    <String as serde::Deserialize>::deserialize(deserializer).map(secrecy::SecretString::new)
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]

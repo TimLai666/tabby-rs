@@ -65,27 +65,34 @@
 
 ## Pending — SSH password prompts and automatic authentication parity
 
-- `tabby-tauri/src/ssh/session.ts` still does not reuse an explicitly configured
-  profile password as upstream `14e2d60` does.
-- `passwordSecretRef` uses `root` when the profile username is empty. Match credential
-  lookup to the username actually resolved by the native connection before accepting
-  stored-password parity for profiles without a username.
+- Configured profile passwords are now tried in automatic and explicit password modes.
+  Native tests verify rejection falls through to stored passwords and Debug redacts the
+  supplied value. Repeated configured/stored passwords are tried only once. Renderer
+  tests cover ordering and separate jump-host passwords; manual macOS desktop loopback
+  checks verify both modes authenticate with the configured password.
+  Keyboard-interactive prefill from configured and stored passwords remains pending.
+- Empty usernames still become `root` in both the native connection and
+  `passwordSecretRef`. Upstream `14e2d60` prompts for the username and resolves `$VAR`
+  before loading stored passwords. Implement and verify that flow for targets and hops
+  before accepting username and stored-password parity.
 - Private-key passphrases now use the shared masked prompt with Remember and retry.
   Renderer tests cover cancellation, consent, retries, stale events, and storage errors.
-  A macOS desktop loopback test verifies wrong-then-correct passphrase entry and
+  A manual macOS desktop loopback check verifies wrong-then-correct passphrase entry and
   successful key authentication. Reading the isolated synthetic Keychain entry verifies
-  the remembered value. Restart reuse, native cancellation/fallback, Vault, and other
-  supported platforms still need acceptance.
+  the remembered value. A second manual macOS desktop check verifies reuse after restarting
+  the app and Esc cancellation followed by successful configured-password fallback.
+  Vault, jump-host flows, and other supported platforms still need acceptance.
 - Missing/unreadable and malformed private keys now fall through to later methods.
   Unit and loopback tests cover this behavior, including successful password fallback.
   Desktop jump-host acceptance still needs verification.
 - Automatic and explicit password modes now use the shared `PromptModalComponent`.
   Browser checks cover masked input, Remember, Enter, OK, and Esc with simulated native
-  events. A macOS desktop loopback SSH test verifies actual prompt delivery, Enter
+  events. A manual macOS desktop loopback SSH check verifies actual prompt delivery, Enter
   authentication, terminal output, and Esc cancellation without a password attempt.
   Desktop jump-host connections and Remember with the actual OS credential store or
   Vault still need end-to-end acceptance.
-- Agent/stored-password fallback and prompted-password persistence have local tests and
-  primary-agent review. Independent review remains pending because OpenCode, agy, and
-  Claude CLI each reached their usage limits. Complete that review before accepting
+- Independent review covers private-key loading/passphrase prompts and configured-password
+  reuse, including the duplicate-password fix. Broader agent/stored-password and prompted-
+  password review remains pending. The native passphrase retry loop has manual desktop
+  evidence but no automated regression test. Complete these checks before accepting
   SSH authentication parity.
