@@ -4,6 +4,8 @@
 //! `HKEY_CLASSES_ROOT\WinSCP.Url\DefaultIcon`. This module only resolves a
 //! path; it never starts WinSCP and never writes to the registry.
 
+pub(crate) mod key;
+
 use std::mem::size_of;
 
 pub fn detect_path() -> Option<String> {

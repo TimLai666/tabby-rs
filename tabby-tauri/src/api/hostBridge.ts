@@ -38,6 +38,7 @@ export interface RuntimeInfo {
     arch: string
     version: string
     windowsBuild: number | null
+    winSCPPath?: string | null
     benchmarkReadyFile: string | null
     benchmarkFrameReportFile: string | null
     installerSmokeReadyFile: string | null
@@ -452,6 +453,7 @@ export interface SshSessionInfo {
     host: string
     port: number
     username: string
+    usedPrivateKey?: boolean
 }
 
 export interface TelnetConnectRequest {

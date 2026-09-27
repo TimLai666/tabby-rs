@@ -32,6 +32,8 @@ pub struct RuntimeInfo {
     pub arch: String,
     pub version: String,
     pub windows_build: Option<u32>,
+    #[serde(rename = "winSCPPath")]
+    pub win_scp_path: Option<String>,
     pub benchmark_ready_file: Option<String>,
     pub benchmark_frame_report_file: Option<String>,
     pub installer_smoke_ready_file: Option<String>,
@@ -80,6 +82,7 @@ fn current_runtime_info() -> RuntimeInfo {
         arch: std::env::consts::ARCH.to_owned(),
         version: env!("CARGO_PKG_VERSION").to_owned(),
         windows_build: windows_build_number(),
+        win_scp_path: crate::winscp::detect_path(),
         benchmark_ready_file: benchmark_ready_path()
             .map(|path| path.to_string_lossy().into_owned()),
         benchmark_frame_report_file: benchmark_frame_report_path()
@@ -406,6 +409,26 @@ mod tests {
         assert!(!info.platform.is_empty());
         assert!(!info.arch.is_empty());
         assert!(info.version.starts_with("1.0.231-tabbyrs."));
+    }
+
+    #[test]
+    fn serializes_win_scp_path_under_the_frontend_key() {
+        let mut info = current_runtime_info();
+
+        info.win_scp_path = None;
+        let missing = serde_json::to_value(&info).unwrap();
+        assert_eq!(missing.get("winSCPPath"), Some(&serde_json::Value::Null));
+        assert!(
+            missing.get("win_scp_path").is_none(),
+            "camelCase renaming must not emit the Rust field name"
+        );
+
+        info.win_scp_path = Some("C:\\Program Files (x86)\\WinSCP 測試\\WinSCP.com ".to_owned());
+        let resolved = serde_json::to_value(&info).unwrap();
+        assert_eq!(
+            resolved.get("winSCPPath").and_then(serde_json::Value::as_str),
+            Some("C:\\Program Files (x86)\\WinSCP 測試\\WinSCP.com ")
+        );
     }
 
     #[test]

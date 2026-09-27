@@ -12,6 +12,7 @@ const pluginSettings = fs.readFileSync(path.join(root, 'tabby-plugin-manager/src
 const bridge = fs.readFileSync(path.join(root, 'tabby-tauri/src/api/hostBridge.ts'), 'utf8')
 const hostApp = fs.readFileSync(path.join(root, 'tabby-tauri/src/services/hostApp.service.ts'), 'utf8')
 const desktop = fs.readFileSync(path.join(root, 'src-tauri/src/commands/desktop.rs'), 'utf8')
+const app = fs.readFileSync(path.join(root, 'src-tauri/src/commands/app.rs'), 'utf8')
 const registration = fs.readFileSync(path.join(root, 'src-tauri/src/lib.rs'), 'utf8')
 const tauriConfig = JSON.parse(fs.readFileSync(path.join(root, 'src-tauri/tauri.conf.json'), 'utf8'))
 const capabilities = JSON.parse(fs.readFileSync(path.join(root, 'src-tauri/capabilities/default.json'), 'utf8'))
@@ -20,13 +21,16 @@ const tauriPolyfills = fs.readFileSync(path.join(root, 'app/src/tauri-polyfills.
 const tauriWebpack = fs.readFileSync(path.join(root, 'app/webpack.config.tauri.mjs'), 'utf8')
 
 assert.match(platform, /async exec \(app: string, argv: string\[\]\): Promise<void> \{[\s\S]*?desktop\.exec/)
-assert.match(platform, /getWinSCPPath \(\): string \| null \{\s*return null\s*\}/)
+assert.match(platform, /getWinSCPPath \(\): string \| null \{/)
+assert.match(bridge, /winSCPPath\?: string \| null/)
 assert.doesNotMatch(shellProvider, /tabby-electron\/src\/icons/)
 assert.match(shellProvider, /require\('\.\.\/icons\/alpine\.svg'\)/)
 assert.doesNotMatch(pluginSettings, /FORCE_ENABLE\s*=\s*\[[^\]]*tabby-electron/)
 assert.ok(fs.existsSync(path.join(root, 'tabby-tauri/src/icons/alpine.svg')))
 assert.match(bridge, /'desktop\.exec':[\s\S]*?request: \{ executable: string; args: string\[\] \}/)
 assert.match(desktop, /pub async fn desktop_exec/)
+assert.match(app, /#\[serde\(rename = "winSCPPath"\)\]\s*pub win_scp_path: Option<String>,/)
+assert.match(app, /win_scp_path: crate::winscp::detect_path\(\),/)
 assert.match(desktop, /Command::new\(&request\.executable\)\s*\.args\(&request\.args\)/)
 assert.doesNotMatch(desktop, /Command::new\("(?:sh|bash|cmd|powershell)"\)/)
 assert.match(registration, /desktop_exec/)
@@ -87,6 +91,18 @@ for (const content of [
     assert.equal(call.request.text, content.text)
     assert.equal(call.request.html, content.html, 'Copy with formatting must preserve HTML across the native bridge')
     assert.equal(provider.clipboardText, content.text)
+}
+
+const windowsWinSCPPath = 'C:\\Program Files (x86)\\WinSCP 測試\\WinSCP.com '
+provider.runtimeInfo = { platform: 'windows', winSCPPath: windowsWinSCPPath }
+assert.equal(provider.getWinSCPPath(), windowsWinSCPPath, 'Windows must surface the resolved WinSCP path verbatim')
+provider.runtimeInfo = { platform: 'windows', winSCPPath: null }
+assert.equal(provider.getWinSCPPath(), null, 'A Windows host without WinSCP must report null')
+provider.runtimeInfo = { platform: 'windows' }
+assert.equal(provider.getWinSCPPath(), null, 'Runtime info fixtures without the field must stay compatible')
+for (const other of ['macos', 'darwin', 'linux']) {
+    provider.runtimeInfo = { platform: other, winSCPPath: windowsWinSCPPath }
+    assert.equal(provider.getWinSCPPath(), null, 'Only Windows may expose a WinSCP path')
 }
 
 for (const options of [

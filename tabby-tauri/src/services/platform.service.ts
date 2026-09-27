@@ -187,7 +187,10 @@ export class TauriPlatformService extends PlatformService {
     }
 
     getWinSCPPath (): string | null {
-        return null
+        if (this.runtimeInfo.platform !== 'windows') {
+            return null
+        }
+        return this.runtimeInfo.winSCPPath ?? null
     }
 
     showItemInFolder (path: string): void {

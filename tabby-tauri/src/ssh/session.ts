@@ -29,6 +29,8 @@ function base64Json (value: unknown): string {
 export class TauriSshSession extends BaseSession {
     private id: string|null = null
     private destroying = false
+    authUsername: string|null = null
+    activePrivateKey = false
     private readonly connectionId = window.crypto.randomUUID()
     private pendingOutput: { data: number[]; extended: boolean }[] = []
     private pendingExit: SshExitEvent|null = null
@@ -104,6 +106,8 @@ export class TauriSshSession extends BaseSession {
             })
             return
         }
+        this.authUsername = info.username
+        this.activePrivateKey = info.usedPrivateKey ?? false
         this.id = info.id
         this.open = true
         try {
@@ -158,6 +162,8 @@ export class TauriSshSession extends BaseSession {
         this.destroying = true
         const id = this.id
         this.id = null
+        this.authUsername = null
+        this.activePrivateKey = false
         if (id) {
             await this.sftp?.close().catch(error => this.logger.debug('SFTP close failed after session end', error))
             this.sftp = null

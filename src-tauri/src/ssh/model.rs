@@ -126,6 +126,7 @@ pub struct SshSessionInfo {
     pub host: String,
     pub port: u16,
     pub username: String,
+    pub used_private_key: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]

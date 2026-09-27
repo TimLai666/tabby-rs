@@ -492,6 +492,23 @@ struct ManagerAuthenticator<'a> {
     request: SshConnectRequest,
     secrets: &'a SecretState,
     credentials: &'a CredentialState,
+    used_private_key: Mutex<bool>,
+}
+
+impl ManagerAuthenticator<'_> {
+    fn record_private_key(&self, used: bool) {
+        *self
+            .used_private_key
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = used;
+    }
+
+    fn used_private_key(&self) -> bool {
+        *self
+            .used_private_key
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
 }
 
 #[async_trait::async_trait]
@@ -502,6 +519,7 @@ impl SshAuthenticator for ManagerAuthenticator<'_> {
         username: &str,
         methods: &[AuthMethodRef],
     ) -> Result<bool, SshError> {
+        self.record_private_key(false);
         let methods = if methods.is_empty() {
             &self.request.auth
         } else {
@@ -511,6 +529,7 @@ impl SshAuthenticator for ManagerAuthenticator<'_> {
             return context.authenticate_none(username).await;
         }
         for method in methods {
+            let private_key_method = matches!(method, AuthMethodRef::PrivateKey { .. });
             let result = match method {
                 AuthMethodRef::Password { secret_ref } => {
                     let password = resolve_secret_ref(secret_ref, self.secrets, self.credentials)?;
@@ -627,6 +646,9 @@ impl SshAuthenticator for ManagerAuthenticator<'_> {
                 }
             }?;
             if result {
+                if private_key_method {
+                    self.record_private_key(true);
+                }
                 return Ok(true);
             }
         }
@@ -730,7 +752,7 @@ impl SshManager {
         connection_id: &str,
         secrets: &SecretState,
         credentials: &CredentialState,
-    ) -> Result<client::Handle<SshHandler>, SshError> {
+    ) -> Result<(client::Handle<SshHandler>, bool), SshError> {
         let host_key_error = Arc::new(Mutex::new(None));
         let handler = self.handler(
             app,
@@ -746,9 +768,10 @@ impl SshManager {
             request: request.clone(),
             secrets,
             credentials,
+            used_private_key: Mutex::new(false),
         });
         let engine = RusshEngine::from_shared_config(config, Duration::from_secs(30));
-        engine
+        let handle = engine
             .connect_with_handler(
                 &SshTarget {
                     host: request.host.clone(),
@@ -759,7 +782,8 @@ impl SshManager {
                 host_key_error,
                 authenticator.as_ref(),
             )
-            .await
+            .await?;
+        Ok((handle, authenticator.used_private_key()))
     }
 
     async fn connect_over_channel(
@@ -830,8 +854,9 @@ impl SshManager {
         let config = Arc::new(config);
         let mut jump_handles = Vec::new();
         let mut handle;
+        let used_private_key;
         if request.jump_chain.is_empty() {
-            handle = self
+            let (connected, connected_with_private_key) = self
                 .connect_direct_engine(
                     Arc::clone(&config),
                     &app,
@@ -841,6 +866,8 @@ impl SshManager {
                     &credentials,
                 )
                 .await?;
+            handle = connected;
+            used_private_key = connected_with_private_key;
         } else {
             let first = jump_request(&request, &request.jump_chain[0], &connection_id, 0);
             handle = self
@@ -858,7 +885,7 @@ impl SshManager {
                 )
                 .await
             {
-                Ok(authenticated) => authenticated,
+                Ok((authenticated, _)) => authenticated,
                 Err(error) => {
                     disconnect_connection(
                         &mut handle,
@@ -921,7 +948,7 @@ impl SshManager {
                     )
                     .await
                 {
-                    Ok(authenticated) => authenticated,
+                    Ok((authenticated, _)) => authenticated,
                     Err(error) => {
                         disconnect_connection(
                             &mut handle,
@@ -982,7 +1009,10 @@ impl SshManager {
                 )
                 .await
             {
-                Ok(authenticated) => authenticated,
+                Ok((authenticated, target_used_private_key)) => {
+                    used_private_key = target_used_private_key;
+                    authenticated
+                }
                 Err(error) => {
                     disconnect_connection(
                         &mut handle,
@@ -1262,6 +1292,7 @@ impl SshManager {
             host: request.host,
             port: request.port,
             username,
+            used_private_key,
         })
     }
 
@@ -1829,18 +1860,20 @@ impl SshManager {
         username: &str,
         secrets: &SecretState,
         credentials: &CredentialState,
-    ) -> Result<bool, SshError> {
+    ) -> Result<(bool, bool), SshError> {
         let authenticator = ManagerAuthenticator {
             manager: self.clone(),
             app: Some(app.clone()),
             request: request.clone(),
             secrets,
             credentials,
+            used_private_key: Mutex::new(false),
         };
         let mut context = RawSshAuthContext { handle };
-        authenticator
+        let authenticated = authenticator
             .authenticate(&mut context, username, &request.auth)
-            .await
+            .await?;
+        Ok((authenticated, authenticator.used_private_key()))
     }
 
     async fn prompt_for_responses(
@@ -2700,7 +2733,11 @@ mod tests {
     use async_trait::async_trait;
     use secrecy::{ExposeSecret, SecretString};
     use sha2::{Digest, Sha512};
-    use std::{collections::BTreeMap, sync::Arc, time::Duration};
+    use std::{
+        collections::BTreeMap,
+        sync::{Arc, Mutex},
+        time::Duration,
+    };
     use tempfile::tempdir;
     use tokio::sync::mpsc;
 
@@ -2749,6 +2786,7 @@ mod tests {
         calls: Vec<String>,
         password_valid: bool,
         private_key_passphrase: Option<String>,
+        private_key_result: bool,
     }
 
     #[async_trait]
@@ -2779,7 +2817,7 @@ mod tests {
                 .passphrase
                 .as_ref()
                 .map(|value| value.expose_secret().to_owned());
-            Ok(true)
+            Ok(self.private_key_result)
         }
 
         async fn authenticate_agent(
@@ -2932,11 +2970,13 @@ mod tests {
             request: value,
             secrets: &secrets,
             credentials: &credentials,
+            used_private_key: Mutex::new(false),
         };
         let mut context = RecordingAuthContext {
             calls: Vec::new(),
             password_valid: false,
             private_key_passphrase: None,
+            private_key_result: true,
         };
 
         assert!(authenticator
@@ -2973,11 +3013,13 @@ mod tests {
             request: value,
             secrets: &secrets,
             credentials: &credentials,
+            used_private_key: Mutex::new(false),
         };
         let mut context = RecordingAuthContext {
             calls: Vec::new(),
             password_valid: false,
             private_key_passphrase: None,
+            private_key_result: true,
         };
 
         assert!(authenticator
@@ -3034,11 +3076,13 @@ mod tests {
             request: value,
             secrets: &secrets,
             credentials: &credentials,
+            used_private_key: Mutex::new(false),
         };
         let mut context = RecordingAuthContext {
             calls: Vec::new(),
             password_valid: false,
             private_key_passphrase: None,
+            private_key_result: true,
         };
         assert!(authenticator
             .authenticate(&mut context, "alice", &[])
@@ -3054,17 +3098,191 @@ mod tests {
             request: value,
             secrets: &secrets,
             credentials: &credentials,
+            used_private_key: Mutex::new(false),
         };
         let mut context = RecordingAuthContext {
             calls: Vec::new(),
             password_valid: false,
             private_key_passphrase: None,
+            private_key_result: true,
         };
         assert!(authenticator
             .authenticate(&mut context, "alice", &[])
             .await
             .unwrap());
         assert_eq!(context.calls, ["keyboard-interactive"]);
+    }
+
+    fn recording_context(private_key_result: bool) -> RecordingAuthContext {
+        RecordingAuthContext {
+            calls: Vec::new(),
+            password_valid: false,
+            private_key_passphrase: None,
+            private_key_result,
+        }
+    }
+
+    fn authenticator_for<'a>(
+        known_hosts: &std::path::Path,
+        secrets: &'a SecretState,
+        credentials: &'a CredentialState,
+        auth: Vec<AuthMethodRef>,
+    ) -> ManagerAuthenticator<'a> {
+        let mut value = request();
+        value.auth = auth;
+        ManagerAuthenticator {
+            manager: SshManager::new(known_hosts.to_path_buf()),
+            app: None,
+            request: value,
+            secrets,
+            credentials,
+            used_private_key: Mutex::new(false),
+        }
+    }
+
+    fn used_private_key(authenticator: &ManagerAuthenticator<'_>) -> bool {
+        *authenticator.used_private_key.lock().unwrap()
+    }
+
+    fn private_key_method(file_ref: &std::path::Path) -> AuthMethodRef {
+        AuthMethodRef::PrivateKey {
+            file_ref: file_ref.to_string_lossy().into_owned(),
+            passphrase_ref: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn manager_authenticator_marks_private_key_after_password_rejection() {
+        let mut credentials = TestCredentialStore::default();
+        credentials.value = Some(("ssh".into(), "alice".into(), "secret-password".into()));
+        let credentials = CredentialState::with_store(Arc::new(credentials));
+        let secrets = SecretState::default();
+        let directory = tempdir().unwrap();
+        let private_key = directory.path().join("id_ed25519");
+        std::fs::write(&private_key, b"test-private-key").unwrap();
+        let authenticator = authenticator_for(
+            directory.path(),
+            &secrets,
+            &credentials,
+            vec![
+                AuthMethodRef::Password {
+                    secret_ref: "keychain://ssh/alice".into(),
+                },
+                private_key_method(&private_key),
+            ],
+        );
+        let mut context = recording_context(true);
+
+        assert!(authenticator
+            .authenticate(&mut context, "alice", &[])
+            .await
+            .unwrap());
+        assert_eq!(context.calls, ["password", "private-key:16"]);
+        assert!(used_private_key(&authenticator));
+    }
+
+    #[tokio::test]
+    async fn manager_authenticator_keeps_private_key_false_for_non_key_methods() {
+        let secrets = SecretState::default();
+        let credentials = CredentialState::default();
+        let directory = tempdir().unwrap();
+        let cases: Vec<(&str, Vec<AuthMethodRef>, &str)> = vec![
+            (
+                "agent",
+                vec![AuthMethodRef::Agent {
+                    socket: Some("/tmp/agent.sock".into()),
+                }],
+                "agent:/tmp/agent.sock",
+            ),
+            (
+                "keyboard-interactive",
+                vec![AuthMethodRef::KeyboardInteractive],
+                "keyboard-interactive",
+            ),
+            ("none", Vec::new(), "none"),
+        ];
+
+        for (label, auth, expected_call) in cases {
+            let authenticator = authenticator_for(directory.path(), &secrets, &credentials, auth);
+            let mut context = recording_context(true);
+            assert!(authenticator
+                .authenticate(&mut context, "alice", &[])
+                .await
+                .unwrap());
+            assert_eq!(context.calls, [expected_call]);
+            assert!(
+                !used_private_key(&authenticator),
+                "{label} success must not report a private key"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn manager_authenticator_clears_private_key_on_a_later_authentication() {
+        let secrets = SecretState::default();
+        let credentials = CredentialState::default();
+        let directory = tempdir().unwrap();
+        let private_key = directory.path().join("id_ed25519");
+        std::fs::write(&private_key, b"test-private-key").unwrap();
+        let authenticator = authenticator_for(
+            directory.path(),
+            &secrets,
+            &credentials,
+            vec![private_key_method(&private_key)],
+        );
+        let mut context = recording_context(true);
+        assert!(authenticator
+            .authenticate(&mut context, "alice", &[])
+            .await
+            .unwrap());
+        assert!(used_private_key(&authenticator));
+
+        let methods = [AuthMethodRef::KeyboardInteractive];
+        let mut context = recording_context(true);
+        assert!(authenticator
+            .authenticate(&mut context, "alice", &methods)
+            .await
+            .unwrap());
+        assert_eq!(context.calls, ["keyboard-interactive"]);
+        assert!(!used_private_key(&authenticator));
+    }
+
+    #[tokio::test]
+    async fn manager_authenticator_reports_false_when_private_key_does_not_succeed() {
+        let secrets = SecretState::default();
+        let credentials = CredentialState::default();
+        let directory = tempdir().unwrap();
+        let private_key = directory.path().join("id_ed25519");
+        std::fs::write(&private_key, b"test-private-key").unwrap();
+        let authenticator = authenticator_for(
+            directory.path(),
+            &secrets,
+            &credentials,
+            vec![
+                private_key_method(&private_key),
+                AuthMethodRef::Agent { socket: None },
+            ],
+        );
+        let mut context = recording_context(false);
+        assert!(authenticator
+            .authenticate(&mut context, "alice", &[])
+            .await
+            .unwrap());
+        assert_eq!(context.calls, ["private-key:16", "agent:default"]);
+        assert!(!used_private_key(&authenticator));
+
+        let unreadable = authenticator_for(
+            directory.path(),
+            &secrets,
+            &credentials,
+            vec![private_key_method(&directory.path().join("missing_key"))],
+        );
+        let mut context = recording_context(true);
+        assert!(unreadable
+            .authenticate(&mut context, "alice", &[])
+            .await
+            .is_err());
+        assert!(!used_private_key(&unreadable));
     }
 
     #[tokio::test]
