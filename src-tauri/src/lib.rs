@@ -104,6 +104,7 @@ use state::AppState;
 use storage::{paths::StoragePaths, state_file::save_state};
 use tauri::{Emitter, Manager};
 use telnet::TelnetManager;
+use winscp::launch::winscp_launch;
 
 fn initial_launch_context() -> LaunchContext {
     let cwd = std::env::current_dir()
@@ -437,6 +438,7 @@ pub fn run() {
             window_toggle_maximize,
             window_toggle_quake,
             windows_integration_status,
+            winscp_launch,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Tabby RS");

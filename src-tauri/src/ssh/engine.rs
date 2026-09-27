@@ -90,6 +90,13 @@ pub trait SshAuthContext: Send {
         username: &str,
         key: PrivateKeyMaterial,
     ) -> Result<bool, SshError>;
+    /// Reports whether the most recent `authenticate_private_key` attempt was
+    /// accepted by the server, including the partial acceptance a server
+    /// reports when another authentication factor is still required. The
+    /// returned value is `false` for a rejected or unparsed key.
+    fn private_key_was_accepted(&self) -> bool {
+        false
+    }
     async fn authenticate_agent(
         &mut self,
         username: &str,
@@ -317,8 +324,22 @@ impl russh::client::Handler for RusshHandler {
     }
 }
 
+/// Reports whether the server accepted a public key attempt, including the
+/// partial acceptance a server returns when another factor is still required.
+pub(super) fn public_key_accepted(result: &russh::client::AuthResult) -> bool {
+    matches!(
+        result,
+        russh::client::AuthResult::Success
+            | russh::client::AuthResult::Failure {
+                partial_success: true,
+                ..
+            }
+    )
+}
+
 struct RusshAuthContext<'a, H: russh::client::Handler> {
     handle: &'a mut russh::client::Handle<H>,
+    private_key_accepted: bool,
 }
 
 #[async_trait::async_trait]
@@ -355,6 +376,7 @@ where
         username: &str,
         key: PrivateKeyMaterial,
     ) -> Result<bool, SshError> {
+        self.private_key_accepted = false;
         let mut text = String::from_utf8(key.openssh.clone()).map_err(|_| SshError::KeyParse)?;
         let passphrase = key
             .passphrase
@@ -363,16 +385,20 @@ where
         let private_key = russh::keys::decode_secret_key(&text, passphrase);
         text.zeroize();
         let private_key = private_key.map_err(|_| SshError::KeyParse)?;
-        Ok(matches!(
-            self.handle
-                .authenticate_publickey(
-                    username,
-                    russh::keys::PrivateKeyWithHashAlg::new(Arc::new(private_key), None),
-                )
-                .await
-                .map_err(|_| SshError::AuthenticationRejected)?,
-            russh::client::AuthResult::Success
-        ))
+        let result = self
+            .handle
+            .authenticate_publickey(
+                username,
+                russh::keys::PrivateKeyWithHashAlg::new(Arc::new(private_key), None),
+            )
+            .await
+            .map_err(|_| SshError::AuthenticationRejected)?;
+        self.private_key_accepted = public_key_accepted(&result);
+        Ok(result.success())
+    }
+
+    fn private_key_was_accepted(&self) -> bool {
+        self.private_key_accepted
     }
 
     async fn authenticate_agent(
@@ -503,7 +529,10 @@ async fn authenticate_handle<H>(
 where
     H: russh::client::Handler<Error = russh::Error> + Send,
 {
-    let mut context = RusshAuthContext { handle };
+    let mut context = RusshAuthContext {
+        handle,
+        private_key_accepted: false,
+    };
     authenticator
         .authenticate(&mut context, username, &[])
         .await

@@ -1,10 +1,14 @@
-//! Resolves the installed WinSCP path on Windows.
+//! WinSCP integration: locating the installed copy and opening a session.
 //!
-//! The path comes from the default icon value the WinSCP installer writes to
-//! `HKEY_CLASSES_ROOT\WinSCP.Url\DefaultIcon`. This module only resolves a
-//! path; it never starts WinSCP and never writes to the registry.
+//! `detect_path` reads the path from the default icon value the WinSCP installer
+//! writes to `HKEY_CLASSES_ROOT\WinSCP.Url\DefaultIcon`, and never writes to the
+//! registry itself. The submodules take it from there: `key` converts a private
+//! key to the format WinSCP accepts, `uri` builds the session URL, and `launch`
+//! starts WinSCP and owns the lifetime of the temporary key files.
 
 pub(crate) mod key;
+pub(crate) mod launch;
+pub(crate) mod uri;
 
 use std::mem::size_of;
 

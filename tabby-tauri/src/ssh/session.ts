@@ -162,8 +162,8 @@ export class TauriSshSession extends BaseSession {
         this.destroying = true
         const id = this.id
         this.id = null
-        this.authUsername = null
-        this.activePrivateKey = false
+        // Keep the last authenticated username and key flag for launching file transfers
+        // from a disconnected tab, matching upstream.
         if (id) {
             await this.sftp?.close().catch(error => this.logger.debug('SFTP close failed after session end', error))
             this.sftp = null

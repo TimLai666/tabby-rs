@@ -46,8 +46,8 @@ use crate::{
     },
     ssh::{
         engine::{
-            HostKeyVerifier, KeyboardInteractiveResponse, PrivateKeyMaterial, RusshEngine,
-            SshAuthContext, SshAuthenticator, SshHostKey, SshTarget,
+            public_key_accepted, HostKeyVerifier, KeyboardInteractiveResponse, PrivateKeyMaterial,
+            RusshEngine, SshAuthContext, SshAuthenticator, SshHostKey, SshTarget,
         },
         known_hosts::fingerprint,
         model::{
@@ -365,6 +365,7 @@ fn host_key_material(key: &russh::keys::PublicKey) -> Result<SshHostKey, SshErro
 
 struct RawSshAuthContext<'a> {
     handle: &'a mut client::Handle<SshHandler>,
+    private_key_accepted: bool,
 }
 
 #[async_trait::async_trait]
@@ -398,21 +399,26 @@ impl<'a> SshAuthContext for RawSshAuthContext<'a> {
         username: &str,
         key: PrivateKeyMaterial,
     ) -> Result<bool, SshError> {
+        self.private_key_accepted = false;
         let mut text = String::from_utf8(key.openssh.clone()).map_err(|_| SshError::KeyParse)?;
         let passphrase = key.passphrase.as_ref().map(|value| value.expose_secret());
         let private_key = decode_secret_key(&text, passphrase.map(|value| value.as_str()));
         text.zeroize();
         let private_key = private_key.map_err(|_| SshError::KeyParse)?;
-        Ok(matches!(
-            self.handle
-                .authenticate_publickey(
-                    username,
-                    PrivateKeyWithHashAlg::new(Arc::new(private_key), None),
-                )
-                .await
-                .map_err(|_| SshError::AuthenticationRejected)?,
-            AuthResult::Success
-        ))
+        let result = self
+            .handle
+            .authenticate_publickey(
+                username,
+                PrivateKeyWithHashAlg::new(Arc::new(private_key), None),
+            )
+            .await
+            .map_err(|_| SshError::AuthenticationRejected)?;
+        self.private_key_accepted = public_key_accepted(&result);
+        Ok(result.success())
+    }
+
+    fn private_key_was_accepted(&self) -> bool {
+        self.private_key_accepted
     }
 
     async fn authenticate_agent(
@@ -529,7 +535,6 @@ impl SshAuthenticator for ManagerAuthenticator<'_> {
             return context.authenticate_none(username).await;
         }
         for method in methods {
-            let private_key_method = matches!(method, AuthMethodRef::PrivateKey { .. });
             let result = match method {
                 AuthMethodRef::Password { secret_ref } => {
                     let password = resolve_secret_ref(secret_ref, self.secrets, self.credentials)?;
@@ -548,7 +553,7 @@ impl SshAuthenticator for ManagerAuthenticator<'_> {
                             self.credentials,
                         )
                         .await?;
-                    match context.authenticate_private_key(username, material).await {
+                    let result = match context.authenticate_private_key(username, material).await {
                         Err(SshError::KeyParse) if passphrase_ref.is_none() => {
                             let responses = self
                                 .manager
@@ -594,7 +599,13 @@ impl SshAuthenticator for ManagerAuthenticator<'_> {
                             result
                         }
                         result => result,
+                    };
+                    if let Ok(completed) = &result {
+                        if *completed || context.private_key_was_accepted() {
+                            self.record_private_key(true);
+                        }
                     }
+                    result
                 }
                 AuthMethodRef::Agent { socket } => {
                     context
@@ -646,9 +657,6 @@ impl SshAuthenticator for ManagerAuthenticator<'_> {
                 }
             }?;
             if result {
-                if private_key_method {
-                    self.record_private_key(true);
-                }
                 return Ok(true);
             }
         }
@@ -1869,7 +1877,10 @@ impl SshManager {
             credentials,
             used_private_key: Mutex::new(false),
         };
-        let mut context = RawSshAuthContext { handle };
+        let mut context = RawSshAuthContext {
+            handle,
+            private_key_accepted: false,
+        };
         let authenticated = authenticator
             .authenticate(&mut context, username, &request.auth)
             .await?;
@@ -2719,11 +2730,12 @@ impl From<SshError> for crate::error::AppError {
 mod tests {
     use super::{
         engine::{
-            KeyboardInteractiveResponse, PrivateKeyMaterial, SshAuthContext, SshAuthenticator,
+            public_key_accepted, KeyboardInteractiveResponse, PrivateKeyMaterial, SshAuthContext,
+            SshAuthenticator,
         },
         host_key_decision_action,
         model::*,
-        resolve_saved_private_key_passphrase, validate_request, HostKeyDecisionAction,
+        resolve_saved_private_key_passphrase, validate_request, AuthResult, HostKeyDecisionAction,
         ManagerAuthenticator, SshControl, SshManager, SshSession, VAULT_SECRET_TYPE_PASSPHRASE,
     };
     use crate::security::{
@@ -2785,8 +2797,10 @@ mod tests {
     struct RecordingAuthContext {
         calls: Vec<String>,
         password_valid: bool,
+        password_accepted: bool,
         private_key_passphrase: Option<String>,
         private_key_result: bool,
+        private_key_accepted: bool,
     }
 
     #[async_trait]
@@ -2803,7 +2817,7 @@ mod tests {
         ) -> Result<bool, SshError> {
             self.calls.push("password".into());
             self.password_valid = password.expose_secret() == "secret-password";
-            Ok(false)
+            Ok(self.password_accepted && self.password_valid)
         }
 
         async fn authenticate_private_key(
@@ -2818,6 +2832,10 @@ mod tests {
                 .as_ref()
                 .map(|value| value.expose_secret().to_owned());
             Ok(self.private_key_result)
+        }
+
+        fn private_key_was_accepted(&self) -> bool {
+            self.private_key_accepted
         }
 
         async fn authenticate_agent(
@@ -2975,8 +2993,10 @@ mod tests {
         let mut context = RecordingAuthContext {
             calls: Vec::new(),
             password_valid: false,
+            password_accepted: false,
             private_key_passphrase: None,
             private_key_result: true,
+            private_key_accepted: false,
         };
 
         assert!(authenticator
@@ -3018,8 +3038,10 @@ mod tests {
         let mut context = RecordingAuthContext {
             calls: Vec::new(),
             password_valid: false,
+            password_accepted: false,
             private_key_passphrase: None,
             private_key_result: true,
+            private_key_accepted: false,
         };
 
         assert!(authenticator
@@ -3081,8 +3103,10 @@ mod tests {
         let mut context = RecordingAuthContext {
             calls: Vec::new(),
             password_valid: false,
+            password_accepted: false,
             private_key_passphrase: None,
             private_key_result: true,
+            private_key_accepted: false,
         };
         assert!(authenticator
             .authenticate(&mut context, "alice", &[])
@@ -3103,8 +3127,10 @@ mod tests {
         let mut context = RecordingAuthContext {
             calls: Vec::new(),
             password_valid: false,
+            password_accepted: false,
             private_key_passphrase: None,
             private_key_result: true,
+            private_key_accepted: false,
         };
         assert!(authenticator
             .authenticate(&mut context, "alice", &[])
@@ -3117,8 +3143,10 @@ mod tests {
         RecordingAuthContext {
             calls: Vec::new(),
             password_valid: false,
+            password_accepted: false,
             private_key_passphrase: None,
             private_key_result,
+            private_key_accepted: false,
         }
     }
 
@@ -3283,6 +3311,81 @@ mod tests {
             .await
             .is_err());
         assert!(!used_private_key(&unreadable));
+    }
+
+    #[tokio::test]
+    async fn manager_authenticator_partial_private_key_then_password_marks_key_used() {
+        let mut credentials = TestCredentialStore::default();
+        credentials.value = Some(("ssh".into(), "alice".into(), "secret-password".into()));
+        let credentials = CredentialState::with_store(Arc::new(credentials));
+        let secrets = SecretState::default();
+        let directory = tempdir().unwrap();
+        let private_key = directory.path().join("id_ed25519");
+        std::fs::write(&private_key, b"test-private-key").unwrap();
+        let authenticator = authenticator_for(
+            directory.path(),
+            &secrets,
+            &credentials,
+            vec![
+                private_key_method(&private_key),
+                AuthMethodRef::Password {
+                    secret_ref: "keychain://ssh/alice".into(),
+                },
+            ],
+        );
+        let mut context = recording_context(false);
+        context.password_accepted = true;
+        context.private_key_accepted = true;
+
+        assert!(authenticator
+            .authenticate(&mut context, "alice", &[])
+            .await
+            .unwrap());
+        assert_eq!(context.calls, ["private-key:16", "password"]);
+        assert!(context.password_valid);
+        assert!(used_private_key(&authenticator));
+    }
+
+    #[tokio::test]
+    async fn manager_authenticator_partial_private_key_without_another_factor_is_rejected() {
+        let mut credentials = TestCredentialStore::default();
+        credentials.value = Some(("ssh".into(), "alice".into(), "secret-password".into()));
+        let credentials = CredentialState::with_store(Arc::new(credentials));
+        let secrets = SecretState::default();
+        let directory = tempdir().unwrap();
+        let private_key = directory.path().join("id_ed25519");
+        std::fs::write(&private_key, b"test-private-key").unwrap();
+        let authenticator = authenticator_for(
+            directory.path(),
+            &secrets,
+            &credentials,
+            vec![
+                private_key_method(&private_key),
+                AuthMethodRef::Password {
+                    secret_ref: "keychain://ssh/alice".into(),
+                },
+            ],
+        );
+        let mut context = recording_context(false);
+        context.private_key_accepted = true;
+
+        assert!(!authenticator
+            .authenticate(&mut context, "alice", &[])
+            .await
+            .unwrap());
+        assert_eq!(context.calls, ["private-key:16", "password"]);
+        assert!(used_private_key(&authenticator));
+    }
+
+    #[test]
+    fn private_key_acceptance_classifies_russh_auth_results() {
+        let failure = |partial_success| AuthResult::Failure {
+            remaining_methods: russh::MethodSet::empty(),
+            partial_success,
+        };
+        assert!(public_key_accepted(&AuthResult::Success));
+        assert!(!public_key_accepted(&failure(false)));
+        assert!(public_key_accepted(&failure(true)));
     }
 
     #[tokio::test]
