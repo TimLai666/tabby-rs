@@ -45,17 +45,21 @@
   decoder unlocks the key. WinSCP conversion reads saved passphrases; verify reuse
   on Windows and compare unchecked Remember behavior with upstream before acceptance.
 
-## Pending — full-repo lint and Rust formatting
+## Pending — Rust formatting
 
-- `yarn lint --format unix` fails with 1 problem:
-  `tabby-local/src/session.ts:67:24: Unnecessary parentheses around expression. [Error/@typescript-eslint/no-extra-parens]`
-- `HEAD` and the working tree match for this file (`git diff HEAD -- tabby-local/src/session.ts`
-  is empty), so the failure is pre-existing.
-- Unrelated to the current WinSCP/SSH changes; still pending.
-- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` also fails on existing
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` fails on existing
   Rust formatting, including `commands/app.rs`, `commands/ssh.rs`, and SSH modules.
   Comparing the changed SSH module with HEAD shows no new formatting differences;
   the X11 cookie change removes one old difference. Keep this gate pending.
+
+## Pending — standalone Tauri package type checking
+
+- `tsc --noEmit -p tabby-tauri/tsconfig.json` rejects two existing contracts:
+  `serial/session.ts:51` passes a `Promise<null>` bridge response to a write queue
+  callback typed as `Promise<void>`; `ssh/tab.component.ts:204` clears a prompt
+  profile password with `undefined` although `SSHProfile.options.password` is
+  declared as `string`. Resolve the contracts without changing write completion
+  or leaking the configured password into keyboard-interactive prompts.
 
 ## Pending — SSH forwarding desktop and Windows acceptance
 
@@ -350,8 +354,44 @@
   prompts; jump authentication does not share that deadline. Verify slow interactive
   login against upstream before accepting timeout parity.
 
+## Pending — native window lifecycle and event isolation
+
+- Native `CloseRequested` must call `prevent_close()` before requesting renderer
+  confirmation, and send the event only to the owning window. After shared
+  `AppService.closeWindow` confirms every tab, `window_close` destroys that window
+  without generating another close request. The multi-window source contract
+  checks the native wiring; the Telnet fixture executes the real AppService close
+  methods and verifies cancellation preserves every tab, while approval closes
+  tabs before the window. Native close buttons, multiple live windows, and native
+  resource cleanup still need runtime acceptance. The Mac was locked during this
+  check. Separately verify application Quit/Cmd+Q: `app_quit` calls `app.exit(0)`
+  directly, so this window-close fix does not establish application-quit parity.
+- Window event producers must use `emit_to(label)` and the renderer must listen
+  through `getCurrentWebviewWindow().listen`. Tauri's default Any listener still
+  receives events sent to another label. Keep both halves for focus, movement,
+  resize, close, file drop, theme, and scale-factor events. The multi-window fixture
+  checks both labels, delivery isolation, unsubscription, and retained global
+  events. A separate check against the actual Tauri 2.11.5 global JS bundle confirms
+  these seven registrations use `WebviewWindow` plus the current label, while global
+  hotkeys use `Any`. This validates registration and wiring, not desktop behavior.
+- `closeAllTabs` invokes tab destruction without awaiting asynchronous session
+  cleanup. Verify server connections and PTY processes after closing a secondary
+  window before accepting cleanup; the native managers do not handle window
+  destruction by owner. Do not assume the passing permission tests prove cleanup.
+- Verify launch-event isolation separately: `window_new` and `present_and_dispatch`
+  still emit `app:launch` globally. The seven scoped desktop events do not change
+  launch-event routing or establish correct delivery to a single destination.
+
 ## Pending — Telnet and serial login scripts and desktop connection startup
 
+- Tauri Telnet now uses the fixed upstream close confirmation for open sessions.
+  `scripts/test-telnet-tab-controls.mjs` executes both actual component methods
+  and compares translated dialog options, inactive sessions, confirm/cancel,
+  unknown responses, dialog failure, and waiting for the response. The tab and
+  session remain intact while checking permission. Tab close buttons, middle-click,
+  close hotkeys, and window closure use the shared `canClose` flow. Verify the
+  actual native dialog and cancellation in the desktop; the Mac was locked during
+  this check. Component tests do not establish rendered or platform acceptance.
 - Tauri Telnet and serial profiles now expose the shared Login scripts editor and
   configure the existing session processor. Successful connection runs unconditional
   scripts before draining early output, matching `14e2d60`. The new

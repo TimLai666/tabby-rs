@@ -318,6 +318,9 @@ jobs:
       - name: Test serial tab controls
         run: yarn test:serial-tab-controls
 
+      - name: Test Telnet tab controls
+        run: yarn test:telnet-tab-controls
+
       - name: Test browser readline compatibility
         run: yarn test:tauri-readline
 
@@ -455,6 +458,9 @@ jobs:
 
       - name: Test serial tab controls
         run: yarn test:serial-tab-controls
+
+      - name: Test Telnet tab controls
+        run: yarn test:telnet-tab-controls
 
       - name: Test browser readline compatibility
         run: yarn test:tauri-readline

@@ -141,25 +141,29 @@ pub(crate) fn register_desktop_window_events(window: &tauri::WebviewWindow) {
     let emitter = window.clone();
     window.clone().on_window_event(move |event| match event {
         tauri::WindowEvent::Focused(focused) => {
-            let _ = emitter.emit("desktop:windowFocused", *focused);
+            let _ = emitter.emit_to(emitter.label(), "desktop:windowFocused", *focused);
         }
         tauri::WindowEvent::Moved(position) => {
-            let _ = emitter.emit(
+            let _ = emitter.emit_to(
+                emitter.label(),
                 "desktop:windowMoved",
                 serde_json::json!({ "x": position.x, "y": position.y }),
             );
         }
         tauri::WindowEvent::Resized(size) => {
-            let _ = emitter.emit(
+            let _ = emitter.emit_to(
+                emitter.label(),
                 "desktop:windowResized",
                 serde_json::json!({ "width": size.width, "height": size.height }),
             );
         }
-        tauri::WindowEvent::CloseRequested { .. } => {
-            let _ = emitter.emit("desktop:windowCloseRequested", ());
+        tauri::WindowEvent::CloseRequested { api, .. } => {
+            api.prevent_close();
+            let _ = emitter.emit_to(emitter.label(), "desktop:windowCloseRequested", ());
         }
         tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, position }) => {
-            let _ = emitter.emit(
+            let _ = emitter.emit_to(
+                emitter.label(),
                 "desktop:fileDrop",
                 serde_json::json!({
                     "paths": paths
@@ -177,10 +181,10 @@ pub(crate) fn register_desktop_window_events(window: &tauri::WebviewWindow) {
                 tauri::Theme::Light => "light",
                 _ => "system",
             };
-            let _ = emitter.emit("desktop:themeChanged", value);
+            let _ = emitter.emit_to(emitter.label(), "desktop:themeChanged", value);
         }
         tauri::WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
-            let _ = emitter.emit("desktop:displayMetricsChanged", *scale_factor);
+            let _ = emitter.emit_to(emitter.label(), "desktop:displayMetricsChanged", *scale_factor);
         }
         _ => {}
     });

@@ -99,6 +99,24 @@ export class TauriTelnetTabComponent extends ConnectableTerminalTabComponent<Tau
         }
     }
 
+    async canClose (): Promise<boolean> {
+        if (!this.session?.open) {
+            return true
+        }
+        return (await this.platform.showMessageBox(
+            {
+                type: 'warning',
+                message: this.translate.instant(_('Disconnect from {host}?'), this.profile.options),
+                buttons: [
+                    this.translate.instant(_('Disconnect')),
+                    this.translate.instant(_('Do not close')),
+                ],
+                defaultId: 0,
+                cancelId: 1,
+            },
+        )).response === 0
+    }
+
     protected isSessionExplicitlyTerminated (): boolean {
         return super.isSessionExplicitlyTerminated() || this.recentInputs.endsWith('close\r') || this.recentInputs.endsWith('quit\r')
     }

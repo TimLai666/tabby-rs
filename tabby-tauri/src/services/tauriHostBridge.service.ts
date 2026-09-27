@@ -6,12 +6,22 @@ interface TauriEvent<T> {
     payload: T
 }
 
+interface TauriEventSource {
+    listen: <T>(event: string, handler: (event: TauriEvent<T>) => void) => Promise<() => void>
+}
+
+const windowEvents = new Set<keyof HostEventMap>([
+    'desktop:windowFocused', 'desktop:windowMoved', 'desktop:windowResized',
+    'desktop:windowCloseRequested', 'desktop:fileDrop', 'desktop:themeChanged', 'desktop:displayMetricsChanged',
+])
+
 interface TauriGlobal {
     core: {
         invoke: <T>(command: string, args?: Record<string, unknown>) => Promise<T>
     }
-    event: {
-        listen: <T>(event: string, handler: (event: TauriEvent<T>) => void) => Promise<() => void>
+    event: TauriEventSource
+    webviewWindow: {
+        getCurrentWebviewWindow: () => TauriEventSource
     }
 }
 
@@ -48,6 +58,7 @@ export class TauriHostBridge extends HostBridge {
         event: K,
         handler: (payload: HostEventMap[K]) => void,
     ): Promise<() => void> {
-        return this.api.event.listen<HostEventMap[K]>(event, message => handler(message.payload))
+        const source = windowEvents.has(event) ? this.api.webviewWindow.getCurrentWebviewWindow() : this.api.event
+        return source.listen<HostEventMap[K]>(event, message => handler(message.payload))
     }
 }

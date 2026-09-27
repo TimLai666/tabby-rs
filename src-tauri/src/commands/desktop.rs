@@ -199,7 +199,9 @@ pub fn window_close(
     window: tauri::WebviewWindow,
     _request: serde_json::Value,
 ) -> Result<(), AppError> {
-    window.close().map_err(io_error)
+    // The renderer has already confirmed and closed its tabs. Do not request
+    // confirmation again through the native CloseRequested handler.
+    window.destroy().map_err(io_error)
 }
 
 #[tauri::command]
