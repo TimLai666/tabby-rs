@@ -136,6 +136,13 @@ pub struct SerialWriteRequest {
 
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SerialBaudRateRequest {
+    pub id: String,
+    pub baud_rate: u32,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SerialSignalRequest {
     pub id: String,
     pub signal: SerialSignal,

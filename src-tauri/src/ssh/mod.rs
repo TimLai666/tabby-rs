@@ -1,4 +1,5 @@
 pub mod agent;
+mod agent_transport;
 pub mod engine;
 #[cfg(test)]
 mod engine_integration;
@@ -27,8 +28,6 @@ use std::{
 
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use rand::RngCore;
-#[cfg(windows)]
-use russh::keys::agent::client::AgentStream;
 use russh::{
     client::{self, Handler},
     keys::agent::client::AgentClient,
@@ -2488,11 +2487,7 @@ fn host_key_decision_action(
     }
 }
 
-#[cfg(unix)]
-type PlatformAgentClient = AgentClient<tokio::net::UnixStream>;
-
-#[cfg(windows)]
-type PlatformAgentClient = AgentClient<Box<dyn AgentStream + Send + Unpin + 'static>>;
+type PlatformAgentClient = AgentClient<agent_transport::AgentTransport>;
 
 async fn request_shell_pty(
     channel: &russh::Channel<client::Msg>,
@@ -2578,25 +2573,25 @@ async fn forward_agent_channel(
 
 async fn connect_agent(socket: Option<String>) -> Result<PlatformAgentClient, SshError> {
     #[cfg(unix)]
-    {
-        let client = match socket {
-            Some(path) => AgentClient::connect_uds(path).await,
-            None => AgentClient::connect_env().await,
-        }
-        .map_err(|_| SshError::AuthenticationRejected)?;
-        return Ok(client);
+    let stream = match socket {
+        Some(path) => AgentClient::connect_uds(path).await,
+        None => AgentClient::connect_env().await,
     }
+    .map_err(|_| SshError::AuthenticationRejected)?
+    .into_inner();
 
     #[cfg(windows)]
+    let stream = match socket {
+        Some(path) => AgentClient::connect_named_pipe(path)
+            .await
+            .map_err(|_| SshError::AuthenticationRejected)?
+            .into_inner(),
+        None => AgentClient::connect_pageant().await.into_inner(),
+    };
+
+    #[cfg(any(unix, windows))]
     {
-        let client = match socket {
-            Some(path) => AgentClient::connect_named_pipe(path)
-                .await
-                .map(|client| client.dynamic()),
-            None => Ok(AgentClient::connect_pageant().await.dynamic()),
-        }
-        .map_err(|_| SshError::AuthenticationRejected)?;
-        return Ok(client);
+        Ok(AgentClient::connect(agent_transport::AgentTransport::new(stream)))
     }
 
     #[cfg(not(any(unix, windows)))]

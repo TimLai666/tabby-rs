@@ -135,6 +135,13 @@ export class TauriSerialSession extends BaseSession {
         this.writeQueue.write(data)
     }
 
+    async setBaudRate (baudRate: number): Promise<void> {
+        if (!this.id) {
+            throw new Error('Serial session is not open')
+        }
+        await this.bridge.invoke('serial.setBaudRate', { id: this.id, baudRate })
+    }
+
     async getSignals (): Promise<SerialSignalState> {
         if (!this.id) {
             throw new Error('Serial session is not open')

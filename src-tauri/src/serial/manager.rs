@@ -20,8 +20,8 @@ use super::{
     codec::MAX_SERIAL_CHUNK_BYTES,
     enumerate::{list_ports, path_for_stable_id, stable_id},
     model::{
-        SerialConnectionStateEvent, SerialOpenRequest, SerialOutputEvent, SerialPortInfo,
-        SerialSessionIdRequest, SerialSessionInfo, SerialSignal, SerialSignalRequest,
+        SerialBaudRateRequest, SerialConnectionStateEvent, SerialOpenRequest, SerialOutputEvent,
+        SerialPortInfo, SerialSessionIdRequest, SerialSessionInfo, SerialSignal, SerialSignalRequest,
         SerialSignalState, SerialWriteRequest,
     },
 };
@@ -93,6 +93,7 @@ impl SerialWriter {
 }
 
 enum SerialControl {
+    SetBaudRate(u32, oneshot::Sender<Result<(), AppError>>),
     SetSignals(SerialSignalRequest, oneshot::Sender<Result<(), AppError>>),
     GetSignals(oneshot::Sender<Result<SerialSignalState, AppError>>),
     Close(oneshot::Sender<Result<(), AppError>>),
@@ -169,6 +170,18 @@ impl SerialManager {
         tokio::task::spawn_blocking(move || writer.write(&request.data, generation))
             .await
             .map_err(|error| AppError::Io(error.to_string()))?
+    }
+
+    pub async fn set_baud_rate(&self, request: SerialBaudRateRequest) -> Result<(), AppError> {
+        if request.baud_rate == 0 {
+            return Err(AppError::InvalidArgument(
+                "Baud rate must be greater than zero".into(),
+            ));
+        }
+        self.send(request.id, |sender| {
+            SerialControl::SetBaudRate(request.baud_rate, sender)
+        })
+        .await
     }
 
     pub async fn set_signals(&self, request: SerialSignalRequest) -> Result<(), AppError> {
@@ -325,7 +338,7 @@ fn prepare_serial_port(port: serialport::COMPort) -> Result<Box<dyn SerialPort>,
 fn run_session(
     app: AppHandle,
     id: String,
-    request: SerialOpenRequest,
+    mut request: SerialOpenRequest,
     stable: String,
     mut port: Box<dyn SerialPort>,
     controls: Receiver<SerialControl>,
@@ -340,7 +353,7 @@ fn run_session(
     loop {
         match controls.try_recv() {
             Ok(control) => {
-                if handle_control(&mut port, control, writer) {
+                if handle_control(&mut port, control, writer, &mut request.baud_rate) {
                     emit_state(&app, &id, &request, "closed", Some(&current_path), None);
                     return;
                 }
@@ -388,7 +401,11 @@ fn run_session(
                         request.reconnect.max_delay_ms,
                     ))) {
                         Ok(control) => {
-                            if handle_control_without_port(control) {
+                            if handle_control_without_port(
+                                control,
+                                &mut request.baud_rate,
+                                &mut reconnect_attempts,
+                            ) {
                                 emit_state(&app, &id, &request, "closed", None, None);
                                 return;
                             }
@@ -460,8 +477,25 @@ fn run_session(
     }
 }
 
-fn handle_control(port: &mut Box<dyn SerialPort>, control: SerialControl, writer: &SerialWriter) -> bool {
+fn handle_control(
+    port: &mut Box<dyn SerialPort>,
+    control: SerialControl,
+    writer: &SerialWriter,
+    baud_rate: &mut u32,
+) -> bool {
     match control {
+        SerialControl::SetBaudRate(rate, sender) => {
+            let result = if writer.closed.load(Ordering::Acquire) {
+                Err(AppError::Io("Serial session is closed".into()))
+            } else {
+                port.set_baud_rate(rate).map_err(serial_error)
+            };
+            if result.is_ok() {
+                *baud_rate = rate;
+            }
+            let _ = sender.send(result);
+            false
+        }
         SerialControl::SetSignals(request, sender) => {
             let result = set_signal(port.as_mut(), request.signal, request.value);
             let _ = sender.send(result);
@@ -481,8 +515,18 @@ fn handle_control(port: &mut Box<dyn SerialPort>, control: SerialControl, writer
     }
 }
 
-fn handle_control_without_port(control: SerialControl) -> bool {
+fn handle_control_without_port(
+    control: SerialControl,
+    baud_rate: &mut u32,
+    reconnect_attempts: &mut u32,
+) -> bool {
     match control {
+        SerialControl::SetBaudRate(rate, sender) => {
+            *baud_rate = rate;
+            *reconnect_attempts = 0;
+            let _ = sender.send(Ok(()));
+            false
+        }
         SerialControl::Close(sender) => {
             let _ = sender.send(Ok(()));
             true

@@ -62,13 +62,11 @@ pub fn window_new(
     let label = format!("window-{}", state.next_window_id());
     let launch = Arc::new(Mutex::new(request.launch));
     let launch_for_page_load = Arc::clone(&launch);
-    let window =
+    let builder =
         tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::App("index.html".into()))
             .title("Tabby RS")
             .inner_size(1100.0, 720.0)
             .min_inner_size(640.0, 480.0)
-            .title_bar_style(tauri::TitleBarStyle::Overlay)
-            .hidden_title(true)
             .visible(false)
             .on_page_load(move |window, payload| {
                 if !matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
@@ -81,9 +79,12 @@ pub fn window_new(
                 if let Some(context) = context {
                     let _ = window.emit("app:launch", context);
                 }
-            })
-            .build()
-            .map_err(io_error)?;
+            });
+    #[cfg(target_os = "macos")]
+    let builder = builder
+        .title_bar_style(tauri::TitleBarStyle::Overlay)
+        .hidden_title(true);
+    let window = builder.build().map_err(io_error)?;
     crate::register_desktop_window_events(&window);
     Ok(())
 }

@@ -210,3 +210,37 @@ for (const lateError of [false, true]) {
     } finally { await f.session.destroy() }
 }
 console.log('serial: automatic reconnect survives failed and stale writes')
+
+{
+    const f = fixture('serial', 'normal', [], { reconnect: { enabled: true } })
+    await assert.rejects(() => f.session.setBaudRate(9600), /not open/)
+    const start = f.session.start()
+    const request = await f.connecting
+    f.finishConnect()
+    await start
+    const calls = []
+    const invoke = f.bridge.invoke
+    f.bridge.invoke = async (name, value) => {
+        if (name === 'serial.setBaudRate') calls.push(value)
+        return invoke(name, value)
+    }
+    try {
+        await f.session.setBaudRate(9600)
+        assert.equal(calls.length, 1)
+        assert.equal(calls[0].id, 'fixture')
+        assert.equal(calls[0].baudRate, 9600)
+        f.bridge.invoke = async () => { throw new Error('driver rejected rate') }
+        await assert.rejects(() => f.session.setBaudRate(19200), /driver rejected/)
+        f.bridge.invoke = invoke
+        f.state(request, 'disconnected')
+        await f.session.setBaudRate(19200)
+        assert.equal(f.session.open, true, 'changing the next reconnect rate must preserve the session')
+        f.state(request, 'connected')
+        await f.session.setBaudRate(38400)
+    } finally {
+        f.bridge.invoke = invoke
+        await f.session.destroy()
+    }
+    await assert.rejects(() => f.session.setBaudRate(9600), /not open/)
+}
+console.log('serial: live baud updates, failed changes, reconnect-wait updates, and closed guards passed')

@@ -63,8 +63,8 @@ use commands::{
     },
     secrets::{secret_import_execute, secret_import_plan},
     serial::{
-        serial_close, serial_get_signals, serial_list, serial_open, serial_set_signals,
-        serial_write,
+        serial_close, serial_get_signals, serial_list, serial_open, serial_set_baud_rate,
+        serial_set_signals, serial_write,
     },
     sftp::{
         sftp_cancel_transfer, sftp_close, sftp_close_transfer, sftp_download, sftp_download_open,
@@ -395,6 +395,7 @@ pub fn run() {
             serial_list,
             serial_open,
             serial_write,
+            serial_set_baud_rate,
             serial_set_signals,
             serial_get_signals,
             serial_close,

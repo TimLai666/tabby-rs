@@ -1263,6 +1263,10 @@ export interface HostRequestMap {
         request: { id: string; signal: 'requestToSend'|'dataTerminalReady'; value: boolean }
         response: null
     }
+    'serial.setBaudRate': {
+        request: { id: string; baudRate: number }
+        response: null
+    }
     'serial.getSignals': {
         request: { id: string }
         response: SerialSignalState

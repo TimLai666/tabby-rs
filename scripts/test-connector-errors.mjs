@@ -69,6 +69,7 @@ async function check (protocol, error, message) {
         if (name === 'tabby-core') return { Platform: {} }
         if (name === 'tabby-terminal') return { BaseTerminalTabComponent: BaseTab, ConnectableTerminalTabComponent: BaseTab }
         if (name === './session') return { TauriSerialSession: Session, TauriTelnetSession: Session }
+        if (name === './profile') return {}
         if (name.endsWith('.pug')) return ''
         return nativeRequire(name)
     }

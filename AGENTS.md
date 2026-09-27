@@ -1,5 +1,20 @@
 # Follow-ups
 
+## Pending — Windows compilation acceptance after local fixes
+
+- CI run `36341774362` on `4aa71925` fails before Windows plugin lifecycle tests
+  can run. The macOS-only `title_bar_style` and `hidden_title` window builder
+  calls now have a macOS platform guard. A standalone macOS compile probe
+  reproduced the Windows `authenticate_agent` Send lifetime error with the same
+  boxed AgentStream type. `ssh/agent_transport.rs` supplies a concrete forwarding
+  wrapper, shared by Unix sockets, Windows named pipes, and Pageant, which passes
+  that probe and the macOS application tests. The ordinary Rust suite passes
+  394 tests, with 11 ignored; the separate real SSH agent signing test also passes.
+  The wrapper tests cover partial binary reads/writes, EOF, and peer closure.
+  Verify a Windows build and named-pipe/Pageant runtime behavior before claiming
+  Windows compilation or runtime acceptance. Original failure evidence:
+  https://github.com/TimLai666/tabby-rs/actions/runs/36341774362
+
 ## P2 — WinSCP temporary key files are only cleaned up by `TempPath` drop
 
 - `src-tauri/src/winscp/key.rs:24` — `ConvertedKey::path` is a `tempfile::TempPath`;
@@ -420,3 +435,24 @@
   byte boundary, plus incomplete output flushed on close. Telnet's existing
   streaming decoder passes the same split-character check. Verify rendered
   serial Unicode output on supported desktop platforms before acceptance.
+- Serial tabs retain the fixed upstream Home/End sequences, focus guard, delayed
+  profile title, and explicit `close`/`quit` termination detection. The toolbar
+  uses the original Pug structure, labels, classes, and connected/disconnected
+  button conditions, with `baudRate` adapted to the Tauri profile. The component
+  test compares the actual pinned upstream methods and compiled templates;
+  rendered layout and real desktop interaction still need acceptance.
+- `serial.setBaudRate` updates the live native port on its control thread without
+  taking the writer lock. Retain a successful rate in the request used for native
+  reconnect, and propagate driver failures without updating that request. The UI
+  retains the selected profile rate and closes a failed session with a notification,
+  matching upstream's update-error path. Selector cancellation sends no update.
+  While native automatic reconnect waits for a device, accept the selected rate
+  for the next open without destroying the session. Reset its bounded retry
+  count on this explicit setting change so exhausted attempts do not prevent
+  recovery with a newly selected rate. Session tests cover bridge
+  payloads, reconnect-wait updates, and closed guards. Native tests cover zero
+  rates, missing sessions, reconnect-wait updates, and control processing while the
+  writer lock is held. macOS pseudo-terminals reject IOSSIOSPEED with `Not a
+  typewriter`; the macOS check verifies driver-error propagation, unchanged native
+  reconnect settings, and continued port I/O. Successful physical rate changes,
+  automatic reconnect at the new rate, and Windows/Linux execution remain pending.

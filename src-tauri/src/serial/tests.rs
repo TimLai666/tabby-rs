@@ -65,6 +65,116 @@ fn write_failures_and_cancellation_preserve_the_accepted_prefix() {
 
 #[cfg(unix)]
 #[tokio::test]
+async fn baud_rate_control_preserves_the_live_port_and_reconnect_settings() {
+    use super::{
+        handle_control, SerialBaudRateRequest, SerialManager, SerialSession, SerialWriter,
+    };
+    use serialport::SerialPort;
+    use std::{
+        io::{Read, Write},
+        sync::mpsc,
+        time::Duration,
+    };
+    let (mut peer, port) = serialport::TTYPort::pair().unwrap();
+    peer.set_timeout(Duration::from_secs(1)).unwrap();
+    let mut port = super::prepare_serial_port(port).unwrap();
+    let writer = SerialWriter::new(port.try_clone().unwrap());
+    let manager = SerialManager::default();
+    let (control, controls) = mpsc::channel();
+    manager.sessions.lock().unwrap().insert(
+        "fixture".into(),
+        SerialSession {
+            control,
+            writer: writer.clone(),
+        },
+    );
+    // A rate change must not wait for the write handle (which may be stalled).
+    let write_guard = writer.port.lock().unwrap();
+    let worker_writer = writer.clone();
+    let worker = std::thread::spawn(move || {
+        let mut baud_rate = 115200;
+        let name = port.name();
+        assert!(!handle_control(
+            &mut port,
+            controls.recv().unwrap(),
+            &worker_writer,
+            &mut baud_rate
+        ));
+        #[cfg(not(target_os = "macos"))]
+        {
+            assert_eq!(
+                baud_rate, 9600,
+                "reconnect request retains the successful rate"
+            );
+            assert_eq!(port.baud_rate().unwrap(), 9600);
+        }
+        // macOS pseudo-terminals reject the driver's IOSSIOSPEED ioctl. This
+        // exercises actual driver failure, not physical-device success.
+        #[cfg(target_os = "macos")]
+        assert_eq!(
+            baud_rate, 115200,
+            "driver failure must not change reconnect settings"
+        );
+        assert_eq!(port.name(), name);
+        port.write_all(b"same port").unwrap();
+    });
+    let result = tokio::time::timeout(
+        Duration::from_secs(1),
+        manager.set_baud_rate(SerialBaudRateRequest {
+            id: "fixture".into(),
+            baud_rate: 9600,
+        }),
+    )
+    .await
+    .unwrap();
+    drop(write_guard);
+    #[cfg(target_os = "macos")]
+    assert!(result.unwrap_err().to_string().contains("Not a typewriter"));
+    #[cfg(not(target_os = "macos"))]
+    result.unwrap();
+    let mut data = [0; 9];
+    peer.read_exact(&mut data).unwrap();
+    assert_eq!(&data, b"same port");
+    worker.join().unwrap();
+}
+
+#[tokio::test]
+async fn baud_rate_rejects_invalid_requests_and_updates_the_next_reconnect() {
+    use super::{handle_control_without_port, SerialBaudRateRequest, SerialControl, SerialManager};
+    use tokio::sync::oneshot;
+    let manager = SerialManager::default();
+    for baud_rate in [0, 9600] {
+        let error = manager
+            .set_baud_rate(SerialBaudRateRequest {
+                id: "missing".into(),
+                baud_rate,
+            })
+            .await
+            .unwrap_err();
+        if baud_rate == 0 {
+            assert!(matches!(error, crate::error::AppError::InvalidArgument(_)));
+        } else {
+            assert!(matches!(error, crate::error::AppError::NotFound(_)));
+        }
+    }
+    let (sender, receiver) = oneshot::channel();
+    let mut baud_rate = 115200;
+    let mut reconnect_attempts = 20;
+    assert!(!handle_control_without_port(
+        SerialControl::SetBaudRate(9600, sender),
+        &mut baud_rate,
+        &mut reconnect_attempts
+    ));
+    receiver.await.unwrap().unwrap();
+    assert_eq!(baud_rate, 9600, "the next open must use the selected rate");
+    assert_eq!(
+        reconnect_attempts, 0,
+        "changing settings starts a fresh bounded retry sequence"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn writes_do_not_wait_for_read_controls() {
     use super::{SerialManager, SerialSession, SerialWriteRequest, SerialWriter};
     use serialport::SerialPort;
@@ -254,7 +364,8 @@ async fn close_waits_until_the_writer_stops() {
         assert!(handle_control(
             &mut port,
             controls.recv().unwrap(),
-            &close_writer
+            &close_writer,
+            &mut 115200
         ));
     });
     let send_manager = manager.clone();

@@ -3,8 +3,8 @@ use std::sync::Arc;
 use tauri::State;
 
 use crate::serial::{
-    list_serial_ports, SerialManager, SerialOpenRequest, SerialSessionIdRequest, SerialSessionInfo,
-    SerialSignalRequest, SerialSignalState, SerialWriteRequest,
+    list_serial_ports, SerialBaudRateRequest, SerialManager, SerialOpenRequest, SerialSessionIdRequest,
+    SerialSessionInfo, SerialSignalRequest, SerialSignalState, SerialWriteRequest,
 };
 
 #[tauri::command]
@@ -32,6 +32,14 @@ pub async fn serial_write(
     manager: State<'_, Arc<SerialManager>>,
 ) -> Result<(), crate::error::AppError> {
     manager.write(request).await
+}
+
+#[tauri::command]
+pub async fn serial_set_baud_rate(
+    request: SerialBaudRateRequest,
+    manager: State<'_, Arc<SerialManager>>,
+) -> Result<(), crate::error::AppError> {
+    manager.set_baud_rate(request).await
 }
 
 #[tauri::command]

@@ -315,6 +315,9 @@ jobs:
       - name: Test serial write queue
         run: yarn test:serial-write-queue
 
+      - name: Test serial tab controls
+        run: yarn test:serial-tab-controls
+
       - name: Test browser readline compatibility
         run: yarn test:tauri-readline
 
@@ -449,6 +452,9 @@ jobs:
 
       - name: Test serial write queue
         run: yarn test:serial-write-queue
+
+      - name: Test serial tab controls
+        run: yarn test:serial-tab-controls
 
       - name: Test browser readline compatibility
         run: yarn test:tauri-readline
