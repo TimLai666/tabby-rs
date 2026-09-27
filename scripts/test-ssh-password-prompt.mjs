@@ -44,11 +44,20 @@ function deferred () {
 }
 async function settle () { for (let i = 0; i < 30; i++) await Promise.resolve() }
 async function fixture (options = {}) {
-    const handlers = new Map(), calls = [], modals = [], saves = [], messages = []
+    const handlers = new Map(), calls = [], modals = [], saves = [], messages = [], keySaves = [], keyDeletes = []
     const connect = deferred()
     const storage = {
         loadPassword: async () => options.prefill ? options.prefill.promise : 'saved-password',
         savePassword: async (...args) => { saves.push(args); if (options.saveFails) throw new Error('storage failed') },
+        deletePrivateKeyPassword: async hash => {
+            keyDeletes.push(hash)
+            if (options.deletion) await options.deletion.promise
+            if (options.deleteFails) throw new Error('secret deletion failed')
+        },
+        savePrivateKeyPassword: async (...args) => {
+            keySaves.push(args)
+            if (options.saveFails) throw new Error('secret save failed')
+        },
     }
     const bridge = {
         listen: async (name, callback) => { handlers.set(name, callback); return () => handlers.delete(name) },
@@ -58,6 +67,10 @@ async function fixture (options = {}) {
             if (command === 'ssh.authResponse' && options.acceptDuringResponse) {
                 handlers.get('ssh:passwordAccepted')?.({ requestId: request.requestId, connectionId: 'connection-1' })
             }
+            if (command === 'ssh.authResponse' && options.unlockDuringResponse) {
+                handlers.get('ssh:privateKeyUnlocked')?.({ requestId: request.requestId, connectionId: 'connection-1' })
+            }
+            if (command === 'ssh.authResponse' && options.responseFails) throw new Error('send failed')
             return null
         },
     }
@@ -96,9 +109,10 @@ async function fixture (options = {}) {
         password: { host: 'jump.test', port: 2222, username: 'resolved-user' },
     }
     return {
-        session, profile, handlers, calls, modals, saves, messages, started, connect, prompt,
+        session, profile, handlers, calls, modals, saves, keySaves, keyDeletes, messages, started, connect, prompt,
         show: () => handlers.get('ssh:authPrompt')(prompt),
         accepted: (overrides = {}) => handlers.get('ssh:passwordAccepted')({ requestId: prompt.requestId, connectionId: prompt.connectionId, ...overrides }),
+        unlocked: (overrides = {}) => handlers.get('ssh:privateKeyUnlocked')({ requestId: prompt.requestId, connectionId: prompt.connectionId, ...overrides }),
         responses: () => calls.filter(c => c.command === 'ssh.authResponse').map(c => plain(c.request)),
         finish: async () => { connect.resolve({ id: 'ssh-1', username: 'alice', usedPrivateKey: false }); await started },
     }
@@ -158,6 +172,58 @@ for (const result of [null, { value: '', remember: false }, { value: 'wrong', re
     f.connect.reject(new Error('closed')); await assert.rejects(f.started)
 }
 console.log('SSH password prompt lifecycle, consent, and persistence tests passed')
+
+function keyPrompt (f) {
+    delete f.prompt.password
+    f.prompt.privateKeyHash = 'fixture-key-hash'
+    f.prompt.name = 'Private key passphrase'
+}
+{
+    const f = await fixture()
+    keyPrompt(f); f.show(); await settle()
+    assert.equal(f.modals.length, 1, 'private key uses shared prompt')
+    assert.deepEqual(plain(f.modals[0].componentInstance), {
+        prompt: 'Private key passphrase', password: true, showRememberCheckbox: true, remember: false, value: '',
+    })
+    assert.deepEqual(f.keyDeletes, ['fixture-key-hash'])
+    f.modals[0].respond({ value: 'wrong-passphrase', remember: true }); await settle()
+    assert.equal(f.keySaves.length, 0)
+    f.prompt.requestId = 'auth-2'; f.show(); await settle()
+    f.unlocked({ requestId: 'auth-1' }); await settle()
+    assert.equal(f.keySaves.length, 0, 'retry discards rejected passphrase')
+    f.modals[1].respond({ value: 'right-passphrase', remember: true }); await settle()
+    f.unlocked({ connectionId: 'other' }); f.unlocked({ requestId: 'other' }); await settle()
+    assert.equal(f.keySaves.length, 0)
+    f.unlocked(); f.unlocked(); await settle()
+    assert.deepEqual(f.keySaves, [['fixture-key-hash', 'right-passphrase']])
+    assert.equal(f.saves.length, 0, 'private-key secret never uses connection-password storage')
+    await f.finish(); await f.session.destroy()
+}
+for (const result of [null, { value: 'passphrase', remember: false }]) {
+    const f = await fixture({ unlockDuringResponse: true })
+    keyPrompt(f); f.show(); await settle(); f.modals[0].respond(result); await settle()
+    assert.deepEqual(f.responses()[0].responses, result ? [result.value] : [])
+    assert.equal(f.keySaves.length, 0)
+    await f.finish(); await f.session.destroy()
+}
+{
+    const deletion = deferred(), f = await fixture({ deletion })
+    keyPrompt(f); f.show(); f.show(); await settle(); await f.session.destroy()
+    deletion.resolve(); await settle()
+    assert.equal(f.modals.length, 0)
+    assert.deepEqual(f.responses(), [{ requestId: 'auth-1', responses: [] }])
+    f.connect.reject(new Error('closed')); await assert.rejects(f.started)
+}
+for (const options of [{ saveFails: true, unlockDuringResponse: true }, { deleteFails: true }, { responseFails: true }]) {
+    const f = await fixture(options)
+    keyPrompt(f); f.show(); await settle()
+    f.modals[0].respond({ value: 'private-secret', remember: true }); await settle()
+    if (options.responseFails) { f.unlocked(); await settle(); assert.equal(f.keySaves.length, 0) }
+    assert.ok(f.messages.every(message => !message.includes('private-secret')))
+    await f.finish(); assert.equal(f.session.open, true)
+    await f.session.destroy()
+}
+console.log('SSH private-key prompt retry, consent, and cleanup tests passed')
 
 // Native command errors carry text in AppError.details, not Error.toString().
 {

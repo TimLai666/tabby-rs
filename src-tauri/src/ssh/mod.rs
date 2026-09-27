@@ -26,7 +26,7 @@ use rand::RngCore;
 use russh::keys::agent::client::AgentStream;
 use russh::{
     client::{self, AuthResult, Handler, KeyboardInteractiveAuthResponse},
-    keys::{agent::client::AgentClient, decode_secret_key, PrivateKeyWithHashAlg},
+    keys::{agent::client::AgentClient, PrivateKeyWithHashAlg},
     ChannelMsg, Disconnect,
 };
 use secrecy::ExposeSecret;
@@ -402,11 +402,7 @@ impl<'a> SshAuthContext for RawSshAuthContext<'a> {
         key: PrivateKeyMaterial,
     ) -> Result<bool, SshError> {
         self.private_key_accepted = false;
-        let mut text = String::from_utf8(key.openssh.clone()).map_err(|_| SshError::KeyParse)?;
-        let passphrase = key.passphrase.as_ref().map(|value| value.expose_secret());
-        let private_key = decode_secret_key(&text, passphrase.map(|value| value.as_str()));
-        text.zeroize();
-        let private_key = private_key.map_err(|_| SshError::KeyParse)?;
+        let private_key = key.decode()?;
         let result = self
             .handle
             .authenticate_publickey(
@@ -572,6 +568,7 @@ impl SshAuthenticator for ManagerAuthenticator<'_> {
                                     port: self.request.port,
                                     username: username.into(),
                                 }),
+                                private_key_hash: None,
                             },
                         )
                         .await?;
@@ -580,7 +577,7 @@ impl SshAuthenticator for ManagerAuthenticator<'_> {
                     if authenticated {
                         app.emit(
                             "ssh:passwordAccepted",
-                            SshPasswordAccepted {
+                            SshCredentialAccepted {
                                 request_id,
                                 connection_id,
                             },
@@ -593,7 +590,7 @@ impl SshAuthenticator for ManagerAuthenticator<'_> {
                     file_ref,
                     passphrase_ref,
                 } => {
-                    let material = self
+                    let mut material = match self
                         .manager
                         .load_private_key_material(
                             file_ref,
@@ -601,53 +598,86 @@ impl SshAuthenticator for ManagerAuthenticator<'_> {
                             self.secrets,
                             self.credentials,
                         )
-                        .await?;
-                    let result = match context.authenticate_private_key(username, material).await {
-                        Err(SshError::KeyParse) if passphrase_ref.is_none() => {
-                            let responses = self
-                                .manager
-                                .prompt_for_responses(
-                                    self.app.as_ref().ok_or(SshError::Closed)?,
-                                    SshAuthPrompt {
-                                        request_id: String::new(),
-                                        id: self.request.profile_id.clone(),
-                                        connection_id: self
-                                            .request
-                                            .connection_id
-                                            .clone()
-                                            .unwrap_or_else(|| self.request.profile_id.clone()),
-                                        name: "Private key passphrase".into(),
-                                        password: None,
-                                        instructions: "The private key is encrypted.".into(),
-                                        prompts: vec![SshAuthPromptItem {
-                                            text: "Passphrase".into(),
-                                            echo: false,
-                                        }],
-                                    },
-                                )
-                                .await?;
-                            let mut responses = responses;
-                            let result = if let Some(passphrase) = responses.first() {
-                                context
-                                    .authenticate_private_key(
-                                        username,
-                                        PrivateKeyMaterial {
-                                            openssh: self
-                                                .manager
-                                                .load_private_key_bytes(file_ref, self.secrets)
-                                                .await?,
-                                            passphrase: Some(secrecy::SecretString::new(
-                                                passphrase.clone(),
-                                            )),
+                        .await
+                    {
+                        Ok(material) => material,
+                        Err(SshError::KeyParse | SshError::AuthenticationRejected) => continue,
+                        Err(error) => return Err(error),
+                    };
+                    let mut prompted_request_id = None;
+                    let result = loop {
+                        match context
+                            .authenticate_private_key(username, material.clone())
+                            .await
+                        {
+                            Err(SshError::KeyPassphrase) if passphrase_ref.is_none() => {
+                                let request_id = self.manager.new_id("auth");
+                                let responses = self
+                                    .manager
+                                    .prompt_for_responses(
+                                        self.app.as_ref().ok_or(SshError::Closed)?,
+                                        SshAuthPrompt {
+                                            request_id: request_id.clone(),
+                                            id: self.request.profile_id.clone(),
+                                            connection_id: self
+                                                .request
+                                                .connection_id
+                                                .clone()
+                                                .unwrap_or_else(|| self.request.profile_id.clone()),
+                                            name: "Private key passphrase".into(),
+                                            password: None,
+                                            private_key_hash: Some(hex::encode(Sha512::digest(
+                                                &material.openssh,
+                                            ))),
+                                            instructions: "The private key is encrypted.".into(),
+                                            prompts: vec![SshAuthPromptItem {
+                                                text: "Passphrase".into(),
+                                                echo: false,
+                                            }],
                                         },
                                     )
-                                    .await
-                            } else {
-                                Err(SshError::AuthenticationRejected)
-                            };
-                            responses.zeroize();
-                            result
+                                    .await?;
+                                let mut responses = zeroize::Zeroizing::new(responses);
+                                if responses.is_empty() {
+                                    break Ok(false);
+                                }
+                                if responses.len() != 1 {
+                                    break Err(SshError::InvalidRequest(
+                                        "one passphrase response is required".into(),
+                                    ));
+                                }
+                                material.passphrase =
+                                    Some(secrecy::SecretString::new(responses[0].clone()));
+                                responses.zeroize();
+                                prompted_request_id = Some(request_id);
+                            }
+                            Ok(authenticated) => {
+                                if let Some(request_id) = prompted_request_id {
+                                    self.app
+                                        .as_ref()
+                                        .ok_or(SshError::Closed)?
+                                        .emit(
+                                            "ssh:privateKeyUnlocked",
+                                            SshCredentialAccepted {
+                                                request_id,
+                                                connection_id: self
+                                                    .request
+                                                    .connection_id
+                                                    .clone()
+                                                    .unwrap_or_else(|| {
+                                                        self.request.profile_id.clone()
+                                                    }),
+                                            },
+                                        )
+                                        .map_err(|_| SshError::Closed)?;
+                                }
+                                break Ok(authenticated);
+                            }
+                            Err(error) => break Err(error),
                         }
+                    };
+                    let result = match result {
+                        Err(SshError::KeyParse | SshError::KeyPassphrase) => Ok(false),
                         result => result,
                     };
                     if let Ok(completed) = &result {
@@ -689,6 +719,7 @@ impl SshAuthenticator for ManagerAuthenticator<'_> {
                                                 .unwrap_or_else(|| self.request.profile_id.clone()),
                                             name: prompt.name,
                                             password: None,
+                                            private_key_hash: None,
                                             instructions: prompt.instructions,
                                             prompts: prompt
                                                 .prompts
@@ -2808,7 +2839,7 @@ impl From<SshError> for crate::error::AppError {
             SshError::HostKeyRejected | SshError::HostKeyChanged => {
                 Self::PermissionDenied(error.to_string())
             }
-            SshError::AuthenticationRejected | SshError::KeyParse => {
+            SshError::AuthenticationRejected | SshError::KeyParse | SshError::KeyPassphrase => {
                 Self::PermissionDenied(error.to_string())
             }
             SshError::Connection | SshError::ChannelOpen | SshError::Closed | SshError::Timeout => {
@@ -3390,7 +3421,7 @@ mod tests {
     fn password_response_wire_contract() {
         let method: AuthMethodRef = serde_json::from_value(serde_json::json!({ "type": "promptPassword" })).unwrap();
         assert!(matches!(method, AuthMethodRef::PromptPassword));
-        let accepted = super::SshPasswordAccepted {
+        let accepted = super::SshCredentialAccepted {
             request_id: "prompt:1".into(),
             connection_id: "connection:1".into(),
         };
@@ -3455,6 +3486,104 @@ mod tests {
             file_ref: file_ref.to_string_lossy().into_owned(),
             passphrase_ref: None,
         }
+    }
+
+    #[tokio::test]
+    async fn manager_authenticator_skips_unavailable_private_key_material() {
+        let credentials = CredentialState::with_store(Arc::new(TestCredentialStore {
+            value: Some(("ssh".into(), "alice".into(), "secret-password".into())),
+        }));
+        let secrets = SecretState::default();
+        let directory = tempdir().unwrap();
+        let valid_key = directory.path().join("valid-key");
+        std::fs::write(&valid_key, b"test-private-key").unwrap();
+        let missing_key = private_key_method(&directory.path().join("missing-key"));
+        let password = AuthMethodRef::Password {
+            secret_ref: "keychain://ssh/alice".into(),
+        };
+        let unavailable = [
+            missing_key,
+            private_key_method(directory.path()),
+            AuthMethodRef::PrivateKey {
+                file_ref: "vault://missing-key".into(),
+                passphrase_ref: None,
+            },
+            AuthMethodRef::PrivateKey {
+                file_ref: valid_key.to_string_lossy().into_owned(),
+                passphrase_ref: Some("keychain://missing/passphrase".into()),
+            },
+        ];
+        for method in unavailable {
+            for fallback in [None, Some(password.clone()), Some(private_key_method(&valid_key))] {
+                let expects_key = matches!(&fallback, Some(AuthMethodRef::PrivateKey { .. }));
+                let expected = fallback.is_some();
+                let mut methods = vec![method.clone()];
+                methods.extend(fallback);
+                let authenticator = authenticator_for(directory.path(), &secrets, &credentials, methods);
+                let mut context = recording_context(true);
+                context.password_accepted = true;
+                assert_eq!(
+                    authenticator.authenticate(&mut context, "alice", &[]).await.unwrap(),
+                    expected,
+                );
+                assert_eq!(used_private_key(&authenticator), expects_key);
+                let expected_calls = if expects_key {
+                    vec!["private-key:16"]
+                } else if expected {
+                    vec!["password"]
+                } else {
+                    vec![]
+                };
+                assert_eq!(context.calls, expected_calls);
+            }
+        }
+    }
+
+    #[test]
+    fn private_key_decode_distinguishes_corruption_from_passphrase_errors() {
+        use russh::keys::{ssh_key::Algorithm, PrivateKey};
+        let key = PrivateKey::random(&mut rand::thread_rng(), Algorithm::Ed25519).unwrap();
+        let plain = key.to_openssh(Default::default()).unwrap().as_bytes().to_vec();
+        let encrypted = key.encrypt(&mut rand::thread_rng(), "fixture-passphrase").unwrap()
+            .to_openssh(Default::default()).unwrap().as_bytes().to_vec();
+        for (openssh, passphrase, expected) in [
+            (plain, None, None),
+            (encrypted.clone(), None, Some("keyPassphrase")),
+            (encrypted.clone(), Some("wrong"), Some("keyPassphrase")),
+            (encrypted, Some("fixture-passphrase"), None),
+            (b"not a key".to_vec(), None, Some("keyParse")),
+            (vec![0xff], None, Some("keyParse")),
+            (b"PuTTY-User-Key-File-2: ssh-ed25519\nEncryption: aes256-cbc\n".to_vec(), None, Some("keyPassphrase")),
+            (b"PuTTY-User-Key-File-2: unsupported\n".to_vec(), None, Some("keyParse")),
+        ] {
+            let material = PrivateKeyMaterial {
+                openssh,
+                passphrase: passphrase.map(|value| SecretString::new(value.into())),
+            };
+            assert_eq!(material.decode().err().map(|error| error.code()), expected);
+        }
+    }
+
+    #[tokio::test]
+    async fn manager_authenticator_rejects_invalid_private_key_passphrase_reference() {
+        let credentials = CredentialState::with_store(Arc::new(TestCredentialStore::default()));
+        let secrets = SecretState::default();
+        let directory = tempdir().unwrap();
+        let key = directory.path().join("key");
+        std::fs::write(&key, b"test-private-key").unwrap();
+        let authenticator = authenticator_for(directory.path(), &secrets, &credentials, vec![
+            AuthMethodRef::PrivateKey {
+                file_ref: key.to_string_lossy().into_owned(),
+                passphrase_ref: Some("invalid-reference".into()),
+            },
+            AuthMethodRef::KeyboardInteractive,
+        ]);
+        let mut context = recording_context(true);
+        assert!(matches!(
+            authenticator.authenticate(&mut context, "alice", &[]).await,
+            Err(SshError::InvalidRequest(_))
+        ));
+        assert!(context.calls.is_empty());
     }
 
     #[tokio::test]
@@ -3657,10 +3786,11 @@ mod tests {
             vec![private_key_method(&directory.path().join("missing_key"))],
         );
         let mut context = recording_context(true);
-        assert!(unreadable
+        assert!(!unreadable
             .authenticate(&mut context, "alice", &[])
             .await
-            .is_err());
+            .unwrap());
+        assert!(context.calls.is_empty());
         assert!(!used_private_key(&unreadable));
     }
 

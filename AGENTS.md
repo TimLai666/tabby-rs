@@ -26,10 +26,9 @@
 - `tabby-tauri/src/services/winscp.service.ts` converts only configured keys, so
   such sessions open WinSCP without a key. Verify this flow against the fixed
   upstream baseline before claiming WinSCP parity.
-- `src-tauri/src/ssh/mod.rs` uses and zeroizes a prompted key passphrase without
-  saving it. WinSCP conversion reads only saved passphrases, so a key unlocked by
-  that prompt can fail conversion. Check upstream reuse and consent behavior
-  before changing passphrase persistence.
+- Private-key prompts now offer Remember and save the passphrase after the native
+  decoder unlocks the key. WinSCP conversion reads saved passphrases; verify reuse
+  on Windows and compare unchecked Remember behavior with upstream before acceptance.
 
 ## Pending — full-repo lint fails on `tabby-local/src/session.ts`
 
@@ -71,8 +70,15 @@
 - `passwordSecretRef` uses `root` when the profile username is empty. Match credential
   lookup to the username actually resolved by the native connection before accepting
   stored-password parity for profiles without a username.
-- `ManagerAuthenticator::authenticate` still propagates private-key loading/parsing
-  errors before trying later keys or other methods. Upstream skips unusable key files.
+- Private-key passphrases now use the shared masked prompt with Remember and retry.
+  Renderer tests cover cancellation, consent, retries, stale events, and storage errors.
+  A macOS desktop loopback test verifies wrong-then-correct passphrase entry and
+  successful key authentication. Reading the isolated synthetic Keychain entry verifies
+  the remembered value. Restart reuse, native cancellation/fallback, Vault, and other
+  supported platforms still need acceptance.
+- Missing/unreadable and malformed private keys now fall through to later methods.
+  Unit and loopback tests cover this behavior, including successful password fallback.
+  Desktop jump-host acceptance still needs verification.
 - Automatic and explicit password modes now use the shared `PromptModalComponent`.
   Browser checks cover masked input, Remember, Enter, OK, and Esc with simulated native
   events. A macOS desktop loopback SSH test verifies actual prompt delivery, Enter

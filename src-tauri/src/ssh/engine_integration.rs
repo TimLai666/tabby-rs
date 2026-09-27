@@ -761,7 +761,10 @@ impl client::Handler for PinnedHostKeyClient {
 }
 
 #[cfg(unix)]
-async fn run_manager_missing_agent(with_password: bool) -> (Result<(), crate::ssh::SshError>, usize) {
+async fn run_manager_auth_fallback(
+    with_password: bool,
+    with_unavailable_keys: bool,
+) -> (Result<(), crate::ssh::SshError>, usize) {
     use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
     use crate::security::{CredentialState, SecretState, VaultSnapshot, VaultSnapshotSecret};
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -786,7 +789,20 @@ async fn run_manager_missing_agent(with_password: bool) -> (Result<(), crate::ss
         )
         .expect("initialize in-memory vault");
     let selector = serde_json::json!({ "type": "password", "key": key });
-    let mut auth = vec![serde_json::json!({ "type": "agent", "socket": missing_socket })];
+    let mut auth = Vec::new();
+    if with_unavailable_keys {
+        let malformed_key = directory.path().join("malformed-key");
+        fs::write(&malformed_key, b"not a private key").expect("write malformed key fixture");
+        for file_ref in [
+            directory.path().join("missing-key").to_string_lossy().into_owned(),
+            directory.path().to_string_lossy().into_owned(),
+            "vault://missing-key".into(),
+            malformed_key.to_string_lossy().into_owned(),
+        ] {
+            auth.push(serde_json::json!({ "type": "privateKey", "fileRef": file_ref }));
+        }
+    }
+    auth.push(serde_json::json!({ "type": "agent", "socket": missing_socket }));
     if with_password {
         auth.push(serde_json::json!({ "type": "keyboardInteractive" }));
         auth.push(serde_json::json!({
@@ -879,14 +895,27 @@ async fn run_manager_missing_agent(with_password: bool) -> (Result<(), crate::ss
 #[tokio::test]
 #[ignore = "requires SSH authentication fixture; run yarn test:ssh-auth-integration"]
 async fn manager_authenticator_missing_agent_falls_back_to_password() {
-    let (result, attempts) = run_manager_missing_agent(true).await;
+    let (result, attempts) = run_manager_auth_fallback(true, false).await;
     assert!(result.is_ok(), "missing agent must fall back: {result:?}");
     assert_eq!(attempts, 1);
 
-    let (result, attempts) = run_manager_missing_agent(false).await;
+    let (result, attempts) = run_manager_auth_fallback(false, false).await;
     assert!(
         matches!(result, Err(crate::ssh::SshError::AuthenticationRejected)),
         "missing agent without password must be rejected: {result:?}"
     );
+    assert_eq!(attempts, 0);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+#[ignore = "requires SSH authentication fixture; run yarn test:ssh-auth-integration"]
+async fn manager_authenticator_unavailable_keys_fall_back_to_password() {
+    let (result, attempts) = run_manager_auth_fallback(true, true).await;
+    assert!(result.is_ok(), "unavailable keys must fall back: {result:?}");
+    assert_eq!(attempts, 1);
+
+    let (result, attempts) = run_manager_auth_fallback(false, true).await;
+    assert!(matches!(result, Err(crate::ssh::SshError::AuthenticationRejected)));
     assert_eq!(attempts, 0);
 }

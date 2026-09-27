@@ -246,6 +246,8 @@ pub struct SshAuthPrompt {
     pub prompts: Vec<SshAuthPromptItem>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub password: Option<SshPasswordPromptTarget>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub private_key_hash: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -258,7 +260,7 @@ pub struct SshPasswordPromptTarget {
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SshPasswordAccepted {
+pub struct SshCredentialAccepted {
     pub request_id: String,
     pub connection_id: String,
 }
@@ -291,6 +293,8 @@ pub enum SshError {
     AuthenticationRejected,
     #[error("SSH private key could not be parsed")]
     KeyParse,
+    #[error("SSH private key requires a valid passphrase")]
+    KeyPassphrase,
     #[error("SSH shell channel could not be opened")]
     ChannelOpen,
     #[error("SSH session was closed")]
@@ -312,6 +316,7 @@ impl SshError {
             Self::HostKeyChanged => "hostKeyChanged",
             Self::AuthenticationRejected => "authenticationRejected",
             Self::KeyParse => "keyParse",
+            Self::KeyPassphrase => "keyPassphrase",
             Self::ChannelOpen => "channelOpen",
             Self::Closed => "closed",
             Self::Timeout => "timeout",

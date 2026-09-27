@@ -36,6 +36,30 @@ pub struct PrivateKeyMaterial {
     pub passphrase: Option<SecretString>,
 }
 
+impl PrivateKeyMaterial {
+    pub(super) fn decode(&self) -> Result<russh::keys::PrivateKey, SshError> {
+        use russh::keys::{ssh_key, Error};
+        let text = std::str::from_utf8(&self.openssh).map_err(|_| SshError::KeyParse)?;
+        let passphrase = self
+            .passphrase
+            .as_ref()
+            .map(|value| secrecy::ExposeSecret::expose_secret(value).as_str());
+        russh::keys::decode_secret_key(text, passphrase).map_err(|error| match error {
+            Error::KeyIsEncrypted | Error::SshKey(ssh_key::Error::Crypto) => {
+                SshError::KeyPassphrase
+            }
+            // The pinned ssh-key fork does not export PpkParseError. Match only
+            // the two variants upstream Tabby treats as passphrase failures.
+            Error::SshKey(ssh_key::Error::Ppk(error))
+                if matches!(format!("{error:?}").as_str(), "Encrypted" | "IncorrectMac") =>
+            {
+                SshError::KeyPassphrase
+            }
+            _ => SshError::KeyParse,
+        })
+    }
+}
+
 impl fmt::Debug for PrivateKeyMaterial {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -377,14 +401,7 @@ where
         key: PrivateKeyMaterial,
     ) -> Result<bool, SshError> {
         self.private_key_accepted = false;
-        let mut text = String::from_utf8(key.openssh.clone()).map_err(|_| SshError::KeyParse)?;
-        let passphrase = key
-            .passphrase
-            .as_ref()
-            .map(|value| secrecy::ExposeSecret::expose_secret(value).as_str());
-        let private_key = russh::keys::decode_secret_key(&text, passphrase);
-        text.zeroize();
-        let private_key = private_key.map_err(|_| SshError::KeyParse)?;
+        let private_key = key.decode()?;
         let result = self
             .handle
             .authenticate_publickey(

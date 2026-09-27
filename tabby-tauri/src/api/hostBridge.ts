@@ -626,6 +626,7 @@ export interface SshAuthPrompt {
     instructions: string
     prompts: { text: string; echo: boolean }[]
     password?: { host: string; port: number; username: string }
+    privateKeyHash?: string
 }
 
 export interface SshOutputEvent {
@@ -1282,6 +1283,7 @@ export interface HostEventMap {
     'ssh:hostKeyPrompt': SshHostKeyPrompt
     'ssh:authPrompt': SshAuthPrompt
     'ssh:passwordAccepted': { requestId: string; connectionId: string }
+    'ssh:privateKeyUnlocked': { requestId: string; connectionId: string }
     'ssh:output': SshOutputEvent
     'ssh:exit': SshExitEvent
     'ssh:forwardingChanged': SshForwardingInfo
