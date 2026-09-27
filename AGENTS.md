@@ -334,3 +334,27 @@
 - Direct authentication shares a 120-second deadline across username, password, and key
   prompts; jump authentication does not share that deadline. Verify slow interactive
   login against upstream before accepting timeout parity.
+
+## Pending — Telnet and serial login scripts and desktop connection startup
+
+- Tauri Telnet and serial profiles now expose the shared Login scripts editor and
+  configure the existing session processor. Successful connection runs unconditional
+  scripts before draining early output, matching `14e2d60`. The new
+  `scripts/test-connector-login-scripts.mjs` runs real session and middleware code
+  with a simulated native bridge. It verifies ordered initial/prompt scripts,
+  early output, once-only execution, preserved profile data, failed/cancelled
+  connections, and legacy profiles without scripts for both protocols.
+- `tabby-tauri/src/index.ts` imports the core and terminal Angular modules so shared
+  settings components render. macOS desktop checks show the login-script rows,
+  input/stream controls, and serial reconnect toggle. Search and terminal-toolbar
+  interactions still need desktop acceptance.
+- Desktop connection verification is blocked by the existing `readline: false`
+  fallback in `app/webpack.config.tauri.mjs:99`. Telnet startup throws
+  `readline.clearLine is not a function` in cli-spinner before native connection.
+  Serial uses the same spinner, and stream processing also requires readline.
+  The Node session tests use real Node readline and cannot detect this bundle gap.
+  Fix browser readline support and verify actual Telnet/serial script exchanges
+  before accepting connector parity. The macOS fixture has no successful exchange.
+- Script deletion persistence, serial automatic-reconnect script behavior, original
+  serial slow-send support, and other platforms remain unaccepted. Do not infer
+  full connector parity from the session tests or rendered settings controls.

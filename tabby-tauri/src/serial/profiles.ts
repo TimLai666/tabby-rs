@@ -26,6 +26,7 @@ export class TauriSerialProfilesService extends QuickConnectProfileProvider<Taur
             outputNewlines: null,
             maxInputLineLength: 64 * 1024,
             preserveOutputHexdumpOffset: true,
+            scripts: [],
             input: { backspace: 'backspace' },
         },
         clearServiceMessagesOnConnect: false,

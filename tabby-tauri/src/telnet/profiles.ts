@@ -23,6 +23,7 @@ export class TauriTelnetProfilesService extends QuickConnectProfileProvider<Taur
             outputMode: null,
             inputNewlines: null,
             outputNewlines: 'crlf',
+            scripts: [],
             input: { backspace: 'backspace' },
         },
         clearServiceMessagesOnConnect: false,

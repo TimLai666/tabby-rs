@@ -56,6 +56,7 @@ export class TauriTelnetSession extends BaseSession {
         this.middleware.push(new TelnetEncodingMiddleware(profile.options.encoding || 'utf-8'))
         this.middleware.push(this.streamProcessor)
         this.middleware.push(new InputProcessor(profile.options.input))
+        this.setLoginScriptsOptions({ scripts: profile.options.scripts ?? [] })
     }
 
     async start (): Promise<void> {
@@ -117,6 +118,7 @@ export class TauriTelnetSession extends BaseSession {
         }
         this.id = info.id
         this.open = true
+        this.loginScriptProcessor?.executeUnconditionalScripts()
         for (const data of this.pendingOutput.splice(0)) {
             this.emitOutput(Buffer.from(data))
         }

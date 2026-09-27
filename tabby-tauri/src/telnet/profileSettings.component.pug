@@ -19,6 +19,10 @@ ul.nav-tabs(ngbNav, #nav='ngbNav')
                 input.form-control(type='number', [(ngModel)]='profile.options.connectTimeoutMs')
             stream-processing-settings([options]='profile.options')
     li(ngbNavItem)
+        a(ngbNavLink, translate) Login scripts
+        ng-template(ngbNavContent)
+            login-scripts-settings([options]='profile.options')
+    li(ngbNavItem)
         a(ngbNavLink, translate) Input
         ng-template(ngbNavContent)
             input-processing-settings([options]='profile.options.input')

@@ -306,6 +306,9 @@ jobs:
       - name: Test SSH session routing contract
         run: yarn test:ssh-session
 
+      - name: Test Telnet and serial login scripts
+        run: yarn test:connector-login-scripts
+
       - name: Test SSH reconnect contract
         run: yarn test:ssh-reconnect
 
@@ -428,6 +431,9 @@ jobs:
 
       - name: Test SSH session routing contract
         run: yarn test:ssh-session
+
+      - name: Test Telnet and serial login scripts
+        run: yarn test:connector-login-scripts
 
       - name: Test SSH reconnect contract
         run: yarn test:ssh-reconnect

@@ -65,6 +65,10 @@ ul.nav-tabs(ngbNav, #nav='ngbNav')
                     .title(translate) Maximum delay (ms)
                 input.form-control(type='number', [(ngModel)]='profile.options.reconnect.maxDelayMs')
     li(ngbNavItem)
+        a(ngbNavLink, translate) Login scripts
+        ng-template(ngbNavContent)
+            login-scripts-settings([options]='profile.options')
+    li(ngbNavItem)
         a(ngbNavLink, translate) Input
         ng-template(ngbNavContent)
             input-processing-settings([options]='profile.options.input')

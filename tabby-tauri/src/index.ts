@@ -2,7 +2,7 @@ import { CommonModule } from '@angular/common'
 import { APP_INITIALIZER, NgModule } from '@angular/core'
 import { FormsModule } from '@angular/forms'
 import { NgbModule } from '@ng-bootstrap/ng-bootstrap'
-import {
+import TabbyCoreModule, {
     ConfigProvider,
     DockingService,
     FileProvider,
@@ -68,7 +68,7 @@ import { TauriNotificationsService } from './services/notifications.service'
 import { TauriVaultService } from './services/vault.service'
 import { TauriPathDropDecorator } from './pathDrop'
 import { TauriExportTerminalContextMenu } from './terminalContextMenu'
-import { TerminalContextMenuItemProvider, TerminalDecorator } from 'tabby-terminal'
+import TabbyTerminalModule, { TerminalContextMenuItemProvider, TerminalDecorator } from 'tabby-terminal'
 import { KeyboardInteractiveAuthComponent } from '../../tabby-ssh/src/components/keyboardInteractiveAuthPanel.component'
 import { TauriSshHostKeyPromptModalComponent } from './ssh/hostKeyPromptModal.component'
 import { TauriSshImportModalComponent } from './ssh/importModal.component'
@@ -106,7 +106,7 @@ function initializeDesktop (service: TauriDesktopIntegrationService): () => Prom
 }
 
 @NgModule({
-    imports: [CommonModule, FormsModule, NgbModule, KeyboardInteractiveAuthComponent],
+    imports: [CommonModule, FormsModule, NgbModule, TabbyCoreModule, TabbyTerminalModule, KeyboardInteractiveAuthComponent],
     declarations: [
         IdentitySettingsTabComponent,
         TauriDiagnosticsSettingsTabComponent,

@@ -1,10 +1,10 @@
-import { ConnectableTerminalProfile, InputProcessingOptions, StreamProcessingOptions } from 'tabby-terminal'
+import { ConnectableTerminalProfile, InputProcessingOptions, LoginScriptsOptions, StreamProcessingOptions } from 'tabby-terminal'
 
 export interface TauriSerialProfile extends ConnectableTerminalProfile {
     options: TauriSerialProfileOptions
 }
 
-export interface TauriSerialProfileOptions extends StreamProcessingOptions {
+export interface TauriSerialProfileOptions extends StreamProcessingOptions, LoginScriptsOptions {
     port: string|null
     baudRate: number|null
     dataBits: 5|6|7|8
