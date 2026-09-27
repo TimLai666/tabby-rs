@@ -716,3 +716,163 @@ async fn x11_forwarding_consent() {
         }
     }
 }
+
+#[cfg(unix)]
+struct CountingPasswordServer {
+    inner: AuthFixtureServer,
+    attempts: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+#[cfg(unix)]
+impl ServerHandler for CountingPasswordServer {
+    type Error = russh::Error;
+
+    async fn auth_password(&mut self, user: &str, password: &str) -> Result<Auth, Self::Error> {
+        self.attempts
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.inner.auth_password(user, password).await
+    }
+}
+
+#[cfg(unix)]
+struct PinnedHostKeyClient(PublicKey);
+
+#[cfg(unix)]
+impl client::Handler for PinnedHostKeyClient {
+    type Error = russh::Error;
+
+    async fn check_server_key(&mut self, key: &PublicKey) -> Result<bool, Self::Error> {
+        Ok(key.key_data() == self.0.key_data())
+    }
+}
+
+#[cfg(unix)]
+async fn run_manager_missing_agent(with_password: bool) -> (Result<(), crate::ssh::SshError>, usize) {
+    use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
+    use crate::security::{CredentialState, SecretState, VaultSnapshot, VaultSnapshotSecret};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    const IO: Duration = Duration::from_secs(10);
+    let directory = tempdir().expect("create manager fallback directory");
+    let missing_socket = directory.path().join("missing-agent.sock");
+    let key = serde_json::json!({ "user": "fixture-user", "host": "127.0.0.1", "port": 22 });
+    let secrets = SecretState::default();
+    secrets
+        .replace(
+            VaultSnapshot {
+                config: serde_json::Value::Null,
+                secrets: vec![VaultSnapshotSecret {
+                    r#type: "password".into(),
+                    key: key.as_object().expect("vault key object").clone(),
+                    value: "fixture-secret".into(),
+                }],
+            },
+            SecretString::new("vault-passphrase".into()),
+            Duration::from_secs(60),
+        )
+        .expect("initialize in-memory vault");
+    let selector = serde_json::json!({ "type": "password", "key": key });
+    let mut auth = vec![serde_json::json!({ "type": "agent", "socket": missing_socket })];
+    if with_password {
+        auth.push(serde_json::json!({ "type": "keyboardInteractive" }));
+        auth.push(serde_json::json!({
+            "type": "password",
+            "secretRef": format!("vault-secret://{}", BASE64_STANDARD.encode(selector.to_string())),
+        }));
+    }
+
+    let host_key = HostKeyAlgorithm::Ed25519.generate();
+    let host_public_key = host_key.public_key().clone();
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .expect("bind manager fallback fixture");
+    let port = listener.local_addr().expect("read fixture address").port();
+    let request: crate::ssh::SshConnectRequest = serde_json::from_value(serde_json::json!({
+        "profileId": "ssh:fixture",
+        "host": "127.0.0.1",
+        "port": port,
+        "username": "fixture-user",
+        "auth": auth,
+        "terminal": { "term": "xterm-256color", "columns": 80, "rows": 24 },
+    }))
+    .expect("parse fixture request");
+    let mut config = server::Config::default();
+    config.keys.push(host_key);
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let handler = CountingPasswordServer {
+        inner: AuthFixtureServer {
+            kind: AuthFixtureKind::Password,
+            expected: "fixture-secret".into(),
+            authorized_public_key: None,
+        },
+        attempts: Arc::clone(&attempts),
+    };
+    let mut tasks = tokio::task::JoinSet::new();
+    tasks.spawn(async move {
+        let (tcp, _) = listener.accept().await.expect("accept manager fallback");
+        if let Ok(session) = server::run_stream(Arc::new(config), tcp, handler).await {
+            let _ = session.await;
+        }
+    });
+
+    let credentials = CredentialState::default();
+    let authenticator = super::ManagerAuthenticator {
+        manager: super::SshManager::new(directory.path().join("known_hosts")),
+        app: None,
+        request,
+        secrets: &secrets,
+        credentials: &credentials,
+        used_private_key: std::sync::Mutex::new(false),
+    };
+    let engine = super::engine::RusshEngine::new(client::Config::default(), IO);
+    let connected = tokio::time::timeout(
+        IO,
+        engine.connect_with_handler(
+            &SshTarget {
+                host: "127.0.0.1".into(),
+                port,
+                username: "fixture-user".into(),
+            },
+            PinnedHostKeyClient(host_public_key),
+            Arc::new(std::sync::Mutex::new(None)),
+            &authenticator,
+        ),
+    )
+    .await
+    .expect("manager fallback connection timed out");
+    let result = match connected {
+        Ok(handle) => {
+            tokio::time::timeout(
+                IO,
+                handle.disconnect(russh::Disconnect::ByApplication, "", "en"),
+            )
+            .await
+            .expect("disconnect timed out")
+            .expect("disconnect failed");
+            Ok(())
+        }
+        Err(error) => Err(error),
+    };
+    tokio::time::timeout(IO, tasks.join_next())
+        .await
+        .expect("manager fallback fixture did not stop")
+        .expect("manager fallback fixture task missing")
+        .expect("manager fallback fixture task panicked");
+    (result, attempts.load(Ordering::SeqCst))
+}
+
+#[cfg(unix)]
+#[tokio::test]
+#[ignore = "requires SSH authentication fixture; run yarn test:ssh-auth-integration"]
+async fn manager_authenticator_missing_agent_falls_back_to_password() {
+    let (result, attempts) = run_manager_missing_agent(true).await;
+    assert!(result.is_ok(), "missing agent must fall back: {result:?}");
+    assert_eq!(attempts, 1);
+
+    let (result, attempts) = run_manager_missing_agent(false).await;
+    assert!(
+        matches!(result, Err(crate::ssh::SshError::AuthenticationRejected)),
+        "missing agent without password must be rejected: {result:?}"
+    );
+    assert_eq!(attempts, 0);
+}

@@ -63,3 +63,21 @@
   `X11Socket.resolveDisplaySpec` treats values of 100 or greater as raw TCP ports.
 - Verify the SSH close confirmation in the real desktop UI and validate agent/X11
   behavior on the supported operating systems before accepting complete parity.
+
+## Pending — SSH password prompts and automatic authentication parity
+
+- `tabby-tauri/src/ssh/session.ts:260` builds automatic authentication candidates from
+  keys, agent, keyboard-interactive, and a stored-password reference. It still lacks
+  upstream `14e2d60`'s prompted password, remember-password choice, and reuse of an
+  explicitly configured profile password. Explicit password mode also lacks prompting.
+- `passwordSecretRef` uses `root` when the profile username is empty. Match credential
+  lookup to the username actually resolved by the native connection before accepting
+  stored-password parity for profiles without a username.
+- `ManagerAuthenticator::authenticate` still propagates private-key loading/parsing
+  errors before trying later keys or other methods. Upstream skips unusable key files.
+- Verify password prompting and cancellation through the existing SSH auth dialog,
+  including jump hosts. Do not treat agent fallback or the stored-password candidate
+  as complete SSH authentication parity.
+- The agent/stored-password fallback patch has local tests and primary-agent review.
+  Independent review remains pending because OpenCode, agy, and Claude CLI each reached
+  their usage limits. Complete that review before shipping this patch.

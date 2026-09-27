@@ -179,7 +179,7 @@ async function runAllTests () {
         console.log('  PASS: config mutation second call uses latest')
     }
 
-    // 9. automatic auth: privateKey -> agent -> keyboardInteractive ordering
+    // 9. automatic auth: keys, agent, keyboard-interactive, then stored password
     {
         const profile = { id: 'target', options: { host: 'h', port: 22, user: 'u', input: {}, privateKeys: ['/key1'], forwardedPorts: [], keepaliveInterval: 0, keepaliveCountMax: 0, jumpHost: null, auth: null } }
         const config = { store: { ssh: { agentType: 'auto', agentPath: null, x11Display: null } } }
@@ -189,6 +189,16 @@ async function runAllTests () {
         assert.equal(auth[0].type, 'privateKey', 'ordering: first privateKey')
         assert.equal(auth[1].type, 'agent', 'ordering: second agent')
         assert.equal(auth[2].type, 'keyboardInteractive', 'ordering: third keyboardInteractive')
+        assert.ok(auth[3], 'automatic auth includes a stored password candidate')
+        assert.deepEqual(normalize(auth[3]), { type: 'password', secretRef: 'keychain://ssh@h:22/u' })
+        assert.equal(auth.length, 4)
+        session.vault.isEnabled = () => true
+        const vaultAuth = await session.authForOptions(profile.options)
+        const vaultRef = vaultAuth[3].secretRef
+        assert.ok(vaultRef.startsWith('vault-secret://'))
+        assert.deepEqual(JSON.parse(Buffer.from(vaultRef.slice('vault-secret://'.length), 'base64').toString()), {
+            type: 'password', key: { user: 'u', host: 'h', port: 22 },
+        })
         console.log('  PASS: automatic auth ordering preserved')
     }
 
@@ -243,6 +253,14 @@ async function runAllTests () {
         assert.deepEqual(normalize(resolveCalls[1].req), { agentType: 'auto', agentPath: null })
         const jumpAuth = chain[0].auth.find(a => a.type === 'agent')
         assert.equal(jumpAuth.socket, '/agent.sock', 'jump hop uses resolved socket')
+        assert.equal(chain[0].auth.some(a => a.type === 'password'), false, 'explicit agent has no password fallback')
+        jumpProfile.options.auth = null
+        jumpProfile.options.port = 2222
+        jumpProfile.options.user = 'hop-user'
+        const automaticChain = await session.jumpChain(profile.options.jumpHost)
+        assert.deepEqual(normalize(automaticChain[0].auth.at(-1)), {
+            type: 'password', secretRef: 'keychain://ssh@jump:2222/hop-user',
+        }, 'automatic hop uses its own stored password')
         console.log('  PASS: jumpChain invokes resolver per hop')
     }
 
@@ -259,8 +277,8 @@ async function runAllTests () {
         { name: 'password+forward', auth: 'password', forward: true, config: customAgent, resolved: '/custom.sock', expectedAuth: passwordAuth, forwarding: { socket: '/custom.sock' }, resolverCalls: 1 },
         { name: 'publicKey+forward', auth: 'publicKey', forward: true, config: customAgent, resolved: '/custom.sock', expectedAuth: [keyAuth], forwarding: { socket: '/custom.sock' }, resolverCalls: 1 },
         { name: 'keyboardInteractive+forward', auth: 'keyboardInteractive', forward: true, config: customAgent, resolved: '/custom.sock', expectedAuth: [{ type: 'keyboardInteractive' }], forwarding: { socket: '/custom.sock' }, resolverCalls: 1 },
-        { name: 'auto+forward reuses socket', auth: null, forward: true, config: autoAgent, resolved: '/auto.sock', expectedAuth: [keyAuth, { type: 'agent', socket: '/auto.sock' }, { type: 'keyboardInteractive' }], forwarding: { socket: '/auto.sock' }, resolverCalls: 1 },
-        { name: 'auto+forward reuses null', auth: null, forward: true, config: autoAgent, resolved: null, expectedAuth: [keyAuth, { type: 'agent', socket: null }, { type: 'keyboardInteractive' }], forwarding: { socket: null }, resolverCalls: 1 },
+        { name: 'auto+forward reuses socket', auth: null, forward: true, config: autoAgent, resolved: '/auto.sock', expectedAuth: [keyAuth, { type: 'agent', socket: '/auto.sock' }, { type: 'keyboardInteractive' }, ...passwordAuth], forwarding: { socket: '/auto.sock' }, resolverCalls: 1 },
+        { name: 'auto+forward reuses null', auth: null, forward: true, config: autoAgent, resolved: null, expectedAuth: [keyAuth, { type: 'agent', socket: null }, { type: 'keyboardInteractive' }, ...passwordAuth], forwarding: { socket: null }, resolverCalls: 1 },
         { name: 'agent(Pageant)+forward reuses null', auth: 'agent', forward: true, config: { agentType: 'pageant', agentPath: null }, resolved: null, expectedAuth: [{ type: 'agent', socket: null }], forwarding: { socket: null }, resolverCalls: 1 },
         { name: 'password+forward false', auth: 'password', forward: false, config: autoAgent, expectedAuth: passwordAuth, forwarding: null, resolverCalls: 0 },
         { name: 'password+forward absent', auth: 'password', forward: undefined, config: autoAgent, expectedAuth: passwordAuth, forwarding: null, resolverCalls: 0 },

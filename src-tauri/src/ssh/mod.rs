@@ -539,8 +539,11 @@ impl SshAuthenticator for ManagerAuthenticator<'_> {
         for method in methods {
             let result = match method {
                 AuthMethodRef::Password { secret_ref } => {
-                    let password = resolve_secret_ref(secret_ref, self.secrets, self.credentials)?;
-                    context.authenticate_password(username, &password).await
+                    match resolve_secret_ref(secret_ref, self.secrets, self.credentials) {
+                        Ok(password) => context.authenticate_password(username, &password).await,
+                        Err(SshError::AuthenticationRejected) => Ok(false),
+                        Err(error) => Err(error),
+                    }
                 }
                 AuthMethodRef::PrivateKey {
                     file_ref,
@@ -610,9 +613,13 @@ impl SshAuthenticator for ManagerAuthenticator<'_> {
                     result
                 }
                 AuthMethodRef::Agent { socket } => {
-                    context
+                    match context
                         .authenticate_agent(username, socket.as_deref())
                         .await
+                    {
+                        Err(SshError::AuthenticationRejected) => Ok(false),
+                        result => result,
+                    }
                 }
                 AuthMethodRef::KeyboardInteractive => {
                     let mut response = context
@@ -2819,6 +2826,7 @@ mod tests {
         private_key_passphrase: Option<String>,
         private_key_result: bool,
         private_key_accepted: bool,
+        agent_error: Option<fn() -> SshError>,
     }
 
     #[async_trait]
@@ -2863,7 +2871,10 @@ mod tests {
         ) -> Result<bool, SshError> {
             self.calls
                 .push(format!("agent:{}", socket.unwrap_or("default")));
-            Ok(true)
+            match self.agent_error {
+                Some(error) => Err(error()),
+                None => Ok(true),
+            }
         }
 
         async fn authenticate_keyboard_interactive_start(
@@ -3097,6 +3108,7 @@ mod tests {
             private_key_passphrase: None,
             private_key_result: true,
             private_key_accepted: false,
+            agent_error: None,
         };
 
         assert!(authenticator
@@ -3142,6 +3154,7 @@ mod tests {
             private_key_passphrase: None,
             private_key_result: true,
             private_key_accepted: false,
+            agent_error: None,
         };
 
         assert!(authenticator
@@ -3207,6 +3220,7 @@ mod tests {
             private_key_passphrase: None,
             private_key_result: true,
             private_key_accepted: false,
+            agent_error: None,
         };
         assert!(authenticator
             .authenticate(&mut context, "alice", &[])
@@ -3231,6 +3245,7 @@ mod tests {
             private_key_passphrase: None,
             private_key_result: true,
             private_key_accepted: false,
+            agent_error: None,
         };
         assert!(authenticator
             .authenticate(&mut context, "alice", &[])
@@ -3247,6 +3262,7 @@ mod tests {
             private_key_passphrase: None,
             private_key_result,
             private_key_accepted: false,
+            agent_error: None,
         }
     }
 
@@ -3270,6 +3286,57 @@ mod tests {
 
     fn used_private_key(authenticator: &ManagerAuthenticator<'_>) -> bool {
         *authenticator.used_private_key.lock().unwrap()
+    }
+
+    #[tokio::test]
+    async fn manager_authenticator_skips_missing_saved_password() {
+        let credentials = CredentialState::with_store(Arc::new(TestCredentialStore::default()));
+        let secrets = SecretState::default();
+        let directory = tempdir().unwrap();
+        let password = AuthMethodRef::Password {
+            secret_ref: "keychain://ssh/alice".into(),
+        };
+        for fallback in [false, true] {
+            let mut methods = vec![password.clone()];
+            if fallback {
+                methods.push(AuthMethodRef::KeyboardInteractive);
+            }
+            let authenticator =
+                authenticator_for(directory.path(), &secrets, &credentials, methods);
+            let mut context = recording_context(false);
+            assert_eq!(
+                authenticator
+                    .authenticate(&mut context, "alice", &[])
+                    .await
+                    .unwrap(),
+                fallback
+            );
+            assert_eq!(
+                context.calls,
+                if fallback {
+                    vec!["keyboard-interactive"]
+                } else {
+                    vec![]
+                }
+            );
+        }
+        let authenticator = authenticator_for(
+            directory.path(),
+            &secrets,
+            &credentials,
+            vec![
+                AuthMethodRef::Password {
+                    secret_ref: "invalid-reference".into(),
+                },
+                AuthMethodRef::KeyboardInteractive,
+            ],
+        );
+        let mut context = recording_context(false);
+        assert!(matches!(
+            authenticator.authenticate(&mut context, "alice", &[]).await,
+            Err(SshError::InvalidRequest(_))
+        ));
+        assert!(context.calls.is_empty());
     }
 
     fn private_key_method(file_ref: &std::path::Path) -> AuthMethodRef {
@@ -3342,6 +3409,79 @@ mod tests {
                 !used_private_key(&authenticator),
                 "{label} success must not report a private key"
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn manager_authenticator_continues_after_rejected_agent() {
+        let mut credentials = TestCredentialStore::default();
+        credentials.value = Some(("ssh".into(), "alice".into(), "secret-password".into()));
+        let credentials = CredentialState::with_store(Arc::new(credentials));
+        let secrets = SecretState::default();
+        let directory = tempdir().unwrap();
+        let agent = AuthMethodRef::Agent { socket: None };
+        let password = AuthMethodRef::Password {
+            secret_ref: "keychain://ssh/alice".into(),
+        };
+        let cases: Vec<(Vec<AuthMethodRef>, bool, Vec<&str>)> = vec![
+            (
+                vec![agent.clone(), AuthMethodRef::KeyboardInteractive],
+                true,
+                vec!["agent:default", "keyboard-interactive"],
+            ),
+            (
+                vec![agent.clone(), password],
+                true,
+                vec!["agent:default", "password"],
+            ),
+            (vec![agent], false, vec!["agent:default"]),
+        ];
+
+        for (auth, expected, expected_calls) in cases {
+            let authenticator = authenticator_for(directory.path(), &secrets, &credentials, auth);
+            let mut context = recording_context(true);
+            context.password_accepted = true;
+            context.agent_error = Some(|| SshError::AuthenticationRejected);
+            assert_eq!(
+                authenticator
+                    .authenticate(&mut context, "alice", &[])
+                    .await
+                    .unwrap(),
+                expected
+            );
+            assert_eq!(context.calls, expected_calls);
+        }
+    }
+
+    #[tokio::test]
+    async fn manager_authenticator_agent_success_and_fatal_errors_stop_later_methods() {
+        let secrets = SecretState::default();
+        let credentials = CredentialState::default();
+        let directory = tempdir().unwrap();
+        let auth = vec![
+            AuthMethodRef::Agent { socket: None },
+            AuthMethodRef::KeyboardInteractive,
+        ];
+
+        let authenticator =
+            authenticator_for(directory.path(), &secrets, &credentials, auth.clone());
+        let mut context = recording_context(true);
+        assert!(authenticator
+            .authenticate(&mut context, "alice", &[])
+            .await
+            .unwrap());
+        assert_eq!(context.calls, ["agent:default"]);
+
+        let fatal: [(fn() -> SshError, &str); 2] =
+            [(|| SshError::Closed, "closed"), (|| SshError::Timeout, "timeout")];
+        for (error, code) in fatal {
+            let authenticator =
+                authenticator_for(directory.path(), &secrets, &credentials, auth.clone());
+            let mut context = recording_context(true);
+            context.agent_error = Some(error);
+            let result = authenticator.authenticate(&mut context, "alice", &[]).await;
+            assert_eq!(result.unwrap_err().code(), code);
+            assert_eq!(context.calls, ["agent:default"]);
         }
     }
 
