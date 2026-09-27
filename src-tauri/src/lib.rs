@@ -75,7 +75,7 @@ use commands::{
     ssh::{
         ssh_auth_response, ssh_close, ssh_connect, ssh_forwarding_list, ssh_forwarding_start,
         ssh_forwarding_stop, ssh_host_key_decision, ssh_import_apply, ssh_import_preview,
-        ssh_list_private_keys, ssh_resize, ssh_write,
+        ssh_list_private_keys, ssh_resize, ssh_resolve_agent_socket, ssh_write,
     },
     sudo::sudo_respond,
     telnet::{telnet_close, telnet_connect, telnet_resize, telnet_write},
@@ -379,6 +379,7 @@ pub fn run() {
             ssh_import_apply,
             ssh_import_preview,
             ssh_list_private_keys,
+            ssh_resolve_agent_socket,
             ssh_auth_response,
             ssh_write,
             ssh_resize,

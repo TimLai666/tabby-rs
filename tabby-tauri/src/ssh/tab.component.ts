@@ -101,6 +101,27 @@ export class TauriSshTabComponent extends ConnectableTerminalTabComponent<SSHPro
         super.onSessionDestroyed()
     }
 
+    async canClose (): Promise<boolean> {
+        if (!this.session?.open) {
+            return true
+        }
+        if (!(this.profile.options.warnOnClose ?? this.config.store.ssh.warnOnClose)) {
+            return true
+        }
+        return (await this.platform.showMessageBox(
+            {
+                type: 'warning',
+                message: this.translate.instant('Disconnect from {host}?', this.profile.options),
+                buttons: [
+                    this.translate.instant('Disconnect'),
+                    this.translate.instant('Do not close'),
+                ],
+                defaultId: 0,
+                cancelId: 1,
+            },
+        )).response === 0
+    }
+
     async disconnect (): Promise<void> {
         this.cancelReconnectTimer()
         await super.disconnect()

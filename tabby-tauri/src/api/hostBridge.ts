@@ -1103,6 +1103,10 @@ export interface HostRequestMap {
         request: Record<string, never>
         response: string[]
     }
+    'ssh.resolveAgentSocket': {
+        request: { agentType: 'auto' | 'pageant' | 'pipe' | null; agentPath: string | null }
+        response: string | null
+    }
     'ssh.authResponse': {
         request: { requestId: string; responses: string[] }
         response: null

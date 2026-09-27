@@ -7,6 +7,7 @@ use crate::{
     security::{CredentialState, SecretState},
     ssh::{
         self,
+        agent::{resolve_agent_socket, AgentSocketRequest},
         model::{
             HostKeyDecisionRequest, SshAuthResponseRequest, SshConnectRequest,
             SshForwardingIdRequest, SshForwardingInfo, SshForwardingRequest, SshResizeRequest,
@@ -24,6 +25,11 @@ use crate::{
 #[tauri::command]
 pub fn ssh_list_private_keys() -> Result<Vec<String>, AppError> {
     Ok(ssh::private_key_candidates())
+}
+
+#[tauri::command]
+pub fn ssh_resolve_agent_socket(request: AgentSocketRequest) -> Result<Option<String>, AppError> {
+    Ok(resolve_agent_socket(request))
 }
 
 #[tauri::command]

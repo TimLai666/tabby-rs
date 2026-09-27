@@ -18,13 +18,14 @@ class BaseTab {
         this.reconnects = 0
         this.baseInits = 0
         this.notifications = { error: text => this.notices.push(text) }
-        this.translate = { instant: text => `translated:${text}` }
+        this.translate = { instant: (text, params) => params ? text.replace('{host}', params.host) : `translated:${text}` }
     }
     subscribeUntilDestroyed (source, next) { this.subscriptions.push(source.subscribe(next)) }
     ngOnInit () { this.baseInits++ }
     ngOnDestroy () { this.subscriptions.forEach(subscription => subscription.unsubscribe()) }
     sendInput (value) { this.input.push(value) }
     async reconnect () { this.reconnects++ }
+    async canClose () { return true }
 }
 class TabMenu {}
 class TerminalMenu {}
@@ -113,4 +114,105 @@ assert.deepEqual(Array.from(await menu.getItems(tab), item => item.label), ['Ope
 tab.ngOnDestroy()
 for (const key of keys) tab.hotkeys.hotkey$.next(key)
 assert.deepEqual([tab.input.length, tab.reconnects, sftp, launched.length], [2, 1, 2, 2])
-console.log('Tauri SSH focus, hotkeys, menu, and safe launch errors passed')
+
+// canClose tests
+let promptCalls = 0
+let lastPromptOptions = null
+let promptResult = { response: 0 }
+let promptError = null
+tab.platform = {
+    showMessageBox: async (options) => {
+        promptCalls++
+        lastPromptOptions = options
+        if (promptError) throw promptError
+        return promptResult
+    },
+}
+tab.config = { store: { ssh: { warnOnClose: false } } }
+tab.profile = { options: { host: 'test-host' } }
+
+// 1. null session: no prompt, returns true
+tab.session = null
+assert.equal(await tab.canClose(), true, 'canClose: null session returns true')
+assert.equal(promptCalls, 0, 'canClose: null session must not call showMessageBox')
+
+// 2. disconnected session (open: false): no prompt, returns true
+tab.session = { open: false }
+promptCalls = 0
+assert.equal(await tab.canClose(), true, 'canClose: disconnected session returns true')
+assert.equal(promptCalls, 0, 'canClose: disconnected session must not call showMessageBox')
+
+// 3. config disabled (warnOnClose false): no prompt, returns true
+tab.session = { open: true }
+tab.profile.options.warnOnClose = null
+tab.config.store.ssh.warnOnClose = false
+promptCalls = 0
+assert.equal(await tab.canClose(), true, 'canClose: config disabled returns true')
+assert.equal(promptCalls, 0, 'canClose: config disabled must not call showMessageBox')
+
+// 4. null profile inherits global true
+tab.config.store.ssh.warnOnClose = true
+promptResult = { response: 1 }
+promptCalls = 0
+assert.equal(await tab.canClose(), false, 'canClose: null profile inherits global true')
+assert.equal(promptCalls, 1, 'canClose: must call showMessageBox once')
+assert.equal(lastPromptOptions.type, 'warning', 'canClose: dialog type must be warning')
+assert.equal(lastPromptOptions.message, 'Disconnect from test-host?', 'canClose: message must have translated host')
+assert.equal(lastPromptOptions.buttons.length, 2, 'canClose: must have two buttons')
+assert.equal(lastPromptOptions.defaultId, 0, 'canClose: defaultId must be 0')
+assert.equal(lastPromptOptions.cancelId, 1, 'canClose: cancelId must be 1')
+
+// 5. null profile inherits global false
+tab.config.store.ssh.warnOnClose = false
+promptCalls = 0
+assert.equal(await tab.canClose(), true, 'canClose: null profile inherits global false')
+assert.equal(promptCalls, 0, 'canClose: global false must not call showMessageBox')
+
+// 6. undefined profile inherits global true
+tab.profile.options.warnOnClose = undefined
+tab.config.store.ssh.warnOnClose = true
+promptResult = { response: 1 }
+promptCalls = 0
+assert.equal(await tab.canClose(), false, 'canClose: undefined profile inherits global true')
+assert.equal(promptCalls, 1, 'canClose: must call showMessageBox once')
+
+// 7. explicit true overrides global false
+tab.profile.options.warnOnClose = true
+tab.config.store.ssh.warnOnClose = false
+promptResult = { response: 1 }
+promptCalls = 0
+assert.equal(await tab.canClose(), false, 'canClose: explicit true overrides global false')
+assert.equal(promptCalls, 1, 'canClose: must call showMessageBox once')
+
+// 8. explicit false overrides global true
+tab.profile.options.warnOnClose = false
+tab.config.store.ssh.warnOnClose = true
+promptCalls = 0
+assert.equal(await tab.canClose(), true, 'canClose: explicit false overrides global true')
+assert.equal(promptCalls, 0, 'canClose: explicit false must not call showMessageBox')
+
+// 9. confirm (response 0) allows close
+tab.profile.options.warnOnClose = true
+tab.config.store.ssh.warnOnClose = true
+promptResult = { response: 0 }
+promptCalls = 0
+assert.equal(await tab.canClose(), true, 'canClose: confirm (response 0) allows close')
+assert.equal(promptCalls, 1, 'canClose: must call showMessageBox once')
+
+// 10. cancel (response 1) blocks close
+promptResult = { response: 1 }
+promptCalls = 0
+assert.equal(await tab.canClose(), false, 'canClose: cancel (response 1) blocks close')
+assert.equal(promptCalls, 1, 'canClose: must call showMessageBox once')
+
+// 11. unknown response blocks close
+promptResult = { response: 2 }
+promptCalls = 0
+assert.equal(await tab.canClose(), false, 'canClose: unknown response blocks close')
+assert.equal(promptCalls, 1, 'canClose: must call showMessageBox once')
+
+// 12. rejected dialog must not silently allow close
+promptError = new Error('dialog rejected')
+await assert.rejects(tab.canClose(), /dialog rejected/, 'canClose: rejected dialog throws')
+
+console.log('Tauri SSH focus, hotkeys, menu, safe launch errors, and canClose passed')

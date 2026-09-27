@@ -1,7 +1,7 @@
 import { Injector } from '@angular/core'
 import { NgbModal } from '@ng-bootstrap/ng-bootstrap'
 import { Observable, Subject } from 'rxjs'
-import { LogService, ProfilesService, VaultService } from 'tabby-core'
+import { ConfigService, LogService, ProfilesService, VaultService } from 'tabby-core'
 import { BaseSession, InputProcessor, UTF8SplitterMiddleware } from 'tabby-terminal'
 
 import { SSHProfile } from '../../../tabby-ssh/src/api/interfaces'
@@ -235,7 +235,7 @@ export class TauriSshSession extends BaseSession {
             } : null,
             environment: options.environment ?? {},
             x11: !!options.x11,
-            x11Display: null,
+            x11Display: this.injector.get(ConfigService).store.ssh.x11Display || null,
             agentForward: !!options.agentForward,
             jumpChain: await this.jumpChain(options.jumpHost),
         }
@@ -251,7 +251,11 @@ export class TauriSshSession extends BaseSession {
             for (const fileRef of privateKeys) {
                 auth.push({ type: 'privateKey', fileRef, passphraseRef: null })
             }
-            auth.push({ type: 'agent', socket: null })
+            const configService = this.injector.get(ConfigService)
+            const agentType = configService.store.ssh.agentType ?? null
+            const agentPath = configService.store.ssh.agentPath ?? null
+            const socket = await this.bridge.invoke('ssh.resolveAgentSocket', { agentType, agentPath })
+            auth.push({ type: 'agent', socket })
             auth.push({ type: 'keyboardInteractive' })
         } else if (options.auth === 'password') {
             auth.push({ type: 'password', secretRef: await this.passwordSecretRef(options) })
@@ -263,7 +267,11 @@ export class TauriSshSession extends BaseSession {
                 auth.push({ type: 'privateKey', fileRef, passphraseRef: null })
             }
         } else if (options.auth === 'agent') {
-            auth.push({ type: 'agent', socket: null })
+            const configService = this.injector.get(ConfigService)
+            const agentType = configService.store.ssh.agentType ?? null
+            const agentPath = configService.store.ssh.agentPath ?? null
+            const socket = await this.bridge.invoke('ssh.resolveAgentSocket', { agentType, agentPath })
+            auth.push({ type: 'agent', socket })
         } else if (authMode === 'keyboardInteractive') {
             auth.push({ type: 'keyboardInteractive' })
         }

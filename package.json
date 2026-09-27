@@ -183,7 +183,7 @@
     "test:plugin-operation": "node scripts/test-plugin-operation-contract.mjs",
     "test:ssh-reconnect": "node scripts/test-ssh-reconnect-contract.mjs",
     "test:device-reconnect": "node scripts/test-device-reconnect-contract.mjs",
-    "test:ssh-session": "node scripts/test-ssh-session-contract.mjs && node scripts/test-ssh-auth-metadata.mjs",
+    "test:ssh-session": "node scripts/test-ssh-session-contract.mjs && node scripts/test-ssh-auth-metadata.mjs && node scripts/test-ssh-agent-config.mjs",
     "test:ssh-config-parser": "cargo test --manifest-path src-tauri/Cargo.toml --lib ssh::import::tests::parses_",
     "test:ssh-import": "cargo test --manifest-path src-tauri/Cargo.toml --lib ssh::import::tests",
     "test:ssh-manager-auth": "cargo test --manifest-path src-tauri/Cargo.toml --lib manager_authenticator",

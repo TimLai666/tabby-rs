@@ -38,3 +38,24 @@
 - `HEAD` and the working tree match for this file (`git diff HEAD -- tabby-local/src/session.ts`
   is empty), so the failure is pre-existing.
 - Unrelated to the current WinSCP/SSH changes; still pending.
+
+## P2 — SSH agent forwarding and jump authentication still have parity gaps
+
+- `src-tauri/src/ssh/mod.rs` builds `SshHandler.agent_socket` only from agent entries
+  in `request.auth`. Password, private-key-only, and keyboard-interactive profiles
+  therefore ignore configured agent paths when `agentForward` is enabled.
+- Before SSH forwarding acceptance: resolve the forwarding agent independently from
+  the login method and test a custom socket with password and private-key login.
+- The Windows `connect_agent(None)` helper used by jump authentication and forwarding
+  tries `SSH_AUTH_SOCK` before Pageant, while direct authentication routes `None` to
+  Pageant. Verify explicit Pageant mode with `SSH_AUTH_SOCK` set and align both paths
+  with upstream `14e2d60` before claiming full agent parity.
+
+## Pending — X11 transport parity and desktop acceptance
+
+- Forwarding `ssh.x11Display` into the native request does not complete X11 parity.
+  `server_channel_open_x11` still closes the channel on non-Unix hosts.
+- `connect_x11_display` always adds 6000 to numeric display values; upstream
+  `X11Socket.resolveDisplaySpec` treats values of 100 or greater as raw TCP ports.
+- Verify the SSH close confirmation in the real desktop UI and validate agent/X11
+  behavior on the supported operating systems before accepting complete parity.
