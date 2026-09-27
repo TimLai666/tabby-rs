@@ -497,9 +497,15 @@ struct ManagerAuthenticator<'a> {
     secrets: &'a SecretState,
     credentials: &'a CredentialState,
     used_private_key: Mutex<bool>,
+    resolved_username: Mutex<Option<String>>,
 }
 
 impl ManagerAuthenticator<'_> {
+    fn username(&self) -> Result<String, SshError> {
+        self.resolved_username.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone().ok_or(SshError::AuthenticationRejected)
+    }
+
     fn record_private_key(&self, used: bool) {
         *self
             .used_private_key
@@ -520,10 +526,31 @@ impl SshAuthenticator for ManagerAuthenticator<'_> {
     async fn authenticate(
         &self,
         context: &mut dyn SshAuthContext,
-        username: &str,
+        _username: &str,
         methods: &[AuthMethodRef],
     ) -> Result<bool, SshError> {
         self.record_private_key(false);
+        *self.resolved_username.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+        let resolved_username = resolve_username_with(
+            self.request.username.as_deref(),
+            || async {
+                let app = self.app.as_ref().ok_or(SshError::Closed)?;
+                self.manager.prompt_for_responses(app, SshAuthPrompt {
+                    request_id: self.manager.new_id("auth"),
+                    id: self.request.profile_id.clone(),
+                    connection_id: self.request.connection_id.clone().unwrap_or_else(|| self.request.profile_id.clone()),
+                    name: format!("Username for {}", self.request.host),
+                    instructions: String::new(),
+                    prompts: vec![SshAuthPromptItem { text: "Username".into(), echo: true }],
+                    username: true,
+                    password: None,
+                    private_key_hash: None,
+                }).await
+            },
+            |name| std::env::var(name).ok(),
+        ).await?;
+        *self.resolved_username.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(resolved_username.clone());
+        let username = resolved_username.as_str();
         let methods = if methods.is_empty() {
             &self.request.auth
         } else {
@@ -538,7 +565,7 @@ impl SshAuthenticator for ManagerAuthenticator<'_> {
                     context.authenticate_password(username, password).await
                 }
                 AuthMethodRef::Password { secret_ref } => {
-                    match resolve_secret_ref(secret_ref, self.secrets, self.credentials) {
+                    match resolve_password_ref(secret_ref, &self.request, username, self.secrets, self.credentials) {
                         Ok(password) => {
                             let already_tried = methods[..index].iter().any(|method| {
                                 matches!(method, AuthMethodRef::ProvidedPassword { password: provided }
@@ -580,6 +607,7 @@ impl SshAuthenticator for ManagerAuthenticator<'_> {
                                     port: self.request.port,
                                     username: username.into(),
                                 }),
+                                username: false,
                                 private_key_hash: None,
                             },
                         )
@@ -638,6 +666,7 @@ impl SshAuthenticator for ManagerAuthenticator<'_> {
                                                 .unwrap_or_else(|| self.request.profile_id.clone()),
                                             name: "Private key passphrase".into(),
                                             password: None,
+                                            username: false,
                                             private_key_hash: Some(hex::encode(Sha512::digest(
                                                 &material.openssh,
                                             ))),
@@ -731,6 +760,7 @@ impl SshAuthenticator for ManagerAuthenticator<'_> {
                                                 .unwrap_or_else(|| self.request.profile_id.clone()),
                                             name: prompt.name,
                                             password: None,
+                                            username: false,
                                             private_key_hash: None,
                                             instructions: prompt.instructions,
                                             prompts: prompt
@@ -760,6 +790,39 @@ impl SshAuthenticator for ManagerAuthenticator<'_> {
         }
         Ok(false)
     }
+}
+
+async fn resolve_username_with<F, Fut, E>(
+    configured: Option<&str>,
+    prompt: F,
+    environment: E,
+) -> Result<String, SshError>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<Vec<String>, SshError>>,
+    E: FnOnce(&str) -> Option<String>,
+{
+    let username = match configured.filter(|value| !value.is_empty()) {
+        Some(username) => username.to_owned(),
+        None => {
+            let mut responses = zeroize::Zeroizing::new(prompt().await?);
+            if responses.is_empty() {
+                return Err(SshError::Closed);
+            }
+            if responses.len() != 1 {
+                return Err(SshError::InvalidRequest("one username response is required".into()));
+            }
+            responses.remove(0)
+        }
+    };
+    let username = username.strip_prefix('$').and_then(environment).unwrap_or(username);
+    if username.is_empty() {
+        return Err(SshError::AuthenticationRejected);
+    }
+    if username.len() > 255 || username.chars().any(char::is_control) {
+        return Err(SshError::InvalidRequest("SSH username is invalid".into()));
+    }
+    Ok(username)
 }
 
 async fn authenticate_password_response(
@@ -876,7 +939,7 @@ impl SshManager {
         connection_id: &str,
         secrets: &SecretState,
         credentials: &CredentialState,
-    ) -> Result<(client::Handle<SshHandler>, bool), SshError> {
+    ) -> Result<(client::Handle<SshHandler>, bool, String), SshError> {
         let host_key_error = Arc::new(Mutex::new(None));
         let handler = self.handler(
             app,
@@ -893,6 +956,7 @@ impl SshManager {
             secrets,
             credentials,
             used_private_key: Mutex::new(false),
+            resolved_username: Mutex::new(None),
         });
         let engine = RusshEngine::from_shared_config(config, Duration::from_secs(30));
         let handle = engine
@@ -900,14 +964,14 @@ impl SshManager {
                 &SshTarget {
                     host: request.host.clone(),
                     port: request.port,
-                    username: request.username.clone().unwrap_or_else(|| "root".into()),
+                    username: request.username.clone().unwrap_or_default(),
                 },
                 handler,
                 host_key_error,
                 authenticator.as_ref(),
             )
             .await?;
-        Ok((handle, authenticator.used_private_key()))
+        Ok((handle, authenticator.used_private_key(), authenticator.username()?))
     }
 
     async fn connect_over_channel(
@@ -951,7 +1015,7 @@ impl SshManager {
         credentials: CredentialState,
     ) -> Result<SshSessionInfo, SshError> {
         validate_request(&request)?;
-        let username = request.username.clone().unwrap_or_else(|| "root".into());
+        let username;
         let connection_id = request
             .connection_id
             .clone()
@@ -980,7 +1044,7 @@ impl SshManager {
         let mut handle;
         let used_private_key;
         if request.jump_chain.is_empty() {
-            let (connected, connected_with_private_key) = self
+            let (connected, connected_with_private_key, connected_username) = self
                 .connect_direct_engine(
                     Arc::clone(&config),
                     &app,
@@ -992,24 +1056,23 @@ impl SshManager {
                 .await?;
             handle = connected;
             used_private_key = connected_with_private_key;
+            username = connected_username;
         } else {
             let first = jump_request(&request, &request.jump_chain[0], &connection_id, 0);
             handle = self
                 .connect_direct(Arc::clone(&config), &app, &first, &connection_id)
                 .await?;
-            let first_username = first.username.clone().unwrap_or_else(|| "root".into());
             let first_authenticated = match self
                 .authenticate(
                     &app,
                     &mut handle,
                     &first,
-                    &first_username,
                     &secrets,
                     &credentials,
                 )
                 .await
             {
-                Ok((authenticated, _)) => authenticated,
+                Ok((authenticated, _, _)) => authenticated,
                 Err(error) => {
                     disconnect_connection(
                         &mut handle,
@@ -1060,19 +1123,17 @@ impl SshManager {
                         return Err(error);
                     }
                 };
-                let next_username = next.username.clone().unwrap_or_else(|| "root".into());
                 let next_authenticated = match self
                     .authenticate(
                         &app,
                         &mut handle,
                         &next,
-                        &next_username,
                         &secrets,
                         &credentials,
                     )
                     .await
                 {
-                    Ok((authenticated, _)) => authenticated,
+                    Ok((authenticated, _, _)) => authenticated,
                     Err(error) => {
                         disconnect_connection(
                             &mut handle,
@@ -1127,14 +1188,14 @@ impl SshManager {
                     &app,
                     &mut handle,
                     &request,
-                    &username,
                     &secrets,
                     &credentials,
                 )
                 .await
             {
-                Ok((authenticated, target_used_private_key)) => {
+                Ok((authenticated, target_used_private_key, target_username)) => {
                     used_private_key = target_used_private_key;
+                    username = target_username;
                     authenticated
                 }
                 Err(error) => {
@@ -1981,10 +2042,9 @@ impl SshManager {
         app: &AppHandle,
         handle: &mut client::Handle<SshHandler>,
         request: &SshConnectRequest,
-        username: &str,
         secrets: &SecretState,
         credentials: &CredentialState,
-    ) -> Result<(bool, bool), SshError> {
+    ) -> Result<(bool, bool, String), SshError> {
         let authenticator = ManagerAuthenticator {
             manager: self.clone(),
             app: Some(app.clone()),
@@ -1992,15 +2052,16 @@ impl SshManager {
             secrets,
             credentials,
             used_private_key: Mutex::new(false),
+            resolved_username: Mutex::new(None),
         };
         let mut context = RawSshAuthContext {
             handle,
             private_key_accepted: false,
         };
         let authenticated = authenticator
-            .authenticate(&mut context, username, &request.auth)
+            .authenticate(&mut context, request.username.as_deref().unwrap_or_default(), &request.auth)
             .await?;
-        Ok((authenticated, authenticator.used_private_key()))
+        Ok((authenticated, authenticator.used_private_key(), authenticator.username()?))
     }
 
     async fn prompt_for_responses(
@@ -2776,6 +2837,27 @@ fn validate_forwarding_request(request: &SshForwardingRequest) -> Result<(), Ssh
     Ok(())
 }
 
+fn resolve_password_ref(
+    reference: &str,
+    request: &SshConnectRequest,
+    username: &str,
+    secrets: &SecretState,
+    credentials: &CredentialState,
+) -> Result<secrecy::SecretString, SshError> {
+    let resolved = match reference {
+        "ssh-password://keychain" => format!("keychain://ssh@{}:{}/{username}", request.host, request.port),
+        "ssh-password://vault" => {
+            let selector = serde_json::json!({
+                "type": "password",
+                "key": { "user": username, "host": request.host, "port": request.port },
+            });
+            format!("vault-secret://{}", BASE64_STANDARD.encode(selector.to_string()))
+        }
+        _ => return resolve_secret_ref(reference, secrets, credentials),
+    };
+    resolve_secret_ref(&resolved, secrets, credentials)
+}
+
 fn resolve_secret_ref(
     reference: &str,
     secrets: &SecretState,
@@ -3042,6 +3124,68 @@ mod tests {
     }
 
     #[test]
+    fn resolved_username_password_uses_selected_store_and_actual_target() {
+        let mut request = request();
+        request.username = Some("root".into());
+        request.port = 2222;
+        let credentials = CredentialState::with_store(Arc::new(TestCredentialStore {
+            value: Some(("ssh@example.test:2222".into(), "bob".into(), "keychain-password".into())),
+        }));
+        let secrets = SecretState::default();
+        let key = serde_json::json!({ "user": "bob", "host": "example.test", "port": 2222 });
+        secrets.replace(VaultSnapshot {
+            config: serde_json::Value::Null,
+            secrets: vec![VaultSnapshotSecret {
+                r#type: "password".into(), key: key.as_object().unwrap().clone(), value: "vault-password".into(),
+            }],
+        }, SecretString::new("fixture".into()), Duration::from_secs(60)).unwrap();
+        for (reference, expected) in [
+            ("ssh-password://keychain", "keychain-password"),
+            ("ssh-password://vault", "vault-password"),
+            ("keychain://ssh@example.test:2222/bob", "keychain-password"),
+        ] {
+            let value = super::resolve_password_ref(reference, &request, "bob", &secrets, &credentials).unwrap();
+            assert_eq!(value.expose_secret(), expected);
+        }
+        for (username, host, port) in [("root", "example.test", 2222), ("bob", "other.test", 2222), ("bob", "example.test", 22)] {
+            request.host = host.into(); request.port = port;
+            for reference in ["ssh-password://keychain", "ssh-password://vault"] {
+                assert!(matches!(super::resolve_password_ref(reference, &request, username, &secrets, &credentials), Err(SshError::AuthenticationRejected)));
+            }
+        }
+        request.host = "example.test".into(); request.port = 2222;
+        let empty_credentials = CredentialState::with_store(Arc::new(TestCredentialStore::default()));
+        assert!(super::resolve_password_ref("ssh-password://keychain", &request, "bob", &secrets, &empty_credentials).is_err());
+        assert!(super::resolve_password_ref("ssh-password://vault", &request, "bob", &SecretState::default(), &credentials).is_err());
+    }
+
+    #[tokio::test]
+    async fn resolved_username_prompts_only_when_empty_and_expands_environment() {
+        for (configured, response, expected, prompts) in [
+            (Some("alice"), "ignored", "alice", 0),
+            (None, "bob", "bob", 1),
+            (Some(""), "bob", "bob", 1),
+            (Some("$LOGIN"), "ignored", "resolved", 0),
+            (None, "$LOGIN", "resolved", 1),
+            (Some("$UNSET"), "ignored", "$UNSET", 0),
+        ] {
+            let called = std::cell::Cell::new(0);
+            let result = super::resolve_username_with(configured, || {
+                called.set(called.get() + 1);
+                std::future::ready(Ok(vec![response.into()]))
+            }, |name| (name == "LOGIN").then(|| "resolved".into())).await.unwrap();
+            assert_eq!(result, expected); assert_eq!(called.get(), prompts);
+        }
+        for responses in [vec![], vec![String::new()], vec!["a".into(), "b".into()], vec!["bad\nuser".into()], vec!["a".repeat(256)]] {
+            assert!(super::resolve_username_with(None, || std::future::ready(Ok(responses)), |_| None).await.is_err());
+        }
+        for resolved in [String::new(), "bad\nuser".into(), "a".repeat(256)] {
+            assert!(super::resolve_username_with(Some("$LOGIN"), || async { panic!("must not prompt") }, |_| Some(resolved)).await.is_err());
+        }
+        assert!(matches!(super::resolve_username_with(None, || async { Err(SshError::Closed) }, |_| None).await, Err(SshError::Closed)));
+    }
+
+    #[test]
     fn forwarding_agent_explicit_path_overrides_auth() {
         let mut value = request_with_agent_auth(Some("/auth.sock"));
         value.agent_forwarding = Some(AgentForwardingOptions {
@@ -3212,6 +3356,7 @@ mod tests {
             secrets: &secrets,
             credentials: &credentials,
             used_private_key: Mutex::new(false),
+            resolved_username: Mutex::new(None),
         };
         let mut context = RecordingAuthContext {
             calls: Vec::new(),
@@ -3258,6 +3403,7 @@ mod tests {
             secrets: &secrets,
             credentials: &credentials,
             used_private_key: Mutex::new(false),
+            resolved_username: Mutex::new(None),
         };
         let mut context = RecordingAuthContext {
             calls: Vec::new(),
@@ -3324,6 +3470,7 @@ mod tests {
             secrets: &secrets,
             credentials: &credentials,
             used_private_key: Mutex::new(false),
+            resolved_username: Mutex::new(None),
         };
         let mut context = RecordingAuthContext {
             calls: Vec::new(),
@@ -3349,6 +3496,7 @@ mod tests {
             secrets: &secrets,
             credentials: &credentials,
             used_private_key: Mutex::new(false),
+            resolved_username: Mutex::new(None),
         };
         let mut context = RecordingAuthContext {
             calls: Vec::new(),
@@ -3393,11 +3541,35 @@ mod tests {
             secrets,
             credentials,
             used_private_key: Mutex::new(false),
+            resolved_username: Mutex::new(None),
         }
     }
 
     fn used_private_key(authenticator: &ManagerAuthenticator<'_>) -> bool {
         *authenticator.used_private_key.lock().unwrap()
+    }
+
+    #[tokio::test]
+    async fn resolved_username_manager_uses_request_identity_before_password_lookup() {
+        let secrets = SecretState::default();
+        let credentials = CredentialState::with_store(Arc::new(TestCredentialStore {
+            value: Some(("ssh@example.test:22".into(), "bob".into(), "secret-password".into())),
+        }));
+        let directory = tempdir().unwrap();
+        let mut authenticator = authenticator_for(directory.path(), &secrets, &credentials, vec![
+            AuthMethodRef::Password { secret_ref: "ssh-password://keychain".into() },
+        ]);
+        authenticator.request.username = Some("bob".into());
+        let mut context = recording_context(false);
+        context.password_accepted = true;
+        assert!(authenticator.authenticate(&mut context, "root", &[]).await.unwrap());
+        assert_eq!(authenticator.username().unwrap(), "bob");
+        assert_eq!(context.calls, ["password"]);
+        authenticator.request.username = None;
+        let mut context = recording_context(false);
+        assert!(matches!(authenticator.authenticate(&mut context, "root", &[]).await, Err(SshError::Closed)));
+        assert!(context.calls.is_empty(), "no default-root attempt when a username cannot be supplied");
+        assert!(authenticator.username().is_err(), "a cancelled retry must clear the previous identity");
     }
 
     #[tokio::test]

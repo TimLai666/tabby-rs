@@ -255,6 +255,7 @@ pub struct SshAuthPrompt {
     pub name: String,
     pub instructions: String,
     pub prompts: Vec<SshAuthPromptItem>,
+    pub username: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub password: Option<SshPasswordPromptTarget>,
     #[serde(skip_serializing_if = "Option::is_none")]

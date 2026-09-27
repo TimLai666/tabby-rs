@@ -744,6 +744,9 @@ impl ServerHandler for CountingPasswordServer {
     async fn auth_password(&mut self, user: &str, password: &str) -> Result<Auth, Self::Error> {
         self.attempts
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if user != "fixture-user" {
+            return Ok(Auth::Reject { proceed_with_methods: None, partial_success: false });
+        }
         self.inner.auth_password(user, password).await
     }
 }
@@ -857,6 +860,7 @@ async fn run_manager_auth_fallback(
         secrets: &secrets,
         credentials: &credentials,
         used_private_key: std::sync::Mutex::new(false),
+        resolved_username: std::sync::Mutex::new(None),
     };
     let engine = super::engine::RusshEngine::new(client::Config::default(), IO);
     let connected = tokio::time::timeout(
@@ -865,7 +869,7 @@ async fn run_manager_auth_fallback(
             &SshTarget {
                 host: "127.0.0.1".into(),
                 port,
-                username: "fixture-user".into(),
+                username: "unused-transport-username".into(),
             },
             PinnedHostKeyClient(host_public_key),
             Arc::new(std::sync::Mutex::new(None)),
@@ -876,6 +880,7 @@ async fn run_manager_auth_fallback(
     .expect("manager fallback connection timed out");
     let result = match connected {
         Ok(handle) => {
+            assert_eq!(authenticator.username().unwrap(), "fixture-user");
             tokio::time::timeout(
                 IO,
                 handle.disconnect(russh::Disconnect::ByApplication, "", "en"),

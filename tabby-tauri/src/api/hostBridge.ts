@@ -626,6 +626,7 @@ export interface SshAuthPrompt {
     name: string
     instructions: string
     prompts: { text: string; echo: boolean }[]
+    username?: boolean
     password?: { host: string; port: number; username: string }
     privateKeyHash?: string
 }

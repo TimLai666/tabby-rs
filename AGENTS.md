@@ -71,10 +71,13 @@
   tests cover ordering and separate jump-host passwords; manual macOS desktop loopback
   checks verify both modes authenticate with the configured password.
   Keyboard-interactive prefill from configured and stored passwords remains pending.
-- Empty usernames still become `root` in both the native connection and
-  `passwordSecretRef`. Upstream `14e2d60` prompts for the username and resolves `$VAR`
-  before loading stored passwords. Implement and verify that flow for targets and hops
-  before accepting username and stored-password parity.
+- Empty usernames now prompt after host-key verification; `$VAR` expands before
+  authentication and saved-password lookup. Native tests cover cancellation, invalid
+  responses, environment fallback, and Keychain/Vault identity isolation. Manual macOS
+  desktop checks verify visible username input, Enter, Esc without an auth attempt,
+  environment expansion, and Keychain password reuse under the resolved username.
+  A single-hop desktop check verifies distinct hop/target usernames and target Keychain
+  reuse. Multiple hops, Vault desktop behavior, and other platforms still need acceptance.
 - Private-key passphrases now use the shared masked prompt with Remember and retry.
   Renderer tests cover cancellation, consent, retries, stale events, and storage errors.
   A manual macOS desktop loopback check verifies wrong-then-correct passphrase entry and
@@ -89,10 +92,25 @@
   Browser checks cover masked input, Remember, Enter, OK, and Esc with simulated native
   events. A manual macOS desktop loopback SSH check verifies actual prompt delivery, Enter
   authentication, terminal output, and Esc cancellation without a password attempt.
-  Desktop jump-host connections and Remember with the actual OS credential store or
-  Vault still need end-to-end acceptance.
-- Independent review covers private-key loading/passphrase prompts and configured-password
-  reuse, including the duplicate-password fix. Broader agent/stored-password and prompted-
+  A manual macOS desktop check also verifies Remember creates a Keychain credential that
+  a subsequent resolved-username connection can reuse. Password prompts on jump hosts,
+  Vault persistence, and other platforms still need end-to-end acceptance.
+- Independent review covers private-key loading/passphrase prompts, configured-password
+  reuse, and resolved-username prompts/lookups. Broader agent/stored-password and prompted-
   password review remains pending. The native passphrase retry loop has manual desktop
   evidence but no automated regression test. Complete these checks before accepting
   SSH authentication parity.
+
+## Pending — SSH credential and username follow-through
+
+- `tabby-tauri/src/services/winscp.service.ts` uses the original profile username for
+  jump options, matching `14e2d60:tabby-ssh/src/services/ssh.service.ts`. Verify prompted
+  and `$VAR` accounts on Windows against that baseline before classifying a parity gap.
+- `tabby-tauri/src/services/passwordStorage.service.ts` omits the port from the Keychain
+  service when the profile has no port, while native SSH lookup defaults to port 22.
+  Verify legacy no-port profiles and preserve existing credentials when aligning the keys.
+- Upstream `14e2d60:tabby-ssh/src/session/ssh.ts` deletes saved passwords after rejected
+  authentication. Compare and implement the matching resolved-account behavior.
+- Direct authentication shares a 120-second deadline across username, password, and key
+  prompts; jump authentication does not share that deadline. Verify slow interactive
+  login against upstream before accepting timeout parity.

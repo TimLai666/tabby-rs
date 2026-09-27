@@ -18,15 +18,6 @@ import { TauriSshHostKeyPromptModalComponent } from './hostKeyPromptModal.compon
 import { TauriSftpSession } from './sftp'
 import { TauriPasswordStorageService } from '../services/passwordStorage.service'
 
-function base64Json (value: unknown): string {
-    const bytes = new TextEncoder().encode(JSON.stringify(value))
-    let binary = ''
-    for (const byte of bytes) {
-        binary += String.fromCharCode(byte)
-    }
-    return btoa(binary)
-}
-
 export class TauriSshSession extends BaseSession {
     private id: string|null = null
     private destroying = false
@@ -96,7 +87,7 @@ export class TauriSshSession extends BaseSession {
             }),
             this.bridge.listen('ssh:authPrompt', prompt => {
                 if (prompt.connectionId === this.connectionId) {
-                    if (prompt.password ?? prompt.privateKeyHash) {
+                    if (prompt.username === true || Boolean(prompt.password ?? prompt.privateKeyHash)) {
                         void this.handleCredentialPrompt(prompt)
                     } else {
                         this.authPrompt.next(prompt)
@@ -295,13 +286,13 @@ export class TauriSshSession extends BaseSession {
                 auth.push({ type: 'providedPassword', password: options.password })
             }
             auth.push({ type: 'keyboardInteractive' })
-            auth.push({ type: 'password', secretRef: await this.passwordSecretRef(options) })
+            auth.push({ type: 'password', secretRef: this.passwordSecretRef() })
             auth.push({ type: 'promptPassword' })
         } else if (options.auth === 'password') {
             if (options.password) {
                 auth.push({ type: 'providedPassword', password: options.password })
             }
-            auth.push({ type: 'password', secretRef: await this.passwordSecretRef(options) })
+            auth.push({ type: 'password', secretRef: this.passwordSecretRef() })
             auth.push({ type: 'promptPassword' })
         } else if (options.auth === 'publicKey') {
             const privateKeys = options.privateKeys.length
@@ -365,20 +356,12 @@ export class TauriSshSession extends BaseSession {
         }
     }
 
-    private async passwordSecretRef (options = this.profile.options): Promise<string> {
-        const account = options.user || 'root'
-        if (!this.vault.isEnabled()) {
-            return `keychain://ssh@${options.host}:${options.port ?? 22}/${account}`
-        }
-        const selector = {
-            type: 'password',
-            key: { user: account, host: options.host, port: options.port ?? 22 },
-        }
-        return `vault-secret://${base64Json(selector)}`
+    private passwordSecretRef (): string {
+        return this.vault.isEnabled() ? 'ssh-password://vault' : 'ssh-password://keychain'
     }
 
     private async handleCredentialPrompt (prompt: SshAuthPrompt): Promise<void> {
-        const hasTarget = Boolean(prompt.password ?? prompt.privateKeyHash)
+        const hasTarget = prompt.username === true || Boolean(prompt.password ?? prompt.privateKeyHash)
         if (!hasTarget || this.destroying || this.credentialModals.has(prompt.requestId)) {
             return
         }
@@ -407,14 +390,14 @@ export class TauriSshSession extends BaseSession {
             this.credentialModals.set(prompt.requestId, modal)
             const component = modal.componentInstance as PromptModalComponent
             Object.assign(component, {
-                prompt: prompt.name, password: true, showRememberCheckbox: true, remember: false, value: saved ?? '',
+                prompt: prompt.name, password: !prompt.username, showRememberCheckbox: !prompt.username, remember: false, value: saved ?? '',
             })
             const result = await modal.result.catch(() => null) as { value: string; remember: boolean }|null
             component.value = ''
             if (result && this.credentialModals.has(prompt.requestId)) {
                 const value = result.value
                 responses = [value]
-                if (result.remember) {
+                if (result.remember && !prompt.username) {
                     if (prompt.privateKeyHash) {
                         this.pendingPassphrases.set(prompt.requestId, { hash: prompt.privateKeyHash, value })
                     } else if (profile && target) {

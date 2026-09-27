@@ -225,6 +225,34 @@ for (const options of [{ saveFails: true, unlockDuringResponse: true }, { delete
 }
 console.log('SSH private-key prompt retry, consent, and cleanup tests passed')
 
+for (const response of [{ value: 'bob', remember: true }, null]) {
+    const f = await fixture({ acceptDuringResponse: true, unlockDuringResponse: true })
+    delete f.prompt.password
+    f.prompt.username = true
+    f.prompt.name = 'Username for jump.test'
+    f.prompt.prompts = [{ text: 'Username', echo: true }]
+    f.show(); f.show(); await settle()
+    assert.equal(f.modals.length, 1, 'username prompt uses the shared modal only once')
+    assert.deepEqual(plain(f.modals[0].componentInstance), {
+        prompt: f.prompt.name, password: false, showRememberCheckbox: false, remember: false, value: '',
+    })
+    f.modals[0].respond(response); await settle()
+    assert.deepEqual(f.responses(), [{ requestId: 'auth-1', responses: response ? ['bob'] : [] }])
+    assert.deepEqual(f.saves, []); assert.deepEqual(f.keySaves, []); assert.deepEqual(f.keyDeletes, [])
+    await f.finish(); await f.session.destroy()
+}
+{
+    const f = await fixture()
+    delete f.prompt.password
+    f.prompt.username = true
+    f.handlers.get('ssh:authPrompt')({ ...f.prompt, connectionId: 'another-connection' })
+    await settle(); assert.equal(f.modals.length, 0)
+    f.show(); await settle(); await f.session.destroy(); await settle()
+    assert.deepEqual(f.responses(), [{ requestId: 'auth-1', responses: [] }])
+    f.connect.reject(new Error('closed')); await assert.rejects(f.started)
+}
+console.log('SSH username prompt visibility, cancellation, and connection isolation passed')
+
 // Native command errors carry text in AppError.details, not Error.toString().
 {
     const tabSource = fs.readFileSync(new URL('../tabby-tauri/src/ssh/tab.component.ts', import.meta.url), 'utf8')
