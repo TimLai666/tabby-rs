@@ -72,6 +72,29 @@ function normalize (v) { return JSON.parse(JSON.stringify(v)) }
 async function runAllTests () {
     console.log('Running SSH agent config resolver tests (real-method harness)...')
 
+    for (const auth of [null, 'keyboardInteractive', 'password', 'agent', 'publicKey']) {
+        for (const password of ['configured-password', '', undefined]) {
+            for (const vaultEnabled of [false, true]) {
+                const options = { auth, password, privateKeys: [], user: '$LOGIN' }
+                const session = createSession({ options }, { store: { ssh: { agentType: 'auto' } } }, {
+                    invoke: async command => command === 'ssh.listPrivateKeys' ? [] : null,
+                })
+                session.vault.isEnabled = () => vaultEnabled
+                const methods = normalize(await session.authForOptions(options))
+                const expected = !auth || auth === 'keyboardInteractive' ? [
+                    ...(password ? [{ type: 'keyboardInteractive', password }] : []),
+                    { type: 'keyboardInteractive', secretRef: `ssh-password://${vaultEnabled ? 'vault' : 'keychain'}` },
+                ] : []
+                assert.deepEqual(methods.filter(method => method.type === 'keyboardInteractive'), expected)
+                if (!auth && password) {
+                    assert.deepEqual(methods.map(method => method.type), [
+                        'agent', 'providedPassword', 'keyboardInteractive', 'keyboardInteractive', 'password', 'promptPassword',
+                    ])
+                }
+            }
+        }
+    }
+
     // 1. automatic auth: resolver invoked with current config (auto, null)
     {
         const profile = { id: 'target', options: { host: 'h', port: 22, user: 'u', input: {}, privateKeys: [], forwardedPorts: [], keepaliveInterval: 0, keepaliveCountMax: 0, jumpHost: null, auth: null } }
@@ -275,9 +298,9 @@ async function runAllTests () {
     const forwardingCases = [
         { name: 'password+forward', auth: 'password', forward: true, config: customAgent, resolved: '/custom.sock', expectedAuth: passwordAuth, forwarding: { socket: '/custom.sock' }, resolverCalls: 1 },
         { name: 'publicKey+forward', auth: 'publicKey', forward: true, config: customAgent, resolved: '/custom.sock', expectedAuth: [keyAuth], forwarding: { socket: '/custom.sock' }, resolverCalls: 1 },
-        { name: 'keyboardInteractive+forward', auth: 'keyboardInteractive', forward: true, config: customAgent, resolved: '/custom.sock', expectedAuth: [{ type: 'keyboardInteractive' }], forwarding: { socket: '/custom.sock' }, resolverCalls: 1 },
-        { name: 'auto+forward reuses socket', auth: null, forward: true, config: autoAgent, resolved: '/auto.sock', expectedAuth: [keyAuth, { type: 'agent', socket: '/auto.sock' }, { type: 'keyboardInteractive' }, ...passwordAuth], forwarding: { socket: '/auto.sock' }, resolverCalls: 1 },
-        { name: 'auto+forward reuses null', auth: null, forward: true, config: autoAgent, resolved: null, expectedAuth: [keyAuth, { type: 'agent', socket: null }, { type: 'keyboardInteractive' }, ...passwordAuth], forwarding: { socket: null }, resolverCalls: 1 },
+        { name: 'keyboardInteractive+forward', auth: 'keyboardInteractive', forward: true, config: customAgent, resolved: '/custom.sock', expectedAuth: [{ type: 'keyboardInteractive', secretRef: 'ssh-password://keychain' }], forwarding: { socket: '/custom.sock' }, resolverCalls: 1 },
+        { name: 'auto+forward reuses socket', auth: null, forward: true, config: autoAgent, resolved: '/auto.sock', expectedAuth: [keyAuth, { type: 'agent', socket: '/auto.sock' }, { type: 'keyboardInteractive', secretRef: 'ssh-password://keychain' }, ...passwordAuth], forwarding: { socket: '/auto.sock' }, resolverCalls: 1 },
+        { name: 'auto+forward reuses null', auth: null, forward: true, config: autoAgent, resolved: null, expectedAuth: [keyAuth, { type: 'agent', socket: null }, { type: 'keyboardInteractive', secretRef: 'ssh-password://keychain' }, ...passwordAuth], forwarding: { socket: null }, resolverCalls: 1 },
         { name: 'agent(Pageant)+forward reuses null', auth: 'agent', forward: true, config: { agentType: 'pageant', agentPath: null }, resolved: null, expectedAuth: [{ type: 'agent', socket: null }], forwarding: { socket: null }, resolverCalls: 1 },
         { name: 'password+forward false', auth: 'password', forward: false, config: autoAgent, expectedAuth: passwordAuth, forwarding: null, resolverCalls: 0 },
         { name: 'password+forward absent', auth: 'password', forward: undefined, config: autoAgent, expectedAuth: passwordAuth, forwarding: null, resolverCalls: 0 },
@@ -341,6 +364,20 @@ async function runAllTests () {
         assert.ok(!JSON.stringify(request.jumpChain).includes('target-secret'))
     }
     console.log('Configured SSH password selection, ordering, and hop isolation passed')
+
+    {
+        const options = { ...forwardingOptions('keyboardInteractive', false), password: 'target-secret', jumpHost: 'jump' }
+        const jump = { id: 'jump', type: 'ssh', options: { ...options, host: 'hop.test', password: 'hop-secret', jumpHost: null } }
+        const request = normalize(await createSession({ id: 'target', options }, { store: { ssh: {} } }, { invoke: async () => null }, [jump]).connectRequest())
+        assert.deepEqual(request.auth, [
+            { type: 'keyboardInteractive', password: 'target-secret' },
+            { type: 'keyboardInteractive', secretRef: 'ssh-password://keychain' },
+        ])
+        assert.deepEqual(request.jumpChain[0].auth, [
+            { type: 'keyboardInteractive', password: 'hop-secret' },
+            { type: 'keyboardInteractive', secretRef: 'ssh-password://keychain' },
+        ])
+    }
 
     {
         const profile = { id: 'target', options: forwardingOptions('password', false) }

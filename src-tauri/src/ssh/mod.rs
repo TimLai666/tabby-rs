@@ -11,8 +11,6 @@ pub mod sftp;
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
     fs,
-    future::Future,
-    pin::Pin,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex,
@@ -25,8 +23,8 @@ use rand::RngCore;
 #[cfg(windows)]
 use russh::keys::agent::client::AgentStream;
 use russh::{
-    client::{self, AuthResult, Handler, KeyboardInteractiveAuthResponse},
-    keys::{agent::client::AgentClient, PrivateKeyWithHashAlg},
+    client::{self, Handler},
+    keys::agent::client::AgentClient,
     ChannelMsg, Disconnect,
 };
 use secrecy::ExposeSecret;
@@ -47,7 +45,7 @@ use crate::{
     },
     ssh::{
         engine::{
-            public_key_accepted, HostKeyVerifier, KeyboardInteractiveResponse, PrivateKeyMaterial,
+            HostKeyVerifier, KeyboardInteractiveResponse, PrivateKeyMaterial,
             RusshEngine, SshAuthContext, SshAuthenticator, SshHostKey, SshTarget,
         },
         known_hosts::fingerprint,
@@ -365,131 +363,6 @@ fn host_key_material(key: &russh::keys::PublicKey) -> Result<SshHostKey, SshErro
     })
 }
 
-struct RawSshAuthContext<'a> {
-    handle: &'a mut client::Handle<SshHandler>,
-    private_key_accepted: bool,
-}
-
-#[async_trait::async_trait]
-impl<'a> SshAuthContext for RawSshAuthContext<'a> {
-    async fn authenticate_none(&mut self, username: &str) -> Result<bool, SshError> {
-        Ok(matches!(
-            self.handle
-                .authenticate_none(username)
-                .await
-                .map_err(|_| SshError::AuthenticationRejected)?,
-            AuthResult::Success
-        ))
-    }
-
-    async fn authenticate_password(
-        &mut self,
-        username: &str,
-        password: &secrecy::SecretString,
-    ) -> Result<bool, SshError> {
-        Ok(matches!(
-            self.handle
-                .authenticate_password(username, password.expose_secret())
-                .await
-                .map_err(|_| SshError::AuthenticationRejected)?,
-            AuthResult::Success
-        ))
-    }
-
-    async fn authenticate_private_key(
-        &mut self,
-        username: &str,
-        key: PrivateKeyMaterial,
-    ) -> Result<bool, SshError> {
-        self.private_key_accepted = false;
-        let private_key = key.decode()?;
-        let result = self
-            .handle
-            .authenticate_publickey(
-                username,
-                PrivateKeyWithHashAlg::new(Arc::new(private_key), None),
-            )
-            .await
-            .map_err(|_| SshError::AuthenticationRejected)?;
-        self.private_key_accepted = public_key_accepted(&result);
-        Ok(result.success())
-    }
-
-    fn private_key_was_accepted(&self) -> bool {
-        self.private_key_accepted
-    }
-
-    async fn authenticate_agent(
-        &mut self,
-        username: &str,
-        socket: Option<&str>,
-    ) -> Result<bool, SshError> {
-        let mut agent = connect_agent(socket.map(str::to_owned)).await?;
-        let identities = agent
-            .request_identities()
-            .await
-            .map_err(|_| SshError::AuthenticationRejected)?;
-        for identity in identities {
-            let result =
-                authenticate_publickey_with_agent(self.handle, username, identity, &mut agent)
-                    .await
-                    .map_err(|_| SshError::AuthenticationRejected)?;
-            if matches!(result, AuthResult::Success) {
-                return Ok(true);
-            }
-        }
-        Ok(false)
-    }
-
-    async fn authenticate_keyboard_interactive_start(
-        &mut self,
-        username: &str,
-    ) -> Result<KeyboardInteractiveResponse, SshError> {
-        map_keyboard_response(
-            self.handle
-                .authenticate_keyboard_interactive_start(username, None::<String>)
-                .await
-                .map_err(|_| SshError::AuthenticationRejected)?,
-        )
-    }
-
-    async fn authenticate_keyboard_interactive_respond(
-        &mut self,
-        responses: Vec<String>,
-    ) -> Result<KeyboardInteractiveResponse, SshError> {
-        map_keyboard_response(
-            self.handle
-                .authenticate_keyboard_interactive_respond(responses)
-                .await
-                .map_err(|_| SshError::AuthenticationRejected)?,
-        )
-    }
-}
-
-fn map_keyboard_response(
-    response: KeyboardInteractiveAuthResponse,
-) -> Result<KeyboardInteractiveResponse, SshError> {
-    Ok(match response {
-        KeyboardInteractiveAuthResponse::Success => KeyboardInteractiveResponse::Success,
-        KeyboardInteractiveAuthResponse::Failure { .. } => KeyboardInteractiveResponse::Failure,
-        KeyboardInteractiveAuthResponse::InfoRequest {
-            name,
-            instructions,
-            prompts,
-        } => KeyboardInteractiveResponse::Prompt(crate::ssh::engine::KeyboardInteractivePrompt {
-            name,
-            instructions,
-            prompts: prompts
-                .into_iter()
-                .map(|prompt| crate::ssh::engine::KeyboardInteractivePromptItem {
-                    text: prompt.prompt,
-                    echo: prompt.echo,
-                })
-                .collect(),
-        }),
-    })
-}
-
 struct ManagerAuthenticator<'a> {
     manager: SshManager,
     app: Option<AppHandle>,
@@ -544,6 +417,7 @@ impl SshAuthenticator for ManagerAuthenticator<'_> {
                     prompts: vec![SshAuthPromptItem { text: "Username".into(), echo: true }],
                     username: true,
                     keyboard_interactive: None,
+                    saved_password: None,
                     password: None,
                     private_key_hash: None,
                 }).await
@@ -557,17 +431,22 @@ impl SshAuthenticator for ManagerAuthenticator<'_> {
         } else {
             methods
         };
-        if methods.is_empty() {
-            return context.authenticate_none(username).await;
-        }
-        for (index, method) in methods.iter().enumerate() {
+        let passwords = resolve_auth_passwords(methods, &self.request, username, self.secrets, self.credentials)?;
+        if context.authenticate_none(username).await? { return Ok(true); }
+        let mut remaining: Vec<usize> = (0..methods.len()).collect();
+        while let Some(position) = remaining.iter().position(|&index| {
+            let allowed = context.remaining_auth_methods();
+            allowed.is_empty() || allowed.iter().any(|name| name == auth_method_name(&methods[index]))
+        }) {
+            let index = remaining.remove(position);
+            let method = &methods[index];
             let result = match method {
                 AuthMethodRef::ProvidedPassword { password } => {
                     context.authenticate_password(username, password).await
                 }
-                AuthMethodRef::Password { secret_ref } => {
-                    match resolve_password_ref(secret_ref, &self.request, username, self.secrets, self.credentials) {
-                        Ok(password) => {
+                AuthMethodRef::Password { .. } => {
+                    match passwords[index].as_ref() {
+                        Some(password) => {
                             let already_tried = methods[..index].iter().any(|method| {
                                 matches!(method, AuthMethodRef::ProvidedPassword { password: provided }
                                     if provided.expose_secret() == password.expose_secret())
@@ -575,10 +454,9 @@ impl SshAuthenticator for ManagerAuthenticator<'_> {
                             if already_tried {
                                 continue;
                             }
-                            context.authenticate_password(username, &password).await
+                            context.authenticate_password(username, password).await
                         }
-                        Err(SshError::AuthenticationRejected) => Ok(false),
-                        Err(error) => Err(error),
+                        None => Ok(false),
                     }
                 }
                 AuthMethodRef::PromptPassword => {
@@ -610,6 +488,7 @@ impl SshAuthenticator for ManagerAuthenticator<'_> {
                                 }),
                                 username: false,
                                 keyboard_interactive: None,
+                                saved_password: None,
                                 private_key_hash: None,
                             },
                         )
@@ -670,6 +549,7 @@ impl SshAuthenticator for ManagerAuthenticator<'_> {
                                             password: None,
                                             username: false,
                                             keyboard_interactive: None,
+                                            saved_password: None,
                                             private_key_hash: Some(hex::encode(Sha512::digest(
                                                 &material.openssh,
                                             ))),
@@ -740,7 +620,7 @@ impl SshAuthenticator for ManagerAuthenticator<'_> {
                         result => result,
                     }
                 }
-                AuthMethodRef::KeyboardInteractive => {
+                AuthMethodRef::KeyboardInteractive { .. } => {
                     let mut response = context
                         .authenticate_keyboard_interactive_start(username)
                         .await?;
@@ -759,7 +639,7 @@ impl SshAuthenticator for ManagerAuthenticator<'_> {
                                     .manager
                                     .prompt_for_responses(
                                         self.app.as_ref().ok_or(SshError::Closed)?,
-                                        keyboard_interactive_prompt(&self.request, username, prompt),
+                                        keyboard_interactive_prompt(&self.request, username, prompt, passwords[index].clone()),
                                     )
                                     .await?;
                                 let result = context
@@ -2042,10 +1922,7 @@ impl SshManager {
             used_private_key: Mutex::new(false),
             resolved_username: Mutex::new(None),
         };
-        let mut context = RawSshAuthContext {
-            handle,
-            private_key_accepted: false,
-        };
+        let mut context = engine::RusshAuthContext::new(handle);
         let authenticated = authenticator
             .authenticate(&mut context, request.username.as_deref().unwrap_or_default(), &request.auth)
             .await?;
@@ -2610,15 +2487,6 @@ type PlatformAgentClient = AgentClient<tokio::net::UnixStream>;
 #[cfg(windows)]
 type PlatformAgentClient = AgentClient<Box<dyn AgentStream + Send + Unpin + 'static>>;
 
-fn authenticate_publickey_with_agent<'a>(
-    handle: &'a mut client::Handle<SshHandler>,
-    username: &str,
-    identity: russh::keys::PublicKey,
-    agent: &'a mut PlatformAgentClient,
-) -> Pin<Box<dyn Future<Output = Result<AuthResult, russh::AgentAuthError>> + Send + 'a>> {
-    Box::pin(handle.authenticate_publickey_with(username.to_owned(), identity, None, agent))
-}
-
 async fn wait_for_channel_confirmation(
     channel: &mut russh::Channel<client::Msg>,
 ) -> Result<Vec<ChannelMsg>, SshError> {
@@ -2696,6 +2564,7 @@ fn keyboard_interactive_prompt(
     request: &SshConnectRequest,
     username: &str,
     prompt: engine::KeyboardInteractivePrompt,
+    saved_password: Option<secrecy::SecretString>,
 ) -> SshAuthPrompt {
     SshAuthPrompt {
         request_id: String::new(),
@@ -2712,6 +2581,7 @@ fn keyboard_interactive_prompt(
             port: request.port,
             username: username.into(),
         }),
+        saved_password,
     }
 }
 
@@ -2843,6 +2713,52 @@ fn validate_forwarding_request(request: &SshForwardingRequest) -> Result<(), Ssh
     Ok(())
 }
 
+fn auth_method_name(method: &AuthMethodRef) -> &'static str {
+    match method {
+        AuthMethodRef::ProvidedPassword { .. } | AuthMethodRef::Password { .. } | AuthMethodRef::PromptPassword => "password",
+        AuthMethodRef::PrivateKey { .. } | AuthMethodRef::Agent { .. } => "publickey",
+        AuthMethodRef::KeyboardInteractive { .. } => "keyboard-interactive",
+    }
+}
+
+fn resolve_auth_passwords(
+    methods: &[AuthMethodRef],
+    request: &SshConnectRequest,
+    username: &str,
+    secrets: &SecretState,
+    credentials: &CredentialState,
+) -> Result<Vec<Option<secrecy::SecretString>>, SshError> {
+    // Snapshot stored credentials before interactive panels can save new values.
+    let mut saved = std::collections::HashMap::<String, Option<secrecy::SecretString>>::new();
+    methods.iter().map(|method| {
+        let reference = match method {
+            AuthMethodRef::ProvidedPassword { password } => return Ok(Some(password.clone())),
+            AuthMethodRef::KeyboardInteractive { password: Some(password), .. } => return Ok(Some(password.clone())),
+            AuthMethodRef::KeyboardInteractive { secret_ref: Some(reference), .. }
+            | AuthMethodRef::Password { secret_ref: reference } => reference,
+            _ => return Ok(None),
+        };
+        if !saved.contains_key(reference) {
+            let value = match resolve_password_ref(reference, request, username, secrets, credentials) {
+                Ok(value) if !value.expose_secret().is_empty() => Some(value),
+                Ok(_) | Err(SshError::AuthenticationRejected) => None,
+                Err(error) => return Err(error),
+            };
+            saved.insert(reference.clone(), value);
+        }
+        let value = saved.get(reference).cloned().flatten();
+        if matches!(method, AuthMethodRef::KeyboardInteractive { .. }) && value.as_ref().is_some_and(|value| {
+            methods.iter().any(|method| matches!(method,
+                AuthMethodRef::KeyboardInteractive { password: Some(configured), .. }
+                if configured.expose_secret() == value.expose_secret()))
+        }) {
+            // Upstream keeps the second bare candidate when configured and saved match.
+            return Ok(None);
+        }
+        Ok(value)
+    }).collect()
+}
+
 fn resolve_password_ref(
     reference: &str,
     request: &SshConnectRequest,
@@ -2960,7 +2876,7 @@ mod tests {
         },
         host_key_decision_action,
         model::*,
-        resolve_saved_private_key_passphrase, validate_request, AuthResult, HostKeyDecisionAction,
+        resolve_saved_private_key_passphrase, validate_request, HostKeyDecisionAction,
         ManagerAuthenticator, SshControl, SshManager, SshSession, VAULT_SECRET_TYPE_PASSPHRASE,
     };
     use crate::security::{
@@ -2968,6 +2884,7 @@ mod tests {
         SecretState, VaultSnapshot, VaultSnapshotSecret,
     };
     use async_trait::async_trait;
+    use russh::client::AuthResult;
     use secrecy::{ExposeSecret, SecretString};
     use sha2::{Digest, Sha512};
     use std::{
@@ -3033,7 +2950,7 @@ mod tests {
     impl SshAuthContext for RecordingAuthContext {
         async fn authenticate_none(&mut self, _username: &str) -> Result<bool, SshError> {
             self.calls.push("none".into());
-            Ok(true)
+            Ok(false)
         }
 
         async fn authenticate_password(
@@ -3100,7 +3017,7 @@ mod tests {
             host: "example.test".into(),
             port: 22,
             username: Some("alice".into()),
-            auth: vec![AuthMethodRef::KeyboardInteractive],
+            auth: vec![AuthMethodRef::KeyboardInteractive { password: None, secret_ref: None }],
             terminal: TerminalRequest {
                 term: "xterm-256color".into(),
                 columns: 80,
@@ -3121,7 +3038,7 @@ mod tests {
     fn request_with_agent_auth(socket: Option<&str>) -> SshConnectRequest {
         let mut value = request();
         value.auth = vec![
-            AuthMethodRef::KeyboardInteractive,
+            AuthMethodRef::KeyboardInteractive { password: None, secret_ref: None },
             AuthMethodRef::Agent {
                 socket: socket.map(Into::into),
             },
@@ -3381,6 +3298,7 @@ mod tests {
             .await
             .unwrap());
         assert!(context.password_valid);
+        assert_eq!(context.calls.remove(0), "none", "Probe methods before credential attempts");
         assert_eq!(context.calls, ["password", "private-key:16"]);
     }
 
@@ -3493,10 +3411,11 @@ mod tests {
             .authenticate(&mut context, "alice", &[])
             .await
             .unwrap());
+        assert_eq!(context.calls.remove(0), "none", "Probe methods before credential attempts");
         assert_eq!(context.calls, ["agent:/tmp/agent.sock"]);
 
         let mut value = request();
-        value.auth = vec![AuthMethodRef::KeyboardInteractive];
+        value.auth = vec![AuthMethodRef::KeyboardInteractive { password: None, secret_ref: None }];
         let authenticator = ManagerAuthenticator {
             manager: SshManager::new(directory.path().join("known_hosts")),
             app: None,
@@ -3519,6 +3438,7 @@ mod tests {
             .authenticate(&mut context, "alice", &[])
             .await
             .unwrap());
+        assert_eq!(context.calls.remove(0), "none", "Probe methods before credential attempts");
         assert_eq!(context.calls, ["keyboard-interactive"]);
     }
 
@@ -3548,7 +3468,7 @@ mod tests {
         #[async_trait]
         impl SshAuthContext for ChallengeContext {
             async fn authenticate_none(&mut self, _: &str) -> Result<bool, SshError> {
-                panic!("unexpected none authentication")
+                Ok(false)
             }
             async fn authenticate_password(&mut self, user: &str, password: &SecretString) -> Result<bool, SshError> {
                 assert_eq!(user, "alice");
@@ -3591,7 +3511,7 @@ mod tests {
         let secrets = SecretState::default();
         let credentials = CredentialState::with_store(Arc::new(TestCredentialStore::default()));
         for (states, fallback, expected, answers, password_attempts) in cases {
-            let mut methods = vec![AuthMethodRef::KeyboardInteractive];
+            let mut methods = vec![AuthMethodRef::KeyboardInteractive { password: None, secret_ref: None }];
             if fallback {
                 methods.push(AuthMethodRef::ProvidedPassword { password: SecretString::new("fallback".into()) });
             }
@@ -3603,6 +3523,22 @@ mod tests {
             assert_eq!(context.answers, vec![Vec::<String>::new(); answers]);
             assert_eq!(context.password_attempts, password_attempts);
             assert!(context.states.is_empty());
+        }
+        for accepted in [false, true] {
+            let authenticator = authenticator_for(directory.path(), &secrets, &credentials, vec![
+                AuthMethodRef::KeyboardInteractive { password: Some(SecretString::new("configured".into())), secret_ref: None },
+                AuthMethodRef::KeyboardInteractive { password: None, secret_ref: None },
+                AuthMethodRef::ProvidedPassword { password: SecretString::new("fallback".into()) },
+            ]);
+            let mut context = ChallengeContext {
+                states: vec![Ok(KeyboardInteractiveResponse::Failure), empty(),
+                    Ok(if accepted { KeyboardInteractiveResponse::Success } else { KeyboardInteractiveResponse::Failure })].into(),
+                answers: vec![], password_attempts: 0,
+            };
+            assert!(authenticator.authenticate(&mut context, "alice", &[]).await.unwrap());
+            assert!(context.states.is_empty(), "Both interactive candidates must run before password fallback");
+            assert_eq!(context.answers, vec![Vec::<String>::new()]);
+            assert_eq!(context.password_attempts, usize::from(!accepted));
         }
     }
 
@@ -3616,8 +3552,10 @@ mod tests {
         let prompt = super::keyboard_interactive_prompt(&target, "resolved-user", super::engine::KeyboardInteractivePrompt {
             name: "Challenge".into(), instructions: "Instructions".into(),
             prompts: vec![super::engine::KeyboardInteractivePromptItem { text: "Password: ".into(), echo: false }],
-        });
+        }, Some(SecretString::new("configured-secret".into())));
+        assert!(!format!("{prompt:?}").contains("configured-secret"));
         let value = serde_json::to_value(prompt).unwrap();
+        assert_eq!(value["savedPassword"], "configured-secret");
         assert_eq!(value["keyboardInteractive"], serde_json::json!({ "host": "jump.test", "port": 2222, "username": "resolved-user" }));
         assert_eq!(value["connectionId"], "connection-1");
         assert_eq!(value["name"], "Challenge");
@@ -3666,6 +3604,7 @@ mod tests {
         context.password_accepted = true;
         assert!(authenticator.authenticate(&mut context, "root", &[]).await.unwrap());
         assert_eq!(authenticator.username().unwrap(), "bob");
+        assert_eq!(context.calls.remove(0), "none", "Probe methods before credential attempts");
         assert_eq!(context.calls, ["password"]);
         authenticator.request.username = None;
         let mut context = recording_context(false);
@@ -3730,6 +3669,7 @@ mod tests {
             context.password_accepted = true;
             assert_eq!(authenticator.authenticate(&mut context, "alice", &[]).await.unwrap(), accepted);
             assert_eq!(context.password_valid, accepted);
+            assert_eq!(context.calls.remove(0), "none", "Probe methods before credential attempts");
             assert_eq!(context.calls, vec!["password"; attempts]);
             assert!(!used_private_key(&authenticator));
         }
@@ -3747,11 +3687,12 @@ mod tests {
                 AuthMethodRef::ProvidedPassword { password: SecretString::new("expired-password".into()) },
                 AuthMethodRef::Password { secret_ref: "keychain://ssh/alice".into() },
             ];
-            if fallback { methods.push(AuthMethodRef::KeyboardInteractive); }
+            if fallback { methods.push(AuthMethodRef::KeyboardInteractive { password: None, secret_ref: None }); }
             let authenticator = authenticator_for(directory.path(), &secrets, &credentials, methods);
             let mut context = recording_context(false);
             context.password_accepted = true;
             assert_eq!(authenticator.authenticate(&mut context, "alice", &[]).await.unwrap(), fallback);
+            assert_eq!(context.calls.remove(0), "none", "Probe methods before credential attempts");
             assert_eq!(context.calls, if fallback { vec!["password", "keyboard-interactive"] } else { vec!["password"] });
         }
     }
@@ -3769,6 +3710,133 @@ mod tests {
         }));
     }
 
+    #[test]
+    fn keyboard_interactive_candidates_snapshot_saved_passwords() {
+        let directory = tempdir().unwrap();
+        let secrets = SecretState::default();
+        for stored in [None, Some("configured"), Some("stored")] {
+            let credentials = CredentialState::with_store(Arc::new(TestCredentialStore {
+                value: stored.map(|value| ("ssh@example.test:22".into(), "alice".into(), value.into())),
+            }));
+            let methods: Vec<AuthMethodRef> = serde_json::from_value(serde_json::json!([
+                { "type": "providedPassword", "password": "configured" },
+                { "type": "keyboardInteractive", "password": "configured" },
+                { "type": "keyboardInteractive", "secretRef": "ssh-password://keychain" },
+                { "type": "password", "secretRef": "ssh-password://keychain" },
+                { "type": "promptPassword" }
+            ])).unwrap();
+            let authenticator = authenticator_for(directory.path(), &secrets, &credentials, methods);
+            let prepared = super::resolve_auth_passwords(&authenticator.request.auth, &authenticator.request, "alice", &secrets, &credentials).unwrap();
+            let values: Vec<_> = prepared.iter().map(|value| value.as_ref().map(|value| value.expose_secret().as_str())).collect();
+            assert_eq!(values, vec![Some("configured"), Some("configured"), stored.filter(|value| *value != "configured"), stored, None]);
+            assert!(!format!("{prepared:?}").contains("configured"));
+            let isolated = super::resolve_auth_passwords(&authenticator.request.auth, &authenticator.request, "other-user", &secrets, &credentials).unwrap();
+            assert!(isolated[2].is_none());
+            assert!(isolated[3].is_none());
+        }
+    }
+
+    #[test]
+    fn keyboard_interactive_vault_snapshot_survives_panel_password_saving() {
+        let credentials = CredentialState::with_store(Arc::new(TestCredentialStore::default()));
+        let secrets = SecretState::default();
+        let snapshot = |value: &str| VaultSnapshot {
+            config: serde_json::Value::Null,
+            secrets: vec![VaultSnapshotSecret { r#type: "password".into(),
+                key: serde_json::json!({"user":"alice","host":"example.test","port":22}).as_object().unwrap().clone(),
+                value: value.into() }],
+        };
+        secrets.replace(snapshot("initial-secret"), SecretString::new("fixture".into()), Duration::from_secs(60)).unwrap();
+        let methods: Vec<AuthMethodRef> = serde_json::from_value(serde_json::json!([
+            {"type":"keyboardInteractive","secretRef":"ssh-password://vault"},
+            {"type":"password","secretRef":"ssh-password://vault"}
+        ])).unwrap();
+        let prepared = super::resolve_auth_passwords(&methods, &request(), "alice", &secrets, &credentials).unwrap();
+        secrets.replace(snapshot("new-secret"), SecretString::new("fixture".into()), Duration::from_secs(60)).unwrap();
+        for password in prepared { assert_eq!(password.unwrap().expose_secret(), "initial-secret"); }
+        for (host, port, username) in [("other.test", 22, "alice"), ("example.test", 23, "alice"), ("example.test", 22, "bob")] {
+            let mut target = request(); target.host = host.into(); target.port = port;
+            let prepared = super::resolve_auth_passwords(&methods, &target, username, &secrets, &credentials).unwrap();
+            assert!(prepared.iter().all(Option::is_none));
+        }
+        let legacy: AuthMethodRef = serde_json::from_value(serde_json::json!({"type":"keyboardInteractive"})).unwrap();
+        assert!(matches!(legacy, AuthMethodRef::KeyboardInteractive { password: None, secret_ref: None }));
+    }
+
+    #[tokio::test]
+    async fn manager_authenticator_follows_server_method_changes_over_transport() {
+        use russh::{server, MethodKind, MethodSet};
+        struct Client;
+        impl russh::client::Handler for Client {
+            type Error = russh::Error;
+            async fn check_server_key(&mut self, _: &russh::keys::PublicKey) -> Result<bool, Self::Error> { Ok(true) }
+        }
+        struct Server { calls: Arc<Mutex<Vec<&'static str>>>, mode: &'static str }
+        fn reject(method: MethodKind) -> server::Auth {
+            server::Auth::Reject { proceed_with_methods: Some(MethodSet::from(&[method][..])), partial_success: false }
+        }
+        impl server::Handler for Server {
+            type Error = russh::Error;
+            async fn auth_none(&mut self, _: &str) -> Result<server::Auth, Self::Error> {
+                self.calls.lock().unwrap().push("none");
+                Ok(if self.mode == "none accepted" { server::Auth::Accept } else { reject(MethodKind::Password) })
+            }
+            async fn auth_password(&mut self, _: &str, password: &str) -> Result<server::Auth, Self::Error> {
+                self.calls.lock().unwrap().push("password");
+                Ok(if password == "secret-password" { server::Auth::Accept }
+                    else if self.mode == "methods change" { reject(MethodKind::KeyboardInteractive) }
+                    else if self.mode == "empty update" { server::Auth::Reject { proceed_with_methods: Some(MethodSet::empty()), partial_success: false } }
+                    else { reject(MethodKind::Password) })
+            }
+            async fn auth_keyboard_interactive<'a>(&'a mut self, _: &str, _: &str, _: Option<server::Response<'a>>) -> Result<server::Auth, Self::Error> {
+                self.calls.lock().unwrap().push("keyboard-interactive"); Ok(reject(MethodKind::Password))
+            }
+        }
+        for mode in ["password only", "methods change", "empty update", "none accepted"] {
+            let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let mut config = server::Config::default();
+            config.auth_rejection_time = Duration::ZERO;
+            config.auth_rejection_time_initial = Some(Duration::ZERO);
+            config.keys.push(russh::keys::PrivateKey::random(&mut rand::rngs::OsRng, russh::keys::Algorithm::Ed25519).unwrap());
+            let calls = Arc::new(Mutex::new(Vec::new()));
+            let observed = calls.clone();
+            let server = tokio::spawn(async move {
+                let (socket, _) = listener.accept().await.unwrap();
+                let result = server::run_stream(Arc::new(config), socket, Server { calls, mode }).await.unwrap().await;
+                if mode == "empty update" {
+                    assert!(result.is_ok() || matches!(result, Err(russh::Error::IO(ref error)) if error.kind() == std::io::ErrorKind::UnexpectedEof));
+                } else { result.unwrap(); }
+            });
+            let mut handle = russh::client::connect(Arc::new(russh::client::Config::default()), address, Client).await.unwrap();
+            let directory = tempdir().unwrap();
+            let secrets = SecretState::default();
+            let credentials = CredentialState::with_store(Arc::new(TestCredentialStore::default()));
+            let authenticator = authenticator_for(directory.path(), &secrets, &credentials, vec![
+                AuthMethodRef::KeyboardInteractive { password: Some(SecretString::new("configured".into())), secret_ref: None },
+                AuthMethodRef::ProvidedPassword { password: SecretString::new("wrong".into()) },
+                AuthMethodRef::KeyboardInteractive { password: None, secret_ref: None },
+                AuthMethodRef::ProvidedPassword { password: SecretString::new("secret-password".into()) },
+            ]);
+            let mut context = super::engine::RusshAuthContext::new(&mut handle);
+            let result = tokio::time::timeout(Duration::from_secs(5), authenticator.authenticate(&mut context, "alice", &[])).await.unwrap();
+            if mode == "empty update" {
+                // russh closes the transport on an empty server method list.
+                assert!(matches!(result, Err(SshError::AuthenticationRejected)));
+                assert_eq!(context.remaining_auth_methods(), ["password"]);
+            } else {
+                assert!(matches!(result, Ok(true)), "{mode}: {result:?}; observed {:?}", observed.lock().unwrap());
+            }
+            assert_eq!(*observed.lock().unwrap(), if mode == "empty update" { vec!["none", "password"] }
+            else if mode == "none accepted" { vec!["none"] } else if mode == "methods change" {
+                vec!["none", "password", "keyboard-interactive", "password"]
+            } else { vec!["none", "password", "password"] });
+            let disconnect = handle.disconnect(russh::Disconnect::ByApplication, "fixture done", "").await;
+            if mode != "empty update" { disconnect.unwrap(); }
+            tokio::time::timeout(Duration::from_secs(5), server).await.unwrap().unwrap();
+        }
+    }
+
     #[tokio::test]
     async fn manager_authenticator_skips_missing_saved_password() {
         let credentials = CredentialState::with_store(Arc::new(TestCredentialStore::default()));
@@ -3780,7 +3848,7 @@ mod tests {
         for fallback in [false, true] {
             let mut methods = vec![password.clone()];
             if fallback {
-                methods.push(AuthMethodRef::KeyboardInteractive);
+                methods.push(AuthMethodRef::KeyboardInteractive { password: None, secret_ref: None });
             }
             let authenticator =
                 authenticator_for(directory.path(), &secrets, &credentials, methods);
@@ -3792,6 +3860,7 @@ mod tests {
                     .unwrap(),
                 fallback
             );
+            assert_eq!(context.calls.remove(0), "none", "Probe methods before credential attempts");
             assert_eq!(
                 context.calls,
                 if fallback {
@@ -3809,7 +3878,7 @@ mod tests {
                 AuthMethodRef::Password {
                     secret_ref: "invalid-reference".into(),
                 },
-                AuthMethodRef::KeyboardInteractive,
+                AuthMethodRef::KeyboardInteractive { password: None, secret_ref: None },
             ],
         );
         let mut context = recording_context(false);
@@ -3873,6 +3942,7 @@ mod tests {
                 } else {
                     vec![]
                 };
+                assert_eq!(context.calls.remove(0), "none", "Probe methods before credential attempts");
                 assert_eq!(context.calls, expected_calls);
             }
         }
@@ -3915,14 +3985,14 @@ mod tests {
                 file_ref: key.to_string_lossy().into_owned(),
                 passphrase_ref: Some("invalid-reference".into()),
             },
-            AuthMethodRef::KeyboardInteractive,
+            AuthMethodRef::KeyboardInteractive { password: None, secret_ref: None },
         ]);
         let mut context = recording_context(true);
         assert!(matches!(
             authenticator.authenticate(&mut context, "alice", &[]).await,
             Err(SshError::InvalidRequest(_))
         ));
-        assert!(context.calls.is_empty());
+        assert_eq!(context.calls, ["none"]);
     }
 
     #[tokio::test]
@@ -3951,6 +4021,7 @@ mod tests {
             .authenticate(&mut context, "alice", &[])
             .await
             .unwrap());
+        assert_eq!(context.calls.remove(0), "none", "Probe methods before credential attempts");
         assert_eq!(context.calls, ["password", "private-key:16"]);
         assert!(used_private_key(&authenticator));
     }
@@ -3970,7 +4041,7 @@ mod tests {
             ),
             (
                 "keyboard-interactive",
-                vec![AuthMethodRef::KeyboardInteractive],
+                vec![AuthMethodRef::KeyboardInteractive { password: None, secret_ref: None }],
                 "keyboard-interactive",
             ),
             ("none", Vec::new(), "none"),
@@ -3979,11 +4050,12 @@ mod tests {
         for (label, auth, expected_call) in cases {
             let authenticator = authenticator_for(directory.path(), &secrets, &credentials, auth);
             let mut context = recording_context(true);
-            assert!(authenticator
+            assert_eq!(authenticator
                 .authenticate(&mut context, "alice", &[])
                 .await
-                .unwrap());
-            assert_eq!(context.calls, [expected_call]);
+                .unwrap(), label != "none");
+            assert_eq!(context.calls.remove(0), "none", "Probe methods before credential attempts");
+            assert_eq!(context.calls, if label == "none" { vec![] } else { vec![expected_call] });
             assert!(
                 !used_private_key(&authenticator),
                 "{label} success must not report a private key"
@@ -4004,7 +4076,7 @@ mod tests {
         };
         let cases: Vec<(Vec<AuthMethodRef>, bool, Vec<&str>)> = vec![
             (
-                vec![agent.clone(), AuthMethodRef::KeyboardInteractive],
+                vec![agent.clone(), AuthMethodRef::KeyboardInteractive { password: None, secret_ref: None }],
                 true,
                 vec!["agent:default", "keyboard-interactive"],
             ),
@@ -4028,6 +4100,7 @@ mod tests {
                     .unwrap(),
                 expected
             );
+            assert_eq!(context.calls.remove(0), "none", "Probe methods before credential attempts");
             assert_eq!(context.calls, expected_calls);
         }
     }
@@ -4039,7 +4112,7 @@ mod tests {
         let directory = tempdir().unwrap();
         let auth = vec![
             AuthMethodRef::Agent { socket: None },
-            AuthMethodRef::KeyboardInteractive,
+            AuthMethodRef::KeyboardInteractive { password: None, secret_ref: None },
         ];
 
         let authenticator =
@@ -4049,6 +4122,7 @@ mod tests {
             .authenticate(&mut context, "alice", &[])
             .await
             .unwrap());
+        assert_eq!(context.calls.remove(0), "none", "Probe methods before credential attempts");
         assert_eq!(context.calls, ["agent:default"]);
 
         let fatal: [(fn() -> SshError, &str); 2] =
@@ -4060,6 +4134,7 @@ mod tests {
             context.agent_error = Some(error);
             let result = authenticator.authenticate(&mut context, "alice", &[]).await;
             assert_eq!(result.unwrap_err().code(), code);
+            assert_eq!(context.calls.remove(0), "none", "Probe methods before credential attempts");
             assert_eq!(context.calls, ["agent:default"]);
         }
     }
@@ -4084,12 +4159,13 @@ mod tests {
             .unwrap());
         assert!(used_private_key(&authenticator));
 
-        let methods = [AuthMethodRef::KeyboardInteractive];
+        let methods = [AuthMethodRef::KeyboardInteractive { password: None, secret_ref: None }];
         let mut context = recording_context(true);
         assert!(authenticator
             .authenticate(&mut context, "alice", &methods)
             .await
             .unwrap());
+        assert_eq!(context.calls.remove(0), "none", "Probe methods before credential attempts");
         assert_eq!(context.calls, ["keyboard-interactive"]);
         assert!(!used_private_key(&authenticator));
     }
@@ -4115,6 +4191,7 @@ mod tests {
             .authenticate(&mut context, "alice", &[])
             .await
             .unwrap());
+        assert_eq!(context.calls.remove(0), "none", "Probe methods before credential attempts");
         assert_eq!(context.calls, ["private-key:16", "agent:default"]);
         assert!(!used_private_key(&authenticator));
 
@@ -4129,7 +4206,7 @@ mod tests {
             .authenticate(&mut context, "alice", &[])
             .await
             .unwrap());
-        assert!(context.calls.is_empty());
+        assert_eq!(context.calls, ["none"]);
         assert!(!used_private_key(&unreadable));
     }
 
@@ -4161,6 +4238,7 @@ mod tests {
             .authenticate(&mut context, "alice", &[])
             .await
             .unwrap());
+        assert_eq!(context.calls.remove(0), "none", "Probe methods before credential attempts");
         assert_eq!(context.calls, ["private-key:16", "password"]);
         assert!(context.password_valid);
         assert!(used_private_key(&authenticator));
@@ -4193,6 +4271,7 @@ mod tests {
             .authenticate(&mut context, "alice", &[])
             .await
             .unwrap());
+        assert_eq!(context.calls.remove(0), "none", "Probe methods before credential attempts");
         assert_eq!(context.calls, ["private-key:16", "password"]);
         assert!(used_private_key(&authenticator));
     }

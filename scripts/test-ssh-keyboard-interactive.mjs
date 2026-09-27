@@ -86,6 +86,14 @@ assert.deepEqual(Array.from(calls[1].request.responses), [])
 await tab.showAuthPrompt({ ...event, requestId: 'stale' }, {})
 assert.equal(tab.activeKIPrompt, null)
 assert.equal(calls.length, 2)
+const prefilled = tab.showAuthPrompt({ ...event, requestId: 'configured', savedPassword: 'configured-secret',
+    prompts: [{ text: 'PASSWORD: ', echo: false }, { text: 'Password visible', echo: true }, { text: 'OTP: ', echo: false }],
+}, session)
+assert.deepEqual(Array.from(tab.activeKIPrompt.responses), ['configured-secret', '', ''])
+assert.equal(calls.length, 2, 'Prefill must wait for user confirmation')
+tab.activeKIPrompt.respond()
+await prefilled
+assert.deepEqual(Array.from(calls.at(-1).request.responses), ['configured-secret', '', ''])
 assert.match(metadata.template, /keyboard-interactive-auth-panel/)
 assert.match(metadata.template, /\[profile\]="activeKIProfile"/)
 console.log('Tauri inline keyboard-interactive panel: resolved hop identity, response, cancellation and stale-session isolation passed')

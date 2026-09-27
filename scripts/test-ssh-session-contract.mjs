@@ -21,8 +21,8 @@ const resolveAgentSocket = session.match(/private async resolveAgentSocket \(\):
 assert.ok(resolveAgentSocket, 'SSH agent socket resolver helper is missing')
 assert.match(resolveAgentSocket[1], /this\.bridge\.invoke\('ssh\.resolveAgentSocket', \{ agentType, agentPath \}\)/)
 assert.match(authForOptions[1], /auth\.push\(\{ type: 'agent', socket/)
-assert.match(authForOptions[1], /auth\.push\(\{ type: 'keyboardInteractive' \}\)/)
-assert.match(authForOptions[1], /authMode === 'keyboardInteractive'[\s\S]*auth\.push\(\{ type: 'keyboardInteractive' \}\)/)
+assert.match(authForOptions[1], /auth\.push\(\{ type: 'keyboardInteractive', password: options\.password \}\)/)
+assert.match(authForOptions[1], /authMode === 'keyboardInteractive'[\s\S]*auth\.push\(\{ type: 'keyboardInteractive', secretRef: this\.passwordSecretRef\(\) \}\)/)
 
 assert.match(session, /private pendingExit: SshExitEvent\|null = null/)
 assert.match(session, /private readonly serviceMessage = new Subject<string>\(\)/)

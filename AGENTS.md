@@ -70,8 +70,25 @@
   supplied value. Repeated configured/stored passwords are tried only once. Renderer
   tests cover ordering and separate jump-host passwords; manual macOS desktop loopback
   checks verify both modes authenticate with the configured password.
-  Keyboard-interactive prefill from configured passwords and authentication retry
-  ordering remain pending.
+  Keyboard-interactive now tries a configured-password candidate before the stored
+  or bare candidate. Only masked password fields receive prefill. Native code snapshots
+  saved passwords after resolving the account, preserving the retry values if the panel
+  saves a different password. Tests cover Keychain/Vault target isolation, equal/different
+  configured and stored values, empty credentials, wire compatibility, and Debug redaction.
+  macOS desktop direct and single-hop target connections verify a rejected configured
+  password followed by a successful manual second candidate, with blank verification-code
+  fields. Saved-password retry still needs desktop acceptance: this run's synthetic
+  Keychain credential triggered SecurityAgent access approval, which desktop tools cannot
+  operate. The test credential was removed and its absence verified.
+- Automatic authentication now probes none and follows the server's non-empty allowed
+  method lists. Unused candidates remain available if a later response enables them.
+  Direct and jump connections share the same transport authentication adapter. Real SSH
+  loopback tests cover password-only servers, method changes, and successful none auth.
+  The password-retry fixture explicitly advertises password after rejection; its previous
+  default russh rejection removed that method despite expecting another password attempt.
+  Empty method lists preserve the last advertised list, but russh 0.54.4 closes the
+  connection on an empty list; compare that transport behavior with upstream before
+  accepting the empty-list edge case as complete parity.
 - Keyboard-interactive challenges with no prompts now receive an empty response
   automatically, matching `14e2d60:tabby-ssh/src/session/ssh.ts`. Unit tests cover
   repeated empty rounds, rejection/fallback, non-empty prompts, and transport errors.
@@ -87,7 +104,7 @@
   masked and echoed fields, Keychain saving, restart prefill, and reuse through a jump
   host. The synthetic Keychain entry and test servers were cleaned up afterward.
   Vault, keyboard-interactive authentication on the jump host itself, other supported
-  platforms, and configured-password/retry behavior still need acceptance. Preserve
+  platforms, and saved-password retry behavior still need acceptance. Preserve
   upstream's save-on-consent behavior when aligning rejected-password deletion below.
 - Empty usernames now prompt after host-key verification; `$VAR` expands before
   authentication and saved-password lookup. Native tests cover cancellation, invalid

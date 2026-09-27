@@ -122,7 +122,26 @@ pub enum AuthMethodRef {
     Agent {
         socket: Option<String>,
     },
-    KeyboardInteractive,
+    KeyboardInteractive {
+        #[serde(default, deserialize_with = "deserialize_optional_password")]
+        password: Option<secrecy::SecretString>,
+        #[serde(rename = "secretRef")]
+        secret_ref: Option<String>,
+    },
+}
+
+fn deserialize_optional_password<'de, D>(deserializer: D) -> Result<Option<secrecy::SecretString>, D::Error>
+where D: serde::Deserializer<'de>,
+{
+    <Option<String> as serde::Deserialize>::deserialize(deserializer)
+        .map(|value| value.map(secrecy::SecretString::new))
+}
+
+fn serialize_optional_password<S>(value: &Option<secrecy::SecretString>, serializer: S) -> Result<S::Ok, S::Error>
+where S: serde::Serializer,
+{
+    use secrecy::ExposeSecret;
+    serde::Serialize::serialize(&value.as_ref().map(|value| value.expose_secret()), serializer)
 }
 
 fn deserialize_password<'de, D>(deserializer: D) -> Result<secrecy::SecretString, D::Error>
@@ -262,6 +281,8 @@ pub struct SshAuthPrompt {
     pub private_key_hash: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub keyboard_interactive: Option<SshPasswordPromptTarget>,
+    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "serialize_optional_password")]
+    pub saved_password: Option<secrecy::SecretString>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]

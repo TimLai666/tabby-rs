@@ -285,7 +285,10 @@ export class TauriSshSession extends BaseSession {
             if (options.password) {
                 auth.push({ type: 'providedPassword', password: options.password })
             }
-            auth.push({ type: 'keyboardInteractive' })
+            if (options.password) {
+                auth.push({ type: 'keyboardInteractive', password: options.password })
+            }
+            auth.push({ type: 'keyboardInteractive', secretRef: this.passwordSecretRef() })
             auth.push({ type: 'password', secretRef: this.passwordSecretRef() })
             auth.push({ type: 'promptPassword' })
         } else if (options.auth === 'password') {
@@ -305,7 +308,10 @@ export class TauriSshSession extends BaseSession {
             const socket = await this.resolveAgentSocket()
             auth.push({ type: 'agent', socket })
         } else if (authMode === 'keyboardInteractive') {
-            auth.push({ type: 'keyboardInteractive' })
+            if (options.password) {
+                auth.push({ type: 'keyboardInteractive', password: options.password })
+            }
+            auth.push({ type: 'keyboardInteractive', secretRef: this.passwordSecretRef() })
         }
         return auth
     }

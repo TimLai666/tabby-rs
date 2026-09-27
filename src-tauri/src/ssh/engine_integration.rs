@@ -747,7 +747,15 @@ impl ServerHandler for CountingPasswordServer {
         if user != "fixture-user" {
             return Ok(Auth::Reject { proceed_with_methods: None, partial_success: false });
         }
-        self.inner.auth_password(user, password).await
+        match self.inner.auth_password(user, password).await? {
+            Auth::Accept => Ok(Auth::Accept),
+            // This fixture tests password retries. russh's default rejection
+            // removes password from the advertised methods, forbidding retries.
+            _ => Ok(Auth::Reject {
+                proceed_with_methods: Some(russh::MethodSet::from(&[russh::MethodKind::Password][..])),
+                partial_success: false,
+            }),
+        }
     }
 }
 

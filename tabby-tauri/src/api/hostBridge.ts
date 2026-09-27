@@ -439,7 +439,7 @@ export type SshAuthMethodRef =
     | { type: 'promptPassword' }
     | { type: 'privateKey'; fileRef: string; passphraseRef?: string | null }
     | { type: 'agent'; socket?: string | null }
-    | { type: 'keyboardInteractive' }
+    | { type: 'keyboardInteractive'; password?: string; secretRef?: string }
 
 export interface SshTerminalRequest {
     term: string
@@ -630,6 +630,7 @@ export interface SshAuthPrompt {
     password?: { host: string; port: number; username: string }
     privateKeyHash?: string
     keyboardInteractive?: { host: string; port: number; username: string }
+    savedPassword?: string
 }
 
 export interface SshOutputEvent {
