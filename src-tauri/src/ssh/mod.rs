@@ -1279,8 +1279,7 @@ impl SshManager {
             }
         }
         if request.x11 {
-            let display = x11_display_spec(request.x11_display.clone(), std::env::var_os("DISPLAY"));
-            let cookie = x11_cookie(&display);
+            let cookie = x11_cookie();
             if channel
                 .request_x11(true, false, "MIT-MAGIC-COOKIE-1", cookie, 0)
                 .await
@@ -2516,25 +2515,7 @@ fn emit_forwarding(app: &AppHandle, info: &SshForwardingInfo) {
     let _ = app.emit("ssh:forwardingChanged", info.clone());
 }
 
-fn x11_cookie(display: &str) -> String {
-    #[cfg(unix)]
-    if let Ok(output) = std::process::Command::new("xauth")
-        .args(["nlist", display])
-        .output()
-    {
-        if let Some(cookie) = String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .filter_map(|line| line.split_whitespace().last())
-            .find(|cookie| {
-                cookie.len() == 32
-                    && cookie
-                        .chars()
-                        .all(|character| character.is_ascii_hexdigit())
-            })
-        {
-            return cookie.into();
-        }
-    }
+fn x11_cookie() -> String {
     let mut random = [0u8; 16];
     rand::rngs::OsRng.fill_bytes(&mut random);
     random.iter().map(|byte| format!("{byte:02x}")).collect()
@@ -3044,6 +3025,55 @@ mod tests {
     };
     use tempfile::tempdir;
     use tokio::sync::mpsc;
+
+    #[test]
+    fn x11_cookie_is_fresh_lowercase_hex() {
+        let mut cookies = std::collections::HashSet::new();
+        for _ in 0..16 {
+            let cookie = super::x11_cookie();
+            assert_eq!(cookie.len(), 32);
+            assert!(cookie
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)));
+            assert!(cookies.insert(cookie), "each shell must get a fresh cookie");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn x11_cookie_does_not_read_local_xauth() {
+        use std::os::unix::fs::PermissionsExt;
+        const MARKER: &str = "TABBY_RS_X11_COOKIE_TEST_MARKER";
+        if let Some(marker) = std::env::var_os(MARKER) {
+            x11_cookie_is_fresh_lowercase_hex();
+            assert!(
+                !std::path::Path::new(&marker).exists(),
+                "xauth must not be invoked"
+            );
+            return;
+        }
+        let directory = tempdir().unwrap();
+        let xauth = directory.path().join("xauth");
+        std::fs::write(&xauth, "#!/bin/sh\n: > \"$TABBY_RS_X11_COOKIE_TEST_MARKER\"\nprintf '%s\\n' 0123456789abcdef0123456789abcdef\n").unwrap();
+        std::fs::set_permissions(&xauth, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "ssh::tests::x11_cookie_does_not_read_local_xauth",
+                "--nocapture",
+            ])
+            .env("PATH", directory.path())
+            .env(MARKER, directory.path().join("invoked"))
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "isolated xauth regression failed:\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(!directory.path().join("invoked").exists());
+    }
 
     #[cfg(unix)]
     #[test]

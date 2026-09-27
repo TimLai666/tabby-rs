@@ -30,13 +30,17 @@
   decoder unlocks the key. WinSCP conversion reads saved passphrases; verify reuse
   on Windows and compare unchecked Remember behavior with upstream before acceptance.
 
-## Pending — full-repo lint fails on `tabby-local/src/session.ts`
+## Pending — full-repo lint and Rust formatting
 
 - `yarn lint --format unix` fails with 1 problem:
   `tabby-local/src/session.ts:67:24: Unnecessary parentheses around expression. [Error/@typescript-eslint/no-extra-parens]`
 - `HEAD` and the working tree match for this file (`git diff HEAD -- tabby-local/src/session.ts`
   is empty), so the failure is pre-existing.
 - Unrelated to the current WinSCP/SSH changes; still pending.
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` also fails on existing
+  Rust formatting, including `commands/app.rs`, `commands/ssh.rs`, and SSH modules.
+  Comparing the changed SSH module with HEAD shows no new formatting differences;
+  the X11 cookie change removes one old difference. Keep this gate pending.
 
 ## Pending — SSH forwarding desktop and Windows acceptance
 
@@ -69,8 +73,9 @@
   such as `unix:0.0` resolve to `/tmp/.X11-unix/X0`. Tests cover the 99/100 boundary,
   port 65535, socket paths, invalid numbers, and a real TCP exchange on an ephemeral
   port. The existing real SSH forwarding fixture also passes with forwarding enabled
-  and disabled under password and private-key login. Real X11 application display,
-  Windows TCP forwarding acceptance, and multi-hop desktop acceptance remain pending.
+  and disabled under password and private-key login. macOS desktop TCP forwarding displays
+  xclock on a disposable Xvfb server that allows connections without cookie validation.
+  Windows TCP forwarding acceptance and multi-hop desktop acceptance remain pending.
 - DISPLAY parsing follows the fixed upstream regex, including fallback for screenless
   values such as `host:12`, the wildcard separator, and the greedy `host:100` result
   (`host:6001`). Hostless `:N` and `:N.screen` also fall back to the platform default.
@@ -95,9 +100,19 @@
   when X11 is disabled. Windows guidance and other platforms still need desktop acceptance.
 - Verify the SSH close confirmation in the real desktop UI and validate agent/X11
   behavior on the supported operating systems before accepting complete parity.
-- `x11_cookie` reads local xauth entries, whereas `14e2d60:tabby-ssh/src/session/ssh.ts`
-  generates a random forwarding cookie. Resolve that existing difference and verify
-  authentication with a real X server before accepting full X11 parity.
+- Each X11-enabled shell requests a fresh 16-byte random cookie, matching
+  `14e2d60:tabby-ssh/src/session/ssh.ts`; it no longer queries local xauth entries.
+  Isolated child-process tests verify that an available xauth executable is not called.
+  macOS desktop SSH fixtures verify distinct cookies across two shells, the upstream
+  protocol/flags/screen number, and no request when X11 is disabled. The exact upstream
+  shell method also passes the fixture. Both implementations relay X11 data unchanged.
+  The fixed upstream shell/relay methods and the macOS Tauri app both display xclock
+  through real SSH channels on Xvfb with access control disabled. With a fixed-cookie
+  Xvfb server, both reject the random cookie with `Invalid MIT-MAGIC-COOKIE-1 key`, while
+  a direct connection using the server's cookie succeeds. The native SSH shell stays usable.
+  This matches the fixed upstream behavior, but changes the prior native local-cookie path;
+  do not claim support for cookie-protected displays from the successful xclock check.
+  XQuartz, other X servers, other client platforms, and multi-hop X11 still need acceptance.
 
 ## Pending — SSH password prompts and automatic authentication parity
 
