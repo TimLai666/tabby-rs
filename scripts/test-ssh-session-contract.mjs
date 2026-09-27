@@ -44,10 +44,8 @@ assert.match(tabRecovery, /tokens = parsed\.map\(token => sanitizeRecoveryToken\
 
 const rust = fs.readFileSync(path.join(root, 'src-tauri/src/ssh/mod.rs'), 'utf8')
 const engine = fs.readFileSync(path.join(root, 'src-tauri/src/ssh/engine.rs'), 'utf8')
-assert.match(rust, /let mut exit_event_emitted = false/)
-assert.match(rust, /ChannelMsg::ExitStatus \{ \.\. \}[\s\S]*ChannelMsg::ExitSignal \{ \.\. \}/)
-assert.match(rust, /exit_event_emitted \|= is_exit_message/)
-assert.match(rust, /if !exit_event_emitted \{[\s\S]*exit_code: None[\s\S]*signal: None/)
+// Native lifecycle is covered with real SSH peers in ssh/lifecycle/tests.rs.
+// The fixed upstream shell does not terminate on exit status or signal alone.
 assert.match(rust, /use zeroize::Zeroize/)
 assert.match(rust, /bytes\.zeroize\(\)/)
 // Decoding borrows key bytes; the owning material clears them on every exit path.
@@ -90,4 +88,4 @@ assert.ok((jumpConnectBranch[1].match(/\.authenticate\(/g) || []).length >= 3, '
 assert.match(jumpConnectBranch[1], /disconnect_jump_handles\(/)
 assert.match(jumpConnectBranch[1], /disconnect_connection\(/)
 
-console.log('SSH session exit contract passed')
+console.log('SSH session contract passed')

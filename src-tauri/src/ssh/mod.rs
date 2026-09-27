@@ -4,6 +4,7 @@ pub mod engine;
 mod engine_integration;
 mod forwarding;
 mod import;
+mod input;
 mod known_hosts;
 mod lifecycle;
 pub mod model;
@@ -93,6 +94,7 @@ pub struct SshManager {
 #[derive(Clone)]
 struct SshSession {
     control: mpsc::Sender<SshControl>,
+    input: mpsc::Sender<input::ShellWrite>,
 }
 
 struct ForwardingRuntime {
@@ -108,7 +110,6 @@ struct RemoteForwardRoute {
 }
 
 enum SshControl {
-    Write(Vec<u8>, oneshot::Sender<Result<(), SshError>>),
     Resize(SshResizeRequest, oneshot::Sender<Result<(), SshError>>),
     OpenDirectTcpip {
         host: String,
@@ -1271,6 +1272,8 @@ impl SshManager {
 
         let id = self.new_id("session");
         let (mut reader, writer) = channel.split();
+        let writer = Arc::new(writer);
+        let (mut input_task, input) = input::start(Arc::clone(&writer));
         let (control, mut controls) = mpsc::channel(32);
         let sessions = Arc::clone(&self.sessions);
         let task_id = id.clone();
@@ -1283,7 +1286,7 @@ impl SshManager {
         self.sessions
             .lock()
             .unwrap_or_else(|error| error.into_inner())
-            .insert(id.clone(), SshSession { control });
+            .insert(id.clone(), SshSession { control, input });
         tauri::async_runtime::spawn(async move {
             let mut pending = pending;
             let mut sftp = None;
@@ -1298,6 +1301,7 @@ impl SshManager {
             .await
             {
                 match event {
+                    lifecycle::ShellEvent::ChannelClosed => input_task.stop().await,
                     lifecycle::ShellEvent::Channel(message) => {
                         if !emit_channel_message(
                             &task_app,
@@ -1310,6 +1314,9 @@ impl SshManager {
                         }
                     }
                     lifecycle::ShellEvent::Control(control_message) => {
+                        if matches!(&control_message, SshControl::Close(_)) {
+                            input_task.stop().await;
+                        }
                         if !handle_control(
                             &mut handle,
                             &writer,
@@ -1325,6 +1332,7 @@ impl SshManager {
                     }
                 }
             }
+            input_task.stop().await;
             if let Some(manager) = sftp {
                 manager.shutdown().await;
             }
@@ -1409,8 +1417,8 @@ impl SshManager {
         let session = self.session(&request.id)?;
         let (sender, receiver) = oneshot::channel();
         session
-            .control
-            .send(SshControl::Write(request.data, sender))
+            .input
+            .send((request.data, sender))
             .await
             .map_err(|_| SshError::Closed)?;
         receiver.await.map_err(|_| SshError::Closed)??;
@@ -2011,8 +2019,8 @@ impl SshManager {
     }
 }
 
-async fn handle_control(
-    handle: &mut client::Handle<SshHandler>,
+async fn handle_control<H: client::Handler>(
+    handle: &mut client::Handle<H>,
     writer: &russh::ChannelWriteHalf<client::Msg>,
     sftp: &mut Option<sftp::SftpManager>,
     connection_id: &str,
@@ -2020,16 +2028,6 @@ async fn handle_control(
     control: SshControl,
 ) -> bool {
     match control {
-        SshControl::Write(data, sender) => {
-            let mut sink = writer.make_writer();
-            let result = match sink.write_all(&data).await {
-                Ok(()) => sink.flush().await.map_err(|_| SshError::Closed),
-                Err(_) => Err(SshError::Closed),
-            };
-            let keep_running = result.is_ok();
-            let _ = sender.send(result);
-            keep_running
-        }
         SshControl::Resize(request, sender) => {
             let result = writer
                 .window_change(
@@ -4644,17 +4642,21 @@ mod tests {
         let directory = tempdir().unwrap();
         let manager = SshManager::new(directory.path().join("known_hosts"));
         let (first_sender, mut first_receiver) = mpsc::channel(1);
-        let (second_sender, mut second_receiver) = mpsc::channel(1);
+        let (second_sender, _second_receiver) = mpsc::channel(1);
+        let (first_input, _first_input_receiver) = mpsc::channel(1);
+        let (second_input, mut second_input_receiver) = mpsc::channel(1);
         manager.sessions.lock().unwrap().insert(
             "first".into(),
             SshSession {
                 control: first_sender,
+                input: first_input,
             },
         );
         manager.sessions.lock().unwrap().insert(
             "second".into(),
             SshSession {
                 control: second_sender,
+                input: second_input,
             },
         );
 
@@ -4668,12 +4670,11 @@ mod tests {
             }
         });
         let second_task = tokio::spawn(async move {
-            match second_receiver.recv().await {
-                Some(SshControl::Write(data, sender)) => {
+            match second_input_receiver.recv().await {
+                Some((data, sender)) => {
                     assert_eq!(data, b"still-alive");
                     sender.send(Ok(())).unwrap();
                 }
-                Some(_) => panic!("second session received the wrong control message"),
                 None => panic!("second session control channel closed unexpectedly"),
             }
         });

@@ -80,21 +80,31 @@
   channel CLOSE, and registers sessions before spawning their reader to avoid stale entries
   when EOF arrives immediately. Real loopback tests cover these events, buffered output,
   a second channel after CLOSE, tab controls, and disconnection with or without prior CLOSE.
-  Queued closure is processed before writes; writes and resizes after CLOSE return Closed
-  without ending the transport or blocking tab closure. Tests include an 8 MiB write.
+  Queued closure is processed before controls. CLOSE cancels shell input and rejects
+  resizes without ending the transport or blocking tab closure.
   The exact upstream methods with the locked binding verify seven reference scenarios;
   these are method-level probes, not original desktop UI acceptance.
   macOS desktop checks verify EOF termination, continued input after status/signal,
   retained output and reconnect prompts on transport disconnect with or without prior
-  CLOSE, and closing a CLOSE-only tab without disrupting another SSH tab. The large-write
-  guard is covered by native tests; its desktop paste flow remains unverified. SFTP and
+  CLOSE, and closing a CLOSE-only tab without disrupting another SSH tab. Stalled-input
+  cancellation is covered by native tests; its desktop paste flow remains unverified. SFTP and
   forwarding teardown, stalled writes, and other platforms still need acceptance.
   PTY approval waiting remains unchanged and needs comparison with upstream.
-- Investigate writes already waiting for SSH window replenishment when the peer stops
-  reading or closes the channel. `handle_control` awaits each write in the session loop,
-  so teardown can be delayed before the lifecycle reader observes closure. The queued-CLOSE
-  guard does not cover an in-flight write. Verify with a stalled-window loopback fixture
-  before choosing cancellation or timeout behavior against the fixed upstream version.
+- Shell input uses a separate bounded worker so waiting for the peer's channel window
+  cannot block output or session controls. Keep ordered `ChannelWriteHalf` writes:
+  `Handle::data` can leave pending data that prevents russh 0.54.4 from acknowledging CLOSE.
+  Cancel the worker on remote CLOSE, EOF, disconnection, local close, or owner drop.
+  Await worker termination before sending local CLOSE so no write can race behind it.
+  Loopback tests verify a stalled one-byte window with a full 32-entry input queue,
+  output delivery, all four close paths, release of pending callers, the peer's CLOSE
+  acknowledgement, and exact binary data/order across window adjustments. The locked
+  upstream binding retains pending write promises while delivering output and lifecycle
+  events; its disconnect call completes for live transports. Native cancellation releases
+  write callers with Closed; the renderer only logs write errors and does not close the tab
+  or display a service message for them. Desktop paste and teardown
+  acceptance remains pending because the Mac was locked during verification.
+  Sustained input against a stalled peer and transport-level backpressure need separate
+  resource and responsiveness checks before accepting full SSH parity.
 - Security-sensitive parity decision pending: the exact upstream incoming-channel handlers
   with the locked russh binding forward unsolicited agent and X11 channels even when both
   target options are false. A real two-hop fixture confirms both local synthetic endpoints
