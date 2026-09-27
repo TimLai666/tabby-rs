@@ -918,7 +918,8 @@ async fn manager_authenticator_missing_agent_falls_back_to_password() {
 
     let (result, attempts) = run_manager_auth_fallback(None, false, None).await;
     assert!(
-        matches!(result, Err(crate::ssh::SshError::AuthenticationRejected)),
+        matches!(result, Err(crate::ssh::SshError::AuthenticationExhausted(ref target))
+            if target.host == "127.0.0.1" && target.port > 0 && target.username == "fixture-user"),
         "missing agent without password must be rejected: {result:?}"
     );
     assert_eq!(attempts, 0);
@@ -933,7 +934,8 @@ async fn manager_authenticator_unavailable_keys_fall_back_to_password() {
     assert_eq!(attempts, 1);
 
     let (result, attempts) = run_manager_auth_fallback(None, true, None).await;
-    assert!(matches!(result, Err(crate::ssh::SshError::AuthenticationRejected)));
+    assert!(matches!(result, Err(crate::ssh::SshError::AuthenticationExhausted(ref target))
+        if target.host == "127.0.0.1" && target.port > 0 && target.username == "fixture-user"));
     assert_eq!(attempts, 0);
 }
 
@@ -952,7 +954,8 @@ async fn manager_provided_password_authenticates_or_tries_saved_password() {
         if expected_success {
             assert!(result.is_ok(), "configured password authentication failed: {result:?}");
         } else {
-            assert!(matches!(result, Err(crate::ssh::SshError::AuthenticationRejected)));
+            assert!(matches!(result, Err(crate::ssh::SshError::AuthenticationExhausted(ref target))
+                if target.host == "127.0.0.1" && target.port > 0 && target.username == "fixture-user"));
         }
         assert_eq!(attempts, expected_attempts);
     }
@@ -1031,7 +1034,8 @@ async fn manager_keyboard_interactive_empty_challenges_use_real_transport() {
             tokio::time::timeout(IO, handle.disconnect(russh::Disconnect::ByApplication, "", "en"))
                 .await.unwrap().unwrap();
         } else {
-            assert!(matches!(connected, Err(crate::ssh::SshError::AuthenticationRejected)));
+            assert!(matches!(connected, Err(crate::ssh::SshError::AuthenticationExhausted(ref target))
+                if target.host == "127.0.0.1" && target.port == port && target.username == "fixture-user"));
         }
         assert_eq!(responses.load(Ordering::SeqCst), 2);
         tokio::time::timeout(IO, tasks.join_next()).await.unwrap().unwrap().unwrap();

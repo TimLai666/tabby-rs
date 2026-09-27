@@ -154,8 +154,32 @@
 - `tabby-tauri/src/services/passwordStorage.service.ts` omits the port from the Keychain
   service when the profile has no port, while native SSH lookup defaults to port 22.
   Verify legacy no-port profiles and preserve existing credentials when aligning the keys.
-- Upstream `14e2d60:tabby-ssh/src/session/ssh.ts` deletes saved passwords after rejected
-  authentication. Compare and implement the matching resolved-account behavior.
+- Final SSH authentication-candidate exhaustion now deletes the saved password for the
+  failing host, port, and resolved account. The connect error preserves code/details and
+  carries that identity only on exhaustion, avoiding event/listener teardown races.
+  Tests cover ordinary propagated errors, identity isolation, Keychain/Vault selectors,
+  private-key preservation, unavailable storage, and non-blocking deletion failures.
+  macOS desktop direct and first-hop rejection checks verify that Save password creates
+  a Keychain item, one rejection preserves it, and final rejection removes only that item.
+  A separate destination credential survives hop rejection. Synthetic items and servers
+  were cleaned up. Vault persistence and other platforms still need desktop acceptance.
+- Password lookup must distinguish a missing item from an unreadable store. If a candidate's
+  saved-password lookup fails, exhaustion currently omits the deletion target and allows
+  other authentication candidates to run. This prevents deleting an untried saved password;
+  it does not complete upstream parity. Upstream loads passwords after resolving the account
+  and before authentication. Align Vault unlocking and candidate preparation, including
+  explicit key-only modes, before accepting this flow.
+- Password prompt cancellation currently exits with Closed; upstream continues to later
+  candidates and can delete the stored password on final exhaustion. Keyboard-interactive
+  cancellation and tab closure also need exact baseline comparison and acceptance.
+  Agent errors continue to fall through as in upstream; a disconnect swallowed by that path
+  can reach exhaustion, unlike an error propagated out of authentication.
+  Upstream also catches failures inside prompted-password and private-key attempts, whereas
+  some corresponding native errors propagate. Compare disconnects in those methods before
+  accepting their fallback and saved-password deletion behavior.
+- Upstream's keyboard-interactive panel saves on consent without awaiting storage. Verify
+  pending saves cannot restore a rejected password after deletion, especially during Vault
+  unlock or expiration. This ordering remains unverified, not an accepted parity result.
 - Direct authentication shares a 120-second deadline across username, password, and key
   prompts; jump authentication does not share that deadline. Verify slow interactive
   login against upstream before accepting timeout parity.

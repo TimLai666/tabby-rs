@@ -326,6 +326,8 @@ pub enum SshError {
     HostKeyChanged,
     #[error("SSH authentication was rejected")]
     AuthenticationRejected,
+    #[error("SSH authentication was rejected")]
+    AuthenticationExhausted(SshPasswordPromptTarget),
     #[error("SSH private key could not be parsed")]
     KeyParse,
     #[error("SSH private key requires a valid passphrase")]
@@ -349,7 +351,7 @@ impl SshError {
             Self::Connection => "connection",
             Self::HostKeyRejected => "hostKeyRejected",
             Self::HostKeyChanged => "hostKeyChanged",
-            Self::AuthenticationRejected => "authenticationRejected",
+            Self::AuthenticationRejected | Self::AuthenticationExhausted(_) => "authenticationRejected",
             Self::KeyParse => "keyParse",
             Self::KeyPassphrase => "keyPassphrase",
             Self::ChannelOpen => "channelOpen",

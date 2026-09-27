@@ -10,6 +10,7 @@ import {
     SshAuthPrompt,
     SshAuthMethodRef,
     SshConnectRequest,
+    SshConnectError,
     SshExitEvent,
     SshHostKeyPrompt,
     SshJumpRequest,
@@ -108,6 +109,7 @@ export class TauriSshSession extends BaseSession {
 
         const info = await this.bridge.invoke('ssh.connect', await this.connectRequest()).catch(error => {
             this.clearCredentialPrompts()
+            void this.removeRejectedPassword(error)
             throw error
         })
         // The session can be destroyed while the bridge connection is still opening.
@@ -422,6 +424,26 @@ export class TauriSshSession extends BaseSession {
                     this.logger.warn('SSH credential response could not be sent')
                 })
             }
+        }
+    }
+
+    private async removeRejectedPassword (error: unknown): Promise<void> {
+        const rejected = error as Partial<SshConnectError>|null
+        const target = rejected?.passwordDeletionTarget
+        if (this.destroying || rejected?.code !== 'permissionDenied' || !target ||
+            typeof target.host !== 'string' || !target.host ||
+            typeof target.username !== 'string' || !target.username ||
+            !Number.isInteger(target.port) || target.port < 1 || target.port > 65535) {
+            return
+        }
+        const profile: SSHProfile = {
+            ...this.profile,
+            options: { ...this.profile.options, host: target.host, port: target.port, user: target.username },
+        }
+        try {
+            await this.injector.get(TauriPasswordStorageService).deletePassword(profile, target.username)
+        } catch {
+            this.serviceMessage.next('SSH saved password could not be removed')
         }
     }
 

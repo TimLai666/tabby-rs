@@ -445,7 +445,7 @@ impl SshAuthenticator for ManagerAuthenticator<'_> {
                     context.authenticate_password(username, password).await
                 }
                 AuthMethodRef::Password { .. } => {
-                    match passwords[index].as_ref() {
+                    match passwords.values[index].as_ref() {
                         Some(password) => {
                             let already_tried = methods[..index].iter().any(|method| {
                                 matches!(method, AuthMethodRef::ProvidedPassword { password: provided }
@@ -639,7 +639,7 @@ impl SshAuthenticator for ManagerAuthenticator<'_> {
                                     .manager
                                     .prompt_for_responses(
                                         self.app.as_ref().ok_or(SshError::Closed)?,
-                                        keyboard_interactive_prompt(&self.request, username, prompt, passwords[index].clone()),
+                                        keyboard_interactive_prompt(&self.request, username, prompt, passwords.values[index].clone()),
                                     )
                                     .await?;
                                 let result = context
@@ -656,7 +656,16 @@ impl SshAuthenticator for ManagerAuthenticator<'_> {
                 return Ok(true);
             }
         }
-        Ok(false)
+        // An unreadable store may contain a password that never became a candidate.
+        if passwords.storage_unavailable {
+            return Err(SshError::AuthenticationRejected);
+        }
+        // Only the exhausted-candidate path identifies a password for deletion.
+        Err(SshError::AuthenticationExhausted(SshPasswordPromptTarget {
+            host: self.request.host.clone(),
+            port: self.request.port,
+            username: username.into(),
+        }))
     }
 }
 
@@ -2721,16 +2730,23 @@ fn auth_method_name(method: &AuthMethodRef) -> &'static str {
     }
 }
 
+#[derive(Debug)]
+struct ResolvedAuthPasswords {
+    values: Vec<Option<secrecy::SecretString>>,
+    storage_unavailable: bool,
+}
+
 fn resolve_auth_passwords(
     methods: &[AuthMethodRef],
     request: &SshConnectRequest,
     username: &str,
     secrets: &SecretState,
     credentials: &CredentialState,
-) -> Result<Vec<Option<secrecy::SecretString>>, SshError> {
+) -> Result<ResolvedAuthPasswords, SshError> {
     // Snapshot stored credentials before interactive panels can save new values.
     let mut saved = std::collections::HashMap::<String, Option<secrecy::SecretString>>::new();
-    methods.iter().map(|method| {
+    let mut storage_unavailable = false;
+    let values = methods.iter().map(|method| {
         let reference = match method {
             AuthMethodRef::ProvidedPassword { password } => return Ok(Some(password.clone())),
             AuthMethodRef::KeyboardInteractive { password: Some(password), .. } => return Ok(Some(password.clone())),
@@ -2740,8 +2756,11 @@ fn resolve_auth_passwords(
         };
         if !saved.contains_key(reference) {
             let value = match resolve_password_ref(reference, request, username, secrets, credentials) {
-                Ok(value) if !value.expose_secret().is_empty() => Some(value),
-                Ok(_) | Err(SshError::AuthenticationRejected) => None,
+                Ok(value) => value.filter(|value| !value.expose_secret().is_empty()),
+                Err(SshError::AuthenticationRejected) => {
+                    storage_unavailable = true;
+                    None
+                }
                 Err(error) => return Err(error),
             };
             saved.insert(reference.clone(), value);
@@ -2756,7 +2775,8 @@ fn resolve_auth_passwords(
             return Ok(None);
         }
         Ok(value)
-    }).collect()
+    }).collect::<Result<Vec<_>, SshError>>()?;
+    Ok(ResolvedAuthPasswords { values, storage_unavailable })
 }
 
 fn resolve_password_ref(
@@ -2765,7 +2785,7 @@ fn resolve_password_ref(
     username: &str,
     secrets: &SecretState,
     credentials: &CredentialState,
-) -> Result<secrecy::SecretString, SshError> {
+) -> Result<Option<secrecy::SecretString>, SshError> {
     let resolved = match reference {
         "ssh-password://keychain" => format!("keychain://ssh@{}:{}/{username}", request.host, request.port),
         "ssh-password://vault" => {
@@ -2775,9 +2795,9 @@ fn resolve_password_ref(
             });
             format!("vault-secret://{}", BASE64_STANDARD.encode(selector.to_string()))
         }
-        _ => return resolve_secret_ref(reference, secrets, credentials),
+        _ => return lookup_secret_ref(reference, secrets, credentials),
     };
-    resolve_secret_ref(&resolved, secrets, credentials)
+    lookup_secret_ref(&resolved, secrets, credentials)
 }
 
 fn resolve_secret_ref(
@@ -2785,6 +2805,14 @@ fn resolve_secret_ref(
     secrets: &SecretState,
     credentials: &CredentialState,
 ) -> Result<secrecy::SecretString, SshError> {
+    lookup_secret_ref(reference, secrets, credentials)?.ok_or(SshError::AuthenticationRejected)
+}
+
+fn lookup_secret_ref(
+    reference: &str,
+    secrets: &SecretState,
+    credentials: &CredentialState,
+) -> Result<Option<secrecy::SecretString>, SshError> {
     if let Some(encoded) = reference.strip_prefix("vault-secret://") {
         let bytes = BASE64_STANDARD
             .decode(encoded)
@@ -2793,9 +2821,8 @@ fn resolve_secret_ref(
             .map_err(|_| SshError::InvalidRequest("secret reference is invalid".into()))?;
         let value = secrets
             .get_secret(&selector)
-            .map_err(|_| SshError::AuthenticationRejected)?
-            .ok_or(SshError::AuthenticationRejected)?;
-        return Ok(secrecy::SecretString::new(value));
+            .map_err(|_| SshError::AuthenticationRejected)?;
+        return Ok(value.map(secrecy::SecretString::new));
     }
     let Some(reference) = reference.strip_prefix("keychain://") else {
         return Err(SshError::InvalidRequest(
@@ -2814,8 +2841,7 @@ fn resolve_secret_ref(
                 account: account.into(),
             },
         )
-        .map_err(|_| SshError::AuthenticationRejected)?
-        .ok_or(SshError::AuthenticationRejected)?;
+        .map_err(|_| SshError::AuthenticationRejected)?;
     Ok(value)
 }
 
@@ -2855,7 +2881,7 @@ impl From<SshError> for crate::error::AppError {
             SshError::HostKeyRejected | SshError::HostKeyChanged => {
                 Self::PermissionDenied(error.to_string())
             }
-            SshError::AuthenticationRejected | SshError::KeyParse | SshError::KeyPassphrase => {
+            SshError::AuthenticationRejected | SshError::AuthenticationExhausted(_) | SshError::KeyParse | SshError::KeyPassphrase => {
                 Self::PermissionDenied(error.to_string())
             }
             SshError::Connection | SshError::ChannelOpen | SshError::Closed | SshError::Timeout => {
@@ -3067,18 +3093,18 @@ mod tests {
             ("ssh-password://vault", "vault-password"),
             ("keychain://ssh@example.test:2222/bob", "keychain-password"),
         ] {
-            let value = super::resolve_password_ref(reference, &request, "bob", &secrets, &credentials).unwrap();
+            let value = super::resolve_password_ref(reference, &request, "bob", &secrets, &credentials).unwrap().unwrap();
             assert_eq!(value.expose_secret(), expected);
         }
         for (username, host, port) in [("root", "example.test", 2222), ("bob", "other.test", 2222), ("bob", "example.test", 22)] {
             request.host = host.into(); request.port = port;
             for reference in ["ssh-password://keychain", "ssh-password://vault"] {
-                assert!(matches!(super::resolve_password_ref(reference, &request, username, &secrets, &credentials), Err(SshError::AuthenticationRejected)));
+                assert!(super::resolve_password_ref(reference, &request, username, &secrets, &credentials).unwrap().is_none());
             }
         }
         request.host = "example.test".into(); request.port = 2222;
         let empty_credentials = CredentialState::with_store(Arc::new(TestCredentialStore::default()));
-        assert!(super::resolve_password_ref("ssh-password://keychain", &request, "bob", &secrets, &empty_credentials).is_err());
+        assert!(super::resolve_password_ref("ssh-password://keychain", &request, "bob", &secrets, &empty_credentials).unwrap().is_none());
         assert!(super::resolve_password_ref("ssh-password://vault", &request, "bob", &SecretState::default(), &credentials).is_err());
     }
 
@@ -3518,7 +3544,7 @@ mod tests {
             let authenticator = authenticator_for(directory.path(), &secrets, &credentials, methods);
             let mut context = ChallengeContext { states: states.into(), answers: vec![], password_attempts: 0 };
             let outcome = authenticator.authenticate(&mut context, "alice", &[]).await;
-            let actual = match outcome { Ok(true) => "accepted", Ok(false) => "rejected", Err(ref error) => error.code() };
+            let actual = match outcome { Ok(true) => "accepted", Err(SshError::AuthenticationExhausted(_)) => "rejected", Err(ref error) => error.code(), Ok(false) => panic!("missing rejected identity") };
             assert_eq!(actual, expected);
             assert_eq!(context.answers, vec![Vec::<String>::new(); answers]);
             assert_eq!(context.password_attempts, password_attempts);
@@ -3587,6 +3613,77 @@ mod tests {
 
     fn used_private_key(authenticator: &ManagerAuthenticator<'_>) -> bool {
         *authenticator.used_private_key.lock().unwrap()
+    }
+
+    fn authentication_succeeded(result: Result<bool, SshError>) -> bool {
+        match result {
+            Ok(true) => true,
+            Err(SshError::AuthenticationExhausted(target)) => {
+                assert_eq!((target.host.as_str(), target.port, target.username.as_str()),
+                    ("example.test", 22, "alice"));
+                false
+            }
+            other => panic!("unexpected authentication result: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn exhausted_authentication_carries_the_resolved_account() {
+        let directory = tempdir().unwrap();
+        let secrets = SecretState::default();
+        let credentials = CredentialState::with_store(Arc::new(TestCredentialStore::default()));
+        for (host, port, username) in [("target.test", 22, "target-user"), ("hop.test", 2222, "hop-user")] {
+            let mut authenticator = authenticator_for(directory.path(), &secrets, &credentials, vec![
+                AuthMethodRef::ProvidedPassword { password: SecretString::new("wrong-password".into()) },
+            ]);
+            authenticator.request.host = host.into();
+            authenticator.request.port = port;
+            authenticator.request.username = Some(username.into());
+            let mut context = recording_context(false);
+            let result = authenticator.authenticate(&mut context, "wrong-default-user", &[]).await;
+            match result {
+                Err(SshError::AuthenticationExhausted(target)) => {
+                    assert_eq!(target.host, host);
+                    assert_eq!(target.port, port);
+                    assert_eq!(target.username, username);
+                }
+                other => panic!("expected account-specific exhaustion, got {other:?}"),
+            }
+            assert_eq!(context.calls, ["none", "password"]);
+        }
+    }
+
+    #[tokio::test]
+    async fn inaccessible_password_storage_never_authorizes_deletion() {
+        struct Unavailable;
+        impl CredentialStore for Unavailable {
+            fn get(&self, _: CredentialNamespace, _: &CredentialAddress) -> Result<Option<SecretString>, CredentialError> {
+                Err(CredentialError::Unavailable)
+            }
+            fn put(&self, _: CredentialNamespace, _: &CredentialAddress, _: &str) -> Result<(), CredentialError> {
+                unreachable!()
+            }
+            fn delete(&self, _: CredentialNamespace, _: &CredentialAddress) -> Result<bool, CredentialError> {
+                unreachable!()
+            }
+        }
+        let directory = tempdir().unwrap();
+        let secrets = SecretState::default(); // Locked, not an empty unlocked Vault.
+        let credentials = CredentialState::with_store(Arc::new(Unavailable));
+        for reference in ["ssh-password://vault", "ssh-password://keychain"] {
+            for accepted in [false, true] {
+                let authenticator = authenticator_for(directory.path(), &secrets, &credentials, vec![
+                    AuthMethodRef::ProvidedPassword { password: SecretString::new("secret-password".into()) },
+                    AuthMethodRef::Password { secret_ref: reference.into() },
+                ]);
+                let mut context = recording_context(false);
+                context.password_accepted = accepted;
+                let result = authenticator.authenticate(&mut context, "alice", &[]).await;
+                if accepted { assert!(matches!(result, Ok(true))); }
+                else { assert!(matches!(result, Err(SshError::AuthenticationRejected)), "{result:?}"); }
+                assert_eq!(context.calls, ["none", "password"]);
+            }
+        }
     }
 
     #[tokio::test]
@@ -3667,7 +3764,7 @@ mod tests {
             assert!(!debug.contains(password), "request Debug must redact configured passwords");
             let mut context = recording_context(false);
             context.password_accepted = true;
-            assert_eq!(authenticator.authenticate(&mut context, "alice", &[]).await.unwrap(), accepted);
+            assert_eq!(authentication_succeeded(authenticator.authenticate(&mut context, "alice", &[]).await), accepted);
             assert_eq!(context.password_valid, accepted);
             assert_eq!(context.calls.remove(0), "none", "Probe methods before credential attempts");
             assert_eq!(context.calls, vec!["password"; attempts]);
@@ -3691,7 +3788,7 @@ mod tests {
             let authenticator = authenticator_for(directory.path(), &secrets, &credentials, methods);
             let mut context = recording_context(false);
             context.password_accepted = true;
-            assert_eq!(authenticator.authenticate(&mut context, "alice", &[]).await.unwrap(), fallback);
+            assert_eq!(authentication_succeeded(authenticator.authenticate(&mut context, "alice", &[]).await), fallback);
             assert_eq!(context.calls.remove(0), "none", "Probe methods before credential attempts");
             assert_eq!(context.calls, if fallback { vec!["password", "keyboard-interactive"] } else { vec!["password"] });
         }
@@ -3727,12 +3824,12 @@ mod tests {
             ])).unwrap();
             let authenticator = authenticator_for(directory.path(), &secrets, &credentials, methods);
             let prepared = super::resolve_auth_passwords(&authenticator.request.auth, &authenticator.request, "alice", &secrets, &credentials).unwrap();
-            let values: Vec<_> = prepared.iter().map(|value| value.as_ref().map(|value| value.expose_secret().as_str())).collect();
+            let values: Vec<_> = prepared.values.iter().map(|value| value.as_ref().map(|value| value.expose_secret().as_str())).collect();
             assert_eq!(values, vec![Some("configured"), Some("configured"), stored.filter(|value| *value != "configured"), stored, None]);
             assert!(!format!("{prepared:?}").contains("configured"));
             let isolated = super::resolve_auth_passwords(&authenticator.request.auth, &authenticator.request, "other-user", &secrets, &credentials).unwrap();
-            assert!(isolated[2].is_none());
-            assert!(isolated[3].is_none());
+            assert!(isolated.values[2].is_none());
+            assert!(isolated.values[3].is_none());
         }
     }
 
@@ -3753,11 +3850,11 @@ mod tests {
         ])).unwrap();
         let prepared = super::resolve_auth_passwords(&methods, &request(), "alice", &secrets, &credentials).unwrap();
         secrets.replace(snapshot("new-secret"), SecretString::new("fixture".into()), Duration::from_secs(60)).unwrap();
-        for password in prepared { assert_eq!(password.unwrap().expose_secret(), "initial-secret"); }
+        for password in prepared.values { assert_eq!(password.unwrap().expose_secret(), "initial-secret"); }
         for (host, port, username) in [("other.test", 22, "alice"), ("example.test", 23, "alice"), ("example.test", 22, "bob")] {
             let mut target = request(); target.host = host.into(); target.port = port;
             let prepared = super::resolve_auth_passwords(&methods, &target, username, &secrets, &credentials).unwrap();
-            assert!(prepared.iter().all(Option::is_none));
+            assert!(prepared.values.iter().all(Option::is_none));
         }
         let legacy: AuthMethodRef = serde_json::from_value(serde_json::json!({"type":"keyboardInteractive"})).unwrap();
         assert!(matches!(legacy, AuthMethodRef::KeyboardInteractive { password: None, secret_ref: None }));
@@ -3854,10 +3951,9 @@ mod tests {
                 authenticator_for(directory.path(), &secrets, &credentials, methods);
             let mut context = recording_context(false);
             assert_eq!(
-                authenticator
+                authentication_succeeded(authenticator
                     .authenticate(&mut context, "alice", &[])
-                    .await
-                    .unwrap(),
+                    .await),
                 fallback
             );
             assert_eq!(context.calls.remove(0), "none", "Probe methods before credential attempts");
@@ -3931,7 +4027,7 @@ mod tests {
                 let mut context = recording_context(true);
                 context.password_accepted = true;
                 assert_eq!(
-                    authenticator.authenticate(&mut context, "alice", &[]).await.unwrap(),
+                    authentication_succeeded(authenticator.authenticate(&mut context, "alice", &[]).await),
                     expected,
                 );
                 assert_eq!(used_private_key(&authenticator), expects_key);
@@ -4050,10 +4146,9 @@ mod tests {
         for (label, auth, expected_call) in cases {
             let authenticator = authenticator_for(directory.path(), &secrets, &credentials, auth);
             let mut context = recording_context(true);
-            assert_eq!(authenticator
+            assert_eq!(authentication_succeeded(authenticator
                 .authenticate(&mut context, "alice", &[])
-                .await
-                .unwrap(), label != "none");
+                .await), label != "none");
             assert_eq!(context.calls.remove(0), "none", "Probe methods before credential attempts");
             assert_eq!(context.calls, if label == "none" { vec![] } else { vec![expected_call] });
             assert!(
@@ -4094,10 +4189,9 @@ mod tests {
             context.password_accepted = true;
             context.agent_error = Some(|| SshError::AuthenticationRejected);
             assert_eq!(
-                authenticator
+                authentication_succeeded(authenticator
                     .authenticate(&mut context, "alice", &[])
-                    .await
-                    .unwrap(),
+                    .await),
                 expected
             );
             assert_eq!(context.calls.remove(0), "none", "Probe methods before credential attempts");
@@ -4202,10 +4296,9 @@ mod tests {
             vec![private_key_method(&directory.path().join("missing_key"))],
         );
         let mut context = recording_context(true);
-        assert!(!unreadable
+        assert!(!authentication_succeeded(unreadable
             .authenticate(&mut context, "alice", &[])
-            .await
-            .unwrap());
+            .await));
         assert_eq!(context.calls, ["none"]);
         assert!(!used_private_key(&unreadable));
     }
@@ -4267,10 +4360,9 @@ mod tests {
         let mut context = recording_context(false);
         context.private_key_accepted = true;
 
-        assert!(!authenticator
+        assert!(!authentication_succeeded(authenticator
             .authenticate(&mut context, "alice", &[])
-            .await
-            .unwrap());
+            .await));
         assert_eq!(context.calls.remove(0), "none", "Probe methods before credential attempts");
         assert_eq!(context.calls, ["private-key:16", "password"]);
         assert!(used_private_key(&authenticator));

@@ -633,6 +633,12 @@ export interface SshAuthPrompt {
     savedPassword?: string
 }
 
+export interface SshConnectError {
+    code: string
+    details: string
+    passwordDeletionTarget?: { host: string; port: number; username: string }
+}
+
 export interface SshOutputEvent {
     id: string
     connectionId: string

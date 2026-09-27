@@ -44,11 +44,15 @@ function deferred () {
 }
 async function settle () { for (let i = 0; i < 30; i++) await Promise.resolve() }
 async function fixture (options = {}) {
-    const handlers = new Map(), calls = [], modals = [], saves = [], messages = [], keySaves = [], keyDeletes = []
+    const handlers = new Map(), calls = [], modals = [], saves = [], messages = [], keySaves = [], keyDeletes = [], passwordDeletes = []
     const connect = deferred()
     const storage = {
         loadPassword: async () => options.prefill ? options.prefill.promise : 'saved-password',
         savePassword: async (...args) => { saves.push(args); if (options.saveFails) throw new Error('storage failed') },
+        deletePassword: async (...args) => {
+            passwordDeletes.push(args)
+            if (options.passwordDeleteFails) throw new Error('private storage failure')
+        },
         deletePrivateKeyPassword: async hash => {
             keyDeletes.push(hash)
             if (options.deletion) await options.deletion.promise
@@ -77,7 +81,7 @@ async function fixture (options = {}) {
     const profile = { id: 'destination', options: { host: 'destination.test', port: 22, user: 'alice', input: {}, forwardedPorts: [] } }
     const session = new loaded.exports.TauriSshSession({ get: token => {
         if (token === fakes['tabby-core'].LogService) return { create: () => ({ debug () {}, warn () {} }) }
-        if (token === fakes['../services/passwordStorage.service'].TauriPasswordStorageService) return storage
+        if (token === fakes['../services/passwordStorage.service'].TauriPasswordStorageService) return options.storage ?? storage
         if (token === fakes['tabby-core'].ConfigService) return { store: { ssh: {} } }
         throw new Error(`Unexpected token ${token.name}`)
     } }, bridge, { isEnabled: () => false }, profile, {
@@ -109,7 +113,7 @@ async function fixture (options = {}) {
         password: { host: 'jump.test', port: 2222, username: 'resolved-user' },
     }
     return {
-        session, profile, handlers, calls, modals, saves, keySaves, keyDeletes, messages, started, connect, prompt,
+        session, profile, handlers, calls, modals, saves, keySaves, keyDeletes, passwordDeletes, messages, started, connect, prompt,
         show: () => handlers.get('ssh:authPrompt')(prompt),
         accepted: (overrides = {}) => handlers.get('ssh:passwordAccepted')({ requestId: prompt.requestId, connectionId: prompt.connectionId, ...overrides }),
         unlocked: (overrides = {}) => handlers.get('ssh:privateKeyUnlocked')({ requestId: prompt.requestId, connectionId: prompt.connectionId, ...overrides }),
@@ -117,6 +121,124 @@ async function fixture (options = {}) {
         finish: async () => { connect.resolve({ id: 'ssh-1', username: 'alice', usedPrivateKey: false }); await started },
     }
 }
+
+// Only a final native rejection identifies a password to delete, even without a prompt event.
+for (const target of [
+    { host: 'destination.test', port: 22, username: 'resolved-target' },
+    { host: 'jump.test', port: 2222, username: 'resolved-hop' },
+]) {
+    const f = await fixture()
+    const error = { code: 'permissionDenied', details: 'SSH authentication was rejected', passwordDeletionTarget: target }
+    f.connect.reject(error)
+    await assert.rejects(f.started, candidate => candidate === error)
+    await settle()
+    assert.equal(f.passwordDeletes.length, 1)
+    const [profile, username] = f.passwordDeletes[0]
+    assert.deepEqual(plain({ host: profile.options.host, port: profile.options.port, username }), target)
+    assert.equal(profile.options.user, target.username)
+    assert.equal(f.profile.options.user, 'alice', 'deletion must not mutate profile defaults')
+    assert.equal(f.keyDeletes.length, 0)
+    await f.session.destroy()
+}
+for (const error of [
+    null, 'SSH authentication was rejected', new Error('closed'),
+    { code: 'permissionDenied', details: 'SSH authentication was rejected' },
+    { code: 'io', passwordDeletionTarget: { host: 'h', port: 22, username: 'u' } },
+    ...[null, {}, { host: 'h', port: 0, username: 'u' }, { host: 'h', port: 22, username: '' }]
+        .map(passwordDeletionTarget => ({ code: 'permissionDenied', passwordDeletionTarget })),
+]) {
+    const f = await fixture()
+    f.connect.reject(error)
+    await f.started.catch(candidate => assert.equal(candidate, error))
+    await settle()
+    assert.equal(f.passwordDeletes.length, 0, 'transport, host-key, malformed and legacy errors cannot delete credentials')
+    await f.session.destroy()
+}
+{
+    const f = await fixture({ passwordDeleteFails: true })
+    const error = { code: 'permissionDenied', passwordDeletionTarget: { host: 'h', port: 22, username: 'u' } }
+    f.connect.reject(error)
+    await assert.rejects(f.started, candidate => candidate === error)
+    await settle()
+    assert.equal(f.passwordDeletes.length, 1)
+    assert.ok(f.messages.some(message => /password could not be removed/i.test(message)))
+    assert.ok(f.messages.every(message => !message.includes('private storage failure')))
+    await f.session.destroy()
+}
+console.log('Final authentication rejection deletes only the resolved target password; unrelated failures preserve credentials')
+
+{
+    const deletion = deferred()
+    const f = await fixture({ storage: { deletePassword: () => deletion.promise } })
+    const error = { code: 'permissionDenied', passwordDeletionTarget: { host: 'h', port: 22, username: 'u' } }
+    let reported = false
+    f.started.catch(candidate => { assert.equal(candidate, error); reported = true })
+    f.connect.reject(error)
+    await settle()
+    assert.equal(reported, true, 'a locked or slow credential store must not delay the authentication failure')
+    deletion.resolve()
+    await settle()
+    await f.session.destroy()
+}
+
+// Exercise the actual storage service, including its Keychain/Vault routing and selectors.
+function loadStorageModule (path, dependencies) {
+    const exports = {}
+    vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL(path, import.meta.url), 'utf8'), {
+        compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS, experimentalDecorators: true },
+    }).outputText, {
+        exports,
+        require: name => { assert.ok(name in dependencies, name); return dependencies[name] },
+    })
+    return exports
+}
+const storageDeps = { '@angular/core': { Injectable: () => target => target }, 'tabby-core': {}, '../api/hostBridge': {}, '../api/keychain': {} }
+const sharedStorage = loadStorageModule('../tabby-ssh/src/services/passwordStorage.service.ts', storageDeps)
+const { TauriPasswordStorageService } = loadStorageModule('../tabby-tauri/src/services/passwordStorage.service.ts', {
+    ...storageDeps, '../../../tabby-ssh/src/services/passwordStorage.service': sharedStorage,
+})
+for (const vaultEnabled of [false, true]) {
+    const records = new Map(), operations = []
+    const vault = {
+        isEnabled: () => vaultEnabled,
+        addSecret: async secret => records.set(JSON.stringify([secret.type, secret.key]), secret.value),
+        removeSecret: async (type, key) => { operations.push([type, plain(key)]); records.delete(JSON.stringify([type, key])) },
+        getSecret: async (type, key) => ({ value: records.get(JSON.stringify([type, key])) ?? null }),
+    }
+    const storage = new TauriPasswordStorageService(vault, { invoke: async (command, request) => {
+        const key = JSON.stringify([request.service, request.account])
+        if (command === 'keychain.put') return records.set(key, request.value)
+        if (command === 'keychain.get') return records.get(key) ?? null
+        assert.equal(command, 'keychain.delete')
+        operations.push(plain(request)); return records.delete(key)
+    } })
+    const profiles = [
+        { host: 'hop.test', port: 2222, user: 'resolved-hop' },
+        { host: 'hop.test', port: 2222, user: 'other-user' },
+        { host: 'hop.test', port: 22, user: 'resolved-hop' },
+        { host: 'destination.test', port: 2222, user: 'resolved-hop' },
+    ].map(options => ({ options }))
+    for (const profile of profiles) await storage.savePassword(profile, 'synthetic-password')
+    await storage.savePrivateKeyPassword('synthetic-key', 'synthetic-passphrase')
+    const f = await fixture({ storage })
+    f.connect.reject({ code: 'permissionDenied', passwordDeletionTarget: { host: 'hop.test', port: 2222, username: 'resolved-hop' } })
+    await assert.rejects(f.started)
+    assert.equal(await storage.loadPassword(profiles[0]), null)
+    for (const profile of profiles.slice(1)) assert.equal(await storage.loadPassword(profile), 'synthetic-password')
+    assert.equal(await storage.loadPrivateKeyPassword('synthetic-key'), 'synthetic-passphrase')
+    assert.deepEqual(operations, vaultEnabled
+        ? [[sharedStorage.VAULT_SECRET_TYPE_PASSWORD, { user: 'resolved-hop', host: 'hop.test', port: 2222 }]]
+        : [{ service: 'ssh@hop.test:2222', account: 'resolved-hop' }])
+    await f.session.destroy()
+}
+{
+    const f = await fixture()
+    await f.session.destroy()
+    f.connect.reject({ code: 'permissionDenied', passwordDeletionTarget: { host: 'h', port: 22, username: 'u' } })
+    await assert.rejects(f.started)
+    assert.equal(f.passwordDeletes.length, 0, 'late failure after tab closure cannot delete credentials')
+}
+console.log('Real password storage routes rejection to one Keychain or Vault entry and preserves other accounts, ports, hosts and private keys')
 
 // A native acceptance event can race the authResponse promise. Only matching success saves.
 {
@@ -137,6 +259,7 @@ async function fixture (options = {}) {
     assert.equal(f.profile.options.host, 'destination.test')
     f.accepted(); await settle(); assert.equal(f.saves.length, 1, 'duplicate success cannot save twice')
     await f.finish(); await f.session.destroy()
+    assert.equal(f.passwordDeletes.length, 0, 'successful authentication must preserve stored passwords')
 }
 for (const result of [null, { value: '', remember: false }, { value: 'wrong', remember: true }]) {
     const f = await fixture()
