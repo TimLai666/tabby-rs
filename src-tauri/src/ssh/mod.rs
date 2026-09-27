@@ -545,6 +545,50 @@ impl SshAuthenticator for ManagerAuthenticator<'_> {
                         Err(error) => Err(error),
                     }
                 }
+                AuthMethodRef::PromptPassword => {
+                    let app = self.app.as_ref().ok_or(SshError::Closed)?;
+                    let request_id = self.manager.new_id("auth");
+                    let connection_id = self
+                        .request
+                        .connection_id
+                        .clone()
+                        .unwrap_or_else(|| self.request.profile_id.clone());
+                    let responses = self
+                        .manager
+                        .prompt_for_responses(
+                            app,
+                            SshAuthPrompt {
+                                request_id: request_id.clone(),
+                                id: self.request.profile_id.clone(),
+                                connection_id: connection_id.clone(),
+                                name: format!("Password for {username}@{}", self.request.host),
+                                instructions: String::new(),
+                                prompts: vec![SshAuthPromptItem {
+                                    text: "Password".into(),
+                                    echo: false,
+                                }],
+                                password: Some(SshPasswordPromptTarget {
+                                    host: self.request.host.clone(),
+                                    port: self.request.port,
+                                    username: username.into(),
+                                }),
+                            },
+                        )
+                        .await?;
+                    let authenticated =
+                        authenticate_password_response(context, username, responses).await?;
+                    if authenticated {
+                        app.emit(
+                            "ssh:passwordAccepted",
+                            SshPasswordAccepted {
+                                request_id,
+                                connection_id,
+                            },
+                        )
+                        .map_err(|_| SshError::Closed)?;
+                    }
+                    Ok(authenticated)
+                }
                 AuthMethodRef::PrivateKey {
                     file_ref,
                     passphrase_ref,
@@ -573,6 +617,7 @@ impl SshAuthenticator for ManagerAuthenticator<'_> {
                                             .clone()
                                             .unwrap_or_else(|| self.request.profile_id.clone()),
                                         name: "Private key passphrase".into(),
+                                        password: None,
                                         instructions: "The private key is encrypted.".into(),
                                         prompts: vec![SshAuthPromptItem {
                                             text: "Passphrase".into(),
@@ -643,6 +688,7 @@ impl SshAuthenticator for ManagerAuthenticator<'_> {
                                                 .clone()
                                                 .unwrap_or_else(|| self.request.profile_id.clone()),
                                             name: prompt.name,
+                                            password: None,
                                             instructions: prompt.instructions,
                                             prompts: prompt
                                                 .prompts
@@ -671,6 +717,25 @@ impl SshAuthenticator for ManagerAuthenticator<'_> {
         }
         Ok(false)
     }
+}
+
+async fn authenticate_password_response(
+    context: &mut dyn SshAuthContext,
+    username: &str,
+    responses: Vec<String>,
+) -> Result<bool, SshError> {
+    let mut responses = zeroize::Zeroizing::new(responses);
+    if responses.is_empty() {
+        return Err(SshError::Closed);
+    }
+    if responses.len() != 1 {
+        return Err(SshError::InvalidRequest(
+            "one password response is required".into(),
+        ));
+    }
+    let password = secrecy::SecretString::new(responses[0].clone());
+    responses.zeroize();
+    context.authenticate_password(username, &password).await
 }
 
 async fn disconnect_jump_handles(handles: &mut Vec<client::Handle<SshHandler>>) {
@@ -1900,7 +1965,11 @@ impl SshManager {
         app: &AppHandle,
         mut prompt: SshAuthPrompt,
     ) -> Result<Vec<String>, SshError> {
-        let request_id = self.new_id("auth");
+        let request_id = if prompt.request_id.is_empty() {
+            self.new_id("auth")
+        } else {
+            prompt.request_id.clone()
+        };
         prompt.request_id = request_id.clone();
         let (sender, receiver) = oneshot::channel();
         self.auth_waiters
@@ -3286,6 +3355,48 @@ mod tests {
 
     fn used_private_key(authenticator: &ManagerAuthenticator<'_>) -> bool {
         *authenticator.used_private_key.lock().unwrap()
+    }
+
+    #[tokio::test]
+    async fn password_response_preserves_cancellation_and_password_results() {
+        let mut context = recording_context(false);
+        assert!(matches!(
+            super::authenticate_password_response(&mut context, "alice", vec![]).await,
+            Err(SshError::Closed)
+        ));
+        assert!(context.calls.is_empty());
+        assert!(matches!(
+            super::authenticate_password_response(&mut context, "alice", vec!["a".into(), "b".into()]).await,
+            Err(SshError::InvalidRequest(_))
+        ));
+        assert!(context.calls.is_empty());
+        for (password, accepted, expected) in [
+            ("secret-password", true, true),
+            ("wrong-password", true, false),
+            ("secret-password", false, false),
+            ("", true, false),
+        ] {
+            let mut context = recording_context(false);
+            context.password_accepted = accepted;
+            assert_eq!(
+                super::authenticate_password_response(&mut context, "alice", vec![password.into()]).await.unwrap(),
+                expected
+            );
+            assert_eq!(context.calls, ["password"]);
+        }
+    }
+
+    #[test]
+    fn password_response_wire_contract() {
+        let method: AuthMethodRef = serde_json::from_value(serde_json::json!({ "type": "promptPassword" })).unwrap();
+        assert!(matches!(method, AuthMethodRef::PromptPassword));
+        let accepted = super::SshPasswordAccepted {
+            request_id: "prompt:1".into(),
+            connection_id: "connection:1".into(),
+        };
+        assert_eq!(serde_json::to_value(accepted).unwrap(), serde_json::json!({
+            "requestId": "prompt:1", "connectionId": "connection:1"
+        }));
     }
 
     #[tokio::test]

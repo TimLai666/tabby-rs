@@ -435,6 +435,7 @@ export interface SshForwardingInfo extends SshForwardingRequest {
 
 export type SshAuthMethodRef =
     | { type: 'password'; secretRef: string }
+    | { type: 'promptPassword' }
     | { type: 'privateKey'; fileRef: string; passphraseRef?: string | null }
     | { type: 'agent'; socket?: string | null }
     | { type: 'keyboardInteractive' }
@@ -624,6 +625,7 @@ export interface SshAuthPrompt {
     name: string
     instructions: string
     prompts: { text: string; echo: boolean }[]
+    password?: { host: string; port: number; username: string }
 }
 
 export interface SshOutputEvent {
@@ -1279,6 +1281,7 @@ export interface HostEventMap {
     'transfer:progress': TransferDescriptor
     'ssh:hostKeyPrompt': SshHostKeyPrompt
     'ssh:authPrompt': SshAuthPrompt
+    'ssh:passwordAccepted': { requestId: string; connectionId: string }
     'ssh:output': SshOutputEvent
     'ssh:exit': SshExitEvent
     'ssh:forwardingChanged': SshForwardingInfo

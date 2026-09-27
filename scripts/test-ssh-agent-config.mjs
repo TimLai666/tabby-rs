@@ -27,6 +27,7 @@ const fakes = {
     },
     '../../../tabby-ssh/src/api/interfaces': {},
     '../api/hostBridge': {},
+    '../services/passwordStorage.service': { TauriPasswordStorageService: class {} },
     './hostKeyPromptModal.component': { TauriSshHostKeyPromptModalComponent: class {} },
     './sftp': { TauriSftpSession: class { static async open () { throw new Error('SFTP is out of scope') } } },
 }
@@ -191,7 +192,8 @@ async function runAllTests () {
         assert.equal(auth[2].type, 'keyboardInteractive', 'ordering: third keyboardInteractive')
         assert.ok(auth[3], 'automatic auth includes a stored password candidate')
         assert.deepEqual(normalize(auth[3]), { type: 'password', secretRef: 'keychain://ssh@h:22/u' })
-        assert.equal(auth.length, 4)
+        assert.deepEqual(normalize(auth[4]), { type: 'promptPassword' })
+        assert.equal(auth.length, 5)
         session.vault.isEnabled = () => true
         const vaultAuth = await session.authForOptions(profile.options)
         const vaultRef = vaultAuth[3].secretRef
@@ -258,7 +260,7 @@ async function runAllTests () {
         jumpProfile.options.port = 2222
         jumpProfile.options.user = 'hop-user'
         const automaticChain = await session.jumpChain(profile.options.jumpHost)
-        assert.deepEqual(normalize(automaticChain[0].auth.at(-1)), {
+        assert.deepEqual(normalize(automaticChain[0].auth.at(-2)), {
             type: 'password', secretRef: 'keychain://ssh@jump:2222/hop-user',
         }, 'automatic hop uses its own stored password')
         console.log('  PASS: jumpChain invokes resolver per hop')
@@ -269,7 +271,7 @@ async function runAllTests () {
     // ===== AGENT FORWARDING TESTS (real connectRequest) =====
 
     const forwardingOptions = (auth, agentForward) => ({ host: 'h', port: 22, user: 'u', input: {}, privateKeys: [], forwardedPorts: [], keepaliveInterval: 0, keepaliveCountMax: 0, jumpHost: null, auth, ...agentForward === undefined ? {} : { agentForward } })
-    const passwordAuth = [{ type: 'password', secretRef: 'keychain://ssh@h:22/u' }]
+    const passwordAuth = [{ type: 'password', secretRef: 'keychain://ssh@h:22/u' }, { type: 'promptPassword' }]
     const keyAuth = { type: 'privateKey', fileRef: '/k', passphraseRef: null }
     const customAgent = { agentType: 'pipe', agentPath: '/custom.sock' }
     const autoAgent = { agentType: 'auto', agentPath: null }

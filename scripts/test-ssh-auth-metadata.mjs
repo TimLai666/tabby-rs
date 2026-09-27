@@ -38,6 +38,7 @@ const fakes = {
     'tabby-terminal': { BaseSession: FakeBaseSession, InputProcessor: class {}, UTF8SplitterMiddleware: class {} },
     '../../../tabby-ssh/src/api/interfaces': {},
     '../api/hostBridge': {},
+    '../services/passwordStorage.service': { TauriPasswordStorageService: class {} },
     './hostKeyPromptModal.component': { TauriSshHostKeyPromptModalComponent: class {} },
     './sftp': { TauriSftpSession: class { static async open () { throw new Error('SFTP is out of scope') } } },
 }

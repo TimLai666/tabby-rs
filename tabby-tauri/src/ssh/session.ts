@@ -1,7 +1,7 @@
 import { Injector } from '@angular/core'
-import { NgbModal } from '@ng-bootstrap/ng-bootstrap'
+import { NgbModal, NgbModalRef } from '@ng-bootstrap/ng-bootstrap'
 import { Observable, Subject } from 'rxjs'
-import { ConfigService, LogService, ProfilesService, VaultService } from 'tabby-core'
+import { ConfigService, LogService, ProfilesService, PromptModalComponent, VaultService } from 'tabby-core'
 import { BaseSession, InputProcessor, UTF8SplitterMiddleware } from 'tabby-terminal'
 
 import { SSHProfile } from '../../../tabby-ssh/src/api/interfaces'
@@ -16,6 +16,7 @@ import {
 } from '../api/hostBridge'
 import { TauriSshHostKeyPromptModalComponent } from './hostKeyPromptModal.component'
 import { TauriSftpSession } from './sftp'
+import { TauriPasswordStorageService } from '../services/passwordStorage.service'
 
 function base64Json (value: unknown): string {
     const bytes = new TextEncoder().encode(JSON.stringify(value))
@@ -39,6 +40,8 @@ export class TauriSshSession extends BaseSession {
     private readonly serviceMessage = new Subject<string>()
     private forwardingIds: string[] = []
     private sftp: TauriSftpSession|null = null
+    private passwordModals = new Map<string, NgbModalRef|null>()
+    private pendingPasswords = new Map<string, { profile: SSHProfile; value: string; username: string }>()
 
     get authPrompt$ (): Observable<SshAuthPrompt> {
         return this.authPrompt.asObservable()
@@ -92,12 +95,24 @@ export class TauriSshSession extends BaseSession {
             }),
             this.bridge.listen('ssh:authPrompt', prompt => {
                 if (prompt.connectionId === this.connectionId) {
-                    this.authPrompt.next(prompt)
+                    if (prompt.password) {
+                        void this.handlePasswordPrompt(prompt)
+                    } else {
+                        this.authPrompt.next(prompt)
+                    }
+                }
+            }),
+            this.bridge.listen('ssh:passwordAccepted', event => {
+                if (event.connectionId === this.connectionId) {
+                    void this.saveAcceptedPassword(event.requestId)
                 }
             }),
         ]))
 
-        const info = await this.bridge.invoke('ssh.connect', await this.connectRequest())
+        const info = await this.bridge.invoke('ssh.connect', await this.connectRequest()).catch(error => {
+            this.clearPasswordPrompts()
+            throw error
+        })
         // The session can be destroyed while the bridge connection is still opening.
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
         if (this.destroying) {
@@ -160,6 +175,7 @@ export class TauriSshSession extends BaseSession {
             return
         }
         this.destroying = true
+        this.clearPasswordPrompts()
         const id = this.id
         this.id = null
         // Keep the last authenticated username and key flag for launching file transfers
@@ -271,8 +287,10 @@ export class TauriSshSession extends BaseSession {
             auth.push({ type: 'agent', socket })
             auth.push({ type: 'keyboardInteractive' })
             auth.push({ type: 'password', secretRef: await this.passwordSecretRef(options) })
+            auth.push({ type: 'promptPassword' })
         } else if (options.auth === 'password') {
             auth.push({ type: 'password', secretRef: await this.passwordSecretRef(options) })
+            auth.push({ type: 'promptPassword' })
         } else if (options.auth === 'publicKey') {
             const privateKeys = options.privateKeys.length
                 ? options.privateKeys
@@ -345,6 +363,68 @@ export class TauriSshSession extends BaseSession {
             key: { user: account, host: options.host, port: options.port ?? 22 },
         }
         return `vault-secret://${base64Json(selector)}`
+    }
+
+    private async handlePasswordPrompt (prompt: SshAuthPrompt): Promise<void> {
+        if (!prompt.password || this.destroying || this.passwordModals.has(prompt.requestId)) {
+            return
+        }
+        this.passwordModals.set(prompt.requestId, null)
+        let responses: string[] = []
+        try {
+            const target = prompt.password
+            const profile: SSHProfile = {
+                ...this.profile,
+                options: { ...this.profile.options, host: target.host, port: target.port, user: target.username },
+            }
+            const storage = this.injector.get(TauriPasswordStorageService)
+            const saved = await storage.loadPassword(profile, target.username).catch(() => null)
+            if (!this.passwordModals.has(prompt.requestId)) { return }
+            const modal = this.modals.open(PromptModalComponent)
+            this.passwordModals.set(prompt.requestId, modal)
+            const component = modal.componentInstance as PromptModalComponent
+            Object.assign(component, {
+                prompt: prompt.name, password: true, showRememberCheckbox: true, remember: false, value: saved ?? '',
+            })
+            const result = await modal.result.catch(() => null) as { value: string; remember: boolean }|null
+            component.value = ''
+            if (result && this.passwordModals.has(prompt.requestId)) {
+                const value = result.value
+                responses = [value]
+                if (result.remember) {
+                    this.pendingPasswords.set(prompt.requestId, { profile, value, username: target.username })
+                }
+            }
+        } catch {
+            this.serviceMessage.next('SSH password prompt could not be opened')
+        } finally {
+            if (this.passwordModals.delete(prompt.requestId)) {
+                await this.bridge.invoke('ssh.authResponse', { requestId: prompt.requestId, responses }).catch(() => {
+                    this.pendingPasswords.delete(prompt.requestId)
+                    this.logger.warn('SSH password response could not be sent')
+                })
+            }
+        }
+    }
+
+    private async saveAcceptedPassword (requestId: string): Promise<void> {
+        const pending = this.pendingPasswords.get(requestId)
+        if (!pending) { return }
+        this.pendingPasswords.delete(requestId)
+        try {
+            await this.injector.get(TauriPasswordStorageService).savePassword(pending.profile, pending.value, pending.username)
+        } catch {
+            this.serviceMessage.next('SSH password could not be saved')
+        }
+    }
+
+    private clearPasswordPrompts (): void {
+        this.pendingPasswords.clear()
+        for (const [requestId, modal] of this.passwordModals) {
+            modal?.dismiss()
+            void this.bridge.invoke('ssh.authResponse', { requestId, responses: [] }).catch(() => undefined)
+        }
+        this.passwordModals.clear()
     }
 
     private async handleHostKeyPrompt (prompt: SshHostKeyPrompt): Promise<void> {

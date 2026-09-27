@@ -108,6 +108,7 @@ pub enum AuthMethodRef {
         #[serde(rename = "secretRef")]
         secret_ref: String,
     },
+    PromptPassword,
     PrivateKey {
         #[serde(rename = "fileRef")]
         file_ref: String,
@@ -243,6 +244,23 @@ pub struct SshAuthPrompt {
     pub name: String,
     pub instructions: String,
     pub prompts: Vec<SshAuthPromptItem>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub password: Option<SshPasswordPromptTarget>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SshPasswordPromptTarget {
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SshPasswordAccepted {
+    pub request_id: String,
+    pub connection_id: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]

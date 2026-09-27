@@ -74,7 +74,8 @@ export class TauriSshTabComponent extends ConnectableTerminalTabComponent<SSHPro
             this.reconnectAttempts = 0
             this.cancelReconnectTimer()
         } catch (error) {
-            this.write(`\r\nSSH connection failed: ${String(error)}\r\n`)
+            const message = typeof error?.details === 'string' ? error.details : String(error)
+            this.write(`\r\nSSH connection failed: ${message}\r\n`)
             await session.destroy()
         }
     }

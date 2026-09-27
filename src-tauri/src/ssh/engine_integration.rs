@@ -37,6 +37,7 @@ impl HostKeyVerifier for FixtureHostKeyVerifier {
 enum AuthFixtureKind {
     Agent,
     Password,
+    PromptPassword,
     KeyboardInteractive,
     PrivateKey,
 }
@@ -63,7 +64,7 @@ impl ServerHandler for AuthFixtureServer {
     type Error = russh::Error;
 
     async fn auth_password(&mut self, _user: &str, password: &str) -> Result<Auth, Self::Error> {
-        if matches!(self.kind, AuthFixtureKind::Password) && password == self.expected {
+        if matches!(self.kind, AuthFixtureKind::Password | AuthFixtureKind::PromptPassword) && password == self.expected {
             Ok(Auth::Accept)
         } else {
             Ok(Auth::reject())
@@ -187,6 +188,11 @@ impl SshAuthenticator for AuthFixtureAuthenticator {
                 context
                     .authenticate_password(username, &self.expected)
                     .await
+            }
+            AuthFixtureKind::PromptPassword => {
+                super::authenticate_password_response(
+                    context, username, vec![self.expected.expose_secret().clone()],
+                ).await
             }
             AuthFixtureKind::PrivateKey => {
                 context
@@ -341,6 +347,14 @@ async fn runs_real_authentication_and_host_key_algorithm_matrix() {
         run_russh_auth_fixture(
             None,
             AuthFixtureKind::Password,
+            host_key.clone(),
+            None,
+            None,
+        )
+        .await;
+        run_russh_auth_fixture(
+            None,
+            AuthFixtureKind::PromptPassword,
             host_key.clone(),
             None,
             None,

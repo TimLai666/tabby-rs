@@ -66,18 +66,20 @@
 
 ## Pending — SSH password prompts and automatic authentication parity
 
-- `tabby-tauri/src/ssh/session.ts:260` builds automatic authentication candidates from
-  keys, agent, keyboard-interactive, and a stored-password reference. It still lacks
-  upstream `14e2d60`'s prompted password, remember-password choice, and reuse of an
-  explicitly configured profile password. Explicit password mode also lacks prompting.
+- `tabby-tauri/src/ssh/session.ts` still does not reuse an explicitly configured
+  profile password as upstream `14e2d60` does.
 - `passwordSecretRef` uses `root` when the profile username is empty. Match credential
   lookup to the username actually resolved by the native connection before accepting
   stored-password parity for profiles without a username.
 - `ManagerAuthenticator::authenticate` still propagates private-key loading/parsing
   errors before trying later keys or other methods. Upstream skips unusable key files.
-- Verify password prompting and cancellation through the existing SSH auth dialog,
-  including jump hosts. Do not treat agent fallback or the stored-password candidate
-  as complete SSH authentication parity.
-- The agent/stored-password fallback patch has local tests and primary-agent review.
-  Independent review remains pending because OpenCode, agy, and Claude CLI each reached
-  their usage limits. Complete that review before shipping this patch.
+- Automatic and explicit password modes now use the shared `PromptModalComponent`.
+  Browser checks cover masked input, Remember, Enter, OK, and Esc with simulated native
+  events. A macOS desktop loopback SSH test verifies actual prompt delivery, Enter
+  authentication, terminal output, and Esc cancellation without a password attempt.
+  Desktop jump-host connections and Remember with the actual OS credential store or
+  Vault still need end-to-end acceptance.
+- Agent/stored-password fallback and prompted-password persistence have local tests and
+  primary-agent review. Independent review remains pending because OpenCode, agy, and
+  Claude CLI each reached their usage limits. Complete that review before accepting
+  SSH authentication parity.
