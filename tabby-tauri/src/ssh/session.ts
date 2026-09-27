@@ -68,6 +68,11 @@ export class TauriSshSession extends BaseSession {
             return
         }
         const unlisteners = await Promise.all([
+            this.bridge.listen('ssh:message', event => {
+                if (event.connectionId === this.connectionId && !this.destroying) {
+                    this.serviceMessage.next(event.message)
+                }
+            }),
             this.bridge.listen('ssh:output', event => {
                 if (event.connectionId === this.connectionId) {
                     if (!this.id) {

@@ -193,3 +193,14 @@ assert.deepEqual(Array.from(await unavailable.prompt.promise), ['manual-password
 await Promise.resolve()
 assert.deepEqual(notices, ['Could not save password'])
 console.log('Unavailable secret storage preserves manual login and reports save failure without private details')
+
+{
+    const handlers = [], writes = []
+    tab.attachSessionHandler = (_source, handler) => handlers.push(handler)
+    tab.write = value => writes.push(value)
+    tab.size = { columns: 80, rows: 24 }
+    startImplementation = async session => { session.resize = () => {} }
+    await tab.initializeSession()
+    handlers[1]('first line\nsecond line')
+    assert.deepEqual(writes, ['\r\x1b[30m\x1b[47m SSH \x1b[49m\x1b[39m first line\r\n      second line\r\n'], 'SSH service messages must match upstream badge, indentation and line spacing')
+}

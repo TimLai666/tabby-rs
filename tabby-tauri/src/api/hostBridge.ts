@@ -1300,6 +1300,7 @@ export interface HostEventMap {
     'ssh:passwordAccepted': { requestId: string; connectionId: string }
     'ssh:privateKeyUnlocked': { requestId: string; connectionId: string }
     'ssh:output': SshOutputEvent
+    'ssh:message': { connectionId: string; message: string }
     'ssh:exit': SshExitEvent
     'ssh:forwardingChanged': SshForwardingInfo
     'telnet:output': TelnetOutputEvent

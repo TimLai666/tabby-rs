@@ -296,10 +296,20 @@ impl Handler for SshHandler {
         _originator_port: u32,
         _session: &mut client::Session,
     ) -> impl std::future::Future<Output = Result<(), Self::Error>> + Send {
+        let app = self.app.clone();
+        let connection_id = self.connection_id.clone();
         tokio::spawn(forward_x11_channel(
             channel,
             self.x11_display.clone(),
             self.x11,
+            move |message| {
+                let _ = app.emit(
+                    "ssh:message",
+                    serde_json::json!({
+                        "connectionId": connection_id, "message": message,
+                    }),
+                );
+            },
         ));
         async { Ok(()) }
     }
@@ -309,36 +319,68 @@ async fn forward_x11_channel(
     channel: russh::Channel<client::Msg>,
     display: Option<String>,
     enabled: bool,
+    on_message: impl Fn(String) + Send,
 ) -> Result<(), russh::Error> {
     if !enabled {
         let _ = channel.close().await;
         return Ok(());
     }
-    let display = display
-        .or_else(|| std::env::var("DISPLAY").ok())
-        .unwrap_or_else(|| ":0".into());
-    #[cfg(unix)]
-    {
-        match connect_x11_display(&display).await {
-            Ok(X11Target::Unix(mut target)) => {
-                let mut ssh_stream = channel.into_stream();
-                let _ = copy_bidirectional(&mut target, &mut ssh_stream).await;
+    let display = x11_display_spec(display, std::env::var_os("DISPLAY"));
+    match connect_x11_display(&display).await {
+        #[cfg(unix)]
+        Ok(X11Target::Unix(mut target)) => {
+            let mut ssh_stream = channel.into_stream();
+            let _ = copy_bidirectional(&mut target, &mut ssh_stream).await;
+        }
+        Ok(X11Target::Tcp(mut target)) => {
+            let mut ssh_stream = channel.into_stream();
+            let _ = copy_bidirectional(&mut target, &mut ssh_stream).await;
+        }
+        Err(error) => {
+            for message in x11_failure_messages(&display, &error, cfg!(windows)) {
+                on_message(message);
             }
-            Ok(X11Target::Tcp(mut target)) => {
-                let mut ssh_stream = channel.into_stream();
-                let _ = copy_bidirectional(&mut target, &mut ssh_stream).await;
-            }
-            Err(_) => {
-                let _ = channel.close().await;
-            }
+            let _ = channel.close().await;
         }
     }
-    #[cfg(not(unix))]
-    {
-        let _ = display;
-        let _ = channel.close().await;
-    }
     Ok(())
+}
+
+fn x11_failure_messages(display: &str, error: &std::io::Error, windows: bool) -> Vec<String> {
+    let terminal_text = |text: &str| -> String {
+        text.chars()
+            .map(|c| {
+                if c.is_control() {
+                    c.escape_default().to_string()
+                } else {
+                    c.to_string()
+                }
+            })
+            .collect()
+    };
+    let endpoint = parse_x11_display(display, windows).to_json();
+    let mut messages = vec![
+        format!(
+            "\x1b[41m\x1b[30m X \x1b[39m\x1b[49m Could not connect to the X server: {}",
+            terminal_text(&error.to_string())
+        ),
+        format!(
+            "    Tabby RS tried to connect to {} based on the DISPLAY environment var ({})",
+            terminal_text(&endpoint),
+            terminal_text(display)
+        ),
+    ];
+    if windows {
+        messages.extend(
+            [
+                "    To use X forwarding, you need a local X server, e.g.:",
+                "    * VcXsrv: https://sourceforge.net/projects/vcxsrv/",
+                "    * Xming: https://sourceforge.net/projects/xming/",
+            ]
+            .map(str::to_owned),
+        );
+    }
+    messages
 }
 
 struct ManagerHostKeyVerifier {
@@ -1237,11 +1279,7 @@ impl SshManager {
             }
         }
         if request.x11 {
-            let display = request
-                .x11_display
-                .clone()
-                .or_else(|| std::env::var("DISPLAY").ok())
-                .unwrap_or_else(|| ":0".into());
+            let display = x11_display_spec(request.x11_display.clone(), std::env::var_os("DISPLAY"));
             let cookie = x11_cookie(&display);
             if channel
                 .request_x11(true, false, "MIT-MAGIC-COOKIE-1", cookie, 0)
@@ -2372,40 +2410,106 @@ async fn run_local_forward(
     manager.finish_forwarding(&app, &info.id);
 }
 
-#[cfg(unix)]
 enum X11Target {
+    #[cfg(unix)]
     Unix(tokio::net::UnixStream),
     Tcp(TcpStream),
 }
 
-#[cfg(unix)]
-async fn connect_x11_display(display: &str) -> Result<X11Target, std::io::Error> {
-    let display = display.strip_prefix("unix:").unwrap_or(display);
-    if display.starts_with('/') {
-        return tokio::net::UnixStream::connect(display)
-            .await
-            .map(X11Target::Unix);
+#[derive(Debug, PartialEq)]
+enum X11Address {
+    Unix(String),
+    Tcp(String, f64),
+}
+
+impl X11Address {
+    fn to_json(&self) -> String {
+        match self {
+            Self::Unix(path) => serde_json::json!({ "path": path }).to_string(),
+            Self::Tcp(host, port) => format!(
+                "{{\"host\":{},\"port\":{}}}",
+                serde_json::to_string(host).unwrap(),
+                if port.is_finite() {
+                    x11_number(*port)
+                } else {
+                    "null".into()
+                },
+            ),
+        }
     }
-    let (host, display_number) = if let Some(number) = display.strip_prefix(':') {
-        ("unix", number)
+}
+
+fn x11_number(number: f64) -> String {
+    if number.is_infinite() {
+        "Infinity".into()
+    } else if number >= 1e21 {
+        format!("{number:e}").replace('e', "e+")
     } else {
-        display.rsplit_once(':').ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid DISPLAY")
-        })?
-    };
-    let number = display_number
-        .split('.')
-        .next()
-        .and_then(|value| value.parse::<u16>().ok())
-        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid DISPLAY"))?;
-    if host == "unix" {
-        return tokio::net::UnixStream::connect(format!("/tmp/.X11-unix/X{number}"))
-            .await
-            .map(X11Target::Unix);
+        number.to_string()
     }
-    TcpStream::connect((host, number.saturating_add(6000)))
-        .await
-        .map(X11Target::Tcp)
+}
+
+fn x11_display_spec(configured: Option<String>, environment: Option<std::ffi::OsString>) -> String {
+    configured
+        .filter(|value| !value.is_empty())
+        .or_else(|| environment.map(|value| value.to_string_lossy().into_owned()))
+        .unwrap_or_else(|| "localhost:0".into())
+}
+
+fn parse_x11_display(display: &str, windows: bool) -> X11Address {
+    if display.starts_with('/') {
+        return X11Address::Unix(display.into());
+    }
+    // Preserve 14e2d60's greedy JS regex, including its wildcard separator and
+    // default on a missing match. JS's non-Unicode dot matches one UTF-16 unit.
+    static SPEC: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let spec = SPEC.get_or_init(|| regex::Regex::new(
+        r"\A([^\n\r\u{2028}\u{2029}]+):([0-9]+)[^\n\r\u{2028}\u{2029}\u{10000}-\u{10ffff}]([0-9]+)\z",
+    ).expect("fixed upstream DISPLAY regex"));
+    let captures = spec.captures(display);
+    let host = captures
+        .as_ref()
+        .map_or(if windows { "localhost" } else { "unix" }, |c| {
+            c.get(1).unwrap().as_str()
+        });
+    let number = captures
+        .as_ref()
+        .map_or(0.0, |c| c[2].parse::<f64>().expect("ASCII decimal digits"));
+    if host == "unix" {
+        return X11Address::Unix(format!("/tmp/.X11-unix/X{}", x11_number(number)));
+    }
+    // Tabby treats numbers below 100 as display indices and larger values as TCP ports.
+    let port = if number < 100.0 {
+        number + 6000.0
+    } else {
+        number
+    };
+    X11Address::Tcp(host.into(), port)
+}
+
+async fn connect_x11_display(display: &str) -> Result<X11Target, std::io::Error> {
+    match parse_x11_display(display, cfg!(windows)) {
+        #[cfg(unix)]
+        X11Address::Unix(path) => tokio::net::UnixStream::connect(path)
+            .await
+            .map(X11Target::Unix),
+        #[cfg(not(unix))]
+        X11Address::Unix(_) => Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "X11 Unix sockets are not supported on this platform",
+        )),
+        X11Address::Tcp(host, port) => {
+            if !port.is_finite() || !(0.0..=65535.0).contains(&port) || port.fract() != 0.0 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("invalid DISPLAY port: {}", x11_number(port)),
+                ));
+            }
+            TcpStream::connect((host.as_str(), port as u16))
+                .await
+                .map(X11Target::Tcp)
+        }
+    }
 }
 
 fn emit_forwarding(app: &AppHandle, info: &SshForwardingInfo) {
@@ -2940,6 +3044,155 @@ mod tests {
     };
     use tempfile::tempdir;
     use tokio::sync::mpsc;
+
+    #[cfg(unix)]
+    #[test]
+    fn x11_display_preserves_non_unicode_environment() {
+        use std::os::unix::ffi::OsStringExt;
+        let value = std::ffi::OsString::from_vec(b"/tmp/\xff:1.0".to_vec());
+        assert_eq!(
+            super::x11_display_spec(None, Some(value)),
+            "/tmp/\u{fffd}:1.0"
+        );
+    }
+
+    #[test]
+    fn x11_display_selection_matches_upstream() {
+        assert_eq!(
+            super::x11_display_spec(Some("host:1.0".into()), Some("host:2.0".into())),
+            "host:1.0"
+        );
+        assert_eq!(
+            super::x11_display_spec(Some(String::new()), Some("host:2.0".into())),
+            "host:2.0"
+        );
+        assert_eq!(
+            super::x11_display_spec(None, Some(String::new().into())),
+            ""
+        );
+        assert_eq!(super::x11_display_spec(None, None), "localhost:0");
+        assert_eq!(
+            super::x11_display_spec(Some(String::new()), None),
+            "localhost:0"
+        );
+    }
+
+    #[test]
+    fn x11_display_matches_fixed_upstream_oracle() {
+        let oracle: serde_json::Value =
+            serde_json::from_str(include_str!("fixtures/x11-display.json")).unwrap();
+        for case in oracle["cases"].as_array().unwrap() {
+            let display = case["display"].as_str().unwrap();
+            let windows = case["windows"].as_bool().unwrap();
+            let actual: serde_json::Value =
+                serde_json::from_str(&super::parse_x11_display(display, windows).to_json())
+                    .unwrap();
+            assert_eq!(
+                actual, case["expected"],
+                "DISPLAY={display:?}, Windows={windows}"
+            );
+        }
+    }
+
+    #[test]
+    fn x11_failure_reports_display_and_platform_guidance() {
+        let error =
+            std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "connection refused");
+        let messages = super::x11_failure_messages("localhost:100.0", &error, false);
+        assert_eq!(messages.len(), 2);
+        assert!(messages[0].contains("Could not connect to the X server: connection refused"));
+        assert_eq!(messages[1], "    Tabby RS tried to connect to {\"host\":\"localhost\",\"port\":100} based on the DISPLAY environment var (localhost:100.0)");
+        let messages = super::x11_failure_messages("unix:0.0", &error, true);
+        assert_eq!(messages.len(), 5);
+        assert!(messages[1].contains("{\"path\":\"/tmp/.X11-unix/X0\"}"));
+        assert_eq!(
+            messages[2],
+            "    To use X forwarding, you need a local X server, e.g.:"
+        );
+        assert_eq!(
+            messages[3],
+            "    * VcXsrv: https://sourceforge.net/projects/vcxsrv/"
+        );
+        assert_eq!(
+            messages[4],
+            "    * Xming: https://sourceforge.net/projects/xming/"
+        );
+        assert!(
+            super::x11_failure_messages("invalid", &error, false)[1].contains("/tmp/.X11-unix/X0")
+        );
+    }
+
+    #[test]
+    fn x11_failure_escapes_terminal_controls() {
+        let error = std::io::Error::other("bad\x1b]52;c;secret\x07\nerror");
+        let messages = super::x11_failure_messages("/tmp/\x1b[2J\r\u{009b}", &error, false);
+        assert!(!messages[0].contains("\x1b]52"));
+        assert!(!messages[0].contains(['\x07', '\n']));
+        assert!(!messages[1].chars().any(char::is_control));
+        assert!(messages[0].contains("secret"));
+    }
+
+    #[test]
+    fn x11_display_windows_and_unix_defaults_match_upstream() {
+        use super::{parse_x11_display, X11Address};
+        assert_eq!(
+            parse_x11_display(":0", true),
+            X11Address::Tcp("localhost".into(), 6000.0)
+        );
+        assert_eq!(
+            parse_x11_display(":0", false),
+            X11Address::Unix("/tmp/.X11-unix/X0".into())
+        );
+        for windows in [true, false] {
+            assert_eq!(
+                parse_x11_display("127.0.0.1:100.0", windows),
+                X11Address::Tcp("127.0.0.1".into(), 100.0)
+            );
+            assert_eq!(
+                parse_x11_display("unix:0.0", windows),
+                X11Address::Unix("/tmp/.X11-unix/X0".into())
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn x11_display_rejects_out_of_range_tcp_ports() {
+        for display in ["host:65536.0", "host:1000000000000000000000.0"] {
+            let error = match super::connect_x11_display(display).await {
+                Err(error) => error,
+                Ok(_) => panic!("invalid port must not connect"),
+            };
+            assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        }
+    }
+
+    #[tokio::test]
+    async fn x11_display_connects_to_explicit_tcp_port() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        tokio::time::timeout(Duration::from_secs(3), async {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            assert!(port >= 100);
+            let target = super::connect_x11_display(&format!("127.0.0.1:{port}.0"))
+                .await
+                .expect("X11 must use ports >=100 without adding 6000");
+            let mut client = match target {
+                super::X11Target::Tcp(client) => client,
+                #[cfg(unix)]
+                super::X11Target::Unix(_) => panic!("expected TCP"),
+            };
+            let (mut server, _) = listener.accept().await.unwrap();
+            client.write_all(b"ping").await.unwrap();
+            let mut bytes = [0; 4];
+            server.read_exact(&mut bytes).await.unwrap();
+            assert_eq!(&bytes, b"ping");
+            server.write_all(b"pong").await.unwrap();
+            client.read_exact(&mut bytes).await.unwrap();
+            assert_eq!(&bytes, b"pong");
+        })
+        .await
+        .expect("X11 TCP exchange timed out");
+    }
 
     #[derive(Default)]
     struct TestCredentialStore {

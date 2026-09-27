@@ -128,6 +128,22 @@ async function fixture (options = {}) {
 }
 
 {
+    const f = await fixture()
+    const message = f.handlers.get('ssh:message')
+    assert.equal(typeof message, 'function', 'native SSH service messages must have a listener')
+    message({ connectionId: 'another-connection', message: 'wrong session' })
+    assert.deepEqual(f.messages, [])
+    message({ connectionId: 'connection-1', message: 'X11 connection refused' })
+    assert.deepEqual(f.messages, ['X11 connection refused'], 'messages before connect resolves are visible')
+    await f.finish()
+    message({ connectionId: 'connection-1', message: 'DISPLAY endpoint' })
+    assert.deepEqual(f.messages, ['X11 connection refused', 'DISPLAY endpoint'])
+    await f.session.destroy()
+    assert.equal(f.handlers.has('ssh:message'), false)
+    message({ connectionId: 'connection-1', message: 'stale failure' })
+    assert.equal(f.messages.length, 2, 'late callbacks after teardown must not emit')
+}
+{
     const f = await fixture({ modalFails: true })
     f.show(); await settle()
     assert.deepEqual(f.responses(), [{ requestId: 'auth-1', responses: [], abort: true }], 'a broken prompt must abort, not skip authentication')

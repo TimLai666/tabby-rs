@@ -5319,6 +5319,7 @@ dependencies = [
  "pbkdf2",
  "portable-pty",
  "rand 0.8.7",
+ "regex",
  "reqwest",
  "russh",
  "russh-sftp",

@@ -510,22 +510,25 @@ async fn classifies_dns_and_tcp_faults_with_bounded_timeouts() {
     server.abort();
 }
 
-#[cfg(unix)]
 #[derive(Clone, Copy)]
 enum ForwardedChannel {
+    #[cfg(unix)]
     Agent,
+    #[cfg(unix)]
     X11,
+    #[cfg(unix)]
+    X11Unavailable,
+    X11Tcp,
 }
 
-#[cfg(unix)]
 struct ForwardingConsentClient {
     host_key: PublicKey,
     socket: String,
     enabled: bool,
+    messages: Arc<std::sync::Mutex<Vec<String>>>,
     forwards: tokio::sync::mpsc::UnboundedSender<tokio::task::JoinHandle<Result<(), russh::Error>>>,
 }
 
-#[cfg(unix)]
 impl client::Handler for ForwardingConsentClient {
     type Error = russh::Error;
 
@@ -555,16 +558,17 @@ impl client::Handler for ForwardingConsentClient {
         _originator_port: u32,
         _session: &mut client::Session,
     ) -> impl std::future::Future<Output = Result<(), Self::Error>> + Send {
+        let messages = Arc::clone(&self.messages);
         let _ = self.forwards.send(tokio::spawn(super::forward_x11_channel(
             channel,
             Some(self.socket.clone()),
             self.enabled,
+            move |message| messages.lock().unwrap().push(message),
         )));
         async { Ok(()) }
     }
 }
 
-#[cfg(unix)]
 async fn run_forwarding_consent(forwarded: ForwardedChannel, kind: AuthFixtureKind, enabled: bool) {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -573,15 +577,11 @@ async fn run_forwarding_consent(forwarded: ForwardedChannel, kind: AuthFixtureKi
     const REQUEST_IDENTITIES: [u8; 5] = [0, 0, 0, 1, 11];
     const IDENTITIES_ANSWER: [u8; 9] = [0, 0, 0, 5, 12, 0, 0, 0, 0];
 
-    let mut tasks = tokio::task::JoinSet::new();
-    let directory = tempdir().expect("create agent consent directory");
-    let socket = directory.path().join("forward.sock");
-    let agent = tokio::net::UnixListener::bind(&socket).expect("bind custom local socket");
-    let accepted = Arc::new(AtomicUsize::new(0));
-    let agent_accepted = Arc::clone(&accepted);
-    tasks.spawn(async move {
-        let (mut stream, _) = agent.accept().await.expect("accept custom agent socket");
-        agent_accepted.fetch_add(1, Ordering::SeqCst);
+    async fn respond(
+        mut stream: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+        accepted: Arc<AtomicUsize>,
+    ) {
+        accepted.fetch_add(1, Ordering::SeqCst);
         let mut request = [0; 5];
         stream
             .read_exact(&mut request)
@@ -593,7 +593,41 @@ async fn run_forwarding_consent(forwarded: ForwardedChannel, kind: AuthFixtureKi
             .await
             .expect("write agent answer");
         let _ = stream.read(&mut [0; 1]).await;
-    });
+    }
+
+    let mut tasks = tokio::task::JoinSet::new();
+    #[cfg(unix)]
+    let directory = tempdir().expect("create forwarding consent directory");
+    let accepted = Arc::new(AtomicUsize::new(0));
+    let messages = Arc::new(std::sync::Mutex::new(Vec::new()));
+    #[cfg(unix)]
+    let unavailable = matches!(forwarded, ForwardedChannel::X11Unavailable);
+    #[cfg(not(unix))]
+    let unavailable = false;
+    let local_accepted = Arc::clone(&accepted);
+    let socket = match forwarded {
+        #[cfg(unix)]
+        ForwardedChannel::X11Unavailable => directory.path().join("missing.sock").to_string_lossy().into_owned(),
+        ForwardedChannel::X11Tcp => {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            tasks.spawn(async move {
+                let (stream, _) = listener.accept().await.unwrap();
+                respond(stream, local_accepted).await;
+            });
+            format!("127.0.0.1:{port}.0")
+        }
+        #[cfg(unix)]
+        _ => {
+            let path = directory.path().join("forward.sock");
+            let listener = tokio::net::UnixListener::bind(&path).unwrap();
+            tasks.spawn(async move {
+                let (stream, _) = listener.accept().await.unwrap();
+                respond(stream, local_accepted).await;
+            });
+            path.to_string_lossy().into_owned()
+        }
+    };
 
     let host_key = HostKeyAlgorithm::Ed25519.generate();
     let host_public_key = host_key.public_key().clone();
@@ -629,8 +663,9 @@ async fn run_forwarding_consent(forwarded: ForwardedChannel, kind: AuthFixtureKi
         .expect("connect agent consent fixture");
     let handler = ForwardingConsentClient {
         host_key: host_public_key,
-        socket: socket.to_string_lossy().into_owned(),
+        socket,
         enabled,
+        messages: Arc::clone(&messages),
         forwards,
     };
     let mut client = tokio::time::timeout(
@@ -664,10 +699,15 @@ async fn run_forwarding_consent(forwarded: ForwardedChannel, kind: AuthFixtureKi
         .expect("server handle timed out")
         .expect("server handle dropped");
     let channel = match forwarded {
+        #[cfg(unix)]
         ForwardedChannel::Agent => {
             tokio::time::timeout(IO, server_handle.channel_open_agent()).await
         }
-        ForwardedChannel::X11 => {
+        #[cfg(unix)]
+        ForwardedChannel::X11 | ForwardedChannel::X11Unavailable => {
+            tokio::time::timeout(IO, server_handle.channel_open_x11("127.0.0.1", 0)).await
+        }
+        ForwardedChannel::X11Tcp => {
             tokio::time::timeout(IO, server_handle.channel_open_x11("127.0.0.1", 0)).await
         }
     }
@@ -675,7 +715,7 @@ async fn run_forwarding_consent(forwarded: ForwardedChannel, kind: AuthFixtureKi
     .expect("open unsolicited channel failed");
     let mut stream = channel.into_stream();
     let written = stream.write_all(&REQUEST_IDENTITIES).await;
-    if enabled {
+    if enabled && !unavailable {
         written.expect("send agent request over channel");
         let mut answer = [0; 9];
         tokio::time::timeout(IO, stream.read_exact(&mut answer))
@@ -688,13 +728,23 @@ async fn run_forwarding_consent(forwarded: ForwardedChannel, kind: AuthFixtureKi
         let mut buffer = [0; 16];
         let read = tokio::time::timeout(IO, stream.read(&mut buffer))
             .await
-            .expect("disabled forwarding must close the channel, not time out");
+            .expect("disabled or failed forwarding must close the channel, not time out");
         assert!(
             matches!(read, Ok(0) | Err(_)),
             "disabled forwarding reached the local socket: {:?}",
             read.map(|count| buffer[..count].to_vec())
         );
         assert_eq!(accepted.load(Ordering::SeqCst), 0);
+    }
+    {
+        let messages = messages.lock().unwrap();
+        if enabled && unavailable {
+            assert_eq!(messages.len(), 2);
+            assert!(messages[0].contains("Could not connect to the X server"));
+            assert!(messages[1].contains("missing.sock"));
+        } else {
+            assert!(messages.is_empty(), "successful and disabled channels must be silent: {messages:?}");
+        }
     }
 
     let _ = tokio::time::timeout(
@@ -727,6 +777,25 @@ async fn x11_forwarding_consent() {
     for kind in [AuthFixtureKind::Password, AuthFixtureKind::PrivateKey] {
         for enabled in [false, true] {
             run_forwarding_consent(ForwardedChannel::X11, kind, enabled).await;
+        }
+    }
+}
+
+#[tokio::test]
+async fn x11_tcp_forwarding_consent() {
+    for kind in [AuthFixtureKind::Password, AuthFixtureKind::PrivateKey] {
+        for enabled in [false, true] {
+            run_forwarding_consent(ForwardedChannel::X11Tcp, kind, enabled).await;
+        }
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn x11_unavailable_display_reports_failure_and_closes_channel() {
+    for kind in [AuthFixtureKind::Password, AuthFixtureKind::PrivateKey] {
+        for enabled in [false, true] {
+            run_forwarding_consent(ForwardedChannel::X11Unavailable, kind, enabled).await;
         }
     }
 }
