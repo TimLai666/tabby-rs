@@ -312,6 +312,9 @@ jobs:
       - name: Test Telnet and serial connection errors
         run: yarn test:connector-errors
 
+      - name: Test serial write queue
+        run: yarn test:serial-write-queue
+
       - name: Test browser readline compatibility
         run: yarn test:tauri-readline
 
@@ -443,6 +446,9 @@ jobs:
 
       - name: Test Telnet and serial connection errors
         run: yarn test:connector-errors
+
+      - name: Test serial write queue
+        run: yarn test:serial-write-queue
 
       - name: Test browser readline compatibility
         run: yarn test:tauri-readline

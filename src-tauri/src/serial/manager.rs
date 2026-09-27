@@ -2,7 +2,7 @@ use std::{
     collections::HashMap,
     io::{ErrorKind, Read, Write},
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc::{self, Receiver, Sender, TryRecvError},
         Arc, Mutex,
     },
@@ -40,10 +40,59 @@ pub struct SerialManager {
 #[derive(Clone)]
 struct SerialSession {
     control: Sender<SerialControl>,
+    writer: SerialWriter,
+}
+
+#[derive(Clone)]
+struct SerialWriter {
+    port: Arc<Mutex<Option<Box<dyn SerialPort>>>>,
+    closed: Arc<AtomicBool>,
+    disconnected: Arc<AtomicBool>,
+    generation: Arc<AtomicU64>,
+}
+
+impl SerialWriter {
+    fn new(port: Box<dyn SerialPort>) -> Self {
+        Self {
+            port: Arc::new(Mutex::new(Some(port))),
+            closed: Arc::new(AtomicBool::new(false)),
+            disconnected: Arc::new(AtomicBool::new(false)),
+            generation: Arc::new(AtomicU64::new(0)),
+        }
+    }
+
+    fn write(&self, data: &[u8], generation: u64) -> Result<(), AppError> {
+        let mut port = self.port.lock().unwrap_or_else(|error| error.into_inner());
+        if self.closed.load(Ordering::Acquire) {
+            return Err(AppError::Io("Serial session is closed".into()));
+        }
+        if self.generation.load(Ordering::Acquire) != generation {
+            return Err(AppError::Io("Serial port changed before writing".into()));
+        }
+        if self.disconnected.load(Ordering::Acquire) {
+            return Err(AppError::Io("Serial port is disconnected".into()));
+        }
+        let port = port.as_mut()
+            .ok_or_else(|| AppError::Io("Serial port is disconnected".into()))?;
+        write_serial_data(port.as_mut(), data, &self.closed, &self.disconnected).map_err(AppError::from)
+    }
+
+    fn replace(&self, port: Option<Box<dyn SerialPort>>) {
+        if port.is_none() {
+            self.disconnected.store(true, Ordering::Release);
+        }
+        let mut current = self.port.lock().unwrap_or_else(|error| error.into_inner());
+        self.generation.fetch_add(1, Ordering::Release);
+        *current = if self.closed.load(Ordering::Acquire) { None } else { port };
+        self.disconnected.store(current.is_none(), Ordering::Release);
+    }
+
+    fn close(&self) {
+        self.closed.store(true, Ordering::Release);
+    }
 }
 
 enum SerialControl {
-    Write(Vec<u8>, oneshot::Sender<Result<(), AppError>>),
     SetSignals(SerialSignalRequest, oneshot::Sender<Result<(), AppError>>),
     GetSignals(oneshot::Sender<Result<SerialSignalState, AppError>>),
     Close(oneshot::Sender<Result<(), AppError>>),
@@ -78,6 +127,7 @@ impl SerialManager {
             .map(stable_id)
             .unwrap_or_else(|| format!("path:{}", request.port));
         let serial = open_port(&request, &request.port)?;
+        let writer = SerialWriter::new(serial.try_clone().map_err(serial_error)?);
         let id = format!(
             "serial-{}",
             self.next_id.fetch_add(1, Ordering::Relaxed) + 1
@@ -86,7 +136,7 @@ impl SerialManager {
         self.sessions
             .lock()
             .unwrap_or_else(|error| error.into_inner())
-            .insert(id.clone(), SerialSession { control });
+            .insert(id.clone(), SerialSession { control, writer: writer.clone() });
 
         let sessions = Arc::clone(&self.sessions);
         let task_id = id.clone();
@@ -97,7 +147,9 @@ impl SerialManager {
             stable_id: stable.clone(),
         };
         thread::spawn(move || {
-            run_session(app, task_id.clone(), request, stable, serial, controls);
+            run_session(app, task_id.clone(), request, stable, serial, controls, &writer);
+            writer.close();
+            writer.replace(None);
             sessions
                 .lock()
                 .unwrap_or_else(|error| error.into_inner())
@@ -112,10 +164,11 @@ impl SerialManager {
                 "Serial write is larger than 1 MiB".into(),
             ));
         }
-        self.send(request.id, |sender| {
-            SerialControl::Write(request.data, sender)
-        })
-        .await
+        let writer = self.session(&request.id)?.writer;
+        let generation = writer.generation.load(Ordering::Acquire);
+        tokio::task::spawn_blocking(move || writer.write(&request.data, generation))
+            .await
+            .map_err(|error| AppError::Io(error.to_string()))?
     }
 
     pub async fn set_signals(&self, request: SerialSignalRequest) -> Result<(), AppError> {
@@ -140,6 +193,7 @@ impl SerialManager {
     }
 
     pub async fn close(&self, request: SerialSessionIdRequest) -> Result<(), AppError> {
+        self.session(&request.id)?.writer.close();
         self.send(request.id, |sender| SerialControl::Close(sender))
             .await
     }
@@ -159,12 +213,15 @@ impl SerialManager {
     }
 
     fn control(&self, id: &str) -> Result<Sender<SerialControl>, AppError> {
+        Ok(self.session(id)?.control)
+    }
+
+    fn session(&self, id: &str) -> Result<SerialSession, AppError> {
         self.sessions
             .lock()
             .unwrap_or_else(|error| error.into_inner())
             .get(id)
             .cloned()
-            .map(|session| session.control)
             .ok_or_else(|| AppError::NotFound(format!("Serial session {id} not found")))
     }
 }
@@ -232,7 +289,7 @@ fn open_port(request: &SerialOpenRequest, path: &str) -> Result<Box<dyn SerialPo
     } else {
         StopBits::One
     };
-    serialport::new(path, request.baud_rate)
+    let port = serialport::new(path, request.baud_rate)
         .data_bits(data_bits)
         .stop_bits(stop_bits)
         .parity(request.parity.as_serialport())
@@ -240,8 +297,29 @@ fn open_port(request: &SerialOpenRequest, path: &str) -> Result<Box<dyn SerialPo
         .timeout(Duration::from_millis(
             request.read_timeout_ms.clamp(10, MAX_READ_TIMEOUT_MS),
         ))
-        .open()
-        .map_err(|error| AppError::Io(format!("failed to open serial port {path}: {error}")))
+        .open_native()
+        .map_err(|error| AppError::Io(format!("failed to open serial port {path}: {error}")))?;
+    prepare_serial_port(port)
+}
+
+#[cfg(unix)]
+fn prepare_serial_port(port: serialport::TTYPort) -> Result<Box<dyn SerialPort>, AppError> {
+    use std::os::fd::AsRawFd;
+    // Readiness polling alone cannot bound a large write to a blocking tty.
+    // Keep the descriptor nonblocking, as upstream's Unix binding does. The
+    // SerialPort implementation still polls using the configured timeout.
+    let fd = port.as_raw_fd();
+    // SAFETY: fd belongs to the live port; these fcntl operations take no pointers.
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    Ok(Box::new(port))
+}
+
+#[cfg(windows)]
+fn prepare_serial_port(port: serialport::COMPort) -> Result<Box<dyn SerialPort>, AppError> {
+    Ok(Box::new(port))
 }
 
 fn run_session(
@@ -251,6 +329,7 @@ fn run_session(
     stable: String,
     mut port: Box<dyn SerialPort>,
     controls: Receiver<SerialControl>,
+    writer: &SerialWriter,
 ) {
     let mut current_path = request.port.clone();
     let mut buffer = vec![0_u8; MAX_SERIAL_CHUNK_BYTES];
@@ -261,7 +340,7 @@ fn run_session(
     loop {
         match controls.try_recv() {
             Ok(control) => {
-                if handle_control(&mut port, control, request.slow_send) {
+                if handle_control(&mut port, control, writer) {
                     emit_state(&app, &id, &request, "closed", Some(&current_path), None);
                     return;
                 }
@@ -298,6 +377,7 @@ fn run_session(
                     Some(&current_path),
                     Some(&message),
                 );
+                writer.replace(None);
                 drop(port);
                 if !request.reconnect.enabled {
                     return;
@@ -342,10 +422,13 @@ fn run_session(
                             }
                             let path = next_path.unwrap_or_else(|| current_path.clone());
                             emit_state(&app, &id, &request, "reconnecting", Some(&path), None);
-                            match open_port(&request, &path) {
-                                Ok(new_port) => {
+                            match open_port(&request, &path).and_then(|port| {
+                                port.try_clone().map(|writer| (port, writer)).map_err(serial_error)
+                            }) {
+                                Ok((new_port, new_writer)) => {
                                     current_path = path;
                                     port = new_port;
+                                    writer.replace(Some(new_writer));
                                     waiting_emitted = false;
                                     reconnect_attempts = 0;
                                     emit_state(
@@ -377,13 +460,8 @@ fn run_session(
     }
 }
 
-fn handle_control(port: &mut Box<dyn SerialPort>, control: SerialControl, slow_send: bool) -> bool {
+fn handle_control(port: &mut Box<dyn SerialPort>, control: SerialControl, writer: &SerialWriter) -> bool {
     match control {
-        SerialControl::Write(data, sender) => {
-            let result = write_serial_data(port.as_mut(), &data, slow_send).map_err(AppError::from);
-            let _ = sender.send(result);
-            false
-        }
         SerialControl::SetSignals(request, sender) => {
             let result = set_signal(port.as_mut(), request.signal, request.value);
             let _ = sender.send(result);
@@ -395,6 +473,8 @@ fn handle_control(port: &mut Box<dyn SerialPort>, control: SerialControl, slow_s
             false
         }
         SerialControl::Close(sender) => {
+            writer.close();
+            writer.replace(None);
             let _ = sender.send(Ok(()));
             true
         }
@@ -407,7 +487,7 @@ fn handle_control_without_port(control: SerialControl) -> bool {
             let _ = sender.send(Ok(()));
             true
         }
-        SerialControl::Write(_, sender) | SerialControl::SetSignals(_, sender) => {
+        SerialControl::SetSignals(_, sender) => {
             let _ = sender.send(Err(AppError::Io("Serial port is disconnected".into())));
             false
         }
@@ -469,23 +549,23 @@ fn serial_error(error: serialport::Error) -> AppError {
     AppError::Io(error.to_string())
 }
 
-fn write_serial_data<W: Write + ?Sized>(
-    port: &mut W,
-    data: &[u8],
-    slow_send: bool,
-) -> std::io::Result<()> {
-    if slow_send {
-        // On an idle upstream SerialPortStream, SlowFeedMiddleware sends the
-        // first byte immediately and _writev batches the queued remainder.
-        // Keep both writes within one control to avoid an extra read timeout.
-        if !data.is_empty() {
-            port.write_all(&data[..1])?;
-            port.write_all(&data[1..])?;
+fn write_serial_data<W: Write + ?Sized>(port: &mut W, data: &[u8], closed: &AtomicBool, disconnected: &AtomicBool) -> std::io::Result<()> {
+    let mut remaining = data;
+    while !remaining.is_empty() {
+        if closed.load(Ordering::Acquire) {
+            return Err(std::io::Error::new(ErrorKind::BrokenPipe, "Serial session is closed"));
         }
-        Ok(())
-    } else {
-        port.write_all(data)
+        if disconnected.load(Ordering::Acquire) {
+            return Err(std::io::Error::new(ErrorKind::BrokenPipe, "Serial port is disconnected"));
+        }
+        match port.write(remaining) {
+            Ok(0) => return Err(ErrorKind::WriteZero.into()),
+            Ok(length) => remaining = &remaining[length..],
+            Err(error) if matches!(error.kind(), ErrorKind::Interrupted | ErrorKind::WouldBlock | ErrorKind::TimedOut) => continue,
+            Err(error) => return Err(error),
+        }
     }
+    Ok(())
 }
 
 #[cfg(test)]

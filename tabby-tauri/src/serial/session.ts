@@ -1,17 +1,28 @@
 import { Injector } from '@angular/core'
 import { Observable, Subject } from 'rxjs'
 import { LogService } from 'tabby-core'
-import { BaseSession, InputProcessor, TerminalStreamProcessor } from 'tabby-terminal'
+import { BaseSession, InputProcessor, SessionMiddleware, TerminalStreamProcessor, UTF8SplitterMiddleware } from 'tabby-terminal'
 
 import { HostBridge, SerialConnectionStateEvent, SerialOpenRequest, SerialSignalState } from '../api/hostBridge'
 import { TauriSerialProfile } from './profile'
+import { SerialWriteQueue } from './writeQueue'
+
+class SlowFeedMiddleware extends SessionMiddleware {
+    feedFromTerminal (data: Buffer): void {
+        for (const byte of data) {
+            this.outputToSession.next(Buffer.from([byte]))
+        }
+    }
+}
 
 export class TauriSerialSession extends BaseSession {
     private id: string|null = null
     private destroying = false
+    private connected = false
     private readonly connectionId = window.crypto.randomUUID()
     private readonly serviceMessage = new Subject<string>()
     private readonly streamProcessor: TerminalStreamProcessor
+    private writeQueue: SerialWriteQueue
     private pendingOutput: number[][] = []
     private pendingState: SerialConnectionStateEvent|null = null
     private unlisteners: (() => void)[] = []
@@ -26,8 +37,32 @@ export class TauriSerialSession extends BaseSession {
         super(injector.get(LogService).create(`serial-${profile.options.port ?? 'unselected'}`))
         this.streamProcessor = new TerminalStreamProcessor(profile.options)
         this.middleware.push(this.streamProcessor)
+        if (profile.options.slowSend) {
+            this.middleware.unshift(new SlowFeedMiddleware())
+        }
+        this.middleware.push(new UTF8SplitterMiddleware())
         this.middleware.push(new InputProcessor(profile.options.input))
         this.setLoginScriptsOptions({ scripts: profile.options.scripts ?? [] })
+        this.writeQueue = this.createWriteQueue()
+    }
+
+    private createWriteQueue (): SerialWriteQueue {
+        const queue = new SerialWriteQueue(
+            data => this.bridge.invoke('serial.write', { id: this.id!, data: Array.from(data) }),
+            error => {
+                if (this.writeQueue !== queue) {
+                    return
+                }
+                this.logger.warn('Serial write failed', error)
+                if (this.profile.options.reconnect.enabled && !this.destroying) {
+                    queue.close()
+                    this.writeQueue = this.createWriteQueue()
+                } else {
+                    void this.destroy()
+                }
+            },
+        )
+        return queue
     }
 
     async start (): Promise<void> {
@@ -65,7 +100,6 @@ export class TauriSerialSession extends BaseSession {
             stopBits: options.stopBits,
             parity: options.parity,
             flowControl: options.flowControl,
-            slowSend: options.slowSend ?? false,
             readTimeoutMs: options.readTimeoutMs,
             reconnect: options.reconnect,
         }
@@ -77,6 +111,7 @@ export class TauriSerialSession extends BaseSession {
         }
         this.id = info.id
         this.open = true
+        this.connected = !this.pendingState || this.pendingState.state === 'connected'
         this.streamProcessor.start()
         this.loginScriptProcessor?.executeUnconditionalScripts()
         for (const data of this.pendingOutput.splice(0)) {
@@ -94,10 +129,10 @@ export class TauriSerialSession extends BaseSession {
     }
 
     write (data: Buffer): void {
-        if (!this.id || data.length === 0) {
+        if (!this.id || !this.connected || data.length === 0) {
             return
         }
-        void this.bridge.invoke('serial.write', { id: this.id, data: Array.from(data) }).catch(error => this.logger.warn('Serial write failed', error))
+        this.writeQueue.write(data)
     }
 
     async getSignals (): Promise<SerialSignalState> {
@@ -121,6 +156,8 @@ export class TauriSerialSession extends BaseSession {
             return
         }
         this.destroying = true
+        this.connected = false
+        this.writeQueue.close()
         const id = this.id
         this.id = null
         if (id) {
@@ -138,6 +175,14 @@ export class TauriSerialSession extends BaseSession {
     async getWorkingDirectory (): Promise<string|null> { return null }
 
     private handleState (event: SerialConnectionStateEvent): void {
+        if (event.state !== 'connected') {
+            this.connected = false
+            this.writeQueue.close()
+        } else if (!this.connected) {
+            this.writeQueue.close()
+            this.writeQueue = this.createWriteQueue()
+            this.connected = true
+        }
         if (event.state === 'connected') {
             this.serviceMessage.next(`Port connected: ${event.path ?? this.profile.options.port ?? ''}`)
         } else if (event.state === 'disconnected') {

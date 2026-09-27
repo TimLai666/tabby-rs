@@ -382,20 +382,41 @@
   SIGTSTP is ignored in that launch environment: input after Ctrl+Z completes
   normally without an external SIGCONT. The adapter preserves that observable
   behavior on macOS. Other launch/process-group environments remain unverified.
-- Serial profiles now expose the original Slow feed toggle. The renderer passes
-  `slowSend` at connection startup; missing values default to false on both sides.
-  For enabled writes, the native handler writes the first byte and then the
-  remainder. A probe using the pinned Electron 38.8.6 / Node 22.22.0 runtime and
-  upstream SerialPortStream confirms an idle 256-byte slow-feed write reaches
-  the binding as 1 + 255 bytes: `_writev` batches the middleware's queued bytes.
-  Both native writes run within one control, avoiding a read timeout between them.
-  Seven native tests cover byte order, partial/interrupted writes, write failures,
-  empty input, and legacy requests. Renderer tests cover enabled, disabled, and
-  missing options before login scripts run. Concurrent upstream writes can also
-  batch across input calls; native controls currently remain separate. Compare
-  that behavior before accepting full slow-feed parity. Toggle persistence,
-  reconnect behavior, rendered controls, and physical serial exchanges still
-  need desktop acceptance.
+- Serial Slow feed uses the original middleware position and a renderer Writable
+  queue. Preserve `_writev` batching across consecutive inputs and login scripts;
+  the native side must not split those batches again. Tests compare the actual
+  browser Writable with the pinned upstream SerialPortStream under controlled
+  write completion, including binary data, errors, close, and legacy settings.
+  They also pass in Electron 38.8.6 / Node 22.22.0. Batches larger than the native
+  1 MiB limit are sent in ordered calls and stop when the session closes.
+  With automatic reconnect enabled, failed writes discard the old queue without
+  destroying the session. Drop input while disconnected; a connected event starts
+  a fresh queue. Tests cover write failure before the state event and an old
+  callback arriving after reconnection. Verify these flows on physical hardware.
+- Native serial reads and writes use separate handles to the same port. Tests
+  using real Unix pseudo-terminals verify writes while a read waits, output while
+  a 1 MiB write stalls, exact bytes, disconnected/replaced ports, and permanent
+  closure. Unix descriptors must remain nonblocking so a large write cannot block
+  inside the driver after readiness polling. Close waits for the writer to stop;
+  regression tests verify remaining bytes are cancelled before acknowledgement.
+  Unix write readiness timeouts must retry: flow control can pause transmission
+  longer than the read timeout. The stalled-write test waits across three timeout
+  periods, receives output, then verifies the full 1 MiB after the peer resumes.
+  Read-side disconnection signals cancellation before waiting for the writer lock;
+  a stalled-write regression verifies this releases the handle for reconnection.
+  Reject queued work from an earlier port generation after reconnect. These
+  fixtures do not establish physical serial or Windows behavior. Toggle
+  persistence, automatic reconnect, rendered controls, physical serial exchanges,
+  and supported-platform acceptance still need desktop checks. Hardware and
+  Windows cancellation/cleanup timing need comparison with the fixed upstream.
+  The Windows backend uses synchronous duplicated COM handles, whereas upstream
+  uses overlapped I/O. Verify simultaneous read/write and zero-byte timeout returns
+  before accepting Windows parity; the Unix pseudo-terminal tests do not cover them.
 - Script deletion persistence, serial automatic-reconnect script behavior,
   and other platforms remain unaccepted. Do not infer
   full connector parity from the session tests or rendered settings controls.
+- Serial output uses the original UTF8SplitterMiddleware before InputProcessor.
+  Session tests verify Chinese, emoji, and accented characters split at every
+  byte boundary, plus incomplete output flushed on close. Telnet's existing
+  streaming decoder passes the same split-character check. Verify rendered
+  serial Unicode output on supported desktop platforms before acceptance.
