@@ -1288,7 +1288,7 @@ export interface HostRequestMap {
 export interface HostEventMap {
     'ssh:connecting': { connectionId: string }
     'app:start': BootstrapData
-    'app:launch': LaunchContext
+    'app:launch': null
     'update:state': UpdateStateDto
     'desktop:hotkey': GlobalHotkeyEvent
     'desktop:windowFocused': boolean

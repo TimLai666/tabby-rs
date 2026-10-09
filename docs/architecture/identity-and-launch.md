@@ -75,9 +75,11 @@ Deep links intentionally cannot execute arbitrary commands.
 
 ## Single-instance routing
 
-The single-instance plugin is registered before other Tauri plugins. A second invocation is converted into the same `LaunchContext` used for the initial process, then sent to the existing window through the `app.launch` event.
+The native host presents existing windows and queues a second invocation for the last-created surviving window, matching the fixed upstream behavior. If no window remains, it creates one first. Incoming requests enter a FIFO channel registered before plugins initialize. A single background receiver starts after application state is ready, preserving requests received during setup and their arrival order. Target selection and queue insertion run together on the main event thread, alongside window destruction; creating a replacement window runs on the receiver thread.
 
-The renderer queues launch contexts until `HostAppService.emitReady()` so profile, directory, and other requests cannot run before Angular config and tab services are ready. It then dispatches them through the existing priority-ordered `CLIHandler` list.
+`app:launch` is a window-scoped notification with a null payload. The renderer installs its listener before draining `app.initialLaunch`; each call consumes one request for the invoking window, or returns null when its queue is empty. Reads are serialized, so repeated notifications cannot duplicate a request. The command name is retained for compatibility, but it also consumes subsequent requests.
+
+The renderer holds received contexts until `HostAppService.emitReady()` so profile, directory, and other requests cannot run before Angular config and tab services are ready. It dispatches them through the existing priority-ordered `CLIHandler` list, preserving `secondInstance`. Only an unhandled second invocation reaches the original `LastCLIHandler` new-window fallback.
 
 ## Optional `tabby` alias
 
@@ -95,5 +97,9 @@ The alias status and conflict path are exposed in the **Settings → Tabby RS** 
 ## Ownership boundaries
 
 The Rust host owns the desktop window lifecycle. `--new-window` is transported through the launch contract, while the Tauri `window.new` command creates an additional renderer window with the same application entry point. Window state commands and desktop events are scoped to the invoking window, so moving or closing one window cannot mutate another window.
+
+When a launch request creates a window, its new-window flags and second-instance marker are consumed before that window reads the request. The initial main window also consumes those flags. The remaining arguments, working directory, and parse errors are preserved. A manual new window receives no copy of the original process arguments. Failed window creation and window destruction remove that window's pending requests. Window creation runs outside synchronous commands and native event handlers to avoid the documented WebView2 deadlock.
+
+An approved window close marks its label as closing before requesting native destruction. Routing excludes it immediately, including the interval before the operating system reports `Destroyed`. If destruction fails, the label becomes eligible again and its renderer is notified to resume pending launches.
 
 Safe-mode and configuration behavior remain owned by their respective milestones. Keeping those concerns out of the window builder preserves one launch contract without duplicating their implementations.

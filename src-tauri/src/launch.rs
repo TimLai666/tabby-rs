@@ -1,4 +1,9 @@
-use std::{collections::BTreeMap, env, path::PathBuf};
+use std::{
+    collections::{BTreeMap, HashMap, HashSet, VecDeque},
+    env,
+    path::PathBuf,
+    sync::Mutex,
+};
 
 use url::Url;
 
@@ -57,6 +62,83 @@ pub struct LaunchContext {
     pub cwd: String,
     pub second_instance: bool,
     pub parse_error: Option<String>,
+}
+
+impl LaunchContext {
+    pub fn for_new_window(mut self) -> Self {
+        self.second_instance = false;
+        self.request.new_window = false;
+        self.request.argv.new_window = false;
+        self
+    }
+}
+
+/// Events only notify a renderer; requests stay here until that window reads them.
+#[derive(Default)]
+pub struct LaunchQueue(Mutex<WindowLaunchState>);
+
+#[derive(Default)]
+struct WindowLaunchState {
+    pending: HashMap<String, VecDeque<LaunchContext>>,
+    closing: HashSet<String>,
+}
+
+impl LaunchQueue {
+    pub fn push(&self, label: &str, context: LaunchContext) -> bool {
+        let mut state = self.0.lock().unwrap_or_else(|error| error.into_inner());
+        if state.closing.contains(label) {
+            return false;
+        }
+        state
+            .pending
+            .entry(label.to_owned())
+            .or_default()
+            .push_back(context);
+        true
+    }
+
+    pub fn set_closing(&self, label: &str, closing: bool) {
+        let mut state = self.0.lock().unwrap_or_else(|error| error.into_inner());
+        if closing {
+            state.closing.insert(label.to_owned());
+        } else {
+            state.closing.remove(label);
+        }
+    }
+
+    pub fn is_closing(&self, label: &str) -> bool {
+        self.0
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .closing
+            .contains(label)
+    }
+
+    pub fn take(&self, label: &str) -> Option<LaunchContext> {
+        let mut state = self.0.lock().unwrap_or_else(|error| error.into_inner());
+        if state.closing.contains(label) {
+            return None;
+        }
+        let queue = state.pending.get_mut(label)?;
+        let context = queue.pop_front();
+        if queue.is_empty() {
+            state.pending.remove(label);
+        }
+        context
+    }
+
+    pub fn remove(&self, label: &str) {
+        let mut state = self.0.lock().unwrap_or_else(|error| error.into_inner());
+        state.pending.remove(label);
+        state.closing.remove(label);
+    }
+}
+
+pub fn window_creation_order(label: &str) -> u64 {
+    label
+        .strip_prefix("window-")
+        .and_then(|id| id.parse().ok())
+        .unwrap_or(0)
 }
 
 pub fn initial_launch_context() -> LaunchContext {
@@ -429,7 +511,7 @@ fn hex_value(value: u8) -> Result<u8, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_launch_context, LaunchRequest};
+    use super::{parse_launch_context, window_creation_order, LaunchQueue, LaunchRequest};
 
     fn parse(args: &[&str]) -> LaunchRequest {
         let argv = args
@@ -494,5 +576,117 @@ mod tests {
         assert!(context.second_instance);
         assert!(context.request.safe_mode);
         assert!(context.request.argv.safe_mode);
+    }
+
+    #[test]
+    fn new_window_consumes_routing_flags_but_preserves_the_request() {
+        let argv = [
+            "tabby-rs",
+            "--new-window",
+            "--safe-mode",
+            "profile",
+            "Profile A",
+        ]
+        .map(str::to_owned);
+        let original = parse_launch_context(&argv, "/work".into(), true);
+        assert!(original.parse_error.is_none());
+        assert!(original.request.new_window && original.request.argv.new_window);
+        let actual = original.clone().for_new_window();
+        let mut expected = original;
+        expected.second_instance = false;
+        expected.request.new_window = false;
+        expected.request.argv.new_window = false;
+        assert_eq!(actual, expected);
+        assert_eq!(actual.clone().for_new_window(), actual);
+    }
+
+    #[test]
+    fn launch_queue_isolates_windows_preserves_order_and_consumes_once() {
+        let queue = LaunchQueue::default();
+        let first = parse_launch_context(&["tabby-rs".into()], "/first".into(), false);
+        let next = parse_launch_context(&["tabby-rs".into()], "/next".into(), true);
+        queue.push("main", first.clone());
+        assert_eq!(queue.take("window-1"), None);
+        queue.push("window-1", next.clone());
+        queue.push("main", next.clone());
+        assert_eq!(queue.take("main"), Some(first));
+        assert_eq!(queue.take("main"), Some(next.clone()));
+        assert_eq!(queue.take("main"), None);
+        assert_eq!(queue.take("window-1"), Some(next));
+        assert!(queue.0.lock().unwrap().pending.is_empty());
+    }
+
+    #[test]
+    fn launch_queue_removes_failed_or_closed_windows_without_affecting_others() {
+        let queue = LaunchQueue::default();
+        let context = parse_launch_context(&["tabby-rs".into()], "/work".into(), false);
+        queue.push("main", context.clone());
+        queue.push("window-1", context.clone());
+        queue.remove("window-1");
+        queue.remove("unknown");
+        assert_eq!(queue.take("window-1"), None);
+        assert_eq!(queue.take("main"), Some(context));
+    }
+
+    #[test]
+    fn concurrent_readers_cannot_duplicate_a_launch() {
+        let queue = std::sync::Arc::new(LaunchQueue::default());
+        for index in 0..100 {
+            queue.push(
+                "main",
+                parse_launch_context(&["tabby-rs".into()], index.to_string(), true),
+            );
+        }
+        let readers = (0..4)
+            .map(|_| {
+                let queue = queue.clone();
+                std::thread::spawn(move || {
+                    let mut received = Vec::new();
+                    while let Some(context) = queue.take("main") {
+                        received.push(context.cwd.parse::<usize>().unwrap());
+                    }
+                    received
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut received = readers
+            .into_iter()
+            .flat_map(|reader| reader.join().unwrap())
+            .collect::<Vec<_>>();
+        received.sort_unstable();
+        assert_eq!(received, (0..100).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn closing_windows_reject_launches_until_destroy_succeeds_or_fails() {
+        let queue = LaunchQueue::default();
+        let context = parse_launch_context(&["tabby-rs".into()], "/work".into(), true);
+        queue.push("window-1", context.clone());
+        queue.set_closing("window-1", true);
+        assert!(queue.is_closing("window-1"));
+        assert!(!queue.push("window-1", context.clone()));
+        assert_eq!(queue.take("window-1"), None);
+        assert!(queue.push("main", context.clone()));
+        assert_eq!(queue.take("main"), Some(context.clone()));
+        queue.set_closing("window-1", false);
+        assert!(!queue.is_closing("window-1"));
+        assert_eq!(queue.take("window-1"), Some(context));
+        queue.set_closing("window-1", true);
+        queue.remove("window-1");
+        assert!(!queue.is_closing("window-1"));
+        assert_eq!(queue.take("window-1"), None);
+    }
+
+    #[test]
+    fn launch_targets_follow_numeric_creation_order_after_main_closes() {
+        let mut labels = ["window-2", "main", "window-11", "window-1"];
+        labels.sort_by_key(|label| window_creation_order(label));
+        assert_eq!(labels, ["main", "window-1", "window-2", "window-11"]);
+        assert_eq!(
+            labels[1..]
+                .iter()
+                .max_by_key(|label| window_creation_order(label)),
+            Some(&"window-11")
+        );
     }
 }

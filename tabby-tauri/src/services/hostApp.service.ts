@@ -30,6 +30,7 @@ export class TauriHostAppService extends HostAppService {
 
     private ready = false
     private pendingLaunches: LaunchContext[] = []
+    private launchRead: Promise<void> = Promise.resolve()
 
     constructor (
         private injector: Injector,
@@ -42,15 +43,11 @@ export class TauriHostAppService extends HostAppService {
         this.configPlatform = this.platform
         this.detectedWindowsBuild = runtimeInfo.windowsBuild ?? undefined
 
-        void this.bridge.listen('app:launch', context => this.enqueueLaunch(context)).catch(error => {
-            this.logger.error('Failed to listen for launch requests:', error)
-        })
-        void this.bridge.invoke('app.initialLaunch', {}).then(context => {
-            if (context) {
-                this.enqueueLaunch(context)
-            }
+        void this.bridge.listen('app:launch', () => this.readLaunchRequests()).then(() => {
+            this.readLaunchRequests()
         }).catch(error => {
-            this.logger.error('Failed to read the initial launch request:', error)
+            this.logger.error('Failed to listen for launch requests:', error)
+            this.readLaunchRequests()
         })
     }
 
@@ -67,7 +64,7 @@ export class TauriHostAppService extends HostAppService {
         this.ready = true
         const pending = this.pendingLaunches.splice(0)
         for (const context of pending) {
-            void this.dispatchLaunch(context)
+            this.enqueueLaunch(context)
         }
     }
 
@@ -79,12 +76,28 @@ export class TauriHostAppService extends HostAppService {
         void this.bridge.invoke('app.quit', {})
     }
 
+    private readLaunchRequests (): void {
+        this.launchRead = this.launchRead.then(async () => {
+            while (true) {
+                const context = await this.bridge.invoke('app.initialLaunch', {})
+                if (!context) {
+                    return
+                }
+                this.enqueueLaunch(context)
+            }
+        }).catch(error => {
+            this.logger.error('Failed to read launch requests:', error)
+        })
+    }
+
     private enqueueLaunch (context: LaunchContext): void {
         if (!this.ready) {
             this.pendingLaunches.push(context)
             return
         }
-        void this.dispatchLaunch(context)
+        void this.dispatchLaunch(context).catch(error => {
+            this.logger.error('Failed to handle launch request:', error)
+        })
     }
 
     private async dispatchLaunch (context: LaunchContext): Promise<void> {
@@ -93,7 +106,7 @@ export class TauriHostAppService extends HostAppService {
             return
         }
 
-        if (context.secondInstance || context.request.newWindow) {
+        if (context.request.newWindow) {
             void this.bridge.invoke('window.new', { launch: context }).catch(error => {
                 this.logger.warn('Failed to open a launch window:', error)
             })

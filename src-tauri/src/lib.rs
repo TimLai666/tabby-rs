@@ -128,12 +128,57 @@ fn initial_launch_context() -> LaunchContext {
 }
 
 fn present_and_dispatch(app: &tauri::AppHandle, context: LaunchContext) {
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.show();
-        let _ = window.set_focus();
+    if let Err(error) = app
+        .state::<std::sync::mpsc::Sender<LaunchContext>>()
+        .send(context)
+    {
+        eprintln!("failed to queue launch request: {error}");
     }
-    if let Err(error) = app.emit("app:launch", context) {
-        eprintln!("failed to emit app:launch: {error}");
+}
+
+fn dispatch_launch(app: &tauri::AppHandle, context: LaunchContext) {
+    loop {
+        let (result_tx, result_rx) = std::sync::mpsc::sync_channel(1);
+        let handle = app.clone();
+        let request = context.clone();
+        // Selection and delivery share the event thread with window destruction.
+        if let Err(error) = app.run_on_main_thread(move || {
+            let state = handle.state::<AppState>();
+            let mut windows = handle.webview_windows().into_values().collect::<Vec<_>>();
+            windows.retain(|window| !state.launches().is_closing(window.label()));
+            windows.sort_by_key(|window| launch::window_creation_order(window.label()));
+            for window in &windows {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+            let mut delivered = false;
+            for window in windows.iter().rev() {
+                if state.launches().push(window.label(), request.clone()) {
+                    if let Err(error) = window.emit_to(window.label(), "app:launch", ()) {
+                        eprintln!("failed to notify window of launch request: {error}");
+                    }
+                    delivered = true;
+                    break;
+                }
+            }
+            let _ = result_tx.send(delivered);
+        }) {
+            eprintln!("failed to dispatch launch request: {error}");
+            return;
+        }
+        match result_rx.recv() {
+            Ok(true) | Err(_) => return,
+            Ok(false) => {}
+        }
+        // Webview2 creation must stay off the event thread. The single receiver
+        // completes this request before attempting the next second invocation.
+        if let Err(error) =
+            commands::desktop::create_window(app, &app.state::<AppState>(), Default::default())
+        {
+            eprintln!("failed to open launch window: {error}");
+            return;
+        }
     }
 }
 
@@ -160,6 +205,9 @@ pub(crate) fn register_desktop_window_events(window: &tauri::WebviewWindow) {
         tauri::WindowEvent::CloseRequested { api, .. } => {
             api.prevent_close();
             let _ = emitter.emit_to(emitter.label(), "desktop:windowCloseRequested", ());
+        }
+        tauri::WindowEvent::Destroyed => {
+            emitter.state::<AppState>().launches().remove(emitter.label());
         }
         tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, position }) => {
             let _ = emitter.emit_to(
@@ -208,7 +256,9 @@ pub fn run() {
         return;
     }
     let initial_launch = initial_launch_context();
+    let (launch_sender, launch_receiver) = std::sync::mpsc::channel::<LaunchContext>();
     let mut builder = tauri::Builder::default()
+        .manage(launch_sender)
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
@@ -270,6 +320,12 @@ pub fn run() {
             if let Some(window) = app.get_webview_window("main") {
                 register_desktop_window_events(&window);
             }
+            let launch_app = app.handle().clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                while let Ok(context) = launch_receiver.recv() {
+                    dispatch_launch(&launch_app, context);
+                }
+            });
 
             #[cfg(any(target_os = "linux", all(debug_assertions, windows)))]
             app.deep_link().register_all()?;

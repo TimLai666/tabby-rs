@@ -1,6 +1,6 @@
 # Follow-ups
 
-## Pending — Windows compilation acceptance after local fixes
+## Pending — Windows runtime and packaging acceptance
 
 - CI run `36341774362` on `4aa71925` fails before Windows plugin lifecycle tests
   can run. The macOS-only `title_bar_style` and `hidden_title` window builder
@@ -8,12 +8,17 @@
   reproduced the Windows `authenticate_agent` Send lifetime error with the same
   boxed AgentStream type. `ssh/agent_transport.rs` supplies a concrete forwarding
   wrapper, shared by Unix sockets, Windows named pipes, and Pageant, which passes
-  that probe and the macOS application tests. The ordinary Rust suite passes
-  394 tests, with 11 ignored; the separate real SSH agent signing test also passes.
+  that probe and the macOS application tests. The separate real SSH agent signing
+  test also passes.
   The wrapper tests cover partial binary reads/writes, EOF, and peer closure.
-  Verify a Windows build and named-pipe/Pageant runtime behavior before claiming
-  Windows compilation or runtime acceptance. Original failure evidence:
+  CI run `36343754549` on `0f03ba33` subsequently passes both the Windows system
+  npm lifecycle and Rust host test steps, confirming compilation for that commit.
+  Its later SSH source-contract step failed; the corrected contract is in
+  `dc3ad915`. Windows packaging, named-pipe/Pageant runtime behavior, and changes
+  after that commit still require their own acceptance. Original failure evidence:
   https://github.com/TimLai666/tabby-rs/actions/runs/36341774362
+  Windows Rust test evidence:
+  https://github.com/TimLai666/tabby-rs/actions/runs/36343754549/job/108688735753
 
 ## P2 — WinSCP temporary key files are only cleaned up by `TempPath` drop
 
@@ -378,9 +383,28 @@
   cleanup. Verify server connections and PTY processes after closing a secondary
   window before accepting cleanup; the native managers do not handle window
   destruction by owner. Do not assume the passing permission tests prove cleanup.
-- Verify launch-event isolation separately: `window_new` and `present_and_dispatch`
-  still emit `app:launch` globally. The seven scoped desktop events do not change
-  launch-event routing or establish correct delivery to a single destination.
+- Launch requests use a per-window native queue and a scoped `app:launch` wake-up.
+  Register the listener before draining `app.initialLaunch`, serialize reads, and
+  retain requests until Angular readiness. Preserve the original CLI handlers and
+  second-instance fallback; consume routing flags when a request creates a window.
+  The incoming FIFO channel exists before plugin setup; its single receiver starts
+  after app state initialization. Keep target selection and delivery on the event
+  thread with window destruction, and window creation on the receiver thread.
+  Mark approved closes before calling `destroy()` and exclude closing labels;
+  Tauri can retain a destroyed native window in its map until the delayed
+  `Destroyed` notification. Restore eligibility and notify on destroy failure.
+  Native tests cover ordering, isolation, concurrent consumption, cleanup, and flag
+  normalization. Renderer tests cover registration/readiness timing and duplicate
+  notifications. Source checks cover wiring; these are not desktop acceptance.
+  Verify two live windows, main-window closure, minimized windows, startup races,
+  explicit new-window launches, and Windows WebView2 behavior on real desktops.
+  The current Mac remains locked, preventing those checks. See
+  `docs/architecture/identity-and-launch.md` before changing this contract.
+- Verify macOS cold deep-link startup event timing against the original app. If
+  `RunEvent::Opened` arrives after setup, a second-instance URL may follow the
+  ordinary initial request and cause an extra auto-opened tab. The queued delivery
+  preserves the event; neither its timing nor exact cold-start UI is established
+  by the renderer fixtures. Do not claim cold deep-link parity without that check.
 
 ## Pending — Telnet and serial login scripts and desktop connection startup
 

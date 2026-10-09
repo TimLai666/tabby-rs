@@ -6,7 +6,7 @@ use std::sync::{
 use crate::{
     error::AppError,
     identity::AppPaths,
-    launch::LaunchContext,
+    launch::{LaunchContext, LaunchQueue},
     plugins::npm::OperationManager,
     storage::{
         paths::StoragePaths,
@@ -17,7 +17,7 @@ use crate::{
 
 pub struct AppState {
     next_window_id: AtomicU64,
-    initial_launch: Mutex<Option<LaunchContext>>,
+    launches: LaunchQueue,
     storage_lock: Mutex<()>,
     plugin_operations: OperationManager,
     paths: AppPaths,
@@ -31,9 +31,11 @@ impl AppState {
         initial_launch: LaunchContext,
         persisted_state: TabbyRsState,
     ) -> Self {
+        let launches = LaunchQueue::default();
+        launches.push("main", initial_launch.for_new_window());
         Self {
             next_window_id: AtomicU64::new(0),
-            initial_launch: Mutex::new(Some(initial_launch)),
+            launches,
             storage_lock: Mutex::new(()),
             plugin_operations: OperationManager::default(),
             paths,
@@ -46,11 +48,8 @@ impl AppState {
         self.next_window_id.fetch_add(1, Ordering::Relaxed) + 1
     }
 
-    pub fn take_initial_launch(&self) -> Option<LaunchContext> {
-        self.initial_launch
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .take()
+    pub fn launches(&self) -> &LaunchQueue {
+        &self.launches
     }
 
     pub fn lock_storage(&self) -> MutexGuard<'_, ()> {

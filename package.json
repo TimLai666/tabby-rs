@@ -200,7 +200,7 @@
     "test:ssh-integration": "node scripts/test-ssh-integration.mjs",
     "test:electron-updater": "node scripts/test-electron-updater-policy.mjs",
     "test:tauri-updater-confirmation": "node scripts/test-tauri-updater-confirmation.mjs",
-    "test:tauri-multi-window": "node scripts/test-tauri-multi-window.mjs",
+    "test:tauri-multi-window": "node scripts/test-tauri-multi-window.mjs && node scripts/test-tauri-launch-routing.mjs",
     "test:updater-cancellation": "node scripts/test-updater-cancellation.mjs",
     "test:updater-generation": "node scripts/test-updater-generation.mjs",
     "test:updater-startup": "node scripts/test-updater-startup.mjs",

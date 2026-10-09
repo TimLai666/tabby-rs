@@ -49,10 +49,13 @@ assert.equal(tauriConfig.app.windows[0].height, 720)
 assert.equal(tauriConfig.app.windows[0].titleBarStyle, 'Overlay')
 assert.equal(tauriConfig.app.windows[0].hiddenTitle, true)
 assert.equal(tauriConfig.app.windows[0].visible, false)
-const newWindow = desktop.match(/pub fn window_new\([\s\S]*?\r?\n\}/)?.[0]
+const newWindow = desktop.match(/pub async fn window_new\([\s\S]*?\r?\n\}/)?.[0]
 assert.ok(newWindow, 'The new-window command must exist')
-assert.match(newWindow, /let builder\s*=\s*tauri::WebviewWindowBuilder::new\([^;]*?\.visible\(false\)/)
-assert.match(newWindow, /#\[cfg\(target_os = "macos"\)\]\s*let builder = builder\s*\.title_bar_style\(tauri::TitleBarStyle::Overlay\)\s*\.hidden_title\(true\);/)
+assert.match(newWindow, /create_window\(&app, &state, request\)/)
+const windowBuilder = desktop.match(/pub\(crate\) fn create_window\([\s\S]*?\r?\n\}/)?.[0]
+assert.ok(windowBuilder, 'The shared new-window builder must exist')
+assert.match(windowBuilder, /let builder\s*=\s*tauri::WebviewWindowBuilder::new\([^;]*?\.visible\(false\)/)
+assert.match(windowBuilder, /#\[cfg\(target_os = "macos"\)\]\s*let builder = builder\s*\.title_bar_style\(tauri::TitleBarStyle::Overlay\)\s*\.hidden_title\(true\);/)
 assert.match(hostApp, /emitReady \(\): void \{[\s\S]*?window\.applyState', \{ visible: true \}/)
 assert.ok(capabilities.permissions.includes('notification:default'))
 assert.match(tauriEntry, /import ['"]\.\/tauri-polyfills['"]\r?\n/)

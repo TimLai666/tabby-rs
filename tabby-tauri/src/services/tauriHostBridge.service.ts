@@ -13,6 +13,7 @@ interface TauriEventSource {
 const windowEvents = new Set<keyof HostEventMap>([
     'desktop:windowFocused', 'desktop:windowMoved', 'desktop:windowResized',
     'desktop:windowCloseRequested', 'desktop:fileDrop', 'desktop:themeChanged', 'desktop:displayMetricsChanged',
+    'app:launch',
 ])
 
 interface TauriGlobal {

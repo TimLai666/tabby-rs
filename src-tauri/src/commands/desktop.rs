@@ -1,4 +1,3 @@
-use std::sync::{Arc, Mutex};
 use std::{fs, path::PathBuf};
 
 use tauri::window::{ProgressBarState, ProgressBarStatus};
@@ -54,39 +53,39 @@ fn window_state(window: &tauri::WebviewWindow) -> Result<WindowStateSnapshot, Ap
 }
 
 #[tauri::command]
-pub fn window_new(
+pub async fn window_new(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     request: NewWindowRequest,
 ) -> Result<(), AppError> {
+    create_window(&app, &state, request).map(|_| ())
+}
+
+pub(crate) fn create_window(
+    app: &tauri::AppHandle,
+    state: &AppState,
+    request: NewWindowRequest,
+) -> Result<tauri::WebviewWindow, AppError> {
     let label = format!("window-{}", state.next_window_id());
-    let launch = Arc::new(Mutex::new(request.launch));
-    let launch_for_page_load = Arc::clone(&launch);
+    if let Some(context) = request.launch {
+        state.launches().push(&label, context.for_new_window());
+    }
     let builder =
-        tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::App("index.html".into()))
+        tauri::WebviewWindowBuilder::new(app, &label, tauri::WebviewUrl::App("index.html".into()))
             .title("Tabby RS")
             .inner_size(1100.0, 720.0)
             .min_inner_size(640.0, 480.0)
-            .visible(false)
-            .on_page_load(move |window, payload| {
-                if !matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
-                    return;
-                }
-                let context = launch_for_page_load
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner())
-                    .take();
-                if let Some(context) = context {
-                    let _ = window.emit("app:launch", context);
-                }
-            });
+            .visible(false);
     #[cfg(target_os = "macos")]
     let builder = builder
         .title_bar_style(tauri::TitleBarStyle::Overlay)
         .hidden_title(true);
-    let window = builder.build().map_err(io_error)?;
+    let window = builder.build().map_err(|error| {
+        state.launches().remove(&label);
+        io_error(error)
+    })?;
     crate::register_desktop_window_events(&window);
-    Ok(())
+    Ok(window)
 }
 
 #[tauri::command]
@@ -197,11 +196,17 @@ pub fn window_toggle_maximize(
 #[tauri::command]
 pub fn window_close(
     window: tauri::WebviewWindow,
+    state: tauri::State<'_, AppState>,
     _request: serde_json::Value,
 ) -> Result<(), AppError> {
     // The renderer has already confirmed and closed its tabs. Do not request
     // confirmation again through the native CloseRequested handler.
-    window.destroy().map_err(io_error)
+    state.launches().set_closing(window.label(), true);
+    window.destroy().map_err(|error| {
+        state.launches().set_closing(window.label(), false);
+        let _ = window.emit_to(window.label(), "app:launch", ());
+        io_error(error)
+    })
 }
 
 #[tauri::command]

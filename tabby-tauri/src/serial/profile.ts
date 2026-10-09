@@ -8,7 +8,7 @@ export interface TauriSerialProfile extends ConnectableTerminalProfile {
     options: TauriSerialProfileOptions
 }
 
-export interface TauriSerialProfileOptions extends StreamProcessingOptions, LoginScriptsOptions {
+export interface TauriSerialProfileOptions extends StreamProcessingOptions, Partial<LoginScriptsOptions> {
     port: string|null
     baudRate: number|null
     dataBits: 5|6|7|8

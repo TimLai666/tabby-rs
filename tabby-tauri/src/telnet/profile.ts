@@ -4,7 +4,7 @@ export interface TauriTelnetProfile extends ConnectableTerminalProfile {
     options: TauriTelnetProfileOptions
 }
 
-export interface TauriTelnetProfileOptions extends StreamProcessingOptions, LoginScriptsOptions {
+export interface TauriTelnetProfileOptions extends StreamProcessingOptions, Partial<LoginScriptsOptions> {
     host: string
     port: number|null
     terminalType: string
