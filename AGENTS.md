@@ -52,10 +52,13 @@
 
 ## Pending — Rust formatting
 
-- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` fails on existing
-  Rust formatting, including `commands/app.rs`, `commands/ssh.rs`, and SSH modules.
-  Comparing the changed SSH module with HEAD shows no new formatting differences;
-  the X11 cookie change removes one old difference. Keep this gate pending.
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` fails on Rust
+  formatting, including application/serial/SSH commands, `lib.rs`, and the serial
+  and SSH modules. CI run `37878946171` on `b3fae75c` stops at this gate after
+  passing the preceding Linux checks; its macOS and Windows build jobs pass.
+  The launch queue's `Destroyed` handler now follows rustfmt. Keep the overall
+  formatting gate pending until the remaining differences are resolved.
+  Evidence: https://github.com/TimLai666/tabby-rs/actions/runs/37878946171
 
 ## Pending — standalone Tauri package type checking
 
@@ -367,10 +370,13 @@
   without generating another close request. The multi-window source contract
   checks the native wiring; the Telnet fixture executes the real AppService close
   methods and verifies cancellation preserves every tab, while approval closes
-  tabs before the window. Native close buttons, multiple live windows, and native
-  resource cleanup still need runtime acceptance. The Mac was locked during this
-  check. Separately verify application Quit/Cmd+Q: `app_quit` calls `app.exit(0)`
-  directly, so this window-close fix does not establish application-quit parity.
+  tabs before the window. macOS desktop native-window closure with two Telnet tabs
+  displays the actual translated warning. Cancelling keeps both tabs and the open
+  connection usable; confirming closes the window and its remaining TCP connection.
+  Two-window local PTY checks also verify process cleanup. SSH/serial resources,
+  cancellation across multiple live windows, and other platforms need acceptance.
+  Separately verify application Quit/Cmd+Q: `app_quit` calls `app.exit(0)` directly,
+  so this window-close fix does not establish application-quit parity.
 - Window event producers must use `emit_to(label)` and the renderer must listen
   through `getCurrentWebviewWindow().listen`. Tauri's default Any listener still
   receives events sent to another label. Keep both halves for focus, movement,
@@ -395,11 +401,15 @@
   `Destroyed` notification. Restore eligibility and notify on destroy failure.
   Native tests cover ordering, isolation, concurrent consumption, cleanup, and flag
   normalization. Renderer tests cover registration/readiness timing and duplicate
-  notifications. Source checks cover wiring; these are not desktop acceptance.
-  Verify two live windows, main-window closure, minimized windows, startup races,
-  explicit new-window launches, and Windows WebView2 behavior on real desktops.
-  The current Mac remains locked, preventing those checks. See
-  `docs/architecture/identity-and-launch.md` before changing this contract.
+  notifications. macOS desktop checks on `b3fae75c` verify a second invocation,
+  explicit new-window creation, routing to the latest window while the original
+  is focused, delivery after minimizing the latest window, and delivery after
+  closing the main window. The surviving terminal round-trips keyboard input.
+  Closing both isolated test windows leaves none of their five PTY child processes
+  running. These checks use a freshly built portable app with isolated settings.
+  Concurrent startup, cold deep links, Windows WebView2, other supported platforms,
+  and cleanup of SSH, Telnet, and serial sessions still need desktop acceptance.
+  See `docs/architecture/identity-and-launch.md` before changing this contract.
 - Verify macOS cold deep-link startup event timing against the original app. If
   `RunEvent::Opened` arrives after setup, a second-instance URL may follow the
   ordinary initial request and cause an extra auto-opened tab. The queued delivery
@@ -414,8 +424,24 @@
   unknown responses, dialog failure, and waiting for the response. The tab and
   session remain intact while checking permission. Tab close buttons, middle-click,
   close hotkeys, and window closure use the shared `canClose` flow. Verify the
-  actual native dialog and cancellation in the desktop; the Mac was locked during
-  this check. Component tests do not establish rendered or platform acceptance.
+  tab-close buttons, middle-click, and close hotkeys on supported desktops.
+  macOS native-window closure verifies the rendered translated dialog, cancellation
+  with both tabs retained and continued Telnet input, confirmation, and TCP cleanup.
+  Other close entry points and supported platforms still need acceptance.
+- Telnet and serial tab termination use the fixed upstream `onSessionDestroyed`
+  behavior: a colored session-closed message precedes the shared end-of-session
+  policy. Keep the frontend guard and shared immediate reconnect; do not restore
+  the custom five-attempt delayed tab reconnect. The device-reconnect test runs
+  actual current and `14e2d60` tab methods plus extracted shared lifecycle methods.
+  It covers keep/reconnect/close/auto, manual disconnect, explicit quit/close,
+  absent frontends, a single key prompt, and reconnection on the next key.
+  macOS Telnet desktop checks verify the rendered closed badge, keep plus key
+  reconnection, automatic reconnect after peer closure, and manual menu disconnect
+  without automatic reconnect. Cancelling the second of two native window-close
+  warnings preserves both tabs and both TCP connections with working input.
+  Confirmed window closure leaves no test TCP connections or fixture app running.
+  Serial desktop/physical-device checks, native device-level automatic reconnect,
+  and other supported platforms still need acceptance.
 - Tauri Telnet and serial profiles now expose the shared Login scripts editor and
   configure the existing session processor. Successful connection runs unconditional
   scripts before draining early output, matching `14e2d60`. The new

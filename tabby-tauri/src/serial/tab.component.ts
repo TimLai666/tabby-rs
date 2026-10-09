@@ -18,8 +18,6 @@ const colors = require('ansi-colors')
 export class TauriSerialTabComponent extends ConnectableTerminalTabComponent<TauriSerialProfile> {
     Platform = Platform
     session: TauriSerialSession|null = null
-    private reconnectAttempts = 0
-    private reconnectTimer: ReturnType<typeof setTimeout>|null = null
 
     constructor (injector: Injector, private bridge: HostBridge, private selector: SelectorService) {
         super(injector)
@@ -75,7 +73,6 @@ export class TauriSerialTabComponent extends ConnectableTerminalTabComponent<Tau
     }
 
     async initializeSession (): Promise<void> {
-        this.cancelReconnectTimer()
         await super.initializeSession()
         const session = new TauriSerialSession(this.injector, this.bridge, this.profile)
         this.setSession(session)
@@ -87,8 +84,6 @@ export class TauriSerialTabComponent extends ConnectableTerminalTabComponent<Tau
         try {
             await session.start()
             session.resize()
-            this.reconnectAttempts = 0
-            this.cancelReconnectTimer()
             this.stopSpinner()
         } catch (error) {
             this.stopSpinner()
@@ -100,40 +95,9 @@ export class TauriSerialTabComponent extends ConnectableTerminalTabComponent<Tau
     }
 
     protected onSessionDestroyed (): void {
-        if (this.frontend && this.profile.behaviorOnSessionEnd === 'reconnect' && !this.isDisconnectedByHand) {
-            if (this.reconnectAttempts < 5) {
-                const delay = Math.min(30_000, 1_000 * 2 ** this.reconnectAttempts)
-                this.reconnectAttempts++
-                this.write(`\r\nSerial reconnecting in ${Math.ceil(delay / 1000)}s (${this.reconnectAttempts}/5)\r\n`)
-                this.reconnectTimer = setTimeout(() => {
-                    this.reconnectTimer = null
-                    if (this.isDisconnectedByHand || !this.frontend) {
-                        return
-                    }
-                    void this.reconnect()
-                }, delay)
-            } else {
-                this.offerReconnection()
-            }
-            return
-        }
-        super.onSessionDestroyed()
-    }
-
-    async disconnect (): Promise<void> {
-        this.cancelReconnectTimer()
-        await super.disconnect()
-    }
-
-    ngOnDestroy (): void {
-        this.cancelReconnectTimer()
-        super.ngOnDestroy()
-    }
-
-    private cancelReconnectTimer (): void {
-        if (this.reconnectTimer !== null) {
-            clearTimeout(this.reconnectTimer)
-            this.reconnectTimer = null
+        if (this.frontend) {
+            this.write('\r\n' + colors.black.bgWhite(' SERIAL ') + ' session closed\r\n')
+            super.onSessionDestroyed()
         }
     }
 }

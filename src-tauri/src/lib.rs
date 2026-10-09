@@ -207,7 +207,10 @@ pub(crate) fn register_desktop_window_events(window: &tauri::WebviewWindow) {
             let _ = emitter.emit_to(emitter.label(), "desktop:windowCloseRequested", ());
         }
         tauri::WindowEvent::Destroyed => {
-            emitter.state::<AppState>().launches().remove(emitter.label());
+            emitter
+                .state::<AppState>()
+                .launches()
+                .remove(emitter.label());
         }
         tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, position }) => {
             let _ = emitter.emit_to(
