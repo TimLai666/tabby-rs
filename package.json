@@ -188,7 +188,7 @@
     "test:app-root-recovery": "node scripts/test-app-root-recovery-contract.mjs",
     "test:tauri-opacity": "node scripts/test-tauri-window-opacity.mjs",
     "test:plugin-operation": "node scripts/test-plugin-operation-contract.mjs",
-    "test:ssh-reconnect": "node scripts/test-ssh-reconnect-contract.mjs && node scripts/test-sftp-delete-cancellation.mjs && node scripts/test-tauri-ssh-actions.mjs && node scripts/test-sftp-links.mjs && node scripts/test-sftp-directory-links.mjs",
+    "test:ssh-reconnect": "node scripts/test-ssh-reconnect-contract.mjs && node scripts/test-sftp-delete-cancellation.mjs && node scripts/test-tauri-ssh-actions.mjs && node scripts/test-sftp-links.mjs && node scripts/test-sftp-directory-links.mjs && npm run test:sftp-panel",
     "test:device-reconnect": "node scripts/test-device-reconnect-contract.mjs",
     "test:ssh-session": "node scripts/test-ssh-session-contract.mjs && node scripts/test-ssh-auth-metadata.mjs && node scripts/test-ssh-agent-config.mjs && node scripts/test-ssh-password-prompt.mjs && node scripts/test-ssh-keyboard-interactive.mjs && node scripts/test-ssh-toolbar-ports.mjs",
     "test:ssh-config-parser": "cargo test --manifest-path src-tauri/Cargo.toml --lib ssh::import::tests::parses_",
@@ -228,7 +228,8 @@
     "postinstall": "patch-package && node ./scripts/install-deps.mjs && node ./scripts/build-native.mjs",
     "i18n:pull": "crowdin pull --skip-untranslated-strings",
     "i18n:extract": "node scripts/i18n-extract.mjs",
-    "i18n:push": "crowdin push"
+    "i18n:push": "crowdin push",
+    "test:sftp-panel": "node scripts/test-sftp-panel-controls.mjs && node scripts/test-sftp-panel-adapter.mjs && node scripts/test-sftp-delete-progress.mjs && node scripts/test-sftp-folder-completion.mjs"
   },
   "type": "module",
   "private": true,

@@ -100,12 +100,27 @@
   with form restoration, focused-editor Escape, and reconnect at 1100x720 and
   640x480. Its native
   IPC is simulated; actual desktop traffic and supported-platform acceptance
-  remain pending. The inline SFTP panel retains the separate gap below.
+  remain pending.
 - The fixed upstream SFTP Pug and SCSS provide breadcrumb/path editing, filtering,
   translated controls, file permissions, a context menu, and folder drag-and-drop.
-  `tabby-tauri/src/ssh/sftpPanel.component.ts` uses a different inline table and
-  browser prompts. Reuse the original templates, styles, and shared component
-  flows with native transport adapters before accepting SFTP UI/function parity.
+  Both hosts use those templates and the shared `SFTPPanelController`, with a
+  display-label hook that preserves Native display-only markers without changing
+  remote names. The Native transport adapter keeps Unix-second timestamps,
+  followed attributes, streaming transfers, and readable native errors compatible
+  with the shared controller. The original session/type exports stay available.
+  Native module registration must provide `NgxFilesizeModule`; Core imports that
+  module without exporting its pipe.
+- `test:sftp-panel` checks the actual shared/Native controllers, transport adapter,
+  delete modal, and directory completion state. `test:ssh-reconnect` includes it.
+  Rendered Angular checks at 1100x720 and 640x480 cover path editing, filtering,
+  no results, navigation failure, create-directory cancellation/completion,
+  context menus, copying paths, deletion progress, file-link download, binary
+  upload, display-only labels, and cancellation during an awaited child deletion.
+  Keep IPC/file-system fixture results separate from desktop/platform acceptance.
+- Still pending: Native Edit locally and third-party SFTP menu-provider integration;
+  Native folder download total-size calculation and per-file progress status;
+  rendered folder upload/drop behavior and supported desktop acceptance. Compare
+  those flows with fixed `14e2d60` before accepting full SFTP parity.
 - Native SFTP resolves remote symbolic links with `readlink` and followed `stat`,
   retaining the alias name/path for downloads and directory navigation. Resolve
   relative targets against the listed item's parent, including after path editing
@@ -129,7 +144,12 @@
   upstream cancellation method and exercises the native method with simulated
   UI/SFTP boundaries. It also covers confirmed deletion, files, dismissed action
   prompts, and display-only names. Verify cancellation in the supported desktops;
-  these method checks do not establish the rendered dialog or full SFTP parity.
+  these method checks do not establish supported-desktop acceptance or full SFTP parity.
+- Cancellation during deletion stops subsequent children and parent removal.
+  An already sent removal may finish; retain the modal operation after its UI
+  closes and await its settlement before refreshing the unchanged current path.
+  Refresh after partial errors as well. Component destruction only stops further
+  operations and must not close an already closed modal again.
 
 ## P1 — SFTP concurrent uploads share temporary names
 
