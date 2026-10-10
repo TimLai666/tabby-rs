@@ -176,6 +176,7 @@ Each package remains under its own license. The package manifest path is include
 | cargo | form_urlencoded | 1.2.2 | MIT OR Apache-2.0 | ../../.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/form_urlencoded-1.2.2/Cargo.toml |
 | cargo | freetype-sys | 0.20.1 | MIT | ../../.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/freetype-sys-0.20.1/Cargo.toml |
 | cargo | fs_extra | 1.3.0 | MIT | ../../.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fs_extra-1.3.0/Cargo.toml |
+| cargo | fsevent-sys | 4.1.0 | MIT | ../../.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fsevent-sys-4.1.0/Cargo.toml |
 | cargo | futures | 0.3.33 | MIT OR Apache-2.0 | ../../.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-0.3.33/Cargo.toml |
 | cargo | futures-channel | 0.3.33 | MIT OR Apache-2.0 | ../../.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-channel-0.3.33/Cargo.toml |
 | cargo | futures-core | 0.3.33 | MIT OR Apache-2.0 | ../../.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-core-0.3.33/Cargo.toml |
@@ -250,6 +251,8 @@ Each package remains under its own license. The package manifest path is include
 | cargo | indexmap | 1.9.3 | Apache-2.0 OR MIT | ../../.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/indexmap-1.9.3/Cargo.toml |
 | cargo | indexmap | 2.14.0 | Apache-2.0 OR MIT | ../../.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/indexmap-2.14.0/Cargo.toml |
 | cargo | infer | 0.19.0 | MIT | ../../.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/infer-0.19.0/Cargo.toml |
+| cargo | inotify | 0.11.5 | ISC | ../../.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/inotify-0.11.5/Cargo.toml |
+| cargo | inotify-sys | 0.1.8 | ISC | ../../.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/inotify-sys-0.1.8/Cargo.toml |
 | cargo | inout | 0.1.4 | MIT OR Apache-2.0 | ../../.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/inout-0.1.4/Cargo.toml |
 | cargo | internal-russh-forked-ssh-key | 0.6.11+upstream-0.6.7 | Apache-2.0 OR MIT | ../../.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/internal-russh-forked-ssh-key-0.6.11+upstream-0.6.7/Cargo.toml |
 | cargo | io-kit-sys | 0.4.1 | MIT / Apache-2.0 | ../../.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/io-kit-sys-0.4.1/Cargo.toml |
@@ -271,6 +274,8 @@ Each package remains under its own license. The package manifest path is include
 | cargo | jsonptr | 0.6.3 | MIT OR Apache-2.0 | ../../.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/jsonptr-0.6.3/Cargo.toml |
 | cargo | keyboard-types | 0.7.0 | MIT OR Apache-2.0 | ../../.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/keyboard-types-0.7.0/Cargo.toml |
 | cargo | keyring | 3.6.3 | MIT OR Apache-2.0 | ../../.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/keyring-3.6.3/Cargo.toml |
+| cargo | kqueue | 1.2.1 | MIT | ../../.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/kqueue-1.2.1/Cargo.toml |
+| cargo | kqueue-sys | 1.1.2 | MIT | ../../.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/kqueue-sys-1.1.2/Cargo.toml |
 | cargo | lazy_static | 1.5.0 | MIT OR Apache-2.0 | ../../.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lazy_static-1.5.0/Cargo.toml |
 | cargo | libappindicator | 0.9.0 | Apache-2.0 OR MIT | ../../.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libappindicator-0.9.0/Cargo.toml |
 | cargo | libappindicator-sys | 0.9.0 | Apache-2.0 OR MIT | ../../.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libappindicator-sys-0.9.0/Cargo.toml |
@@ -304,7 +309,9 @@ Each package remains under its own license. The package manifest path is include
 | cargo | nix | 0.28.0 | MIT | ../../.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/nix-0.28.0/Cargo.toml |
 | cargo | nix | 0.29.0 | MIT | ../../.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/nix-0.29.0/Cargo.toml |
 | cargo | nom | 8.0.0 | MIT | ../../.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/nom-8.0.0/Cargo.toml |
+| cargo | notify | 8.2.0 | CC0-1.0 | ../../.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/notify-8.2.0/Cargo.toml |
 | cargo | notify-rust | 4.18.0 | MIT OR Apache-2.0 | ../../.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/notify-rust-4.18.0/Cargo.toml |
+| cargo | notify-types | 2.1.0 | MIT OR Apache-2.0 | ../../.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/notify-types-2.1.0/Cargo.toml |
 | cargo | ntapi | 0.4.3 | Apache-2.0 OR MIT | ../../.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ntapi-0.4.3/Cargo.toml |
 | cargo | num | 0.4.3 | MIT OR Apache-2.0 | ../../.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/num-0.4.3/Cargo.toml |
 | cargo | num_enum | 0.7.6 | BSD-3-Clause OR MIT OR Apache-2.0 | ../../.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/num_enum-0.7.6/Cargo.toml |

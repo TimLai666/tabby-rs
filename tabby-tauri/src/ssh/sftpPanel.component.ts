@@ -1,8 +1,10 @@
-import { Component, Input } from '@angular/core'
+import { Component, Inject, Input, Optional } from '@angular/core'
 import { NgbModal } from '@ng-bootstrap/ng-bootstrap'
 import { DirectoryDownload, DirectoryUpload, FileUpload, MenuItemOptions, NotificationsService, PlatformService, TranslateService } from 'tabby-core'
 import { posix as posixPath } from 'path'
 import { SFTPFile } from '../../../tabby-ssh/src/api/sftp'
+import { SFTPContextMenuItemProvider } from '../../../tabby-ssh/src/api/sftpContextMenu'
+import { TauriSftpEditor } from './sftpEditor'
 import { SFTPPanelController } from '../../../tabby-ssh/src/components/sftpPanel.controller'
 
 import { RemoteFileEntry } from '../api/hostBridge'
@@ -23,6 +25,8 @@ export class TauriSftpPanelComponent extends SFTPPanelController<TauriSftpPanelT
         notifications: NotificationsService,
         ngbModal: NgbModal,
         private translate: TranslateService,
+        @Optional() @Inject(SFTPContextMenuItemProvider) private contextMenuProviders: SFTPContextMenuItemProvider<TauriSftpPanelComponent>[]|null = [],
+        @Optional() private editor?: TauriSftpEditor,
     ) {
         super(ngbModal, notifications, platform)
     }
@@ -92,19 +96,8 @@ export class TauriSftpPanelComponent extends SFTPPanelController<TauriSftpPanelT
             }
         }
         if (directory) {
-            const transfer = await this.platform.startDownloadDirectory(item.name, 0)
-            if (transfer) {
-                try {
-                    await this.downloadDirectory(item, transfer, '')
-                    transfer.setStatus('')
-                    transfer.setCompleted(true)
-                } catch (error) {
-                    transfer.cancel()
-                    this.showError(error)
-                } finally {
-                    await transfer.closeAsync()
-                }
-            }
+            const folder: SFTPFile = { ...item, modified: item.modified instanceof Date ? item.modified : new Date((item.modified ?? 0) * 1000) }
+            try { await super.downloadFolder(folder) } catch { /* The shared controller already reports the error. */ }
             return
         }
         try {
@@ -113,11 +106,28 @@ export class TauriSftpPanelComponent extends SFTPPanelController<TauriSftpPanelT
         } catch (error) { this.showError(error) }
     }
 
+    protected override async calculateFolderSizeAndUpdate (folder: SFTPFile, transfer: DirectoryDownload): Promise<number> {
+        let totalSize = 0
+        for (const item of await this.sftp.readdir(folder.fullPath)) {
+            if (!item.isOperable) { continue }
+            if (transfer.isCancelled()) { throw new Error('Download cancelled') }
+            totalSize += item.isDirectory ? await this.calculateFolderSizeAndUpdate(item, transfer)
+                : item.isSymlink ? (await this.sftp.stat(item.fullPath, true)).size : item.size
+            transfer.setTotalSize(totalSize)
+        }
+        return totalSize
+    }
+
+    protected override async downloadFolderRecursive (folder: SFTPFile, transfer: DirectoryDownload, relativePath: string): Promise<void> {
+        await this.downloadDirectory(folder, transfer, relativePath)
+    }
+
     private async downloadDirectory (folder: SFTPFile|RemoteFileEntry, transfer: DirectoryDownload, relativePath: string): Promise<void> {
         for (const item of await this.sftp.readdir(folder.fullPath)) {
             if (!item.isOperable) { continue }
             if (transfer.isCancelled()) { throw new Error('Download cancelled') }
             const next = relativePath ? `${relativePath}/${item.name}` : item.name
+            transfer.setStatus(next)
             if (item.isDirectory) {
                 await transfer.createDirectory(next)
                 await this.downloadDirectory(item, transfer, next)
@@ -180,9 +190,13 @@ export class TauriSftpPanelComponent extends SFTPPanelController<TauriSftpPanelT
     }
 
     async buildContextMenu (item: SFTPFile): Promise<MenuItemOptions[]> {
-        return [
+        const editorItems: MenuItemOptions[] = [
             { label: this.translate.instant('Copy full path'), click: () => this.platform.setClipboard({ text: item.fullPath, html: '' }) },
-            { type: 'separator' },
+        ]
+        if (!item.isDirectory && this.editor) {
+            editorItems.push({ label: this.translate.instant('Edit locally'), click: () => this.editor!.edit(item, this.sftp) })
+        }
+        const commonItems: MenuItemOptions[] = [
             { label: this.translate.instant('Create directory'), click: () => this.openCreateDirectoryModal() },
             { label: this.translate.instant(item.isDirectory ? 'Download directory' : 'Download'), click: () => this.downloadItem(item) },
             { label: this.translate.instant('Delete'), click: async () => {
@@ -206,6 +220,13 @@ export class TauriSftpPanelComponent extends SFTPPanelController<TauriSftpPanelT
                 }
             } },
         ]
+        const providers = [
+            { weight: 0, getItems: async () => editorItems },
+            { weight: 10, getItems: async () => commonItems },
+            ...this.contextMenuProviders ?? [],
+        ].sort((a, b) => a.weight - b.weight)
+        const sections = await Promise.all(providers.map(provider => provider.getItems(item, this)))
+        return sections.flatMap(items => items.length ? [{ type: 'separator' as const }, ...items] : []).slice(1)
     }
 
     override async showContextMenu (item: SFTPFile, event: MouseEvent): Promise<void> {

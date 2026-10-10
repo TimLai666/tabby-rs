@@ -107,6 +107,13 @@ export class TauriPlatformService extends PlatformService {
         return transfer
     }
 
+    async prepareEditableFile (name: string, mode: number, size: number): Promise<{ id: string; path: string; transfer: FileDownload }> {
+        const edit = await this.bridge.invoke('fileEdit.prepare', { name, mode, size })
+        const transfer = new TauriFileDownload(this.bridge, edit.transfer.id, edit.transfer.name, size)
+        this.fileTransferStarted.next(transfer)
+        return { id: edit.id, path: edit.path, transfer }
+    }
+
     async startDownloadDirectory (name: string, estimatedSize = 0): Promise<DirectoryDownload|null> {
         const basePath = await this.pickDirectory()
         if (!basePath) {
@@ -117,8 +124,8 @@ export class TauriPlatformService extends PlatformService {
         return transfer
     }
 
-    async startUpload (options: FileUploadOptions = { multiple: false }): Promise<FileUpload[]> {
-        const paths = await this.bridge.invoke('dialog.open', {
+    async startUpload (options: FileUploadOptions = { multiple: false }, paths?: string[]): Promise<FileUpload[]> {
+        paths ??= await this.bridge.invoke('dialog.open', {
             multiple: options.multiple,
             directory: false,
             title: null,

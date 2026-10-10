@@ -237,6 +237,7 @@ Tabby RS 永遠不做 Windows Authenticode 或 macOS Developer ID 系統程式�
 - Node.js 只可出現在建置流程及使用者主動執行的 npm 外掛安裝／更新流程。
 - 遷移期間 Electron 與 Tauri 可以並存，並共用同一套前端；全部功能切換及通過測試後才能移除 Electron。
 - SFTP 面板共用原版 Pug、SCSS 與 `SFTPPanelController`。原版保留 `SFTPSession` 及既有公開型別，Tauri 透過 `TauriSftpPanelTransport` 接到原生傳輸，將修改時間轉成介面使用的 `Date`，保留原始檔名、路徑與操作限制。
+- SFTP 選單提供者共用注入識別，原版提供者的預設型別保留原版面板。本機編輯沿用串流傳輸，僅監看自己的暫存副本，保存後依序覆寫遠端檔案並還原權限。連線結束會停止監看與後續回傳，已完成的編輯副本保留。資料夾下載沿用共用控制器的大小估算與檔案路徑狀態。
 - `tabby-web` 必須持續可建置、可使用；桌面專屬實作不得破壞 web providers。
 - 支援範圍跟隨 Tauri 及所選必要依賴能運作的平台。若某個必要功能額外縮小範圍，必須在該功能 issue 明確記錄。
 - 上游同步策略為鎖定目前基準，只挑選安全修正與必要 bug fix，不完整合併上游新功能。

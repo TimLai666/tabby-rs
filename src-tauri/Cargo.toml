@@ -27,6 +27,7 @@ cbc = { version = "0.1.2", features = ["alloc"] }
 chrono = { version = "0.4.38", default-features = false, features = ["clock", "serde", "std"] }
 hex = "0.4.3"
 minisign-verify = "0.2"
+notify = "8.2.0"
 font-kit = "0.14.3"
 pbkdf2 = "0.12.2"
 portable-pty = "=0.9.0"

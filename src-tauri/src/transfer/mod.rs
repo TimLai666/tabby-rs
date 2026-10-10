@@ -1,3 +1,4 @@
+pub mod file_edit;
 pub mod manager;
 pub mod safe_path;
 

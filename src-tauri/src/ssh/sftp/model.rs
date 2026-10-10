@@ -38,6 +38,14 @@ impl Default for SftpOverwritePolicy {
 
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SftpChmodRequest {
+    pub id: String,
+    pub path: String,
+    pub mode: u32,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SftpPathRequest {
     pub id: String,
     pub path: String,

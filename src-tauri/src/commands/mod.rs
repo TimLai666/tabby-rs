@@ -3,6 +3,7 @@ pub mod backup;
 pub mod config;
 pub mod desktop;
 pub mod diagnostics;
+pub mod file_edit;
 pub mod font;
 pub mod identity;
 pub mod keychain;

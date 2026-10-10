@@ -13,6 +13,7 @@ pub trait SftpBackend: Send + Sync {
     async fn list(&self, path: &str) -> SftpResult<Vec<RemoteFileEntry>>;
     async fn stat(&self, path: &str, follow: bool) -> SftpResult<RemoteFileEntry>;
     async fn readlink(&self, path: &str) -> SftpResult<String>;
+    async fn chmod(&self, path: &str, mode: u32) -> SftpResult<()>;
     async fn mkdir(&self, path: &str) -> SftpResult<()>;
     async fn rename(&self, from: &str, to: &str) -> SftpResult<()>;
     async fn remove(&self, path: &str, recursive: bool) -> SftpResult<()>;
@@ -82,6 +83,20 @@ impl SftpBackend for RusshSftpBackend {
         let path = super::model::checked_path(path)?;
         self.session
             .read_link(path)
+            .await
+            .map_err(|error| SshError::Sftp(error.to_string()))
+    }
+
+    async fn chmod(&self, path: &str, mode: u32) -> SftpResult<()> {
+        let path = super::model::checked_path(path)?;
+        self.session
+            .set_metadata(
+                path,
+                russh_sftp::client::fs::Metadata {
+                    permissions: Some(mode & 0o7777),
+                    ..Default::default()
+                },
+            )
             .await
             .map_err(|error| SshError::Sftp(error.to_string()))
     }

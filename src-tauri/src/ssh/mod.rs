@@ -138,6 +138,11 @@ enum SshControl {
         path: String,
         sender: oneshot::Sender<Result<String, SshError>>,
     },
+    SftpChmod {
+        path: String,
+        mode: u32,
+        sender: oneshot::Sender<Result<(), SshError>>,
+    },
     SftpMkdir {
         path: String,
         sender: oneshot::Sender<Result<(), SshError>>,
@@ -1576,6 +1581,21 @@ impl SshManager {
         Ok(receiver.await.map_err(|_| SshError::Closed)??)
     }
 
+    pub async fn sftp_chmod(&self, request: sftp::SftpChmodRequest) -> Result<(), SshError> {
+        let session = self.session(&request.id)?;
+        let (sender, receiver) = oneshot::channel();
+        session
+            .control
+            .send(SshControl::SftpChmod {
+                path: request.path,
+                mode: request.mode,
+                sender,
+            })
+            .await
+            .map_err(|_| SshError::Closed)?;
+        receiver.await.map_err(|_| SshError::Closed)?
+    }
+
     pub async fn sftp_mkdir(&self, request: sftp::SftpPathRequest) -> Result<(), SshError> {
         let session = self.session(&request.id)?;
         let (sender, receiver) = oneshot::channel();
@@ -2179,6 +2199,14 @@ async fn handle_control<H: client::Handler>(
         SshControl::SftpReadlink { path, sender } => {
             let result = match sftp.as_ref() {
                 Some(manager) => manager.readlink(&path).await,
+                None => Err(SshError::InvalidRequest("SFTP is not open".into())),
+            };
+            let _ = sender.send(result);
+            true
+        }
+        SshControl::SftpChmod { path, mode, sender } => {
+            let result = match sftp.as_ref() {
+                Some(manager) => manager.chmod(&path, mode).await,
                 None => Err(SshError::InvalidRequest("SFTP is not open".into())),
             };
             let _ = sender.send(result);

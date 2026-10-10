@@ -1054,6 +1054,13 @@ export interface HostRequestMap {
         request: { path: string }
         response: number[]
     }
+    'fileEdit.prepare': {
+        request: { name: string; mode: number; size: number }
+        response: { id: string; path: string; transfer: TransferDescriptor }
+    }
+    'fileEdit.ready': { request: { id: string }; response: null }
+    'fileEdit.watch': { request: { id: string }; response: null }
+    'fileEdit.stop': { request: { id: string }; response: null }
     'transfer.openUpload': {
         request: { paths: string[] }
         response: TransferDescriptor[]
@@ -1187,6 +1194,10 @@ export interface HostRequestMap {
         request: { id: string; path: string }
         response: string
     }
+    'sftp.chmod': {
+        request: { id: string; path: string; mode: number }
+        response: null
+    }
     'sftp.mkdir': {
         request: { id: string; path: string }
         response: null
@@ -1302,6 +1313,7 @@ export interface HostEventMap {
     'desktop:fileDrop': { paths: string[]; x: number; y: number }
     'desktop:themeChanged': 'system' | 'light' | 'dark'
     'desktop:displayMetricsChanged': number
+    'fileEdit:changed': { id: string; event: 'change'|'rename'|'error'; message?: string|null }
     'transfer:progress': TransferDescriptor
     'ssh:hostKeyPrompt': SshHostKeyPrompt
     'ssh:authPrompt': SshAuthPrompt

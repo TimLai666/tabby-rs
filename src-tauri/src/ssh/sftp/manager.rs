@@ -65,6 +65,10 @@ impl SftpManager {
         self.backend.readlink(path).await
     }
 
+    pub async fn chmod(&self, path: &str, mode: u32) -> Result<(), SshError> {
+        self.backend.chmod(path, mode).await
+    }
+
     pub async fn mkdir(&self, path: &str) -> Result<(), SshError> {
         self.backend.mkdir(path).await
     }

@@ -45,6 +45,7 @@ use commands::{
         diagnostics_append, diagnostics_clear_logs, diagnostics_export, diagnostics_preview,
         diagnostics_status,
     },
+    file_edit::{file_edit_prepare, file_edit_ready, file_edit_stop, file_edit_watch},
     font::{font_list, font_refresh},
     identity::{identity_alias_status, identity_get, identity_set_alias},
     keychain::{keychain_delete, keychain_get, keychain_put},
@@ -67,9 +68,9 @@ use commands::{
         serial_set_signals, serial_write,
     },
     sftp::{
-        sftp_cancel_transfer, sftp_close, sftp_close_transfer, sftp_download, sftp_download_open,
-        sftp_list, sftp_mkdir, sftp_open, sftp_read, sftp_readlink, sftp_remove, sftp_rename,
-        sftp_stat, sftp_upload, sftp_upload_open, sftp_write,
+        sftp_cancel_transfer, sftp_chmod, sftp_close, sftp_close_transfer, sftp_download,
+        sftp_download_open, sftp_list, sftp_mkdir, sftp_open, sftp_read, sftp_readlink,
+        sftp_remove, sftp_rename, sftp_stat, sftp_upload, sftp_upload_open, sftp_write,
     },
     shell::{shell_detect, shell_prepare_spawn},
     ssh::{
@@ -323,6 +324,9 @@ pub fn run() {
             app.manage(Arc::new(
                 crate::transfer::manager::TransferManager::default(),
             ));
+            app.manage(Arc::new(
+                crate::transfer::file_edit::FileEditManager::default(),
+            ));
             app.manage(CredentialState::default());
             if let Some(window) = app.get_webview_window("main") {
                 register_desktop_window_events(&window);
@@ -430,6 +434,7 @@ pub fn run() {
             sftp_list,
             sftp_stat,
             sftp_readlink,
+            sftp_chmod,
             sftp_mkdir,
             sftp_rename,
             sftp_remove,
@@ -468,6 +473,10 @@ pub fn run() {
             serial_get_signals,
             serial_close,
             sudo_respond,
+            file_edit_prepare,
+            file_edit_ready,
+            file_edit_watch,
+            file_edit_stop,
             transfer_open_upload,
             transfer_open_download,
             transfer_read,

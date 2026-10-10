@@ -117,10 +117,25 @@
   context menus, copying paths, deletion progress, file-link download, binary
   upload, display-only labels, and cancellation during an awaited child deletion.
   Keep IPC/file-system fixture results separate from desktop/platform acceptance.
-- Still pending: Native Edit locally and third-party SFTP menu-provider integration;
-  Native folder download total-size calculation and per-file progress status;
-  rendered folder upload/drop behavior and supported desktop acceptance. Compare
-  those flows with fixed `14e2d60` before accepting full SFTP parity.
+- Native Edit locally uses an owned temporary copy, the existing streaming
+  transfers, a one-second watch grace period and save debounce, serialized
+  overwrite uploads, and remote mode restoration. Session closure stops watching
+  and queued saves; completed editor copies remain available to the editor.
+  File watching is scoped to that copy and distinguishes in-place saves from
+  replacement. Replacement triggers one final upload and ends watching, matching
+  the fixed upstream; later saves require reopening Edit locally. Native SFTP
+  menu extensions share the original injection token;
+  legacy providers retain their concrete-panel default type.
+- Native folder download uses the shared controller's size/status flow, followed
+  file-link sizes, and relative child statuses. `test:sftp-panel` includes local
+  editing, transport, menu-provider, and folder-progress regressions. Native tests
+  exercise actual file watching and a binary save through a real SFTP protocol
+  peer. Renderer/IPC fixtures do not establish an external editor process or
+  supported-platform desktop behavior.
+- Still pending: rendered folder upload/drop behavior, original desktop comparison,
+  and supported desktop acceptance of editing, menu extensions, and folder progress.
+  Cross-session upload temporary-name collisions retain their separate P1 entry.
+  Verify these before accepting full SFTP parity.
 - Native SFTP resolves remote symbolic links with `readlink` and followed `stat`,
   retaining the alias name/path for downloads and directory navigation. Resolve
   relative targets against the listed item's parent, including after path editing

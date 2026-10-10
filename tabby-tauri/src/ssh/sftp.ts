@@ -1,9 +1,13 @@
 import { FileDownload, FileUpload } from 'tabby-core'
+import { Subject } from 'rxjs'
 
 import { HostBridge, RemoteFileEntry, SftpTransferDescriptor } from '../api/hostBridge'
 
 export class TauriSftpSession {
     private closed = false
+    readonly closed$ = new Subject<void>()
+
+    isClosed (): boolean { return this.closed }
 
     private constructor (
         private bridge: HostBridge,
@@ -33,6 +37,11 @@ export class TauriSftpSession {
     async mkdir (path: string): Promise<void> {
         this.ensureOpen()
         await this.bridge.invoke('sftp.mkdir', { id: this.id, path })
+    }
+
+    async chmod (path: string, mode: number): Promise<void> {
+        this.ensureOpen()
+        await this.bridge.invoke('sftp.chmod', { id: this.id, path, mode })
     }
 
     async rename (from: string, to: string): Promise<void> {
@@ -105,6 +114,8 @@ export class TauriSftpSession {
             return
         }
         this.closed = true
+        this.closed$.next()
+        this.closed$.complete()
         await this.bridge.invoke('sftp.close', { id: this.id })
     }
 

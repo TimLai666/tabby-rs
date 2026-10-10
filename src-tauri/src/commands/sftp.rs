@@ -7,9 +7,10 @@ use crate::{
     ssh::{
         model::SshSessionIdRequest,
         sftp::{
-            RemoteFileEntry, SftpDownloadOpenRequest, SftpPathRequest, SftpReadRequest,
-            SftpRemoveRequest, SftpRenameRequest, SftpSessionInfo, SftpStatRequest,
-            SftpTransferDescriptor, SftpTransferIdRequest, SftpUploadOpenRequest, SftpWriteRequest,
+            RemoteFileEntry, SftpChmodRequest, SftpDownloadOpenRequest, SftpPathRequest,
+            SftpReadRequest, SftpRemoveRequest, SftpRenameRequest, SftpSessionInfo,
+            SftpStatRequest, SftpTransferDescriptor, SftpTransferIdRequest, SftpUploadOpenRequest,
+            SftpWriteRequest,
         },
         SshManager,
     },
@@ -45,6 +46,14 @@ pub async fn sftp_readlink(
     manager: State<'_, Arc<SshManager>>,
 ) -> Result<String, AppError> {
     manager.sftp_readlink(request).await.map_err(AppError::from)
+}
+
+#[tauri::command]
+pub async fn sftp_chmod(
+    request: SftpChmodRequest,
+    manager: State<'_, Arc<SshManager>>,
+) -> Result<(), AppError> {
+    manager.sftp_chmod(request).await.map_err(AppError::from)
 }
 
 #[tauri::command]

@@ -1,3 +1,4 @@
+import { Observable } from 'rxjs'
 import { FileDownload, FileUpload } from 'tabby-core'
 import { SFTPFile } from '../../../tabby-ssh/src/api/sftp'
 import { SFTPPanelTransport } from '../../../tabby-ssh/src/components/sftpPanel.controller'
@@ -22,6 +23,14 @@ function toPanelError (error: unknown): Error {
 
 export class TauriSftpPanelTransport implements SFTPPanelTransport {
     constructor (private session: TauriSftpSession) { }
+
+    get closed$ (): Observable<void> { return this.session.closed$ }
+
+    isClosed (): boolean { return this.session.isClosed() }
+
+    chmod (path: string, mode: number): Promise<void> {
+        return this.session.chmod(path, mode)
+    }
 
     async readdir (path: string): Promise<TauriSftpPanelFile[]> {
         try { return (await this.session.readdir(path)).map(toPanelFile) } catch (error) { throw toPanelError(error) }
