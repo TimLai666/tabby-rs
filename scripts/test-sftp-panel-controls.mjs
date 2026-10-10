@@ -4,6 +4,7 @@ import vm from 'node:vm'
 import path from 'node:path'
 import constants from 'node:constants'
 import { createRequire } from 'node:module'
+import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 const stage = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const require = createRequire(path.join(stage, 'package.json'))
@@ -39,7 +40,23 @@ panel.showFilter=true;panel.filterText='a.';panel.onFilterChange();assert.deepEq
 panel.filterText='none';panel.onFilterChange();assert.equal(panel.filteredFileList.length,0)
 panel.clearFilter();assert.equal(panel.filteredFileList.length,3);assert.equal(panel.showFilter,false)
 await panel.navigate('/missing');await new Promise(resolve=>setTimeout(resolve,0));assert.equal(panel.path,'/data');assert.equal(panel.filteredFileList.length,3);assert.deepEqual(notices,['missing'])
-assert.equal(panel.getModeString(entry('A.txt')).trim(),'rw-r--r--')
+const originalPanelSource=execFileSync('git',['show','14e2d60:tabby-ssh/src/components/sftpPanel.component.ts'],{cwd:stage,encoding:'utf8'})
+function modeFormatter(source) {
+  const tree=ts.createSourceFile('panel.ts',source,ts.ScriptTarget.Latest,true)
+  const component=tree.statements.find(node=>ts.isClassDeclaration(node))
+  const method=component.members.find(node=>node.name?.getText(tree)==='getModeString')
+  assert.ok(method, 'permission control must use the actual component method')
+  return new Function('C','item',method.body.getText(tree).slice(1,-1))
+}
+const originalMode=modeFormatter(originalPanelSource)
+const sharedMode=modeFormatter(fs.readFileSync(path.join(stage,'tabby-ssh/src/components/sftpPanel.controller.ts'),'utf8'))
+assert.equal(panel.getModeString(entry('A.txt')),originalMode(constants,entry('A.txt')), 'host constants must match fixed upstream on the same platform')
+const unixModes={S_IFDIR:0o40000,S_IRUSR:0o400,S_IWUSR:0o200,S_IXUSR:0o100,S_IRGRP:0o40,S_IWGRP:0o20,S_IXGRP:0o10,S_IROTH:0o4,S_IWOTH:0o2,S_IXOTH:0o1}
+const windowsModes={...unixModes,S_IRGRP:undefined,S_IWGRP:undefined,S_IXGRP:undefined,S_IROTH:undefined,S_IWOTH:undefined,S_IXOTH:undefined}
+for(const [host,bits,expected] of [['unix',unixModes,'rw-r--r--'],['windows',windowsModes,'rw-------']]) {
+  assert.equal(originalMode(bits,entry('A.txt')).trim(),expected, host+' fixed upstream control')
+  assert.equal(sharedMode(bits,entry('A.txt')),originalMode(bits,entry('A.txt')), host+' shared permissions match the fixed original')
+}
 assert.deepEqual(output,['/data','/missing','/data'])
 console.log('Shared SFTP controller legacy navigation/filter/fallback/permissions: PASS')
 
