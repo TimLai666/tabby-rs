@@ -132,8 +132,22 @@
   exercise actual file watching and a binary save through a real SFTP protocol
   peer. Renderer/IPC fixtures do not establish an external editor process or
   supported-platform desktop behavior.
-- Still pending: rendered folder upload/drop behavior, original desktop comparison,
-  and supported desktop acceptance of editing, menu extensions, and folder progress.
+- Native file drops on a shared SFTP drop zone use the existing streaming upload
+  tree, preserve mixed top-level file/folder names and empty directories, and do not
+  paste local paths into the SSH terminal. Bootstrap awaits one native file-drop
+  listener; panels and terminals subscribe synchronously and release their own
+  subscriptions. Windows/Linux coordinates use physical pixels; the pinned Wry
+  macOS implementation supplies AppKit points despite its PhysicalPosition type.
+  Preparation errors cancel opened handles; a removed panel cancels late
+  preparations. Upload errors cancel remaining tree leaves without cancelling
+  completed files. `test:sftp-panel` includes `scripts/test-sftp-native-drop.mjs`.
+  Rendered Angular checks at 1100x720 and 640x480 cover mixed file/folder drops,
+  exact binary bytes, nested/empty directories, the unchanged folder chooser,
+  delayed startup registration, panel reopening, and partial-error cleanup.
+  Keep IPC/file-system fixture results separate from native OS drag gestures.
+- Still pending: native drag-over hints, original desktop comparison, and supported
+  desktop acceptance of native file drops, editing, menu extensions, and folder
+  progress.
   Cross-session upload temporary-name collisions retain their separate P1 entry.
   Verify these before accepting full SFTP parity.
 - Native SFTP resolves remote symbolic links with `readlink` and followed `stat`,

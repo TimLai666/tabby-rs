@@ -1,4 +1,5 @@
 import { Inject, Injectable, NgZone } from '@angular/core'
+import { Subject } from 'rxjs'
 import {
     ClipboardContent,
     DirectoryDownload,
@@ -20,6 +21,7 @@ import {
 import {
     ContextMenuItem,
     HostBridge,
+    HostEventMap,
     PluginOperation,
     RuntimeInfo,
     TAURI_RUNTIME_INFO,
@@ -29,6 +31,8 @@ import {
 @Injectable()
 export class TauriPlatformService extends PlatformService {
     supportsPluginManagement = false
+    readonly fileDropped$ = new Subject<HostEventMap['desktop:fileDrop']>()
+    readonly fileDropReady: Promise<() => void>
     private clipboardText = ''
     private configRevision: string | null = null
     private configPath: string | null = null
@@ -44,6 +48,7 @@ export class TauriPlatformService extends PlatformService {
         private zone: NgZone,
     ) {
         super()
+        this.fileDropReady = this.bridge.listen('desktop:fileDrop', event => this.fileDropped$.next(event))
         void this.initializeDesktopEvents()
     }
 
@@ -139,6 +144,26 @@ export class TauriPlatformService extends PlatformService {
         return transfers
     }
 
+    getFileDropPosition (event: { x: number; y: number }): { x: number; y: number } {
+        // Pinned Wry reports AppKit points on macOS and physical pixels elsewhere.
+        const scale = this.runtimeInfo.platform === 'macos' ? 1 : window.devicePixelRatio
+        return { x: event.x / scale, y: event.y / scale }
+    }
+
+    async startUploadFromPaths (paths: string[], multiple = false): Promise<DirectoryUpload> {
+        const root = new DirectoryUpload()
+        const uploads: FileUpload[] = []
+        try {
+            for (const path of multiple ? paths : paths.slice(0, 1)) {
+                root.pushChildren(await this.prepareUploadTree(path, uploads))
+            }
+            return root
+        } catch (error) {
+            uploads.forEach(upload => upload.cancel())
+            throw error
+        }
+    }
+
     async startUploadDirectory (paths?: string[]): Promise<DirectoryUpload> {
         if (!paths?.length) {
             paths = await this.bridge.invoke('dialog.open', {
@@ -150,8 +175,12 @@ export class TauriPlatformService extends PlatformService {
         if (!paths.length) {
             return new DirectoryUpload()
         }
+        const root = await this.startUploadFromPaths(paths)
+        return root.getChildrens()[0] as DirectoryUpload
+    }
 
-        const tree = await this.bridge.invoke('transfer.listDirectory', { path: paths[0] })
+    private async prepareUploadTree (path: string, uploads: FileUpload[]): Promise<FileUpload|DirectoryUpload> {
+        const tree = await this.bridge.invoke('transfer.listDirectory', { path })
         const files: TransferDirectoryEntry[] = []
         const collect = (entry: TransferDirectoryEntry) => {
             if (entry.directory) {
@@ -167,6 +196,7 @@ export class TauriPlatformService extends PlatformService {
             if (!entry.directory) {
                 const descriptor = descriptors[index++]
                 const transfer = new TauriFileUpload(this.bridge, descriptor.id, descriptor.name, descriptor.size ?? entry.size)
+                uploads.push(transfer)
                 this.fileTransferStarted.next(transfer)
                 return transfer
             }
@@ -174,7 +204,7 @@ export class TauriPlatformService extends PlatformService {
             entry.children.forEach(child => directory.pushChildren(build(child)))
             return directory
         }
-        return build(tree) as DirectoryUpload
+        return build(tree)
     }
 
     getOSRelease (): string {

@@ -156,7 +156,20 @@ export class TauriSftpPanelComponent extends SFTPPanelController<TauriSftpPanelT
         try {
             await this.uploadDirectory(transfer, savedPath)
             if (this.path === savedPath) { await this.navigate(savedPath) }
-        } catch (error) { this.showError(error) }
+        } catch (error) {
+            this.cancelPendingUploads(transfer)
+            this.showError(error)
+        }
+    }
+
+    private cancelPendingUploads (directory: DirectoryUpload): void {
+        for (const child of directory.getChildrens()) {
+            if (child instanceof DirectoryUpload) {
+                this.cancelPendingUploads(child)
+            } else if (child.getState() === 'pending' || child.getState() === 'running') {
+                child.cancel()
+            }
+        }
     }
 
     override async uploadOne (transfer: FileUpload, remotePath = this.path): Promise<void> {

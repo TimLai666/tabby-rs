@@ -68,6 +68,7 @@ import { TauriRuntimeCapabilitiesService } from './services/runtimeCapabilities.
 import { TauriNotificationsService } from './services/notifications.service'
 import { TauriVaultService } from './services/vault.service'
 import { TauriPathDropDecorator } from './pathDrop'
+import { TauriFileDropDirective } from './fileDrop.directive'
 import { TauriExportTerminalContextMenu } from './terminalContextMenu'
 import TabbyTerminalModule, { TerminalContextMenuItemProvider, TerminalDecorator } from 'tabby-terminal'
 import { KeyboardInteractiveAuthComponent } from '../../tabby-ssh/src/components/keyboardInteractiveAuthPanel.component'
@@ -106,8 +107,11 @@ function initializeUac (service: TauriUACService): () => Promise<void> {
     }
 }
 
-function initializeDesktop (service: TauriDesktopIntegrationService): () => Promise<void> {
-    return () => service.initialize()
+function initializeDesktop (service: TauriDesktopIntegrationService, platform: TauriPlatformService): () => Promise<void> {
+    return async () => {
+        await platform.fileDropReady
+        await service.initialize()
+    }
 }
 
 @NgModule({
@@ -122,6 +126,7 @@ function initializeDesktop (service: TauriDesktopIntegrationService): () => Prom
         SSHPortForwardingConfigComponent,
         TauriSshPortForwardingModalComponent,
         TauriSftpPanelComponent,
+        TauriFileDropDirective,
         SFTPCreateDirectoryModalComponent,
         TauriSftpDeleteModalComponent,
         TauriTelnetProfileSettingsComponent,
@@ -183,7 +188,7 @@ function initializeDesktop (service: TauriDesktopIntegrationService): () => Prom
         {
             provide: APP_INITIALIZER,
             useFactory: initializeDesktop,
-            deps: [TauriDesktopIntegrationService],
+            deps: [TauriDesktopIntegrationService, TauriPlatformService],
             multi: true,
         },
         { provide: ConfigProvider, useClass: TauriConfigProvider, multi: true },

@@ -4,11 +4,11 @@ import { BaseTerminalProfile, BaseTerminalTabComponent, encodeTerminalPath, Term
 import { ShellType } from '../../tabby-local/src/api'
 import { TerminalTabComponent } from '../../tabby-local/src/components/terminalTab.component'
 
-import { HostBridge } from './api/hostBridge'
+import { TauriPlatformService } from './services/platform.service'
 
 @Injectable()
 export class TauriPathDropDecorator extends TerminalDecorator {
-    constructor (private bridge: HostBridge) {
+    constructor (private platform: TauriPlatformService) {
         super()
     }
 
@@ -16,8 +16,11 @@ export class TauriPathDropDecorator extends TerminalDecorator {
         const subscription = new Subscription()
         this.subscribeUntilDetached(terminal, subscription)
 
-        void this.bridge.listen('desktop:fileDrop', event => {
-            if (!this.containsPoint(terminal, event.x, event.y)) {
+        subscription.add(this.platform.fileDropped$.subscribe(event => {
+            const position = this.platform.getFileDropPosition(event)
+            const target = document.elementFromPoint(position.x, position.y)
+            if (target?.closest('[dropZone]')) { return }
+            if (!this.containsPoint(terminal, position.x, position.y)) {
                 return
             }
 
@@ -26,15 +29,12 @@ export class TauriPathDropDecorator extends TerminalDecorator {
             for (const path of event.paths) {
                 terminal.sendInput(encodeTerminalPath(path, shellType, bracketedPaste))
             }
-        }).then(unsubscribe => subscription.add(unsubscribe))
+        }))
     }
 
     private containsPoint (terminal: BaseTerminalTabComponent<BaseTerminalProfile>, x: number, y: number): boolean {
         const bounds = terminal.content.nativeElement.getBoundingClientRect()
-        const scale = window.devicePixelRatio
-        const pointX = x / scale
-        const pointY = y / scale
-        return pointX >= bounds.left && pointX <= bounds.right && pointY >= bounds.top && pointY <= bounds.bottom
+        return x >= bounds.left && x <= bounds.right && y >= bounds.top && y <= bounds.bottom
     }
 
     private getShellType (terminal: BaseTerminalTabComponent<BaseTerminalProfile>): ShellType {
