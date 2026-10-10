@@ -109,7 +109,10 @@ impl From<ssh::model::SshError> for SshConnectError {
             ssh::model::SshError::AuthenticationExhausted(target) => Some(target.clone()),
             _ => None,
         };
-        Self { error: AppError::from(error), password_deletion_target }
+        Self {
+            error: AppError::from(error),
+            password_deletion_target,
+        }
     }
 }
 
@@ -222,25 +225,37 @@ mod tests {
     #[test]
     fn exhausted_authentication_identifies_only_the_rejected_account() {
         let error = SshError::AuthenticationExhausted(SshPasswordPromptTarget {
-            host: "jump.test".into(), port: 2222, username: "resolved-user".into(),
+            host: "jump.test".into(),
+            port: 2222,
+            username: "resolved-user".into(),
         });
         assert_eq!(error.code(), "authenticationRejected");
         let value = serde_json::to_value(SshConnectError::from(error)).unwrap();
-        assert_eq!(value, serde_json::json!({
-            "code": "permissionDenied", "details": "SSH authentication was rejected",
-            "passwordDeletionTarget": { "host": "jump.test", "port": 2222, "username": "resolved-user" },
-        }));
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "code": "permissionDenied", "details": "SSH authentication was rejected",
+                "passwordDeletionTarget": { "host": "jump.test", "port": 2222, "username": "resolved-user" },
+            })
+        );
     }
 
     #[test]
     fn transport_and_other_failures_preserve_the_existing_error_contract() {
-        for error in [SshError::AuthenticationRejected, SshError::Timeout,
-            SshError::HostKeyRejected, SshError::Closed, SshError::Connection] {
+        for error in [
+            SshError::AuthenticationRejected,
+            SshError::Timeout,
+            SshError::HostKeyRejected,
+            SshError::Closed,
+            SshError::Connection,
+        ] {
             let value = serde_json::to_value(SshConnectError::from(error)).unwrap();
             assert!(value.get("passwordDeletionTarget").is_none());
             assert_eq!(value.as_object().unwrap().len(), 2);
         }
-        assert_eq!(serde_json::to_value(SshConnectError::from(SshError::AuthenticationRejected)).unwrap(),
-            serde_json::to_value(AppError::from(SshError::AuthenticationRejected)).unwrap());
+        assert_eq!(
+            serde_json::to_value(SshConnectError::from(SshError::AuthenticationRejected)).unwrap(),
+            serde_json::to_value(AppError::from(SshError::AuthenticationRejected)).unwrap()
+        );
     }
 }

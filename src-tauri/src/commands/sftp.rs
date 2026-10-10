@@ -40,6 +40,14 @@ pub async fn sftp_stat(
 }
 
 #[tauri::command]
+pub async fn sftp_readlink(
+    request: SftpPathRequest,
+    manager: State<'_, Arc<SshManager>>,
+) -> Result<String, AppError> {
+    manager.sftp_readlink(request).await.map_err(AppError::from)
+}
+
+#[tauri::command]
 pub async fn sftp_mkdir(
     request: SftpPathRequest,
     manager: State<'_, Arc<SshManager>>,

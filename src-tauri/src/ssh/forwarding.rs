@@ -6,6 +6,16 @@ use super::model::SshError;
 
 const MAX_SOCKS_DOMAIN: usize = 255;
 
+// Production local/dynamic listener setup; its I/O failures are preserved at the bridge.
+pub(super) async fn bind_listener(
+    host: &str,
+    port: u16,
+) -> Result<tokio::net::TcpListener, SshError> {
+    tokio::net::TcpListener::bind((host, port))
+        .await
+        .map_err(|error| SshError::Forwarding(error.to_string()))
+}
+
 pub(crate) fn validate_endpoint(host: &str, port: u16, field: &str) -> Result<(), SshError> {
     if host.is_empty()
         || host.len() > 255

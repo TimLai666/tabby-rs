@@ -86,12 +86,24 @@ export class TauriSftpPanelComponent {
     goUp (): Promise<void> { return this.navigate(posixPath.dirname(this.path)) }
 
     async open (item: RemoteFileEntry): Promise<void> {
+        if (!this.sftp) { return }
         if (!item.isOperable) {
             this.showError(new Error(item.unoperableReason ?? 'This remote name cannot be operated on'))
             return
         }
         if (item.isSymlink) {
-            this.showError(new Error('Symbolic links are not followed by the SFTP browser'))
+            try {
+                const target = posixPath.resolve(posixPath.dirname(item.fullPath), await this.sftp.readlink(item.fullPath))
+                const stat = await this.sftp.stat(target, true)
+                if (stat.isDirectory) {
+                    await this.navigate(item.fullPath)
+                } else {
+                    const transfer = await this.platform.startDownload(item.name, stat.mode, stat.size)
+                    if (transfer) { await this.sftp.download(item.fullPath, transfer) }
+                }
+            } catch (error) {
+                this.showError(error)
+            }
         } else if (item.isDirectory) {
             await this.navigate(item.fullPath)
         } else {
@@ -129,11 +141,22 @@ export class TauriSftpPanelComponent {
             this.showError(new Error(item.unoperableReason ?? 'This remote name cannot be downloaded'))
             return
         }
+        let directory = item.isDirectory
+        let mode = item.mode
+        let size = item.size
         if (item.isSymlink) {
-            this.showError(new Error('Symbolic links are not downloaded'))
-            return
+            try {
+                const target = posixPath.resolve(posixPath.dirname(item.fullPath), await this.sftp.readlink(item.fullPath))
+                const stat = await this.sftp.stat(target, true)
+                directory = stat.isDirectory
+                mode = stat.mode
+                size = stat.size
+            } catch (error) {
+                this.showError(error)
+                return
+            }
         }
-        if (item.isDirectory) {
+        if (directory) {
             const transfer = await this.platform.startDownloadDirectory(item.name, 0)
             if (transfer) {
                 try {
@@ -147,7 +170,7 @@ export class TauriSftpPanelComponent {
             }
             return
         }
-        const transfer = await this.platform.startDownload(item.name, item.mode, item.size)
+        const transfer = await this.platform.startDownload(item.name, mode, size)
         if (transfer) { await this.sftp.download(item.fullPath, transfer) }
     }
 
@@ -162,7 +185,8 @@ export class TauriSftpPanelComponent {
             const name = window.prompt('New remote name')?.trim()
             if (name && this.sftp) { await this.sftp.rename(item.fullPath, posixPath.join(this.path, name)) }
         } else if (action === 'delete') {
-            const recursive = item.isDirectory && window.confirm(`Delete ${item.fullPath} recursively?`)
+            const recursive = item.isDirectory
+            if (recursive && !window.confirm(`Delete ${item.fullPath} recursively?`)) { return }
             if (this.sftp) { await this.sftp.remove(item.fullPath, recursive) }
         } else if (action === 'download') {
             await this.download(item)
@@ -197,13 +221,14 @@ export class TauriSftpPanelComponent {
     private async downloadDirectory (folder: RemoteFileEntry, transfer: DirectoryDownload, relativePath: string): Promise<void> {
         if (!this.sftp) { return }
         for (const item of await this.sftp.readdir(folder.fullPath)) {
-            if (item.isSymlink || !item.isOperable) { continue }
+            if (!item.isOperable) { continue }
             const next = relativePath ? `${relativePath}/${item.name}` : item.name
             if (item.isDirectory) {
                 await transfer.createDirectory(next)
                 await this.downloadDirectory(item, transfer, next)
             } else {
-                const file = await transfer.createFile(next, item.mode, item.size)
+                const size = item.isSymlink ? (await this.sftp.stat(item.fullPath, true)).size : item.size
+                const file = await transfer.createFile(next, item.mode, size)
                 await this.sftp.download(item.fullPath, file)
             }
         }

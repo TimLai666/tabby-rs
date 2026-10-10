@@ -1,6 +1,6 @@
 import { Component, Injector } from '@angular/core'
 import { NgbModal } from '@ng-bootstrap/ng-bootstrap'
-import { GetRecoveryTokenOptions, RecoveryToken, VaultService } from 'tabby-core'
+import { GetRecoveryTokenOptions, Platform, RecoveryToken, VaultService } from 'tabby-core'
 import { ConnectableTerminalTabComponent, BaseTerminalTabComponent } from 'tabby-terminal'
 import { SSHProfile } from '../../../tabby-ssh/src/api/interfaces'
 
@@ -8,10 +8,11 @@ import { HostBridge } from '../api/hostBridge'
 import { TauriWinSCPService } from '../services/winscp.service'
 import { KeyboardInteractivePrompt } from '../../../tabby-ssh/src/api/keyboardInteractivePrompt'
 import { TauriSshSession } from './session'
+import { TauriSshPortForwardingModalComponent } from './portForwardingModal.component'
 
 @Component({
     selector: 'tauri-ssh-tab',
-    template: `${BaseTerminalTabComponent.template}<tauri-sftp-panel *ngIf="sftpPanelVisible" [session]="session" [(path)]="sftpPath" (close)="sftpPanelVisible = false"></tauri-sftp-panel>
+    template: `${BaseTerminalTabComponent.template} ${require('./toolbar.component.pug')}<tauri-sftp-panel *ngIf="sftpPanelVisible" [session]="session" [(path)]="sftpPath" (close)="sftpPanelVisible = false"></tauri-sftp-panel>
         <keyboard-interactive-auth-panel class="bg-dark" *ngIf="activeKIPrompt"
             [prompt]="activeKIPrompt" [profile]="activeKIProfile"
             (click)="$event.stopPropagation()" (done)="frontend?.focus()">
@@ -21,13 +22,14 @@ import { TauriSshSession } from './session'
 })
 export class TauriSshTabComponent extends ConnectableTerminalTabComponent<SSHProfile> {
     declare session: TauriSshSession|null
+    Platform = Platform
+    enableToolbar = true
+    private lastAuthenticatedSession: TauriSshSession|null = null
     sftpPanelVisible = false
     sftpPath = '/'
     activeKIPrompt: KeyboardInteractivePrompt|null = null
     activeKIProfile: SSHProfile|null = null
     private activeKIRequestId: string|null = null
-    private reconnectAttempts = 0
-    private reconnectTimer: ReturnType<typeof setTimeout>|null = null
 
     constructor (
         injector: Injector,
@@ -54,17 +56,19 @@ export class TauriSshTabComponent extends ConnectableTerminalTabComponent<SSHPro
     }
 
     async launchWinSCP (): Promise<void> {
-        if (!this.session) { return }
+        const current = this.session
+        const session = current?.authUsername != null ? current : this.lastAuthenticatedSession
+        if (!session) { return }
         try {
-            await this.winscp.launchWinSCP(this.session)
+            await this.winscp.launchWinSCP(session)
         } catch {
             this.notifications.error(this.translate.instant('Could not launch WinSCP'))
         }
     }
 
     async initializeSession (): Promise<void> {
+        this.retainAuthenticatedSession(this.session)
         this.clearAuthPrompt()
-        this.cancelReconnectTimer()
         await super.initializeSession()
         const session = new TauriSshSession(
             this.injector,
@@ -82,8 +86,9 @@ export class TauriSshTabComponent extends ConnectableTerminalTabComponent<SSHPro
         try {
             await session.start()
             session.resize(this.size.columns, this.size.rows)
-            this.reconnectAttempts = 0
-            this.cancelReconnectTimer()
+            if (this.session === session) {
+                this.retainAuthenticatedSession(session)
+            }
         } catch (error) {
             if (session.isClosing || this.session !== session) {
                 await session.destroy()
@@ -99,26 +104,18 @@ export class TauriSshTabComponent extends ConnectableTerminalTabComponent<SSHPro
     }
 
     protected onSessionDestroyed (): void {
+        this.retainAuthenticatedSession(this.session)
         this.clearAuthPrompt()
-        if (this.frontend && this.profile.behaviorOnSessionEnd === 'reconnect' && !this.isDisconnectedByHand) {
-            if (this.reconnectAttempts < 5) {
-                const delay = Math.min(30_000, 1_000 * 2 ** this.reconnectAttempts)
-                this.reconnectAttempts++
-                this.write(`\r\nSSH reconnecting in ${Math.ceil(delay / 1000)}s (${this.reconnectAttempts}/5)\r\n`)
-                this.cancelReconnectTimer()
-                this.reconnectTimer = setTimeout(() => {
-                    this.reconnectTimer = null
-                    if (this.isDisconnectedByHand || !this.frontend) {
-                        return
-                    }
-                    void this.reconnect()
-                }, delay)
-            } else {
-                this.offerReconnection()
-            }
-            return
+        if (this.frontend) {
+            this.write(`\r\n\x1b[30m\x1b[47m SSH \x1b[49m\x1b[39m ${this.profile.options.host}: session closed\r\n`)
+            super.onSessionDestroyed()
         }
-        super.onSessionDestroyed()
+    }
+
+    protected isSessionExplicitlyTerminated (): boolean {
+        return super.isSessionExplicitlyTerminated() ||
+        this.recentInputs.charCodeAt(this.recentInputs.length - 1) === 4 ||
+        this.recentInputs.endsWith('exit\r')
     }
 
     async canClose (): Promise<boolean> {
@@ -144,13 +141,11 @@ export class TauriSshTabComponent extends ConnectableTerminalTabComponent<SSHPro
 
     async disconnect (): Promise<void> {
         this.clearAuthPrompt()
-        this.cancelReconnectTimer()
         await super.disconnect()
     }
 
     async destroy (): Promise<void> {
         this.isDisconnectedByHand = true
-        this.cancelReconnectTimer()
         const pending = !this.session?.open ? this.session?.destroy() : undefined
         this.clearAuthPrompt()
         await super.destroy()
@@ -159,8 +154,13 @@ export class TauriSshTabComponent extends ConnectableTerminalTabComponent<SSHPro
 
     ngOnDestroy (): void {
         this.clearAuthPrompt()
-        this.cancelReconnectTimer()
         super.ngOnDestroy()
+    }
+
+    showPortForwarding (): void {
+        if (!this.session?.open) { return }
+        const modal = this.modals.open(TauriSshPortForwardingModalComponent).componentInstance as TauriSshPortForwardingModalComponent
+        modal.session = this.session
     }
 
     async openSFTP (): Promise<void> {
@@ -201,7 +201,7 @@ export class TauriSshTabComponent extends ConnectableTerminalTabComponent<SSHPro
         }
         this.activeKIProfile = {
             ...this.profile,
-            options: { ...this.profile.options, host: target.host, port: target.port, user: target.username, password: undefined },
+            options: { ...this.profile.options, host: target.host, port: target.port, user: target.username, password: '' },
         }
         this.activeKIPrompt = interactive
         this.activeKIRequestId = prompt.requestId
@@ -219,17 +219,16 @@ export class TauriSshTabComponent extends ConnectableTerminalTabComponent<SSHPro
         }).catch(error => this.logger.warn('SSH authentication response failed', error))
     }
 
+    private retainAuthenticatedSession (session: TauriSshSession|null): void {
+        if (session?.authUsername != null) {
+            this.lastAuthenticatedSession = session
+        }
+    }
+
     private clearAuthPrompt (): void {
         this.activeKIPrompt?.reject()
         this.activeKIPrompt = null
         this.activeKIProfile = null
         this.activeKIRequestId = null
-    }
-
-    private cancelReconnectTimer (): void {
-        if (this.reconnectTimer !== null) {
-            clearTimeout(this.reconnectTimer)
-            this.reconnectTimer = null
-        }
     }
 }

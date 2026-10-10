@@ -3,8 +3,9 @@ use std::sync::Arc;
 use tauri::State;
 
 use crate::serial::{
-    list_serial_ports, SerialBaudRateRequest, SerialManager, SerialOpenRequest, SerialSessionIdRequest,
-    SerialSessionInfo, SerialSignalRequest, SerialSignalState, SerialWriteRequest,
+    list_serial_ports, SerialBaudRateRequest, SerialManager, SerialOpenRequest,
+    SerialSessionIdRequest, SerialSessionInfo, SerialSignalRequest, SerialSignalState,
+    SerialWriteRequest,
 };
 
 #[tauri::command]

@@ -68,14 +68,14 @@ use commands::{
     },
     sftp::{
         sftp_cancel_transfer, sftp_close, sftp_close_transfer, sftp_download, sftp_download_open,
-        sftp_list, sftp_mkdir, sftp_open, sftp_read, sftp_remove, sftp_rename, sftp_stat,
-        sftp_upload, sftp_upload_open, sftp_write,
+        sftp_list, sftp_mkdir, sftp_open, sftp_read, sftp_readlink, sftp_remove, sftp_rename,
+        sftp_stat, sftp_upload, sftp_upload_open, sftp_write,
     },
     shell::{shell_detect, shell_prepare_spawn},
     ssh::{
-        ssh_auth_response, ssh_cancel_connect, ssh_close, ssh_connect, ssh_forwarding_list, ssh_forwarding_start,
-        ssh_forwarding_stop, ssh_host_key_decision, ssh_import_apply, ssh_import_preview,
-        ssh_list_private_keys, ssh_resize, ssh_resolve_agent_socket, ssh_write,
+        ssh_auth_response, ssh_cancel_connect, ssh_close, ssh_connect, ssh_forwarding_list,
+        ssh_forwarding_start, ssh_forwarding_stop, ssh_host_key_decision, ssh_import_apply,
+        ssh_import_preview, ssh_list_private_keys, ssh_resize, ssh_resolve_agent_socket, ssh_write,
     },
     sudo::sudo_respond,
     telnet::{telnet_close, telnet_connect, telnet_resize, telnet_write},
@@ -235,7 +235,11 @@ pub(crate) fn register_desktop_window_events(window: &tauri::WebviewWindow) {
             let _ = emitter.emit_to(emitter.label(), "desktop:themeChanged", value);
         }
         tauri::WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
-            let _ = emitter.emit_to(emitter.label(), "desktop:displayMetricsChanged", *scale_factor);
+            let _ = emitter.emit_to(
+                emitter.label(),
+                "desktop:displayMetricsChanged",
+                *scale_factor,
+            );
         }
         _ => {}
     });
@@ -425,6 +429,7 @@ pub fn run() {
             sftp_open,
             sftp_list,
             sftp_stat,
+            sftp_readlink,
             sftp_mkdir,
             sftp_rename,
             sftp_remove,

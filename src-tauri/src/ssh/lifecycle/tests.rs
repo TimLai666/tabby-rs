@@ -445,3 +445,15 @@ async fn disconnect_ends_shell_with_or_without_prior_channel_close() {
     .await
     .unwrap();
 }
+
+#[path = "operation_tests.rs"]
+mod operation_tests;
+
+#[path = "native_completion_tests.rs"]
+mod native_completion_tests;
+
+#[path = "terminal_race_tests.rs"]
+mod terminal_race_tests;
+
+#[path = "resize_race_tests.rs"]
+mod resize_race_tests;

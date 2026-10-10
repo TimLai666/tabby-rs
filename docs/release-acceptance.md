@@ -97,6 +97,43 @@ the gate requires its record under
 `release-staging/manual-acceptance/<platform-id>.json`; a passed Web feature
 requires `release-staging/manual-acceptance/web.json`.
 
+## Approved SSH forwarding safety exception
+
+When the target profile disables agent or X11 forwarding, Tabby RS closes the
+corresponding unsolicited server channel before connecting to the local agent
+or X server. The fixed `14e2d60` incoming-channel handlers forward those channels
+without checking the target options. Preserving the native checks prevents a
+server from reaching a local endpoint after the user has disabled forwarding.
+
+The user approved this behavior as an exception to complete parity:
+
+```json
+{
+  "id": "ssh.disabled-forwarding-consent",
+  "baseline": "14e2d60b9b6dee84a53c37f05eefeb803787de04",
+  "approval": {
+    "decision": "accepted-difference",
+    "approver": "user",
+    "approvedAt": "2026-10-09T15:38:43.497591Z"
+  }
+}
+```
+
+The checks are implemented by `forward_agent_channel` and `forward_x11_channel`
+in `src-tauri/src/ssh/mod.rs`. The real SSH fixtures in
+`src-tauri/src/ssh/engine_integration.rs` verify channel closure and no local
+connection when disabled, plus successful forwarding when enabled, with password
+and private-key login. Run them with:
+
+```text
+cargo test --manifest-path src-tauri/Cargo.toml --lib forwarding_consent -- --include-ignored
+```
+
+Apply this exception only to rejection of disabled incoming channels. Normal
+forwarding, jump hosts, platform behavior, and the remaining manual checks keep
+their existing acceptance requirements. Keep their feature manifest entries
+pending until the complete feature scope has been verified.
+
 ## Windows x64
 
 Run on a real Windows host matching the currently supported Tauri/CI

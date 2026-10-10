@@ -64,7 +64,11 @@ impl ServerHandler for AuthFixtureServer {
     type Error = russh::Error;
 
     async fn auth_password(&mut self, _user: &str, password: &str) -> Result<Auth, Self::Error> {
-        if matches!(self.kind, AuthFixtureKind::Password | AuthFixtureKind::PromptPassword) && password == self.expected {
+        if matches!(
+            self.kind,
+            AuthFixtureKind::Password | AuthFixtureKind::PromptPassword
+        ) && password == self.expected
+        {
             Ok(Auth::Accept)
         } else {
             Ok(Auth::reject())
@@ -191,8 +195,11 @@ impl SshAuthenticator for AuthFixtureAuthenticator {
             }
             AuthFixtureKind::PromptPassword => {
                 super::authenticate_password_response(
-                    context, username, vec![self.expected.expose_secret().clone()],
-                ).await
+                    context,
+                    username,
+                    vec![self.expected.expose_secret().clone()],
+                )
+                .await
             }
             AuthFixtureKind::PrivateKey => {
                 context
@@ -607,7 +614,11 @@ async fn run_forwarding_consent(forwarded: ForwardedChannel, kind: AuthFixtureKi
     let local_accepted = Arc::clone(&accepted);
     let socket = match forwarded {
         #[cfg(unix)]
-        ForwardedChannel::X11Unavailable => directory.path().join("missing.sock").to_string_lossy().into_owned(),
+        ForwardedChannel::X11Unavailable => directory
+            .path()
+            .join("missing.sock")
+            .to_string_lossy()
+            .into_owned(),
         ForwardedChannel::X11Tcp => {
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let port = listener.local_addr().unwrap().port();
@@ -743,7 +754,10 @@ async fn run_forwarding_consent(forwarded: ForwardedChannel, kind: AuthFixtureKi
             assert!(messages[0].contains("Could not connect to the X server"));
             assert!(messages[1].contains("missing.sock"));
         } else {
-            assert!(messages.is_empty(), "successful and disabled channels must be silent: {messages:?}");
+            assert!(
+                messages.is_empty(),
+                "successful and disabled channels must be silent: {messages:?}"
+            );
         }
     }
 
@@ -814,14 +828,19 @@ impl ServerHandler for CountingPasswordServer {
         self.attempts
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         if user != "fixture-user" {
-            return Ok(Auth::Reject { proceed_with_methods: None, partial_success: false });
+            return Ok(Auth::Reject {
+                proceed_with_methods: None,
+                partial_success: false,
+            });
         }
         match self.inner.auth_password(user, password).await? {
             Auth::Accept => Ok(Auth::Accept),
             // This fixture tests password retries. russh's default rejection
             // removes password from the advertised methods, forbidding retries.
             _ => Ok(Auth::Reject {
-                proceed_with_methods: Some(russh::MethodSet::from(&[russh::MethodKind::Password][..])),
+                proceed_with_methods: Some(russh::MethodSet::from(
+                    &[russh::MethodKind::Password][..],
+                )),
                 partial_success: false,
             }),
         }
@@ -846,8 +865,8 @@ async fn run_manager_auth_fallback(
     with_unavailable_keys: bool,
     provided_password: Option<&str>,
 ) -> (Result<(), crate::ssh::SshError>, usize) {
-    use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
     use crate::security::{CredentialState, SecretState, VaultSnapshot, VaultSnapshotSecret};
+    use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     const IO: Duration = Duration::from_secs(10);
@@ -875,7 +894,11 @@ async fn run_manager_auth_fallback(
         let malformed_key = directory.path().join("malformed-key");
         fs::write(&malformed_key, b"not a private key").expect("write malformed key fixture");
         for file_ref in [
-            directory.path().join("missing-key").to_string_lossy().into_owned(),
+            directory
+                .path()
+                .join("missing-key")
+                .to_string_lossy()
+                .into_owned(),
             directory.path().to_string_lossy().into_owned(),
             "vault://missing-key".into(),
             malformed_key.to_string_lossy().into_owned(),
@@ -999,12 +1022,17 @@ async fn manager_authenticator_missing_agent_falls_back_to_password() {
 #[ignore = "requires SSH authentication fixture; run yarn test:ssh-auth-integration"]
 async fn manager_authenticator_unavailable_keys_fall_back_to_password() {
     let (result, attempts) = run_manager_auth_fallback(Some("fixture-secret"), true, None).await;
-    assert!(result.is_ok(), "unavailable keys must fall back: {result:?}");
+    assert!(
+        result.is_ok(),
+        "unavailable keys must fall back: {result:?}"
+    );
     assert_eq!(attempts, 1);
 
     let (result, attempts) = run_manager_auth_fallback(None, true, None).await;
-    assert!(matches!(result, Err(crate::ssh::SshError::AuthenticationExhausted(ref target))
-        if target.host == "127.0.0.1" && target.port > 0 && target.username == "fixture-user"));
+    assert!(
+        matches!(result, Err(crate::ssh::SshError::AuthenticationExhausted(ref target))
+        if target.host == "127.0.0.1" && target.port > 0 && target.username == "fixture-user")
+    );
     assert_eq!(attempts, 0);
 }
 
@@ -1021,10 +1049,15 @@ async fn manager_provided_password_authenticates_or_tries_saved_password() {
     ] {
         let (result, attempts) = run_manager_auth_fallback(saved, false, Some(password)).await;
         if expected_success {
-            assert!(result.is_ok(), "configured password authentication failed: {result:?}");
+            assert!(
+                result.is_ok(),
+                "configured password authentication failed: {result:?}"
+            );
         } else {
-            assert!(matches!(result, Err(crate::ssh::SshError::AuthenticationExhausted(ref target))
-                if target.host == "127.0.0.1" && target.port > 0 && target.username == "fixture-user"));
+            assert!(
+                matches!(result, Err(crate::ssh::SshError::AuthenticationExhausted(ref target))
+                if target.host == "127.0.0.1" && target.port > 0 && target.username == "fixture-user")
+            );
         }
         assert_eq!(attempts, expected_attempts);
     }
@@ -1045,13 +1078,24 @@ async fn manager_keyboard_interactive_empty_challenges_use_real_transport() {
         type Error = russh::Error;
 
         async fn auth_keyboard_interactive<'a>(
-            &'a mut self, user: &str, _: &str, response: Option<Response<'a>>,
+            &'a mut self,
+            user: &str,
+            _: &str,
+            response: Option<Response<'a>>,
         ) -> Result<Auth, Self::Error> {
             assert_eq!(user, "fixture-user");
             if let Some(response) = response {
-                assert_eq!(response.count(), 0, "empty challenge must receive zero answers");
+                assert_eq!(
+                    response.count(),
+                    0,
+                    "empty challenge must receive zero answers"
+                );
                 if self.responses.fetch_add(1, Ordering::SeqCst) == 1 {
-                    return Ok(if self.accept { Auth::Accept } else { Auth::reject() });
+                    return Ok(if self.accept {
+                        Auth::Accept
+                    } else {
+                        Auth::reject()
+                    });
                 }
             }
             Ok(Auth::Partial {
@@ -1067,16 +1111,23 @@ async fn manager_keyboard_interactive_empty_challenges_use_real_transport() {
         let directory = tempdir().unwrap();
         let host_key = HostKeyAlgorithm::Ed25519.generate();
         let pinned_key = host_key.public_key().clone();
-        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
         let port = listener.local_addr().unwrap().port();
         let responses = Arc::new(AtomicUsize::new(0));
-        let handler = EmptyChallengeServer { responses: Arc::clone(&responses), accept };
+        let handler = EmptyChallengeServer {
+            responses: Arc::clone(&responses),
+            accept,
+        };
         let mut config = server::Config::default();
         config.keys.push(host_key);
         let mut tasks = tokio::task::JoinSet::new();
         tasks.spawn(async move {
             let (tcp, _) = listener.accept().await.unwrap();
-            let session = server::run_stream(Arc::new(config), tcp, handler).await.unwrap();
+            let session = server::run_stream(Arc::new(config), tcp, handler)
+                .await
+                .unwrap();
             let _ = session.await;
         });
         let secrets = SecretState::default();
@@ -1088,25 +1139,49 @@ async fn manager_keyboard_interactive_empty_challenges_use_real_transport() {
                 "profileId": "ssh:empty-challenge", "host": "127.0.0.1", "port": port,
                 "username": "fixture-user", "auth": [{ "type": "keyboardInteractive" }],
                 "terminal": { "term": "xterm-256color", "columns": 80, "rows": 24 },
-            })).unwrap(),
-            secrets: &secrets, credentials: &credentials,
+            }))
+            .unwrap(),
+            secrets: &secrets,
+            credentials: &credentials,
             used_private_key: std::sync::Mutex::new(false),
             resolved_username: std::sync::Mutex::new(None),
         };
         let engine = super::engine::RusshEngine::new(client::Config::default(), IO);
-        let connected = tokio::time::timeout(IO, engine.connect_with_handler(
-            &SshTarget { host: "127.0.0.1".into(), port, username: "fixture-user".into() },
-            PinnedHostKeyClient(pinned_key), Arc::new(std::sync::Mutex::new(None)), &authenticator,
-        )).await.expect("empty challenge must not wait for user input");
+        let connected = tokio::time::timeout(
+            IO,
+            engine.connect_with_handler(
+                &SshTarget {
+                    host: "127.0.0.1".into(),
+                    port,
+                    username: "fixture-user".into(),
+                },
+                PinnedHostKeyClient(pinned_key),
+                Arc::new(std::sync::Mutex::new(None)),
+                &authenticator,
+            ),
+        )
+        .await
+        .expect("empty challenge must not wait for user input");
         if accept {
             let handle = connected.expect("empty challenges should authenticate without an app");
-            tokio::time::timeout(IO, handle.disconnect(russh::Disconnect::ByApplication, "", "en"))
-                .await.unwrap().unwrap();
+            tokio::time::timeout(
+                IO,
+                handle.disconnect(russh::Disconnect::ByApplication, "", "en"),
+            )
+            .await
+            .unwrap()
+            .unwrap();
         } else {
-            assert!(matches!(connected, Err(crate::ssh::SshError::AuthenticationExhausted(ref target))
-                if target.host == "127.0.0.1" && target.port == port && target.username == "fixture-user"));
+            assert!(
+                matches!(connected, Err(crate::ssh::SshError::AuthenticationExhausted(ref target))
+                if target.host == "127.0.0.1" && target.port == port && target.username == "fixture-user")
+            );
         }
         assert_eq!(responses.load(Ordering::SeqCst), 2);
-        tokio::time::timeout(IO, tasks.join_next()).await.unwrap().unwrap().unwrap();
+        tokio::time::timeout(IO, tasks.join_next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
     }
 }

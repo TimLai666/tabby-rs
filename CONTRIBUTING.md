@@ -6,16 +6,19 @@ Tabby RS is an unofficial Tauri/Rust fork of Tabby. Keep changes scoped to the f
 
 - Use Node.js 22 and Yarn 1.22.22 for the JavaScript workspace.
 - Install the Rust stable toolchain and the Tauri platform dependencies for your host.
-- Run `yarn install --frozen-lockfile` before running checks.
+- Run `yarn install --frozen-lockfile` to install workspace dependencies.
+- Run `yarn build:typings` before type checks or builds that resolve built-in packages.
 
 Useful checks include:
 
 ```text
 yarn lint --format unix
+yarn test:tauri:types
 yarn test:tauri:bundle
 yarn test:release-documentation
 yarn test:parity-report
 cargo test --manifest-path src-tauri/Cargo.toml --lib
+cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
 ```
 
 The release gate needs real bundle, installer, benchmark, license, and platform evidence. Do not change a parity manifest from `pending` to `passed` to make a local build green.

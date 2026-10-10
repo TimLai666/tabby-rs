@@ -6,5 +6,8 @@ pub mod path;
 #[cfg(all(test, unix))]
 mod integration;
 
+#[cfg(test)]
+mod link_tests;
+
 pub use manager::SftpManager;
 pub use model::*;

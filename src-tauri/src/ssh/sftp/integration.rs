@@ -520,3 +520,283 @@ async fn runs_real_ssh_shell_and_sftp_lifecycle() {
         .await
         .expect("disconnect SSH session");
 }
+
+#[cfg(unix)]
+mod link_acceptance {
+    use std::{os::unix::fs::symlink, path::Path, sync::Arc, time::Duration};
+
+    use russh::{
+        client::{self, AuthResult},
+        keys::{decode_secret_key, PrivateKeyWithHashAlg},
+        Disconnect,
+    };
+    use russh_sftp::client::SftpSession;
+    use tokio::{fs, time::timeout};
+
+    use super::{AcceptAnyHostKey, OpenSshFixture};
+    use crate::ssh::{model::SshError, sftp::manager::SftpManager};
+
+    const BINARY_PAYLOAD: &[u8] = &[
+        0x00, 0xff, 0x01, 0x80, 0x7f, b'T', b'a', b'b', b'b', b'y', 0x00, 0x0a, 0xc3, 0xa9,
+    ];
+
+    fn absolute(path: &Path) -> String {
+        path.to_str()
+            .expect("test-owned fixture paths are valid UTF-8")
+            .to_owned()
+    }
+
+    fn entry<'a>(
+        entries: &'a [crate::ssh::sftp::model::RemoteFileEntry],
+        name: &str,
+    ) -> &'a crate::ssh::sftp::model::RemoteFileEntry {
+        entries
+            .iter()
+            .find(|entry| entry.name == name)
+            .unwrap_or_else(|| panic!("listing is missing {name}: {entries:?}"))
+    }
+
+    #[tokio::test]
+    #[ignore = "requires an isolated local OpenSSH server"]
+    async fn follows_real_openssh_links_with_exact_binary_downloads() {
+        let fixture = OpenSshFixture::start()
+            .await
+            .unwrap_or_else(|error| panic!("OpenSSH fixture failed to start: {error}"));
+
+        let data = tempfile::tempdir().expect("create test-owned data directory");
+        let root = data.path();
+        let target_file = root.join("target.bin");
+        let absolute_target_file = absolute(&target_file);
+        fs::write(&target_file, BINARY_PAYLOAD)
+            .await
+            .expect("write test-owned binary target");
+        let target_dir = root.join("target-dir");
+        fs::create_dir(&target_dir)
+            .await
+            .expect("create test-owned directory target");
+        let absolute_target_dir = absolute(&target_dir);
+
+        let file_rel = root.join("file-rel.link");
+        let file_abs = root.join("file-abs.link");
+        let dir_rel = root.join("dir-rel.link");
+        let dir_abs = root.join("dir-abs.link");
+        let dangling = root.join("dangling.link");
+        symlink("target.bin", &file_rel).expect("create relative file symlink");
+        symlink(&target_file, &file_abs).expect("create absolute file symlink");
+        symlink("target-dir", &dir_rel).expect("create relative directory symlink");
+        symlink(&target_dir, &dir_abs).expect("create absolute directory symlink");
+        symlink("missing-target.bin", &dangling).expect("create dangling symlink");
+
+        let config = Arc::new(client::Config {
+            inactivity_timeout: Some(Duration::from_secs(30)),
+            ..Default::default()
+        });
+        let mut handle = timeout(
+            Duration::from_secs(20),
+            client::connect(config, ("127.0.0.1", fixture.port), AcceptAnyHostKey),
+        )
+        .await
+        .expect("SSH connection timed out")
+        .expect("SSH connection failed");
+
+        let key_text = fs::read_to_string(&fixture.private_key)
+            .await
+            .expect("read fixture client key");
+        let key = decode_secret_key(&key_text, None).expect("decode fixture client key");
+        let auth = handle
+            .authenticate_publickey(
+                &fixture.username,
+                PrivateKeyWithHashAlg::new(Arc::new(key), None),
+            )
+            .await
+            .expect("public-key authentication failed");
+        assert!(matches!(auth, AuthResult::Success));
+
+        let channel = handle
+            .channel_open_session()
+            .await
+            .expect("open SFTP channel");
+        channel
+            .request_subsystem(true, "sftp")
+            .await
+            .expect("request SFTP subsystem");
+        let session = SftpSession::new(channel.into_stream())
+            .await
+            .expect("start SFTP session against OpenSSH");
+        let mut sftp = SftpManager::new(session);
+
+        let rel_target = sftp
+            .readlink(&absolute(&file_rel))
+            .await
+            .expect("readlink relative file link");
+        assert_eq!(rel_target, "target.bin", "raw relative file link target");
+        let abs_target = sftp
+            .readlink(&absolute(&file_abs))
+            .await
+            .expect("readlink absolute file link");
+        assert_eq!(
+            abs_target, absolute_target_file,
+            "raw absolute file link target"
+        );
+        let dir_rel_target = sftp
+            .readlink(&absolute(&dir_rel))
+            .await
+            .expect("readlink relative directory link");
+        assert_eq!(dir_rel_target, "target-dir", "raw relative dir link target");
+        let dir_abs_target = sftp
+            .readlink(&absolute(&dir_abs))
+            .await
+            .expect("readlink absolute directory link");
+        assert_eq!(
+            dir_abs_target, absolute_target_dir,
+            "raw absolute dir link target"
+        );
+        let dangling_target = sftp
+            .readlink(&absolute(&dangling))
+            .await
+            .expect("readlink dangling link returns its raw target");
+        assert_eq!(dangling_target, "missing-target.bin");
+
+        let listing = sftp
+            .list(&absolute(root))
+            .await
+            .expect("list test-owned directory");
+        let target_entry = entry(&listing, "target.bin");
+        assert!(!target_entry.is_symlink);
+        assert!(!target_entry.is_directory);
+        assert_eq!(target_entry.size, BINARY_PAYLOAD.len() as u64);
+        let rel_listing = entry(&listing, "file-rel.link");
+        assert!(
+            rel_listing.is_symlink,
+            "listing must lstat the alias: {rel_listing:?}"
+        );
+        assert!(!rel_listing.is_directory);
+        let dir_listing = entry(&listing, "target-dir");
+        assert!(dir_listing.is_directory);
+        assert!(entry(&listing, "dir-rel.link").is_symlink);
+        assert!(entry(&listing, "file-abs.link").is_symlink);
+        assert!(entry(&listing, "dangling.link").is_symlink);
+
+        let target_lstat = sftp
+            .stat(&absolute_target_file, false)
+            .await
+            .expect("lstat target file");
+        let target_follow = sftp
+            .stat(&absolute_target_file, true)
+            .await
+            .expect("stat target file");
+        assert!(!target_lstat.is_symlink);
+        assert_eq!(target_lstat.mode, target_follow.mode);
+        assert_eq!(target_follow.size, BINARY_PAYLOAD.len() as u64);
+
+        for (alias, name, link_target) in [
+            (&file_rel, "file-rel.link", "target.bin"),
+            (&file_abs, "file-abs.link", absolute_target_file.as_str()),
+        ] {
+            let alias_path = absolute(alias);
+            let lstat = sftp
+                .stat(&alias_path, false)
+                .await
+                .unwrap_or_else(|error| panic!("lstat {name} failed: {error}"));
+            assert!(lstat.is_symlink, "lstat must report {name} as a symlink");
+            assert!(!lstat.is_directory);
+            assert_eq!(
+                lstat.size,
+                link_target.len() as u64,
+                "lstat size is the raw link length for {name}"
+            );
+            let follow = sftp
+                .stat(&alias_path, true)
+                .await
+                .unwrap_or_else(|error| panic!("stat {name} failed: {error}"));
+            assert!(!follow.is_symlink, "follow must resolve {name}");
+            assert!(!follow.is_directory);
+            assert_eq!(follow.size, BINARY_PAYLOAD.len() as u64);
+            assert_eq!(follow.mode, target_follow.mode, "followed mode for {name}");
+            assert_ne!(lstat.mode, follow.mode, "lstat/follow mode for {name}");
+        }
+
+        for (alias, name) in [(&dir_rel, "dir-rel.link"), (&dir_abs, "dir-abs.link")] {
+            let alias_path = absolute(alias);
+            let lstat = sftp
+                .stat(&alias_path, false)
+                .await
+                .unwrap_or_else(|error| panic!("lstat {name} failed: {error}"));
+            assert!(lstat.is_symlink, "lstat must report {name} as a symlink");
+            let follow = sftp
+                .stat(&alias_path, true)
+                .await
+                .unwrap_or_else(|error| panic!("stat {name} failed: {error}"));
+            assert!(!follow.is_symlink, "follow must resolve {name}");
+            assert!(follow.is_directory, "followed {name} must be a directory");
+        }
+
+        let dangling_lstat = sftp
+            .stat(&absolute(&dangling), false)
+            .await
+            .expect("lstat dangling link");
+        assert!(dangling_lstat.is_symlink);
+        let dangling_follow = sftp.stat(&absolute(&dangling), true).await;
+        assert!(
+            dangling_follow.is_err(),
+            "following a dangling link must fail: {dangling_follow:?}"
+        );
+
+        for (alias, name) in [(&file_rel, "file-rel.link"), (&file_abs, "file-abs.link")] {
+            let descriptor = sftp
+                .open_download(&absolute(alias))
+                .await
+                .unwrap_or_else(|error| panic!("open_download {name} failed: {error}"));
+            assert_eq!(descriptor.name, name, "alias basename is retained");
+            assert_eq!(descriptor.direction, "download");
+            assert_eq!(descriptor.size, Some(BINARY_PAYLOAD.len() as u64));
+
+            let mut collected = Vec::new();
+            let state = loop {
+                let (chunk, next) = sftp
+                    .read(&descriptor.id, 4096)
+                    .await
+                    .unwrap_or_else(|error| panic!("read {name} failed: {error}"));
+                if chunk.is_empty() {
+                    break next;
+                }
+                collected.extend_from_slice(&chunk);
+            };
+            assert_eq!(collected, BINARY_PAYLOAD, "exact binary bytes for {name}");
+            assert_eq!(state.state, "completed");
+            assert_eq!(state.transferred, BINARY_PAYLOAD.len() as u64);
+            let closed = sftp
+                .close(&descriptor.id)
+                .await
+                .unwrap_or_else(|error| panic!("close {name} failed: {error}"));
+            assert_eq!(closed.state, "completed");
+        }
+
+        for (alias, name) in [(&dir_rel, "dir-rel.link"), (&dir_abs, "dir-abs.link")] {
+            let error = sftp
+                .open_download(&absolute(alias))
+                .await
+                .expect_err("open_download must reject a directory link");
+            assert!(
+                matches!(error, SshError::InvalidRequest(_)),
+                "unexpected directory-link error for {name}: {error:?}"
+            );
+        }
+
+        let dangling_error = sftp
+            .open_download(&absolute(&dangling))
+            .await
+            .expect_err("open_download must fail on a dangling link");
+        assert!(
+            matches!(dangling_error, SshError::Sftp(_)),
+            "unexpected dangling-link error: {dangling_error:?}"
+        );
+
+        sftp.shutdown().await;
+        handle
+            .disconnect(Disconnect::ByApplication, "link acceptance complete", "")
+            .await
+            .expect("disconnect SSH session");
+        drop(data);
+    }
+}

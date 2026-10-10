@@ -104,7 +104,9 @@ pub enum KeyboardInteractiveResponse {
 #[async_trait::async_trait]
 pub trait SshAuthContext: Send {
     /// Empty means the server has not restricted the next authentication method.
-    fn remaining_auth_methods(&self) -> &[String] { &[] }
+    fn remaining_auth_methods(&self) -> &[String] {
+        &[]
+    }
     async fn authenticate_none(&mut self, username: &str) -> Result<bool, SshError>;
     async fn authenticate_password(
         &mut self,
@@ -252,20 +254,21 @@ impl RusshEngine {
     where
         H: russh::client::Handler<Error = russh::Error> + Send + 'static,
     {
-        let mut handle = match tokio::time::timeout(
-            self.connect_timeout,
-            async {
-                let stream = tokio::net::TcpStream::connect((target.host.as_str(), target.port)).await?;
-                if self.config.nodelay {
-                    if let Err(error) = stream.set_nodelay(true) {
-                        eprintln!("SSH TCP_NODELAY failed: {error}");
-                    }
+        let mut handle = match tokio::time::timeout(self.connect_timeout, async {
+            let stream =
+                tokio::net::TcpStream::connect((target.host.as_str(), target.port)).await?;
+            if self.config.nodelay {
+                if let Err(error) = stream.set_nodelay(true) {
+                    eprintln!("SSH TCP_NODELAY failed: {error}");
                 }
-                russh::client::connect_stream(
-                    Arc::clone(&self.config), self.cancellation.wrap(stream), handler,
-                ).await
-            },
-        )
+            }
+            russh::client::connect_stream(
+                Arc::clone(&self.config),
+                self.cancellation.wrap(stream),
+                handler,
+            )
+            .await
+        })
         .await
         {
             Err(_) => return Err(SshError::Timeout),
@@ -385,7 +388,11 @@ pub(super) struct RusshAuthContext<'a, H: russh::client::Handler> {
 
 impl<'a, H: russh::client::Handler> RusshAuthContext<'a, H> {
     pub(super) fn new(handle: &'a mut russh::client::Handle<H>) -> Self {
-        Self { handle, private_key_accepted: false, remaining_methods: Vec::new() }
+        Self {
+            handle,
+            private_key_accepted: false,
+            remaining_methods: Vec::new(),
+        }
     }
 
     fn remember_methods(&mut self, methods: &russh::MethodSet) {
@@ -395,13 +402,22 @@ impl<'a, H: russh::client::Handler> RusshAuthContext<'a, H> {
     }
 
     fn remember_result(&mut self, result: &russh::client::AuthResult) {
-        if let russh::client::AuthResult::Failure { remaining_methods, .. } = result {
+        if let russh::client::AuthResult::Failure {
+            remaining_methods, ..
+        } = result
+        {
             self.remember_methods(remaining_methods);
         }
     }
 
-    fn keyboard_response(&mut self, response: russh::client::KeyboardInteractiveAuthResponse) -> Result<KeyboardInteractiveResponse, SshError> {
-        if let russh::client::KeyboardInteractiveAuthResponse::Failure { remaining_methods, .. } = &response {
+    fn keyboard_response(
+        &mut self,
+        response: russh::client::KeyboardInteractiveAuthResponse,
+    ) -> Result<KeyboardInteractiveResponse, SshError> {
+        if let russh::client::KeyboardInteractiveAuthResponse::Failure {
+            remaining_methods, ..
+        } = &response
+        {
             self.remember_methods(remaining_methods);
         }
         map_keyboard_interactive(response)
@@ -413,13 +429,16 @@ impl<H> SshAuthContext for RusshAuthContext<'_, H>
 where
     H: russh::client::Handler<Error = russh::Error> + Send,
 {
-    fn remaining_auth_methods(&self) -> &[String] { &self.remaining_methods }
+    fn remaining_auth_methods(&self) -> &[String] {
+        &self.remaining_methods
+    }
 
     async fn authenticate_none(&mut self, username: &str) -> Result<bool, SshError> {
-        let result = self.handle
-                .authenticate_none(username)
-                .await
-                .map_err(|_| SshError::AuthenticationRejected)?;
+        let result = self
+            .handle
+            .authenticate_none(username)
+            .await
+            .map_err(|_| SshError::AuthenticationRejected)?;
         self.remember_result(&result);
         Ok(result.success())
     }
@@ -429,10 +448,11 @@ where
         username: &str,
         password: &SecretString,
     ) -> Result<bool, SshError> {
-        let result = self.handle
-                .authenticate_password(username, secrecy::ExposeSecret::expose_secret(password))
-                .await
-                .map_err(|_| SshError::AuthenticationRejected)?;
+        let result = self
+            .handle
+            .authenticate_password(username, secrecy::ExposeSecret::expose_secret(password))
+            .await
+            .map_err(|_| SshError::AuthenticationRejected)?;
         self.remember_result(&result);
         Ok(result.success())
     }
@@ -489,7 +509,12 @@ where
                     return Ok(true);
                 }
                 self.remember_result(&result);
-                if !self.remaining_methods.is_empty() && !self.remaining_methods.iter().any(|method| method == "publickey") {
+                if !self.remaining_methods.is_empty()
+                    && !self
+                        .remaining_methods
+                        .iter()
+                        .any(|method| method == "publickey")
+                {
                     break;
                 }
             }
@@ -501,10 +526,11 @@ where
         &mut self,
         username: &str,
     ) -> Result<KeyboardInteractiveResponse, SshError> {
-        let response = self.handle
-                .authenticate_keyboard_interactive_start(username, None::<String>)
-                .await
-                .map_err(|_| SshError::AuthenticationRejected)?;
+        let response = self
+            .handle
+            .authenticate_keyboard_interactive_start(username, None::<String>)
+            .await
+            .map_err(|_| SshError::AuthenticationRejected)?;
         self.keyboard_response(response)
     }
 
@@ -512,10 +538,11 @@ where
         &mut self,
         responses: Vec<String>,
     ) -> Result<KeyboardInteractiveResponse, SshError> {
-        let response = self.handle
-                .authenticate_keyboard_interactive_respond(responses)
-                .await
-                .map_err(|_| SshError::AuthenticationRejected)?;
+        let response = self
+            .handle
+            .authenticate_keyboard_interactive_respond(responses)
+            .await
+            .map_err(|_| SshError::AuthenticationRejected)?;
         self.keyboard_response(response)
     }
 }

@@ -87,6 +87,8 @@ Tabby RS 要以 Tauri 與 Rust 取代 Electron 主程序及所有正式版執行
 - 使用 SFTP 瀏覽、上傳、下載、重新命名、刪除、建立資料夾及內容選單。
 - 從 OpenSSH 設定及基準版既有來源匯入連線資料。
 
+已接受的安全例外：關閉目標的 agent 或 X11 forwarding 選項時，Tabby RS 拒絕伺服器主動開啟的對應通道，不連到本機 agent 或 X server。此行為納入完整 parity 的驗收條件，核准範圍與紀錄見 [SSH 轉送安全例外](release-acceptance.md#approved-ssh-forwarding-safety-exception)。
+
 ### 3.5 Telnet 與序列埠
 
 使用者可以：

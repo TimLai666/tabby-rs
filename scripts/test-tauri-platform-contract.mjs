@@ -4,6 +4,7 @@ import path from 'node:path'
 import vm from 'node:vm'
 import ts from 'typescript'
 import { fileURLToPath } from 'node:url'
+import { execFileSync } from 'node:child_process'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const platform = fs.readFileSync(path.join(root, 'tabby-tauri/src/services/platform.service.ts'), 'utf8')
@@ -61,6 +62,17 @@ assert.ok(capabilities.permissions.includes('notification:default'))
 assert.match(tauriEntry, /import ['"]\.\/tauri-polyfills['"]\r?\n/)
 assert.match(tauriEntry, /import ['"]source-sans-pro\/source-sans-pro\.css['"]\r?\n/)
 assert.match(tauriEntry, /import ['"]source-code-pro\/source-code-pro\.css['"]\r?\n/)
+const originalPreload = execFileSync('git', ['show', '14e2d60:app/src/entry.preload.ts'], { cwd: root, encoding: 'utf8' })
+const stylesheetImports = source => ts.createSourceFile('entry.ts', source, ts.ScriptTarget.Latest, true).statements
+    .filter(statement => ts.isImportDeclaration(statement) && ts.isStringLiteral(statement.moduleSpecifier))
+    .map(statement => statement.moduleSpecifier.text)
+    .filter(specifier => specifier.startsWith('@fortawesome/fontawesome-free/css/'))
+const originalIconStyles = stylesheetImports(originalPreload)
+assert.ok(originalIconStyles.length > 0, 'The fixed original preloader must supply icon styles')
+const nativeIconStyles = stylesheetImports(tauriEntry)
+for (const style of originalIconStyles) {
+    assert.ok(nativeIconStyles.includes(style), `Tauri startup must load the original icon stylesheet ${style}`)
+}
 assert.match(tauriPolyfills, /setImmediate/)
 assert.match(tauriWebpack, /test: \/logo\\\.svg\$\/[\s\S]*?type: 'asset\/resource'/)
 assert.match(tauriWebpack, /test: \/\\\.svg\$\/[\s\S]*?svg-inline-loader[\s\S]*?exclude: \/logo\\\.svg\$\//)

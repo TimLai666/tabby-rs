@@ -4,7 +4,7 @@ import { Observable, Subject } from 'rxjs'
 import { ConfigService, LogService, ProfilesService, PromptModalComponent, VaultService } from 'tabby-core'
 import { BaseSession, InputProcessor, UTF8SplitterMiddleware } from 'tabby-terminal'
 
-import { SSHProfile } from '../../../tabby-ssh/src/api/interfaces'
+import { ForwardedPortConfig, SSHProfile } from '../../../tabby-ssh/src/api/interfaces'
 import {
     HostBridge,
     SshAuthPrompt,
@@ -31,7 +31,61 @@ export class TauriSshSession extends BaseSession {
     private unlisteners: (() => void)[] = []
     private readonly authPrompt = new Subject<SshAuthPrompt>()
     private readonly serviceMessage = new Subject<string>()
-    private forwardingIds: string[] = []
+    private activeForwardings = new Map<ForwardedPortConfig, { id: string; stopping: Promise<void>|null }>()
+
+    get forwardedPorts (): ForwardedPortConfig[] {
+        return Array.from(this.activeForwardings.keys())
+    }
+
+    async addPortForward (forwarding: ForwardedPortConfig): Promise<void> {
+        const sessionId = this.id
+        if (!sessionId) {
+            return
+        }
+        const kind = forwarding.type.toLowerCase() as 'local'|'remote'|'dynamic'
+        try {
+            const info = await this.bridge.invoke('ssh.forwardingStart', {
+                sessionId,
+                kind,
+                bindHost: forwarding.host || '127.0.0.1',
+                bindPort: forwarding.port || 0,
+                targetAddress: forwarding.targetAddress || '',
+                targetPort: forwarding.targetPort || 0,
+            })
+            // The owner can close while the start reply is still in flight. In that
+            // case the returned id must be stopped immediately without a visible row.
+            if (this.destroying) {
+                void this.bridge.invoke('ssh.forwardingStop', { id: info.id }).catch(error => {
+                    this.logger.debug('SSH forwarding close failed after session end', error)
+                })
+                return
+            }
+            this.activeForwardings.set(forwarding, { id: info.id, stopping: null })
+            const arrow = kind === 'remote' ? ' <- ' : ' -> '
+            this.serviceMessage.next(`\x1b[42m\x1b[30m${arrow}\x1b[39m\x1b[49m Forwarded ${this.describeForwarding(forwarding)}`)
+        } catch (error) {
+            const message = kind === 'remote' ? 'Remote rejected port forwarding for' : 'Failed to forward port'
+            const details = typeof error?.details === 'string' ? error.details : String(error)
+            this.serviceMessage.next(`\x1b[41m\x1b[30m X \x1b[39m\x1b[49m ${message} ${this.describeForwarding(forwarding)}: ${details}`)
+            // Local and Dynamic adds reject like upstream; a Remote rejection is reported
+            // through the service message only.
+            if (kind !== 'remote') { throw error }
+        }
+    }
+
+    async removePortForward (forwarding: ForwardedPortConfig): Promise<void> {
+        const entry = this.activeForwardings.get(forwarding)
+        if (!entry) {
+            return
+        }
+        if (entry.stopping) {
+            return entry.stopping
+        }
+        const stopping = this.stopForwarding(forwarding, entry)
+        entry.stopping = stopping
+        return stopping
+    }
+
     private sftp: TauriSftpSession|null = null
     private credentialModals = new Map<string, NgbModalRef|null>()
     private hostKeyModals = new Set<NgbModalRef>()
@@ -74,7 +128,7 @@ export class TauriSshSession extends BaseSession {
                 }
             }),
             this.bridge.listen('ssh:output', event => {
-                if (event.connectionId === this.connectionId) {
+                if (event.connectionId === this.connectionId && !this.destroying) {
                     if (!this.id) {
                         this.pendingOutput.push({ data: event.data, extended: event.extended })
                         return
@@ -159,12 +213,7 @@ export class TauriSshSession extends BaseSession {
         this.activePrivateKey = info.usedPrivateKey ?? false
         this.id = info.id
         this.open = true
-        try {
-            await this.startForwardings(info.id)
-        } catch (error) {
-            await this.destroy()
-            throw error
-        }
+        await this.startForwardings()
         for (const output of this.pendingOutput.splice(0)) {
             this.emitOutput(Buffer.from(output.data))
         }
@@ -209,21 +258,32 @@ export class TauriSshSession extends BaseSession {
             return
         }
         this.destroying = true
+        // End the logical session without waiting for background transport cleanup.
         this.clearCredentialPrompts()
         for (const modal of this.hostKeyModals) { modal.dismiss() }
         this.hostKeyModals.clear()
-        if (this.connecting) { await this.cancelPendingConnection() }
+        if (this.connecting) { void this.cancelPendingConnection() }
         const id = this.id
         this.id = null
         // Keep the last authenticated username and key flag for launching file transfers
         // from a disconnected tab, matching upstream.
         if (id) {
-            await this.sftp?.close().catch(error => this.logger.debug('SFTP close failed after session end', error))
+            void this.sftp?.close().catch(error => this.logger.debug('SFTP close failed after session end', error))
             this.sftp = null
-            await Promise.all(this.forwardingIds.splice(0).map(forwardingId => this.bridge.invoke('ssh.forwardingStop', {
-                id: forwardingId,
-            }).catch(error => this.logger.debug('SSH forwarding close failed', error))))
-            await this.bridge.invoke('ssh.close', { id }).catch(error => {
+            const stopping: Promise<unknown>[] = []
+            for (const entry of this.activeForwardings.values()) {
+                // A removal that is already in flight owns this native id; destroying
+                // the owner must not issue a second stop for it.
+                if (entry.stopping) { continue }
+                stopping.push(this.bridge.invoke('ssh.forwardingStop', { id: entry.id }).catch(error => {
+                    this.logger.debug('SSH forwarding close failed', error)
+                }))
+            }
+            // Drain the registry without waiting for the peer replies so a pending
+            // native stop cannot delay logical destruction.
+            this.activeForwardings.clear()
+            void Promise.all(stopping)
+            void this.bridge.invoke('ssh.close', { id }).catch(error => {
                 this.logger.debug('SSH close failed after session end', error)
             })
         }
@@ -388,18 +448,58 @@ export class TauriSshSession extends BaseSession {
         return chain.reverse()
     }
 
-    private async startForwardings (sessionId: string): Promise<void> {
+    private async startForwardings (): Promise<void> {
         for (const forwarding of this.profile.options.forwardedPorts) {
-            const kind = forwarding.type.toLowerCase() as 'local'|'remote'|'dynamic'
-            const info = await this.bridge.invoke('ssh.forwardingStart', {
-                sessionId,
-                kind,
-                bindHost: forwarding.host || '127.0.0.1',
-                bindPort: forwarding.port || 0,
-                targetAddress: forwarding.targetAddress || '',
-                targetPort: forwarding.targetPort || 0,
-            })
-            this.forwardingIds.push(info.id)
+            // Profile JSON may contain entries without a recognised forwarding type.
+            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+            if (!['Local', 'Remote', 'Dynamic'].includes(forwarding?.type)) { continue }
+            try {
+                // Profile-started forwards share the production add path: same bridge
+                // call, same diagnostics, same registry as modal adds.
+                await this.addPortForward(Object.assign({ host: '127.0.0.1' }, forwarding))
+            } catch (error) {
+                // Failure isolation: a rejected forward must not end startup. The
+                // add path already emitted the upstream diagnostic.
+                this.logger.debug('SSH profile forwarding failed', error)
+            }
+        }
+    }
+
+    private describeForwarding (forwarding: ForwardedPortConfig): string {
+        // Mirrors the upstream ForwardedPort.toString() description, including the
+        // 127.0.0.1 default host and literal undefined targets for omitted fields.
+        const { host } = Object.assign({ host: '127.0.0.1' }, forwarding)
+        const kind = forwarding.type.toLowerCase()
+        if (kind === 'local') {
+            return `(local) ${host}:${forwarding.port} → (remote) ${forwarding.targetAddress}:${forwarding.targetPort}`
+        }
+        if (kind === 'remote') {
+            return `(remote) ${host}:${forwarding.port} → (local) ${forwarding.targetAddress}:${forwarding.targetPort}`
+        }
+        return `(dynamic) ${host}:${forwarding.port}`
+    }
+
+    private async stopForwarding (
+        forwarding: ForwardedPortConfig,
+        entry: { id: string; stopping: Promise<void>|null },
+    ): Promise<void> {
+        try {
+            await this.bridge.invoke('ssh.forwardingStop', { id: entry.id })
+        } catch (error) {
+            // The native stop removes its registry entry before awaiting remote
+            // cancellation. A later unknown-id reply therefore retires this stale row.
+            if (error?.code !== 'invalidArgument' || error?.details !== 'forwarding is unknown or closed') {
+                if (this.activeForwardings.get(forwarding) === entry) {
+                    entry.stopping = null
+                }
+                const details = typeof error?.details === 'string' ? error.details : String(error)
+                this.serviceMessage.next(`\x1b[41m\x1b[30m X \x1b[39m\x1b[49m Failed to stop forwarding ${this.describeForwarding(forwarding)}: ${details}`)
+                throw error
+            }
+        }
+        if (this.activeForwardings.get(forwarding) === entry) {
+            this.activeForwardings.delete(forwarding)
+            this.serviceMessage.next(`Stopped forwarding ${this.describeForwarding(forwarding)}`)
         }
     }
 

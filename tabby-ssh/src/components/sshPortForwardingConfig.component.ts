@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/explicit-module-boundary-types */
 import { Component, Input, Output, EventEmitter } from '@angular/core'
-import { ForwardedPortConfig, PortForwardType } from '../api'
+import { ForwardedPortConfig, PortForwardType } from '../api/interfaces'
 
 /** @hidden */
 @Component({

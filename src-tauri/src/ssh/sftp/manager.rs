@@ -61,6 +61,10 @@ impl SftpManager {
         self.backend.stat(path, follow).await
     }
 
+    pub async fn readlink(&self, path: &str) -> Result<String, SshError> {
+        self.backend.readlink(path).await
+    }
+
     pub async fn mkdir(&self, path: &str) -> Result<(), SshError> {
         self.backend.mkdir(path).await
     }
@@ -160,7 +164,7 @@ impl SftpManager {
         let metadata = self
             .backend
             .session
-            .symlink_metadata(path.clone())
+            .metadata(path.clone())
             .await
             .map_err(|error| SshError::Sftp(error.to_string()))?;
         if metadata.is_dir() || metadata.is_symlink() {

@@ -21,8 +21,8 @@ use super::{
     enumerate::{list_ports, path_for_stable_id, stable_id},
     model::{
         SerialBaudRateRequest, SerialConnectionStateEvent, SerialOpenRequest, SerialOutputEvent,
-        SerialPortInfo, SerialSessionIdRequest, SerialSessionInfo, SerialSignal, SerialSignalRequest,
-        SerialSignalState, SerialWriteRequest,
+        SerialPortInfo, SerialSessionIdRequest, SerialSessionInfo, SerialSignal,
+        SerialSignalRequest, SerialSignalState, SerialWriteRequest,
     },
 };
 
@@ -72,9 +72,11 @@ impl SerialWriter {
         if self.disconnected.load(Ordering::Acquire) {
             return Err(AppError::Io("Serial port is disconnected".into()));
         }
-        let port = port.as_mut()
+        let port = port
+            .as_mut()
             .ok_or_else(|| AppError::Io("Serial port is disconnected".into()))?;
-        write_serial_data(port.as_mut(), data, &self.closed, &self.disconnected).map_err(AppError::from)
+        write_serial_data(port.as_mut(), data, &self.closed, &self.disconnected)
+            .map_err(AppError::from)
     }
 
     fn replace(&self, port: Option<Box<dyn SerialPort>>) {
@@ -83,8 +85,13 @@ impl SerialWriter {
         }
         let mut current = self.port.lock().unwrap_or_else(|error| error.into_inner());
         self.generation.fetch_add(1, Ordering::Release);
-        *current = if self.closed.load(Ordering::Acquire) { None } else { port };
-        self.disconnected.store(current.is_none(), Ordering::Release);
+        *current = if self.closed.load(Ordering::Acquire) {
+            None
+        } else {
+            port
+        };
+        self.disconnected
+            .store(current.is_none(), Ordering::Release);
     }
 
     fn close(&self) {
@@ -137,7 +144,13 @@ impl SerialManager {
         self.sessions
             .lock()
             .unwrap_or_else(|error| error.into_inner())
-            .insert(id.clone(), SerialSession { control, writer: writer.clone() });
+            .insert(
+                id.clone(),
+                SerialSession {
+                    control,
+                    writer: writer.clone(),
+                },
+            );
 
         let sessions = Arc::clone(&self.sessions);
         let task_id = id.clone();
@@ -148,7 +161,15 @@ impl SerialManager {
             stable_id: stable.clone(),
         };
         thread::spawn(move || {
-            run_session(app, task_id.clone(), request, stable, serial, controls, &writer);
+            run_session(
+                app,
+                task_id.clone(),
+                request,
+                stable,
+                serial,
+                controls,
+                &writer,
+            );
             writer.close();
             writer.replace(None);
             sessions
@@ -440,7 +461,9 @@ fn run_session(
                             let path = next_path.unwrap_or_else(|| current_path.clone());
                             emit_state(&app, &id, &request, "reconnecting", Some(&path), None);
                             match open_port(&request, &path).and_then(|port| {
-                                port.try_clone().map(|writer| (port, writer)).map_err(serial_error)
+                                port.try_clone()
+                                    .map(|writer| (port, writer))
+                                    .map_err(serial_error)
                             }) {
                                 Ok((new_port, new_writer)) => {
                                     current_path = path;
@@ -593,19 +616,37 @@ fn serial_error(error: serialport::Error) -> AppError {
     AppError::Io(error.to_string())
 }
 
-fn write_serial_data<W: Write + ?Sized>(port: &mut W, data: &[u8], closed: &AtomicBool, disconnected: &AtomicBool) -> std::io::Result<()> {
+fn write_serial_data<W: Write + ?Sized>(
+    port: &mut W,
+    data: &[u8],
+    closed: &AtomicBool,
+    disconnected: &AtomicBool,
+) -> std::io::Result<()> {
     let mut remaining = data;
     while !remaining.is_empty() {
         if closed.load(Ordering::Acquire) {
-            return Err(std::io::Error::new(ErrorKind::BrokenPipe, "Serial session is closed"));
+            return Err(std::io::Error::new(
+                ErrorKind::BrokenPipe,
+                "Serial session is closed",
+            ));
         }
         if disconnected.load(Ordering::Acquire) {
-            return Err(std::io::Error::new(ErrorKind::BrokenPipe, "Serial port is disconnected"));
+            return Err(std::io::Error::new(
+                ErrorKind::BrokenPipe,
+                "Serial port is disconnected",
+            ));
         }
         match port.write(remaining) {
             Ok(0) => return Err(ErrorKind::WriteZero.into()),
             Ok(length) => remaining = &remaining[length..],
-            Err(error) if matches!(error.kind(), ErrorKind::Interrupted | ErrorKind::WouldBlock | ErrorKind::TimedOut) => continue,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    ErrorKind::Interrupted | ErrorKind::WouldBlock | ErrorKind::TimedOut
+                ) =>
+            {
+                continue
+            }
             Err(error) => return Err(error),
         }
     }

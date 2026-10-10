@@ -490,6 +490,8 @@ console.log('SSH username prompt visibility, cancellation, and connection isolat
             async start () { throw failure }
             async destroy () {}
         } },
+        './portForwardingModal.component': { TauriSshPortForwardingModalComponent: class {} },
+        './toolbar.component.pug': '',
     }
     const tabLoaded = { exports: {} }
     vm.runInNewContext(ts.transpileModule(tabSource, {

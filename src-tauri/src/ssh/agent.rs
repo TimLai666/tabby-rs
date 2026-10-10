@@ -216,14 +216,18 @@ mod tests {
         assert_eq!(result2, Some(DEFAULT_PIPE_PATH.to_owned()));
         assert!(probed2, "Empty JSON object must deserialize to Auto mode");
 
-        let req: AgentSocketRequest = serde_json::from_str(r#"{"agentType":null,"agentPath":null}"#).unwrap();
+        let req: AgentSocketRequest =
+            serde_json::from_str(r#"{"agentType":null,"agentPath":null}"#).unwrap();
         let mut probed3 = false;
         let result3 = resolve_agent_socket_internal(req, true, || {
             probed3 = true;
             true
         });
         assert_eq!(result3, Some(DEFAULT_PIPE_PATH.to_owned()));
-        assert!(probed3, "Explicit null fields must deserialize to Auto mode");
+        assert!(
+            probed3,
+            "Explicit null fields must deserialize to Auto mode"
+        );
     }
 
     #[test]

@@ -36,6 +36,7 @@ let metadata
 let startImplementation
 const { TauriSshTabComponent } = load('../tabby-tauri/src/ssh/tab.component.ts', {
     '@angular/core': { Component: value => { metadata = value; return decorator() } },
+    'tabby-core': { Platform: { Web: 'web' } },
     'tabby-terminal': { BaseTerminalTabComponent: { template: '<terminal />' }, ConnectableTerminalTabComponent: class {
         async disconnect () {} ngOnDestroy () {} onSessionDestroyed () {}
         async destroy () { if (this.session?.open) await this.session.destroy() }
@@ -45,6 +46,8 @@ const { TauriSshTabComponent } = load('../tabby-tauri/src/ssh/tab.component.ts',
     './session': { TauriSshSession: class {
         start () { return startImplementation(this) } async destroy () {}
     } },
+    './portForwardingModal.component': { TauriSshPortForwardingModalComponent: class {} },
+    './toolbar.component.pug': '',
 })
 const calls = []
 const tab = new TauriSshTabComponent({}, {
@@ -66,7 +69,7 @@ const duplicate = tab.showAuthPrompt(event, session)
 assert.equal(tab.activeKIPrompt, originalPrompt, 'Duplicate prompt delivery must not cancel the native waiter')
 await duplicate
 assert.deepEqual(JSON.parse(JSON.stringify(tab.activeKIProfile.options)), {
-    host: 'hop.test', port: 2222, user: 'resolved-hop',
+    host: 'hop.test', port: 2222, user: 'resolved-hop', password: '',
 })
 assert.deepEqual(Array.from(tab.activeKIPrompt.responses), ['', ''])
 tab.activeKIPrompt.responses.splice(0, 2, 'hop-answer', 'otp-answer')

@@ -264,6 +264,9 @@ jobs:
       - name: Test Tauri multi-window contract
         run: yarn test:tauri-multi-window
 
+      - name: Type-check Tauri packages
+        run: yarn test:tauri:types
+
       - name: Build Tauri renderer
         run: yarn build:tauri:frontend
 
@@ -393,6 +396,9 @@ jobs:
 
       - name: Verify Electron build outputs
         run: node scripts/ci/assert-build-output.mjs
+
+      - name: Type-check Tauri packages
+        run: yarn test:tauri:types
 
       - name: Build Tauri renderer
         run: yarn build:tauri:frontend

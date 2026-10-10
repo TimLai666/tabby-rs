@@ -70,6 +70,8 @@ import { TauriPathDropDecorator } from './pathDrop'
 import { TauriExportTerminalContextMenu } from './terminalContextMenu'
 import TabbyTerminalModule, { TerminalContextMenuItemProvider, TerminalDecorator } from 'tabby-terminal'
 import { KeyboardInteractiveAuthComponent } from '../../tabby-ssh/src/components/keyboardInteractiveAuthPanel.component'
+import { SSHPortForwardingConfigComponent } from '../../tabby-ssh/src/components/sshPortForwardingConfig.component'
+import { TauriSshPortForwardingModalComponent } from './ssh/portForwardingModal.component'
 import { TauriSshHostKeyPromptModalComponent } from './ssh/hostKeyPromptModal.component'
 import { TauriSshImportModalComponent } from './ssh/importModal.component'
 import { TauriSshProfileSettingsComponent } from './ssh/profileSettings.component'
@@ -114,6 +116,8 @@ function initializeDesktop (service: TauriDesktopIntegrationService): () => Prom
         TauriSshImportModalComponent,
         TauriSshProfileSettingsComponent,
         TauriSshTabComponent,
+        SSHPortForwardingConfigComponent,
+        TauriSshPortForwardingModalComponent,
         TauriSftpPanelComponent,
         TauriTelnetProfileSettingsComponent,
         TauriTelnetTabComponent,

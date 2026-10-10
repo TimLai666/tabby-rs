@@ -48,7 +48,9 @@ export class TauriSerialSession extends BaseSession {
 
     private createWriteQueue (): SerialWriteQueue {
         const queue = new SerialWriteQueue(
-            data => this.bridge.invoke('serial.write', { id: this.id!, data: Array.from(data) }),
+            async data => {
+                await this.bridge.invoke('serial.write', { id: this.id!, data: Array.from(data) })
+            },
             error => {
                 if (this.writeQueue !== queue) {
                     return

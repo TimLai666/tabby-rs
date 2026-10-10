@@ -20,6 +20,22 @@
   Windows Rust test evidence:
   https://github.com/TimLai666/tabby-rs/actions/runs/36343754549/job/108688735753
 
+## Pending — Linux desktop and packaging acceptance
+
+- `cargo test --locked --manifest-path src-tauri/Cargo.toml` passes on Linux x64
+  in an isolated Debian Bookworm container on `ubuntu-1`: 428 passed, none failed,
+  and 12 ignored. The run uses Rust/Cargo 1.97.1, Node 22.22.0, and npm 10.9.4
+  under a non-root account. All 1,419 source and renderer file fingerprints match
+  before and after the run; the temporary container is removed afterward.
+- The run includes the native SSH Close/SFTP completion, EOF reply readiness,
+  output failure, and resize race regressions. The separate
+  `node scripts/test-plugin-npm-lifecycle.mjs` run passes the ignored system npm
+  lifecycle case with actual install, upgrade, and removal. Its 1,419 file
+  fingerprints also match before and after the run, and its container is removed.
+- Linux desktop rendering, interaction, packaging, and installation remain pending.
+  Verify those independently before accepting Linux parity; compilation and
+  native tests do not establish supported-platform runtime acceptance.
+
 ## P2 — WinSCP temporary key files are only cleaned up by `TempPath` drop
 
 - `src-tauri/src/winscp/key.rs:24` — `ConvertedKey::path` is a `tempfile::TempPath`;
@@ -43,31 +59,253 @@
 
 - `tabby-tauri/src/ssh/session.ts` can authenticate with keys from
   `ssh.listPrivateKeys` when the profile has no configured keys.
-- `tabby-tauri/src/services/winscp.service.ts` converts only configured keys, so
-  such sessions open WinSCP without a key. Verify this flow against the fixed
-  upstream baseline before claiming WinSCP parity.
+- With no configured keys, both the exact `14e2d60` SSH service and
+  `tabby-tauri/src/services/winscp.service.ts` launch without a key even when the
+  session records private-key authentication. Their actual launch methods pass
+  the same empty-key check with simulated process/IPC boundaries and preserve
+  the resolved target username. Verify this flow on Windows before acceptance;
+  the method comparison does not verify a WinSCP process.
 - Private-key prompts now offer Remember and save the passphrase after the native
   decoder unlocks the key. WinSCP conversion reads saved passphrases; verify reuse
   on Windows and compare unchecked Remember behavior with upstream before acceptance.
 
-## Pending — Rust formatting
+## Pending — WinSCP launch from ended SSH tabs on Windows
 
-- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` fails on Rust
-  formatting, including application/serial/SSH commands, `lib.rs`, and the serial
-  and SSH modules. CI run `37878946171` on `b3fae75c` stops at this gate after
-  passing the preceding Linux checks; its macOS and Windows build jobs pass.
-  The launch queue's `Destroyed` handler now follows rustfmt. Keep the overall
-  formatting gate pending until the remaining differences are resolved.
-  Evidence: https://github.com/TimLai666/tabby-rs/actions/runs/37878946171
+- Native SSH tabs retain the last authenticated connection before shared shell
+  teardown. Both WinSCP entry points can use it after the shell ends, while a
+  pending, failed, or cancelled reconnect preserves the previous connection.
+  A newer authenticated connection replaces it; an old awaited initialization
+  cannot overwrite that newer identity.
+- `scripts/test-tauri-ssh-actions.mjs` exercises the actual native tab and session
+  start/destroy methods with simulated UI/IPC boundaries and fixed `14e2d60`
+  method controls. Its 11 retention cases cover both entry points, reconnect
+  outcomes, early EOF during pending forwarding, duplicate destruction, and
+  stale completion. The existing lifecycle fixture loads the real retention
+  field/helper and preserves its original assertions. `test:ssh-reconnect`
+  includes these checks and the forwarding fixture's authentication-metadata
+  readiness and retention checks.
+- Verify both entry points in Windows, actual WinSCP process startup, and the
+  selected username and key after the shell ends or reconnects. The passing
+  method checks do not establish desktop or WinSCP-process acceptance. Temporary
+  key cleanup and prompted-passphrase reuse retain their separate pending checks.
 
-## Pending — standalone Tauri package type checking
+## P1 — SFTP panel differs from the fixed upstream
 
-- `tsc --noEmit -p tabby-tauri/tsconfig.json` rejects two existing contracts:
-  `serial/session.ts:51` passes a `Promise<null>` bridge response to a write queue
-  callback typed as `Promise<void>`; `ssh/tab.component.ts:204` clears a prompt
-  profile password with `undefined` although `SSHProfile.options.password` is
-  declared as `string`. Resolve the contracts without changing write completion
-  or leaking the configured password into keyboard-interactive prompts.
+- The native SSH tab uses the exact `14e2d60` toolbar and Ports modal templates,
+  with the shared forwarding editor and native add/remove adapter. Tauri startup
+  loads the exact original icon styles, including solid, regular, and brand icons.
+  Tests cover diagnostics, separate row identities, saved-profile isolation, failed-stop
+  retries, pending requests, and owner destruction. A rendered Angular fixture
+  verifies the toolbar, help dropdown, Local/Remote/Dynamic additions, removal
+  with form restoration, focused-editor Escape, and reconnect at 1100x720 and
+  640x480. Its native
+  IPC is simulated; actual desktop traffic and supported-platform acceptance
+  remain pending. The inline SFTP panel retains the separate gap below.
+- The fixed upstream SFTP Pug and SCSS provide breadcrumb/path editing, filtering,
+  translated controls, file permissions, a context menu, and folder drag-and-drop.
+  `tabby-tauri/src/ssh/sftpPanel.component.ts` uses a different inline table and
+  browser prompts. Reuse the original templates, styles, and shared component
+  flows with native transport adapters before accepting SFTP UI/function parity.
+- Native SFTP resolves remote symbolic links with `readlink` and followed `stat`,
+  retaining the alias name/path for downloads and directory navigation. Resolve
+  relative targets against the listed item's parent, including after path editing
+  or failed navigation. Folder downloads use followed file-link sizes and retain
+  the original link modes. Renderer checks compare the exact fixed methods;
+  native tests use the actual SFTP backend with an in-process SSH/SFTP peer.
+  A macOS real OpenSSH fixture verifies relative and absolute file/directory
+  links, a dangling link, followed attributes, alias names, exact binary reads,
+  EOF, close, and directory/broken-link download rejection. Run the isolated
+  `ssh::sftp::integration::link_acceptance` ignored test with
+  `TABBY_RS_SSH_INTEGRATION=1`. Rendered downloads and other supported platforms
+  remain pending.
+- Unix local downloads apply the requested mode at creation, limited by the process
+  umask. Hold the staged file inside an owned 0700 directory until completion,
+  cancellation, error, or owner drop. Tests exercise actual TransferManager size
+  guards, destination preservation, permissions, privacy, and cleanup. The shared
+  terminal export receives the same creation rule. Existing-destination permission
+  parity and rendered/platform acceptance remain pending.
+- Directory-delete cancellation returns before sending `sftp.remove` or refreshing
+  the listing. `scripts/test-sftp-delete-cancellation.mjs` compares the exact
+  upstream cancellation method and exercises the native method with simulated
+  UI/SFTP boundaries. It also covers confirmed deletion, files, dismissed action
+  prompts, and display-only names. Verify cancellation in the supported desktops;
+  these method checks do not establish the rendered dialog or full SFTP parity.
+
+## P1 — SFTP concurrent uploads share temporary names
+
+- Each SftpManager starts its transfer counter at zero and opens
+  `{final_path}.tabby-upload-{id}` with CREATE, TRUNCATE, and WRITE. Two SSH
+  sessions uploading the same destination can truncate or mix the same temporary
+  file; completion or cancellation can remove the other session's file. This
+  behavior already exists in the base commit.
+- Give each upload a unique temporary path and atomically create it without
+  truncating an existing upload. Verify simultaneous sessions, independent
+  cancellation, rename failure, and destination preservation with an isolated
+  SSH/SFTP peer before accepting concurrent-upload behavior.
+
+## P2 — Folder file-link downloads inherit the upstream link mode
+
+- Fixed `14e2d60` folder downloads pass each listed item's mode to createFile,
+  including a symbolic link's 0777 bits. Under umask 022, the completed local
+  file can be readable by other local users even when the remote target is 0600.
+  The native flow retains this original behavior; its staged file stays inside
+  an owned 0700 directory before completion.
+- Verify completed-file permissions separately from staging privacy. Changing
+  them to the followed target's mode requires a decision on the fixed-baseline
+  parity contract; keep the existing exact-original mode assertions until then.
+
+## P2 — Ports modal focus after removing a forwarding row
+
+- Removing the focused row button moves focus to the body in the Angular
+  fixture. Escape then does not reach the shared NgbModalWindow listener;
+  focusing the forwarding editor restores dismissal. Compare this flow in the
+  original desktop before changing shared focus behavior or accepting Escape
+  handling after row removal.
+
+## P2 — SFTP peers that omit file size are treated as empty files
+
+- `src-tauri/src/ssh/sftp/backend.rs` maps missing size attributes to zero in
+  RemoteFileEntry, while native download descriptors preserve an optional size.
+  Renderer downloads send the entry's zero as an advertised size, so a nonempty
+  file from such a peer is rejected by the existing transfer size guard.
+- Compare the fixed upstream unknown-size flow and preserve a missing size across
+  listing, stat, renderer transfer setup, and IPC. Keep known-size overflow and
+  incomplete-close guards; link support does not resolve this earlier gap.
+
+## Pending — SSH tab lifecycle platform acceptance
+
+- Tauri SSH tabs use the fixed `14e2d60` session-end policy: the colored host
+  session-closed message precedes the shared policy, automatic reconnect is
+  immediate, and `exit` plus Enter or a final Ctrl+D count as explicit termination.
+  Do not restore the custom five-attempt delayed tab reconnect.
+- `scripts/test-ssh-tab-lifecycle.mjs` executes the extracted upstream/current tab
+  and shared lifecycle methods. It covers keep/reconnect/close/auto, manual
+  disconnect, absent frontends, explicit and near-miss inputs, clearing the ended
+  session, one reconnection prompt, and reconnecting once on the next key.
+  Native inline-auth state is cleared with or without a frontend.
+- The fixture passed for upstream and failed for the former native behavior
+  before the fix. Both now pass.
+- macOS arm64 desktop checks through real loopback SSH connections verify the
+  colored host-closed message, a single next-key reconnection, automatic
+  reconnection after EOF, close-on-end, and auto mode retaining an EOF-ended tab
+  while closing after `exit` or Ctrl+D. Manual Disconnect does not automatically
+  reconnect, and another tab remains usable. Closing the fixture window leaves
+  no open server connections. The server echoes data and sends EOF; these checks
+  do not establish execution of a remote shell. Original desktop comparison and
+  other supported platforms still need acceptance before claiming full SSH parity.
+
+## Pending — SSH port forwarding startup acceptance
+
+- Local, Dynamic, and Remote startup failures are handled per forwarding entry,
+  so they do not end the authenticated SSH session or trigger its reconnect policy.
+  Later forwards are attempted, successful IDs are retained for teardown, and
+  service messages use the fixed upstream badges, arrows, and forwarding descriptions.
+  Entries without an exact Local, Remote, or Dynamic type are ignored like `14e2d60`.
+- `scripts/test-ssh-forwarding-startup.mjs` executes the real Tauri session and
+  BaseSession lifecycle against the verbatim upstream `addPortForward` method and
+  entire `ForwardedPort` class, including its field initialization. It covers each
+  rejection mode, failure at each
+  position in a mixed list, invalid JSON entries, structured native errors,
+  successful diagnostic bytes, authentication identity, input/resize, and cleanup.
+  `test:ssh-reconnect` includes this fixture. These checks do not verify startup timing.
+  Omitted-target cases force transport rejection to compare failure descriptions;
+  they do not establish target-validation or successful-startup parity. Native
+  validation rejects missing targets before starting Local/Remote forwards, while
+  the fixed upstream can establish listeners without those fields. Compare that
+  difference before classifying it as parity or an accepted safety exception.
+- Native forwarding failures preserve the actual bind or request error through
+  the existing `AppError` I/O payload. `src-tauri/src/ssh/forwarding_tests.rs`
+  checks a real occupied TCP port, ephemeral-port binary traffic and release,
+  and remote forwarding rejection through the production control handler.
+  The rejection test verifies retained SSH input/output and no registered route.
+  All three tests and the full macOS suite pass. Platform-specific error strings
+  and their rendered diagnostics still need desktop acceptance.
+- Explicit empty bind hosts are replaced with `127.0.0.1` by the renderer,
+  while diagnostics retain the configured empty value. The fixed upstream passes
+  the empty value to its listener or remote forwarding request. A real Node 22
+  probe binds `::`; RFC 4254 section 7.1 gives empty remote bind addresses all
+  supported protocol families. Resolve this behavior and message mismatch with
+  an explicit security decision before accepting parity; no exception is approved.
+- Startup still awaits each forwarding request; the fixed upstream starts them
+  without waiting. Buffered early output is drained after forwarding setup.
+  A real loopback probe executes the exact upstream start, addPortForward, and
+  openShellChannel methods with the locked russh binding. A silent remote-forward
+  request leaves later shell opening pending for the five-second observation;
+  an established shell exchanges binary data while the request remains pending.
+  Its raw channel-close API closes the channel, but the exact SSHShellSession
+  destroy method does not call that API. Shell destruction immediately emits
+  closed/destroyed notifications and starts disconnect without awaiting it.
+  No peer channel close or transport disconnect is observed before peer shutdown
+  during the five-second check; the disconnect call remains pending. All fixture
+  connections and listeners close cleanly, with no unhandled rejection. These are
+  method-level observations, not original desktop or native Tauri acceptance.
+  Compare startup ordering, login scripts, and rendered close behavior against
+  these results before changing the waiting policy.
+- The production shell loop continues reading ordered output while a control
+  request awaits its result. Real loopback SSH tests exercise the shared helper
+  with generic pending operations: binary stdout/stderr, queued output before
+  EOF, operation cancellation, remote CLOSE acknowledgement with blocked input
+  and a full queue, retained transport, status/signal, and operation results.
+  Ready control results take priority over queued output and EOF. After stopping
+  input on EOF or failed output delivery, preserve an available reply with one
+  non-blocking check which ignores cooperative scheduling yields; genuinely pending
+  work is cancelled. Retain EOF for the outer loop when returning a ready result.
+  Failed output delivery always ends the loop. Native loopback tests verify actual
+  SftpList validation and Close replies; deterministic oneshot tests verify readiness
+  between polls and exhausted Tokio task budget. These checks establish native reply
+  delivery, not remote global-request timing. Renderer tests keep native close pending
+  and verify that closing output is neither displayed nor retained in the pre-connect
+  buffer. A separate macOS real-SSH probe exercises the production StartRemoteForward
+  control and shell-loop helpers with an unanswered global request. Exact binary
+  input, stdout, and stderr continue while its reply is pending. EOF retains the
+  final output, stops input, and cancels the pending operation with a dropped reply
+  sender. Transport disconnection returns the forwarding error and drains through
+  transport completion. Both paths close the connection before fixture shutdown;
+  no pending replies or connections remain. This is a handler/loop-helper check,
+  not the full native manager task, rendered desktop, or original desktop comparison.
+  Desktop acceptance remains pending.
+  Later native controls remain queued behind the pending request. Compare actual
+  wire cleanup, resize, SFTP, and forwarding startup with the exact upstream shell
+  before accepting those flows.
+- Resize errors are returned to the caller while the shell loop drains queued output.
+  A real loopback regression selects an actual Resize control before the peer sends
+  binary output and disconnects. It verifies the Closed reply, preserved loop result,
+  exact final bytes, and transport completion. Live resize also preserves shell input
+  and output. These tests call the production control handler and reader helpers.
+  The exact 14e2d60 resize method calls resizePTY without a session-close step. A
+  method-level probe with the locked binding verifies live resize, final output before
+  one closed/destroyed notification, and a post-close SendError without another
+  notification. It does not reproduce the same failed-resize-before-tail interleaving
+  or provide original desktop acceptance. The direct fixture also does not establish
+  jump-transport shutdown: verify final output and ssh:exit after target disconnection
+  while its jump host stays connected. Rendered resize behavior and other supported
+  platforms remain pending.
+- Renderer destruction completes the logical session while cancellation, SFTP
+  shutdown, forwarding stops, and native close finish in the background. The
+  exact upstream session classes provide the reference for
+  `scripts/test-ssh-close-lifecycle.mjs`. The checks verify immediate lifecycle
+  notifications, independent cleanup initiation, duplicate and rejected cleanup,
+  pending cancellation with late registration, and replacement-session event and
+  native ID isolation before and after old cleanup. They execute the current
+  shared disconnect/reconnect methods with a simulated tab host, not the rendered
+  tab lifecycle. Native socket/process cleanup and desktop behavior remain pending.
+  Current shared reconnect awaits logical destruction and marks a manual restart;
+  the upstream method does neither. Compare automatic reconnect and manual restart
+  in the actual desktop before accepting that shared-flow difference.
+- Renderer closure now stops a forwarding ID returned after destruction;
+  regression tests cover the late reply and concurrent pending removal. Native
+  cancellation broadcast timing before listener subscription remains unverified.
+  Reproduce that timing with a hostname bind and confirm the port is released
+  before changing startup to run in the background.
+- Failed native forwarding starts retain entries until session closure. Verify
+  repeated failures, list consumers, and listener cleanup before accepting modal
+  forwarding runtime behavior. An open Ports modal also stays bound to its old
+  session through reconnect; compare that transition with the locked upstream
+  binding before accepting it.
+- macOS desktop failure/success diagnostics and terminal input after all three
+  rejection modes remain unverified: the current fixture cannot be inspected while
+  the Mac is locked. Original desktop comparison and supported-platform checks
+  remain pending.
 
 ## Pending — SSH forwarding desktop and Windows acceptance
 
@@ -154,12 +392,12 @@
   verify the full 8 KiB write and blocked queue explicitly.
   Sustained input against a stalled peer and transport-level backpressure need separate
   resource and responsiveness checks before accepting full SSH parity.
-- Security-sensitive parity decision pending: the exact upstream incoming-channel handlers
-  with the locked russh binding forward unsolicited agent and X11 channels even when both
-  target options are false. A real two-hop fixture confirms both local synthetic endpoints
-  are reached. Native handlers close disabled channels before opening local endpoints.
-  Preserve that protection until the user explicitly decides whether this is an accepted
-  safety exception; do not mark this behavior as full parity or an approved exception yet.
+- Preserve the approved SSH forwarding safety exception: native handlers close an
+  unsolicited agent or X11 channel before opening a local endpoint when its target
+  forwarding option is disabled. The exact `14e2d60` handlers forward those channels.
+  This difference is accepted; its scope and approval are recorded in
+  `docs/release-acceptance.md#approved-ssh-forwarding-safety-exception`.
+  Keep normal forwarding and supported-platform acceptance separate from this exception.
 - `src-tauri/src/ssh/engine.rs` now shares `connect_agent` with jump authentication and
   forwarding. On Windows, `None` selects Pageant and an explicit path selects a named pipe.
   Verify Pageant with `SSH_AUTH_SOCK` set and verify named-pipe connections on Windows.
@@ -546,3 +784,14 @@
   typewriter`; the macOS check verifies driver-error propagation, unchanged native
   reconnect settings, and continued port I/O. Successful physical rate changes,
   automatic reconnect at the new rate, and Windows/Linux execution remain pending.
+
+## Pending — lint from the shared Main checkout
+
+- `npm run lint` in `/Volumes/SSD/Developer/TABBY-RS` reaches the Node heap
+  limit at about 4 GiB and exits with status 134 before producing lint results.
+  That checkout is mounted from `mac-1` over SMB. The full lint command passes
+  in the local verification directory with all 1,344 compared file hashes equal
+  to Main; the private `.env` is excluded from that comparison.
+- Investigate the shared-checkout heap growth before claiming an in-place lint
+  pass. Preserve both the failed Main run and passing local run, and verify the
+  source hashes when using the local copy for acceptance.

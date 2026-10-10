@@ -25,6 +25,11 @@ export class TauriSftpSession {
         return this.bridge.invoke('sftp.stat', { id: this.id, path, follow })
     }
 
+    async readlink (path: string): Promise<string> {
+        this.ensureOpen()
+        return this.bridge.invoke('sftp.readlink', { id: this.id, path })
+    }
+
     async mkdir (path: string): Promise<void> {
         this.ensureOpen()
         await this.bridge.invoke('sftp.mkdir', { id: this.id, path })

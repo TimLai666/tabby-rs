@@ -10,6 +10,8 @@ use std::{
 };
 
 use tempfile::NamedTempFile;
+#[cfg(unix)]
+use tempfile::{Builder, TempDir};
 
 use crate::error::AppError;
 
@@ -35,6 +37,40 @@ pub struct TransferDescriptor {
     pub error: Option<TransferError>,
 }
 
+#[cfg(unix)]
+#[derive(Debug)]
+struct StagedDownload {
+    temp: NamedTempFile,
+    _directory: TempDir,
+}
+
+#[cfg(not(unix))]
+#[derive(Debug)]
+struct StagedDownload {
+    temp: NamedTempFile,
+}
+
+#[cfg(unix)]
+fn create_staging(parent: &Path, mode: u32) -> Result<StagedDownload, AppError> {
+    let directory = Builder::new()
+        .permissions(fs::Permissions::from_mode(0o700))
+        .tempdir_in(parent)?;
+    let temp = Builder::new()
+        .permissions(fs::Permissions::from_mode(mode))
+        .tempfile_in(directory.path())?;
+    Ok(StagedDownload {
+        temp,
+        _directory: directory,
+    })
+}
+
+#[cfg(not(unix))]
+fn create_staging(parent: &Path, _mode: u32) -> Result<StagedDownload, AppError> {
+    Ok(StagedDownload {
+        temp: NamedTempFile::new_in(parent)?,
+    })
+}
+
 #[derive(Debug)]
 enum TransferSession {
     Upload {
@@ -42,9 +78,8 @@ enum TransferSession {
         descriptor: TransferDescriptor,
     },
     Download {
-        temp: NamedTempFile,
+        staging: StagedDownload,
         destination: PathBuf,
-        mode: u32,
         descriptor: TransferDescriptor,
     },
 }
@@ -145,7 +180,7 @@ impl TransferManager {
         let parent = destination.parent().ok_or_else(|| {
             AppError::InvalidArgument("download destination has no parent".into())
         })?;
-        let temp = NamedTempFile::new_in(parent)?;
+        let staging = create_staging(parent, mode)?;
         let id = self.next_id();
         let descriptor = TransferDescriptor {
             id: id.clone(),
@@ -162,9 +197,8 @@ impl TransferManager {
             .insert(
                 id,
                 TransferSession::Download {
-                    temp,
+                    staging,
                     destination,
-                    mode,
                     descriptor: descriptor.clone(),
                 },
             );
@@ -206,7 +240,9 @@ impl TransferManager {
             .get_mut(id)
             .ok_or_else(|| AppError::NotFound(format!("transfer {id}")))?;
         let TransferSession::Download {
-            temp, descriptor, ..
+            staging,
+            descriptor,
+            ..
         } = session
         else {
             return Err(AppError::InvalidArgument(
@@ -220,7 +256,7 @@ impl TransferManager {
                 ));
             }
         }
-        temp.as_file_mut().write_all(bytes)?;
+        staging.temp.as_file_mut().write_all(bytes)?;
         descriptor.transferred = descriptor.transferred.saturating_add(bytes.len() as u64);
         descriptor.state = "running".into();
         Ok(descriptor.clone())
@@ -248,9 +284,8 @@ impl TransferManager {
                 Ok(descriptor)
             }
             TransferSession::Download {
-                mut temp,
+                mut staging,
                 destination,
-                mode,
                 mut descriptor,
             } => {
                 if let Some(size) = descriptor.size {
@@ -260,11 +295,11 @@ impl TransferManager {
                         ));
                     }
                 }
-                temp.as_file_mut().flush()?;
-                temp.persist(&destination)
+                staging.temp.as_file_mut().flush()?;
+                staging
+                    .temp
+                    .persist(&destination)
                     .map_err(|error| AppError::Io(error.error.to_string()))?;
-                #[cfg(unix)]
-                fs::set_permissions(&destination, fs::Permissions::from_mode(mode))?;
                 descriptor.state = "completed".into();
                 Ok(descriptor)
             }

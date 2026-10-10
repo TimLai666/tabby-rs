@@ -130,18 +130,28 @@ pub enum AuthMethodRef {
     },
 }
 
-fn deserialize_optional_password<'de, D>(deserializer: D) -> Result<Option<secrecy::SecretString>, D::Error>
-where D: serde::Deserializer<'de>,
+fn deserialize_optional_password<'de, D>(
+    deserializer: D,
+) -> Result<Option<secrecy::SecretString>, D::Error>
+where
+    D: serde::Deserializer<'de>,
 {
     <Option<String> as serde::Deserialize>::deserialize(deserializer)
         .map(|value| value.map(secrecy::SecretString::new))
 }
 
-fn serialize_optional_password<S>(value: &Option<secrecy::SecretString>, serializer: S) -> Result<S::Ok, S::Error>
-where S: serde::Serializer,
+fn serialize_optional_password<S>(
+    value: &Option<secrecy::SecretString>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
 {
     use secrecy::ExposeSecret;
-    serde::Serialize::serialize(&value.as_ref().map(|value| value.expose_secret()), serializer)
+    serde::Serialize::serialize(
+        &value.as_ref().map(|value| value.expose_secret()),
+        serializer,
+    )
 }
 
 fn deserialize_password<'de, D>(deserializer: D) -> Result<secrecy::SecretString, D::Error>
@@ -281,7 +291,10 @@ pub struct SshAuthPrompt {
     pub private_key_hash: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub keyboard_interactive: Option<SshPasswordPromptTarget>,
-    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "serialize_optional_password")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_optional_password"
+    )]
     pub saved_password: Option<secrecy::SecretString>,
 }
 
@@ -350,6 +363,8 @@ pub enum SshError {
     Internal,
     #[error("SFTP operation failed: {0}")]
     Sftp(String),
+    #[error("{0}")]
+    Forwarding(String),
 }
 
 impl SshError {
@@ -359,7 +374,9 @@ impl SshError {
             Self::Connection => "connection",
             Self::HostKeyRejected => "hostKeyRejected",
             Self::HostKeyChanged => "hostKeyChanged",
-            Self::AuthenticationRejected | Self::AuthenticationExhausted(_) => "authenticationRejected",
+            Self::AuthenticationRejected | Self::AuthenticationExhausted(_) => {
+                "authenticationRejected"
+            }
             Self::KeyParse => "keyParse",
             Self::KeyPassphrase => "keyPassphrase",
             Self::ChannelOpen => "channelOpen",
@@ -367,6 +384,7 @@ impl SshError {
             Self::Timeout => "timeout",
             Self::Internal => "internal",
             Self::Sftp(_) => "sftp",
+            Self::Forwarding(_) => "forwarding",
         }
     }
 }

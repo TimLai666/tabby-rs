@@ -1183,6 +1183,10 @@ export interface HostRequestMap {
         request: { id: string; path: string; follow?: boolean }
         response: RemoteFileEntry
     }
+    'sftp.readlink': {
+        request: { id: string; path: string }
+        response: string
+    }
     'sftp.mkdir': {
         request: { id: string; path: string }
         response: null

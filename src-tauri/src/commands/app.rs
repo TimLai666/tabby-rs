@@ -426,7 +426,9 @@ mod tests {
         info.win_scp_path = Some("C:\\Program Files (x86)\\WinSCP 測試\\WinSCP.com ".to_owned());
         let resolved = serde_json::to_value(&info).unwrap();
         assert_eq!(
-            resolved.get("winSCPPath").and_then(serde_json::Value::as_str),
+            resolved
+                .get("winSCPPath")
+                .and_then(serde_json::Value::as_str),
             Some("C:\\Program Files (x86)\\WinSCP 測試\\WinSCP.com ")
         );
     }
