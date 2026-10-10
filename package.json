@@ -229,7 +229,7 @@
     "i18n:pull": "crowdin pull --skip-untranslated-strings",
     "i18n:extract": "node scripts/i18n-extract.mjs",
     "i18n:push": "crowdin push",
-    "test:sftp-panel": "node scripts/test-sftp-panel-controls.mjs && node scripts/test-sftp-panel-adapter.mjs && node scripts/test-sftp-delete-progress.mjs && node scripts/test-sftp-folder-completion.mjs && node scripts/test-sftp-edit-locally.mjs && node scripts/test-sftp-edit-transport.mjs && node scripts/test-sftp-folder-progress.mjs"
+    "test:sftp-panel": "node scripts/test-sftp-panel-controls.mjs && node scripts/test-sftp-panel-adapter.mjs && node scripts/test-sftp-delete-progress.mjs && node scripts/test-sftp-folder-completion.mjs && node scripts/test-sftp-edit-locally.mjs && node scripts/test-sftp-edit-transport.mjs && node scripts/test-sftp-folder-progress.mjs && node scripts/test-sftp-native-drop.mjs"
   },
   "type": "module",
   "private": true,
