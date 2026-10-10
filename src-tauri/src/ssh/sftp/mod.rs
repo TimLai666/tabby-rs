@@ -9,5 +9,8 @@ mod integration;
 #[cfg(test)]
 mod link_tests;
 
+#[cfg(test)]
+mod edit_tests;
+
 pub use manager::SftpManager;
 pub use model::*;

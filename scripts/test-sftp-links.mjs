@@ -5,8 +5,10 @@ import vm from 'node:vm'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
+import { Subject } from 'rxjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const sharedPanelSource = fs.readFileSync(path.join(root, 'tabby-ssh/src/components/sftpPanel.controller.ts'), 'utf8')
 const panelSource = fs.readFileSync(path.join(root, 'tabby-tauri/src/ssh/sftpPanel.component.ts'), 'utf8')
 const sessionSource = fs.readFileSync(path.join(root, 'tabby-tauri/src/ssh/sftp.ts'), 'utf8')
 const bridgeSource = fs.readFileSync(path.join(root, 'tabby-tauri/src/services/tauriHostBridge.service.ts'), 'utf8')
@@ -53,7 +55,7 @@ function transpile (name, program, globals = {}) {
 }
 
 function instantiate (name, body, globals = {}) {
-    const exports = transpile(name, `class ${name} { ${body} }; module.exports = ${name}`, globals)
+    const exports = transpile(name, `class ${name} ${globals.FolderController ? "extends FolderController" : ""} { ${body} }; module.exports = ${name}`, globals)
     return new exports()
 }
 
@@ -64,7 +66,7 @@ function nativeHost (invoke) {
         `class TauriSftpSession { ${classMembersText(sessionSource, 'TauriSftpSession')} }`,
         'module.exports = { TauriHostBridge, TauriSftpSession }',
     ].join('\n')
-    const exports = transpile('host', program, { window: { __TAURI__: { core: { invoke } } }, Error })
+    const exports = transpile('host', program, { window: { __TAURI__: { core: { invoke } } }, Error, Subject })
     return { TauriHostBridge: exports.TauriHostBridge, TauriSftpSession: exports.TauriSftpSession }
 }
 
@@ -197,8 +199,12 @@ function nativePanel (overrides = {}) {
         memberText(panelSource, 'TauriSftpPanelComponent', 'open'),
         memberText(panelSource, 'TauriSftpPanelComponent', 'download'),
         memberText(panelSource, 'TauriSftpPanelComponent', 'downloadDirectory'),
+        memberText(panelSource, 'TauriSftpPanelComponent', 'downloadFolderRecursive'),
+        memberText(panelSource, 'TauriSftpPanelComponent', 'calculateFolderSizeAndUpdate'),
     ].join('\n')
-    const panel = instantiate('NativePanel', body, { Error, posixPath: path.posix })
+    const FolderController = transpile('FolderController', `class FolderController { ${memberText(sharedPanelSource, 'SFTPPanelController', 'downloadFolder')} }; module.exports = FolderController`, { Error })
+    const panel = instantiate('NativePanel', body, { Error, posixPath: path.posix, FolderController })
+    panel.notifications = { error: message => calls.errors.push(message) }
     panel.path = '/data'
     panel.showError = error => { calls.errors.push(error instanceof Error ? error.message : String(error)) }
     panel.navigate = async p => { calls.navigations.push(p) }
@@ -587,7 +593,9 @@ await check('native explicit download lists the alias folder for a directory lin
         const { panel, calls } = nativePanel()
         await panel.download(item)
         assert.deepEqual(calls.followedStats, [{ path: '/data/dir', follow: true }])
-        assert.deepEqual(calls.readdirs, [item.fullPath])
+        const reference = referencePanel('/data')
+        await reference.panel.downloadFolder(item)
+        assert.deepEqual(calls.readdirs, reference.calls.readdirs, 'alias uses the fixed-upstream size and download walks')
         assert.deepEqual(calls.remoteDownloads, [`${item.fullPath}/nested.txt`])
     }
 })
@@ -625,7 +633,9 @@ for (const [label, item, target] of [
                 } else if (method === 'open') {
                     assert.deepEqual(calls.navigations, [item.fullPath])
                 } else {
-                    assert.deepEqual(calls.readdirs, [item.fullPath])
+                    const reference = referencePanel('/data')
+        await reference.panel.downloadFolder(item)
+        assert.deepEqual(calls.readdirs, reference.calls.readdirs, 'alias uses the fixed-upstream size and download walks')
                     assert.deepEqual(calls.remoteDownloads, [`${item.fullPath}/nested.txt`])
                 }
             }

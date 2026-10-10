@@ -185,3 +185,6 @@ fn file_identity(path: &std::path::Path) -> Option<(u64, u64)> {
         .ok()
         .map(|metadata| (metadata.creation_time(), 0))
 }
+#[cfg(test)]
+#[path = "file_edit_tests.rs"]
+mod tests;

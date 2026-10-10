@@ -12,6 +12,7 @@ import ts from 'typescript'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const POSIX = path.posix
 
+const sharedPanelSource = fs.readFileSync(path.join(root, 'tabby-ssh/src/components/sftpPanel.controller.ts'), 'utf8')
 const panelSource = fs.readFileSync(path.join(root, 'tabby-tauri/src/ssh/sftpPanel.component.ts'), 'utf8')
 const sessionSource = fs.readFileSync(path.join(root, 'tabby-tauri/src/ssh/sftp.ts'), 'utf8')
 const bridgeSource = fs.readFileSync(path.join(root, 'tabby-tauri/src/services/tauriHostBridge.service.ts'), 'utf8')
@@ -114,18 +115,9 @@ reference.ReferencePanel = transpile('ref-panel', [
 const native = transpile('native-host', [
     functionText(bridgeSource, 'toRustCommand'),
     `class TauriHostBridge { ${memberText(bridgeSource, 'TauriHostBridge', 'api')} ${memberText(bridgeSource, 'TauriHostBridge', 'invoke')} }`,
-    `class TauriSftpSession { ${[
-        memberText(sessionSource, 'TauriSftpSession', 'constructor'),
-        memberText(sessionSource, 'TauriSftpSession', 'open'),
-        memberText(sessionSource, 'TauriSftpSession', 'readdir'),
-        memberText(sessionSource, 'TauriSftpSession', 'stat'),
-        memberText(sessionSource, 'TauriSftpSession', 'readlink'),
-        memberText(sessionSource, 'TauriSftpSession', 'download'),
-        memberText(sessionSource, 'TauriSftpSession', 'close'),
-        memberText(sessionSource, 'TauriSftpSession', 'ensureOpen'),
-    ].join('\n')} }`,
+    classText(sessionSource, 'TauriSftpSession'),
     'module.exports = { TauriHostBridge, TauriSftpSession }',
-].join('\n'), { window: { __TAURI__: { core: { invoke: (command, args) => nativeBridge(command, args) } } }, Error })
+].join('\n'), { window: { __TAURI__: { core: { invoke: (command, args) => nativeBridge(command, args) } } }, Error, Subject })
 
 let nativeBridge = () => { throw new Error('native bridge was not configured') }
 
@@ -145,9 +137,12 @@ native.NativePlatform = transpile('native-platform', [
 }).NativePlatform
 
 native.NativePanel = transpile('native-panel', [
-    `class NativePanel { ${[
+    `class FolderController { ${memberText(sharedPanelSource, 'SFTPPanelController', 'downloadFolder')} }`,
+    `class NativePanel extends FolderController { notifications = { error: error => this.showError(new Error(error)) }; ${[
         memberText(panelSource, 'TauriSftpPanelComponent', 'download'),
         memberText(panelSource, 'TauriSftpPanelComponent', 'downloadDirectory'),
+        memberText(panelSource, 'TauriSftpPanelComponent', 'downloadFolderRecursive'),
+        memberText(panelSource, 'TauriSftpPanelComponent', 'calculateFolderSizeAndUpdate'),
         memberText(panelSource, 'TauriSftpPanelComponent', 'showError'),
     ].join('\n')} }`,
     'module.exports = { NativePanel }',
