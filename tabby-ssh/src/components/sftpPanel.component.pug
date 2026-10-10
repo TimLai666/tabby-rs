@@ -79,7 +79,7 @@
                 (click)='open(item)'
             )
                 i.fa-fw([class]='getIcon(item)')
-                div {{item.name}}
+                div {{getDisplayName(item)}}
                 .me-auto
                 .size(*ngIf='!item.isDirectory') {{item.size|filesize}}
                 .date {{item.modified|tabbyDate}}

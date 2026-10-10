@@ -37,7 +37,7 @@ let startImplementation
 const { TauriSshTabComponent } = load('../tabby-tauri/src/ssh/tab.component.ts', {
     '@angular/core': { Component: value => { metadata = value; return decorator() } },
     'tabby-core': { Platform: { Web: 'web' } },
-    'tabby-terminal': { BaseTerminalTabComponent: { template: '<terminal />' }, ConnectableTerminalTabComponent: class {
+    'tabby-terminal': { BaseTerminalTabComponent: { template: '<terminal />', styles: [] }, ConnectableTerminalTabComponent: class {
         async disconnect () {} ngOnDestroy () {} onSessionDestroyed () {}
         async destroy () { if (this.session?.open) await this.session.destroy() }
         async initializeSession () {} setSession (session) { this.session = session } attachSessionHandler () {}
@@ -48,6 +48,7 @@ const { TauriSshTabComponent } = load('../tabby-tauri/src/ssh/tab.component.ts',
     } },
     './portForwardingModal.component': { TauriSshPortForwardingModalComponent: class {} },
     './toolbar.component.pug': '',
+    './tab.component.scss': '',
 })
 const calls = []
 const tab = new TauriSshTabComponent({}, {

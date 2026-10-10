@@ -5,10 +5,25 @@ import vm from 'node:vm'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
+import { Subject } from 'rxjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const source = fs.readFileSync(path.join(root, 'tabby-tauri/src/ssh/sftpPanel.component.ts'), 'utf8')
+const deleteSource = fs.readFileSync(path.join(root, 'tabby-tauri/src/ssh/sftpDeleteModal.component.ts'), 'utf8')
 const upstream = execFileSync('git', ['show', '14e2d60:tabby-ssh/src/sftpContextMenu.ts'], { cwd: root, encoding: 'utf8' })
+const deleteModule = { exports: {} }
+vm.runInNewContext(ts.transpileModule(deleteSource, {
+    compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS, experimentalDecorators: true },
+}).outputText, {
+    module: deleteModule, exports: deleteModule.exports, Error,
+    require: name => {
+        if (name === '@angular/core') return { Component: () => target => target }
+        if (name === 'tabby-core') return { BaseComponent: class { destroyed$ = new Subject() } }
+        if (name === '@ng-bootstrap/ng-bootstrap' || name.endsWith('.pug')) return {}
+        throw new Error(`Unexpected dependency: ${name}`)
+    },
+})
+const { TauriSftpDeleteModalComponent } = deleteModule.exports
 
 function method (source, className, methodName) {
     const tree = ts.createSourceFile(`${className}.ts`, source, ts.ScriptTarget.Latest, true)
@@ -32,16 +47,34 @@ const file = { name: 'file.txt', fullPath: '/remote/file.txt', isDirectory: fals
 
 function native (action, confirmed) {
     const calls = { prompts: [], confirmations: [], removes: [], refreshes: 0, errors: [], prevented: 0 }
-    const panel = instantiate('NativePanel', method(source, 'TauriSftpPanelComponent', 'showMenu'), {
-        window: {
-            prompt: text => { calls.prompts.push(text); return action },
-            confirm: text => { calls.confirmations.push(text); return confirmed },
+    const panel = instantiate('NativePanel', [
+        method(source, 'TauriSftpPanelComponent', 'buildContextMenu'),
+        method(source, 'TauriSftpPanelComponent', 'showContextMenu'),
+    ].join('\n'), { TauriSftpDeleteModalComponent, Error })
+    panel.path = '/remote'
+    panel.sftp = {
+        readdir: async () => [{ ...file, fullPath: '/remote/folder/file.txt' }],
+        remove: async (...args) => { calls.removes.push(args) },
+    }
+    panel.translate = { instant: text => text }
+    panel.platform = {
+        setClipboard: () => {},
+        showMessageBox: async options => { calls.confirmations.push(options); return { response: confirmed ? 0 : 1 } },
+        popupContextMenu: items => {
+            calls.prompts.push(items)
+            if (action === 'delete') { calls.pending = items.find(item => item.label === 'Delete').click() }
         },
-        Error,
-    })
-    panel.sftp = { remove: async (...args) => { calls.removes.push(args) } }
-    panel.refresh = async () => { calls.refreshes++ }
+    }
+    panel.ngbModal = { open: () => {
+        let close; let dismiss
+        const result = new Promise((resolve, reject) => { close = resolve; dismiss = reject })
+        const instance = new TauriSftpDeleteModalComponent({ close, dismiss })
+        queueMicrotask(() => instance.ngOnInit())
+        return { componentInstance: instance, result }
+    } }
+    panel.navigate = async () => { calls.refreshes++ }
     panel.showError = error => calls.errors.push(error.message)
+    panel.showMenu = async (...args) => { await panel.showContextMenu(...args); await calls.pending }
     const event = { preventDefault: () => { calls.prevented++ } }
     return { panel, calls, event }
 }
@@ -84,23 +117,25 @@ await check('native directory cancellation sends no remove request or refresh', 
 await check('native approved directory deletion remains recursive and refreshes once', async () => {
     const { panel, calls, event } = native('delete', true)
     await panel.showMenu(directory, event)
-    assert.equal(calls.removes.length, 1)
-    assert.equal(calls.removes[0][0], directory.fullPath)
-    assert.equal(calls.removes[0][1], true)
+    assert.equal(calls.removes.length, 2)
+    assert.equal(calls.removes[0][0], '/remote/folder/file.txt')
+    assert.equal(calls.removes[0][1], false)
+    assert.equal(calls.removes[1][0], directory.fullPath)
+    assert.equal(calls.removes[1][1], false)
     assert.equal(calls.refreshes, 1)
 })
 
 await check('native file deletion preserves the nonrecursive request', async () => {
-    const { panel, calls, event } = native('delete', false)
+    const { panel, calls, event } = native('delete', true)
     await panel.showMenu(file, event)
-    assert.equal(calls.confirmations.length, 0)
+    assert.equal(calls.confirmations.length, 1)
     assert.equal(calls.removes.length, 1)
     assert.equal(calls.removes[0][0], file.fullPath)
     assert.equal(calls.removes[0][1], false)
     assert.equal(calls.refreshes, 1)
 })
 
-await check('dismissing the native action prompt sends no remove request', async () => {
+await check('dismissing the native context menu sends no remove request', async () => {
     const { panel, calls, event } = native(null, true)
     await panel.showMenu(directory, event)
     assert.equal(calls.confirmations.length, 0)

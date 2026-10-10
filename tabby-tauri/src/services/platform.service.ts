@@ -770,7 +770,7 @@ class TauriDirectoryDownload extends DirectoryDownload {
     }
 
     close (): void {
-        this.markCancelled()
+        // Directory transfers have no open handle; their files close independently.
     }
 
     override cancel (): void {

@@ -12,12 +12,12 @@ import { TauriSshPortForwardingModalComponent } from './portForwardingModal.comp
 
 @Component({
     selector: 'tauri-ssh-tab',
-    template: `${BaseTerminalTabComponent.template} ${require('./toolbar.component.pug')}<tauri-sftp-panel *ngIf="sftpPanelVisible" [session]="session" [(path)]="sftpPath" (close)="sftpPanelVisible = false"></tauri-sftp-panel>
+    template: `${BaseTerminalTabComponent.template} ${require('./toolbar.component.pug')}<tauri-sftp-panel class="bg-dark" @panelSlide [@.disabled]="!config.store.accessibility.animations" *ngIf="sftpPanelVisible && session" [session]="session!" [cwdDetectionAvailable]="session?.supportsWorkingDirectory() ?? false" [(path)]="sftpPath" (click)="$event.stopPropagation()" (closed)="sftpPanelVisible = false"></tauri-sftp-panel>
         <keyboard-interactive-auth-panel class="bg-dark" *ngIf="activeKIPrompt"
             [prompt]="activeKIPrompt" [profile]="activeKIProfile"
             (click)="$event.stopPropagation()" (done)="frontend?.focus()">
         </keyboard-interactive-auth-panel>`,
-    styles: BaseTerminalTabComponent.styles,
+    styles: [...BaseTerminalTabComponent.styles, require('./tab.component.scss')],
     animations: BaseTerminalTabComponent.animations,
 })
 export class TauriSshTabComponent extends ConnectableTerminalTabComponent<SSHProfile> {

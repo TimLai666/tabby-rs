@@ -2,6 +2,7 @@ import { CommonModule } from '@angular/common'
 import { APP_INITIALIZER, NgModule } from '@angular/core'
 import { FormsModule } from '@angular/forms'
 import { NgbModule } from '@ng-bootstrap/ng-bootstrap'
+import { NgxFilesizeModule } from 'ngx-filesize'
 import TabbyCoreModule, {
     ConfigProvider,
     DockingService,
@@ -78,6 +79,8 @@ import { TauriSshProfileSettingsComponent } from './ssh/profileSettings.componen
 import { TauriSshProfilesService } from './ssh/profiles'
 import { TauriSshTabRecoveryProvider } from './ssh/recoveryProvider'
 import { TauriSshTabComponent } from './ssh/tab.component'
+import { SFTPCreateDirectoryModalComponent } from '../../tabby-ssh/src/components/sftpCreateDirectoryModal.component'
+import { TauriSftpDeleteModalComponent } from './ssh/sftpDeleteModal.component'
 import { TauriSftpPanelComponent } from './ssh/sftpPanel.component'
 import { TauriSftpContextMenu } from './sftpContextMenu'
 import { TauriTelnetConfigProvider } from './telnet/config'
@@ -108,7 +111,7 @@ function initializeDesktop (service: TauriDesktopIntegrationService): () => Prom
 }
 
 @NgModule({
-    imports: [CommonModule, FormsModule, NgbModule, TabbyCoreModule, TabbyTerminalModule, KeyboardInteractiveAuthComponent],
+    imports: [CommonModule, FormsModule, NgbModule, NgxFilesizeModule, TabbyCoreModule, TabbyTerminalModule, KeyboardInteractiveAuthComponent],
     declarations: [
         IdentitySettingsTabComponent,
         TauriDiagnosticsSettingsTabComponent,
@@ -119,6 +122,8 @@ function initializeDesktop (service: TauriDesktopIntegrationService): () => Prom
         SSHPortForwardingConfigComponent,
         TauriSshPortForwardingModalComponent,
         TauriSftpPanelComponent,
+        SFTPCreateDirectoryModalComponent,
+        TauriSftpDeleteModalComponent,
         TauriTelnetProfileSettingsComponent,
         TauriTelnetTabComponent,
         TauriSerialProfileSettingsComponent,

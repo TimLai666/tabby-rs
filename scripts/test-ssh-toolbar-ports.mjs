@@ -65,6 +65,7 @@ function load (file, overrides) {
         const dependency = defaultDependency(name)
         if (dependency !== undefined) return dependency
         if (name.endsWith('.pug')) return ''
+        if (name.endsWith('.scss')) return fs.readFileSync(path.resolve(path.dirname(file), name), 'utf8')
         if (name.startsWith('.')) {
             const resolved = path.resolve(path.dirname(file), name)
             return load(resolved.endsWith('.ts') ? resolved : `${resolved}.ts`)

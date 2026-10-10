@@ -479,7 +479,7 @@ console.log('SSH username prompt visibility, cancellation, and connection isolat
         ...fakes,
         '@angular/core': { ...fakes['@angular/core'], Component: () => target => target },
         'tabby-terminal': {
-            BaseTerminalTabComponent: {},
+            BaseTerminalTabComponent: { styles: [] },
             ConnectableTerminalTabComponent: class {
                 async initializeSession () {} setSession (session) { this.session = session } attachSessionHandler () {}
             },
@@ -492,6 +492,7 @@ console.log('SSH username prompt visibility, cancellation, and connection isolat
         } },
         './portForwardingModal.component': { TauriSshPortForwardingModalComponent: class {} },
         './toolbar.component.pug': '',
+        './tab.component.scss': '',
     }
     const tabLoaded = { exports: {} }
     vm.runInNewContext(ts.transpileModule(tabSource, {

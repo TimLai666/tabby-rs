@@ -1,93 +1,46 @@
-import { Component, EventEmitter, Input, Output } from '@angular/core'
-import { DirectoryDownload, DirectoryUpload, FileUpload, NotificationsService, PlatformService } from 'tabby-core'
+import { Component, Input } from '@angular/core'
+import { NgbModal } from '@ng-bootstrap/ng-bootstrap'
+import { DirectoryDownload, DirectoryUpload, FileUpload, MenuItemOptions, NotificationsService, PlatformService, TranslateService } from 'tabby-core'
 import { posix as posixPath } from 'path'
+import { SFTPFile } from '../../../tabby-ssh/src/api/sftp'
+import { SFTPPanelController } from '../../../tabby-ssh/src/components/sftpPanel.controller'
 
 import { RemoteFileEntry } from '../api/hostBridge'
 import { TauriSshSession } from './session'
-import { TauriSftpSession } from './sftp'
+import { TauriSftpPanelTransport } from './sftpPanelTransport'
+import { TauriSftpDeleteModalComponent } from './sftpDeleteModal.component'
 
 @Component({
     selector: 'tauri-sftp-panel',
-    template: `
-        <section class="tauri-sftp-panel" (click)="$event.stopPropagation()">
-            <header class="d-flex align-items-center gap-2 mb-2">
-                <button class="btn btn-sm btn-secondary" type="button" (click)="goUp()">↑</button>
-                <input class="form-control form-control-sm" [(ngModel)]="path" (keyup.enter)="navigate(path)">
-                <button class="btn btn-sm btn-secondary" type="button" (click)="refresh()">Refresh</button>
-                <button class="btn btn-sm btn-primary" type="button" (click)="upload()">Upload</button>
-                <button class="btn btn-sm btn-primary" type="button" (click)="uploadFolder()">Upload folder</button>
-                <button class="btn btn-sm btn-outline-primary" type="button" (click)="mkdir()">New directory</button>
-                <button class="btn btn-sm btn-outline-secondary" type="button" (click)="close.emit()">Close</button>
-            </header>
-            <div *ngIf="error" class="alert alert-danger py-1">{{ error }}</div>
-            <div *ngIf="loading" class="text-muted">Loading…</div>
-            <table *ngIf="!loading" class="table table-sm table-hover mb-0">
-                <thead><tr><th>Name</th><th>Size</th><th>Modified</th><th></th></tr></thead>
-                <tbody>
-                    <tr *ngFor="let item of files" (dblclick)="open(item)" (contextmenu)="showMenu(item, $event)">
-                        <td><span [class]="item.isDirectory ? 'fas fa-folder text-info mr-2' : item.isSymlink ? 'fas fa-link text-warning mr-2' : 'fas fa-file mr-2'"></span>{{ item.name }}<small *ngIf="!item.isOperable" class="text-warning ml-2">(display-only)</small></td>
-                        <td>{{ item.isDirectory ? '—' : item.size }}</td>
-                        <td>{{ item.modified ? (item.modified * 1000 | date:'short') : '—' }}</td>
-                        <td class="text-right"><button class="btn btn-sm btn-link" type="button" (click)="download(item)">{{ item.isDirectory ? 'Download' : 'Download' }}</button></td>
-                    </tr>
-                </tbody>
-            </table>
-        </section>
-    `,
-    styles: [`
-        .tauri-sftp-panel { background: var(--bs-body-bg, #202124); border: 1px solid var(--bs-border-color, #555); border-radius: 4px; padding: 10px; position: absolute; inset: 10% 2% 8%; overflow: auto; z-index: 10; }
-        .tauri-sftp-panel header { position: sticky; top: 0; background: var(--bs-body-bg, #202124); z-index: 1; }
-        .tauri-sftp-panel td, .tauri-sftp-panel th { vertical-align: middle; }
-    `],
+    template: require('../../../tabby-ssh/src/components/sftpPanel.component.pug'),
+    styles: [require('../../../tabby-ssh/src/components/sftpPanel.component.scss')],
 })
-export class TauriSftpPanelComponent {
+export class TauriSftpPanelComponent extends SFTPPanelController<TauriSftpPanelTransport> {
     @Input() session!: TauriSshSession
-    @Input() path = '/'
-    @Output() pathChange = new EventEmitter<string>()
-    @Output() close = new EventEmitter<void>()
-
-    files: RemoteFileEntry[] = []
-    loading = false
-    error = ''
-    private sftp: TauriSftpSession|null = null
 
     constructor (
-        private platform: PlatformService,
-        private notifications: NotificationsService,
-    ) { }
-
-    async ngOnInit (): Promise<void> {
-        try {
-            this.sftp = await this.session.openSFTP()
-            await this.navigate(this.path)
-        } catch (error) {
-            this.showError(error)
-        }
+        platform: PlatformService,
+        notifications: NotificationsService,
+        ngbModal: NgbModal,
+        private translate: TranslateService,
+    ) {
+        super(ngbModal, notifications, platform)
     }
 
-    async navigate (value: string): Promise<void> {
-        if (!this.sftp) { return }
-        this.loading = true
-        this.error = ''
-        try {
-            this.path = value || '/'
-            this.pathChange.emit(this.path)
-            this.files = (await this.sftp.readdir(this.path)).sort((left, right) =>
-                Number(right.isDirectory) - Number(left.isDirectory) || left.name.localeCompare(right.name))
-        } catch (error) {
-            this.showError(error)
-        } finally {
-            this.loading = false
-        }
+    protected async openSFTP (): Promise<TauriSftpPanelTransport> {
+        return new TauriSftpPanelTransport(await this.session.openSFTP())
     }
 
-    refresh (): Promise<void> { return this.navigate(this.path) }
+    override async ngOnInit (): Promise<void> {
+        try { await super.ngOnInit() } catch (error) { this.showError(error) }
+    }
 
-    goUp (): Promise<void> { return this.navigate(posixPath.dirname(this.path)) }
+    override getDisplayName (item: SFTPFile): string {
+        return 'isOperable' in item && !item.isOperable ? `${item.name} (display-only)` : item.name
+    }
 
-    async open (item: RemoteFileEntry): Promise<void> {
-        if (!this.sftp) { return }
-        if (!item.isOperable) {
+    async open (item: SFTPFile|RemoteFileEntry): Promise<void> {
+        if ('isOperable' in item && !item.isOperable) {
             this.showError(new Error(item.unoperableReason ?? 'This remote name cannot be operated on'))
             return
         }
@@ -111,33 +64,15 @@ export class TauriSftpPanelComponent {
         }
     }
 
-    async upload (): Promise<void> {
-        if (!this.sftp) { return }
-        for (const transfer of await this.platform.startUpload({ multiple: true })) {
-            await this.uploadOne(transfer)
+    async download (item: SFTPFile|RemoteFileEntry|string, requestedMode?: number, requestedSize?: number): Promise<void> {
+        if (typeof item === 'string') {
+            try {
+                const transfer = await this.platform.startDownload(posixPath.basename(item), requestedMode ?? 0o644, requestedSize ?? 0)
+                if (transfer) { await this.sftp.download(item, transfer) }
+            } catch (error) { this.showError(error) }
+            return
         }
-        await this.refresh()
-    }
-
-    async uploadFolder (): Promise<void> {
-        if (!this.sftp) { return }
-        const transfer = await this.platform.startUploadDirectory()
-        await this.uploadDirectory(transfer)
-        await this.refresh()
-    }
-
-    async mkdir (): Promise<void> {
-        const name = window.prompt('Remote directory name')?.trim()
-        if (!name || !this.sftp) { return }
-        try {
-            await this.sftp.mkdir(posixPath.join(this.path, name))
-            await this.refresh()
-        } catch (error) { this.showError(error) }
-    }
-
-    async download (item: RemoteFileEntry): Promise<void> {
-        if (!this.sftp) { return }
-        if (!item.isOperable) {
+        if ('isOperable' in item && !item.isOperable) {
             this.showError(new Error(item.unoperableReason ?? 'This remote name cannot be downloaded'))
             return
         }
@@ -161,6 +96,8 @@ export class TauriSftpPanelComponent {
             if (transfer) {
                 try {
                     await this.downloadDirectory(item, transfer, '')
+                    transfer.setStatus('')
+                    transfer.setCompleted(true)
                 } catch (error) {
                     transfer.cancel()
                     this.showError(error)
@@ -170,58 +107,16 @@ export class TauriSftpPanelComponent {
             }
             return
         }
-        const transfer = await this.platform.startDownload(item.name, mode, size)
-        if (transfer) { await this.sftp.download(item.fullPath, transfer) }
-    }
-
-    async showMenu (item: RemoteFileEntry, event: MouseEvent): Promise<void> {
-        event.preventDefault()
-        if (!item.isOperable) {
-            this.showError(new Error(item.unoperableReason ?? 'This remote name cannot be modified'))
-            return
-        }
-        const action = window.prompt(`${item.name}\nType: rename, delete, or download`)
-        if (action === 'rename') {
-            const name = window.prompt('New remote name')?.trim()
-            if (name && this.sftp) { await this.sftp.rename(item.fullPath, posixPath.join(this.path, name)) }
-        } else if (action === 'delete') {
-            const recursive = item.isDirectory
-            if (recursive && !window.confirm(`Delete ${item.fullPath} recursively?`)) { return }
-            if (this.sftp) { await this.sftp.remove(item.fullPath, recursive) }
-        } else if (action === 'download') {
-            await this.download(item)
-        }
-        await this.refresh()
-    }
-
-    private async uploadOne (transfer: FileUpload, remotePath = this.path): Promise<void> {
-        if (!this.sftp) { return }
-        const destination = posixPath.join(remotePath, transfer.getName())
         try {
-            await this.sftp.upload(destination, transfer, 'skip')
-        } catch (error) {
-            if (String(error).includes('already exists') && window.confirm(`${destination} already exists. Overwrite it?`)) {
-                await this.sftp.upload(destination, transfer, 'overwrite')
-            } else {
-                transfer.cancel()
-                throw error
-            }
-        }
+            const transfer = await this.platform.startDownload(item.name, mode, size)
+            if (transfer) { await this.sftp.download(item.fullPath, transfer) }
+        } catch (error) { this.showError(error) }
     }
 
-    private async uploadDirectory (directory: DirectoryUpload, remotePath = this.path): Promise<void> {
-        if (!this.sftp) { return }
-        const destination = posixPath.join(remotePath, directory.getName())
-        if (directory.getName()) { await this.sftp.mkdir(destination).catch(() => undefined) }
-        for (const child of directory.getChildrens()) {
-            if (child instanceof DirectoryUpload) { await this.uploadDirectory(child, destination) } else { await this.uploadOne(child, destination) }
-        }
-    }
-
-    private async downloadDirectory (folder: RemoteFileEntry, transfer: DirectoryDownload, relativePath: string): Promise<void> {
-        if (!this.sftp) { return }
+    private async downloadDirectory (folder: SFTPFile|RemoteFileEntry, transfer: DirectoryDownload, relativePath: string): Promise<void> {
         for (const item of await this.sftp.readdir(folder.fullPath)) {
             if (!item.isOperable) { continue }
+            if (transfer.isCancelled()) { throw new Error('Download cancelled') }
             const next = relativePath ? `${relativePath}/${item.name}` : item.name
             if (item.isDirectory) {
                 await transfer.createDirectory(next)
@@ -234,9 +129,97 @@ export class TauriSftpPanelComponent {
         }
     }
 
+    override async downloadItem (item: SFTPFile): Promise<void> {
+        await this.download(item)
+    }
+
+    override async downloadFolder (folder: SFTPFile): Promise<void> {
+        await this.download(folder)
+    }
+
+    override async upload (): Promise<void> {
+        try { await super.upload() } catch (error) { this.showError(error) }
+    }
+
+    override async uploadOneFolder (transfer: DirectoryUpload): Promise<void> {
+        const savedPath = this.path
+        try {
+            await this.uploadDirectory(transfer, savedPath)
+            if (this.path === savedPath) { await this.navigate(savedPath) }
+        } catch (error) { this.showError(error) }
+    }
+
+    override async uploadOne (transfer: FileUpload, remotePath = this.path): Promise<void> {
+        const destination = posixPath.join(remotePath, transfer.getName())
+        try {
+            await this.sftp.upload(destination, transfer, 'skip')
+        } catch (error) {
+            const message = typeof error?.details === 'string' ? error.details
+                : typeof error?.message === 'string' ? error.message : String(error)
+            if (!message.includes('already exists') || (await this.platform.showMessageBox({
+                type: 'warning',
+                message: this.translate.instant('{path} already exists. Overwrite it?', { path: destination }),
+                buttons: [this.translate.instant('Overwrite'), this.translate.instant('Cancel')],
+                defaultId: 0,
+                cancelId: 1,
+            })).response !== 0) {
+                transfer.cancel()
+                throw error
+            }
+            await this.sftp.upload(destination, transfer, 'overwrite')
+        }
+        if (this.path === remotePath) { await this.navigate(remotePath) }
+    }
+
+    private async uploadDirectory (directory: DirectoryUpload, remotePath: string): Promise<void> {
+        const destination = posixPath.join(remotePath, directory.getName())
+        if (directory.getName()) { await this.sftp.mkdir(destination).catch(() => undefined) }
+        for (const child of directory.getChildrens()) {
+            if (child instanceof DirectoryUpload) { await this.uploadDirectory(child, destination) } else { await this.uploadOne(child, destination) }
+        }
+    }
+
+    async buildContextMenu (item: SFTPFile): Promise<MenuItemOptions[]> {
+        return [
+            { label: this.translate.instant('Copy full path'), click: () => this.platform.setClipboard({ text: item.fullPath, html: '' }) },
+            { type: 'separator' },
+            { label: this.translate.instant('Create directory'), click: () => this.openCreateDirectoryModal() },
+            { label: this.translate.instant(item.isDirectory ? 'Download directory' : 'Download'), click: () => this.downloadItem(item) },
+            { label: this.translate.instant('Delete'), click: async () => {
+                if ((await this.platform.showMessageBox({
+                    type: 'warning',
+                    message: this.translate.instant('Delete {fullPath}?', item),
+                    buttons: [this.translate.instant('Delete'), this.translate.instant('Cancel')],
+                    defaultId: 0,
+                    cancelId: 1,
+                })).response !== 0) { return }
+                const savedPath = this.path
+                const modal = this.ngbModal.open(TauriSftpDeleteModalComponent)
+                const operation: TauriSftpDeleteModalComponent = modal.componentInstance
+                try {
+                    operation.item = item
+                    operation.sftp = this.sftp
+                    await modal.result
+                } catch (error) { this.showError(error) } finally {
+                    await operation.settled
+                    if (operation.changed && this.path === savedPath) { await this.navigate(savedPath) }
+                }
+            } },
+        ]
+    }
+
+    override async showContextMenu (item: SFTPFile, event: MouseEvent): Promise<void> {
+        event.preventDefault()
+        if ('isOperable' in item && !item.isOperable) {
+            this.showError(new Error('unoperableReason' in item && typeof item.unoperableReason === 'string' ? item.unoperableReason : 'This remote name cannot be modified'))
+            return
+        }
+        this.platform.popupContextMenu(await this.buildContextMenu(item), event)
+    }
+
     private showError (error: unknown): void {
-        const message = error instanceof Error ? error.message : String(error)
-        this.error = message
-        this.notifications.error(message)
+        const details = typeof error === 'object' && error !== null && 'details' in error ? error.details : null
+        const message = typeof error === 'object' && error !== null && 'message' in error ? error.message : null
+        this.notifications.error(typeof details === 'string' ? details : typeof message === 'string' ? message : String(error))
     }
 }

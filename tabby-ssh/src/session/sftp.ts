@@ -5,15 +5,8 @@ import { Injector } from '@angular/core'
 import { FileDownload, FileUpload, Logger, LogService } from 'tabby-core'
 import * as russh from 'russh'
 
-export interface SFTPFile {
-    name: string
-    fullPath: string
-    isDirectory: boolean
-    isSymlink: boolean
-    mode: number
-    size: number
-    modified: Date
-}
+import { SFTPFile } from '../api/sftp'
+export { SFTPFile } from '../api/sftp'
 
 export class SFTPFileHandle {
     position = 0
