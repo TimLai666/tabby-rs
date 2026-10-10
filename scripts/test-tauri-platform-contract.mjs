@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import vm from 'node:vm'
 import ts from 'typescript'
+import * as rxjs from 'rxjs'
 import { fileURLToPath } from 'node:url'
 import { execFileSync } from 'node:child_process'
 
@@ -87,6 +88,7 @@ vm.runInNewContext(compiled, {
         if (name === '@angular/core') return { Injectable: () => target => target, Inject: () => () => {} }
         if (name === 'tabby-core') return { PlatformService: class {}, FileUpload: class {}, FileDownload: class {}, DirectoryDownload: class {} }
         if (name === '../api/hostBridge') return {}
+        if (name === 'rxjs') return rxjs
         throw new Error(`Unexpected dependency: ${name}`)
     },
     console,

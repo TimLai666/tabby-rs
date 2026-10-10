@@ -20,6 +20,7 @@ await writeFile(path.join(output, 'provider.js'), `(() => {
   if (name === '@angular/core') return { Injectable: () => target => target, Inject: () => () => {} };
   if (name === 'tabby-core') return { PlatformService: class {}, FileUpload: class {}, FileDownload: class {}, DirectoryDownload: class {} };
   if (name === '../api/hostBridge') return {};
+  if (name === 'rxjs') return window.rxjs;
   throw new Error('Unexpected provider dependency: ' + name);
  };
  ${compiled}
@@ -27,10 +28,11 @@ await writeFile(path.join(output, 'provider.js'), `(() => {
  window.menuProvider.runtimeInfo = { platform: 'windows' };
  window.menuProvider.zone = { run: fn => fn() };
 })();`)
+await writeFile(path.join(output, 'rxjs.js'), await readFile(path.join(path.dirname(require.resolve('rxjs/package.json')), 'dist/bundles/rxjs.umd.min.js')))
 await writeFile(path.join(output, 'fixture.js'), await readFile(path.join(root, 'scripts/ci/context-menu-browser/fixture.js')))
 await writeFile(path.join(output, 'index.html'), `<!doctype html><html><head><meta charset="utf-8"><title>Tabby context menu parity fixture</title>
 <style>body{font:14px system-ui;background:#202124;color:#eee;--bs-body-bg:#202124;--bs-border-color:#555;--bs-primary:#375a9e}#open-menu{position:fixed;right:12px;bottom:12px;padding:12px}#result{margin:24px}</style></head>
-<body><h1>Tabby context menu parity fixture</h1><p id="result">Isolated production renderer. Actions record a choice only.</p><button id="open-menu">Open test menu</button><script>window.fixtureErrors=[];addEventListener('error',e=>fixtureErrors.push(e.message));addEventListener('unhandledrejection',e=>fixtureErrors.push(String(e.reason)));</script><script src="provider.js"></script><script src="fixture.js"></script></body></html>`)
+<body><h1>Tabby context menu parity fixture</h1><p id="result">Isolated production renderer. Actions record a choice only.</p><button id="open-menu">Open test menu</button><script>window.fixtureErrors=[];addEventListener('error',e=>fixtureErrors.push(e.message));addEventListener('unhandledrejection',e=>fixtureErrors.push(String(e.reason)));</script><script src="rxjs.js"></script><script src="provider.js"></script><script src="fixture.js"></script></body></html>`)
 if (process.argv.includes('--prepare')) {
     console.log(output)
 } else {
