@@ -253,7 +253,7 @@ await check('native direct unknown-size file carries null through the panel adap
     assert.deepEqual(calls.errors, [])
 })
 
-await check('native followed file link downloads unknown-size target bytes while retaining alias mode', async base => {
+await check('native followed file link downloads unknown-size target bytes with the followed target mode', async base => {
     const { panel, calls } = await nativeHarness(base)
     const target = await panel.sftp.stat('/target', true)
     assert.equal(target.size, 0, 'unknown target keeps the original UI display size')
