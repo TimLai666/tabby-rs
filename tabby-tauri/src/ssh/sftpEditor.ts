@@ -60,7 +60,8 @@ export class TauriSftpEditor {
         }
         try {
             if (sftp.isClosed()) { stop(); return }
-            workspace = await this.platform.prepareEditableFile(item.name, item.mode, getSftpDownloadSize(item))
+            const size = getSftpDownloadSize(item)
+            workspace = await this.platform.prepareEditableFile(item.name, item.mode, item.isSymlink ? undefined : size, size)
             state.downloading = true
             if (isStopped()) { stop(); return }
             await sftp.download(item.fullPath, workspace.transfer)

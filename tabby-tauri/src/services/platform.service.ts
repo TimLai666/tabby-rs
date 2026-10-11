@@ -112,9 +112,9 @@ export class TauriPlatformService extends PlatformService {
         return transfer
     }
 
-    async prepareEditableFile (name: string, mode: number, size?: number): Promise<{ id: string; path: string; transfer: FileDownload }> {
+    async prepareEditableFile (name: string, mode: number, size?: number, displaySize = size): Promise<{ id: string; path: string; transfer: FileDownload }> {
         const edit = await this.bridge.invoke('fileEdit.prepare', { name, mode, size })
-        const transfer = new TauriFileDownload(this.bridge, edit.transfer.id, edit.transfer.name, size)
+        const transfer = new TauriFileDownload(this.bridge, edit.transfer.id, edit.transfer.name, displaySize)
         this.fileTransferStarted.next(transfer)
         return { id: edit.id, path: edit.path, transfer }
     }

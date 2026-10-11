@@ -148,8 +148,12 @@
 - Preserve omitted protocol file sizes as null through Native listing/stat. The
   Native panel adapter keeps the original numeric-zero display and retains a
   separate optional transferSize. Use getSftpDownloadSize for direct, followed-link,
-  folder-child, and local-editor downloads. Keep known-zero and known-positive
-  overflow/incomplete-close guards. Native protocol/filesystem and renderer fixtures
+  folder-child, and local-editor downloads. For Edit locally on symbolic links,
+  retain the listed alias size for display and pass an unknown expected size to
+  the local transfer guard; download target bytes to EOF through the alias path.
+  Preserve the listed name/mode and avoid extra stat/readlink requests. Keep
+  ordinary-file known-zero and known-positive overflow/incomplete-close guards.
+  Native protocol/filesystem and renderer fixtures
   cover unknown sizes, binary EOF, cancellation, and editor requests; supported
   desktop acceptance remains pending.
 - Uploads reserve a short random sibling staging name with CREATE, EXCLUDE, and
@@ -201,16 +205,6 @@
 - Fixed `14e2d60` upload unlinks the destination before renaming its stage. Verify
   native existing-file overwrite and Edit locally against that behavior, including
   commit failures and destination preservation, before accepting upload parity.
-
-## P2 — Native local editing advertises the listed symbolic-link size
-
-- The native context menu offers Edit locally for symbolic links. Editor
-  preparation forwards the listed link size, while the download reads target
-  file bytes. The local known-size guard rejects the transfer when link-text
-  length and target-file length differ.
-- Compare fixed `14e2d60` editor metadata and display before changing this flow.
-  Cover known link length, target bytes, EOF, and cleanup; preserve valid
-  file-size guards and the original visible transfer behavior.
 
 ## P2 — Folder file-link downloads inherit the upstream link mode
 
