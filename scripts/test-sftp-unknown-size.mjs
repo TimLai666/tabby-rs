@@ -101,18 +101,23 @@ const remoteEntries = {
     '/remote/folder/unknown.bin': { name: 'unknown.bin', fullPath: '/remote/folder/unknown.bin', isDirectory: false, isSymlink: false, mode: 0o100640, size: null, modified: null, isOperable: true },
 }
 
-function harness (base) {
-    const calls = { opened: [], prepared: [], errors: [], bridge: [] }
+function harness (base, options = {}) {
+    const calls = { opened: [], prepared: [], errors: [], bridge: [], events: [] }
     const active = new Map()
     const sftp = new Map()
     let id = 0
+    const entries = { ...remoteEntries,
+        '/remote/alias': { ...remoteEntries['/remote/alias'], size: options.aliasSize === undefined ? 5 : options.aliasSize },
+        '/remote/regular-wrong': { ...remoteEntries['/remote/known.bin'], name: 'regular-wrong', fullPath: '/remote/regular-wrong', size: options.regularSize ?? 2 },
+    }
     const bridge = { async invoke (command, request = {}) {
         calls.bridge.push({ command, request })
+        if (command === 'fileEdit.ready' || command === 'desktop.openPath' || command === 'fileEdit.stop') calls.events.push({ command, request })
         switch (command) {
             case 'sftp.open': return { id: 'session' }
             case 'sftp.close': sftp.clear(); return null
-            case 'sftp.list': return request.path === '/remote/folder' ? [remoteEntries['/remote/folder/unknown.bin']] : [remoteEntries['/remote/unknown.bin'], remoteEntries['/remote/alias'], remoteEntries['/remote/folder'], remoteEntries['/remote/empty.bin'], remoteEntries['/remote/known.bin']]
-            case 'sftp.stat': return request.follow && request.path === '/target' ? { ...remoteEntries['/remote/unknown.bin'], name: 'target', fullPath: '/target', size: null } : remoteEntries[request.path]
+            case 'sftp.list': return request.path === '/remote/folder' ? [entries['/remote/folder/unknown.bin']] : [entries['/remote/unknown.bin'], entries['/remote/alias'], entries['/remote/folder'], entries['/remote/empty.bin'], entries['/remote/known.bin'], entries['/remote/regular-wrong']]
+            case 'sftp.stat': return request.follow && request.path === '/target' ? { ...entries['/remote/unknown.bin'], name: 'target', fullPath: '/target', size: null } : entries[request.path]
             case 'sftp.readlink': return '../target'
             case 'dialog.save': return path.join(base, request.fileName)
             case 'dialog.open': return [path.join(base, 'folder')]
@@ -124,7 +129,12 @@ function harness (base) {
             case 'sftp.read': {
                 const transfer = sftp.get(request.transferId)
                 assert.ok(transfer, `SFTP stream ${request.transferId} should be active`)
-                const bytes = transfer.path === '/remote/empty.bin' ? Buffer.alloc(0) : REMOTE_BYTES
+                if (options.failRead || (options.failAfterBytes !== undefined && transfer.offset >= options.failAfterBytes)) throw new Error('fixture read failure')
+                if (options.closeDuringRead && options.closeAfterBytes !== undefined && transfer.offset >= options.closeAfterBytes) {
+                    await options.closeDuringRead()
+                    throw new Error('fixture session closed during read')
+                }
+                const bytes = options.targetBytes ?? (transfer.path === '/remote/empty.bin' ? Buffer.alloc(0) : REMOTE_BYTES)
                 const chunk = bytes.subarray(transfer.offset, transfer.offset + Math.min(request.maxBytes, 2))
                 transfer.offset += chunk.length
                 return Array.from(chunk)
@@ -190,13 +200,59 @@ function harness (base) {
     return { bridge, platform, panel, calls, active, sftp }
 }
 
-async function nativeHarness (base) {
-    const env = harness(base)
+async function nativeHarness (base, options) {
+    const env = harness(base, options)
     const session = await NativeSession.open(env.bridge, 'ssh')
     env.panel.sftp = new NativeTransport(session)
     env.session = session
     openSessions.push(session)
     return env
+}
+
+function nativeEditor (env) {
+    const editor = new NativeEditor()
+    editor.bridge = env.bridge
+    editor.platform = env.platform
+    editor.notifications = { error: error => env.calls.errors.push(String(error?.message ?? error)) }
+    const prepare = env.platform.prepareEditableFile.bind(env.platform)
+    env.platform.prepareEditableFile = async (...args) => {
+        const workspace = await prepare(...args)
+        env.calls.editTransfer = workspace.transfer
+        return workspace
+    }
+    return editor
+}
+
+async function fixedUpstreamEdit (base, listedSize, targetBytes) {
+    const refPlatform = upstream('tabby-electron/src/services/platform.service.ts')
+    const refEditor = upstream('tabby-electron/src/sftpContextMenu.ts')
+    const ReferenceDownload = transpile('reference-download', `${classText(refPlatform, 'ElectronFileDownload')}; module.exports = ElectronFileDownload`, { FileDownload: core.FileDownload, fs: fsp, path, Error })
+    const ReferenceEditor = transpile('reference-editor', `class EditSFTPContextMenu { ${memberText(refEditor, 'EditSFTPContextMenu', 'edit')} }; module.exports = EditSFTPContextMenu`, {
+        path, fs, Error, Subject, tmp: { dir: async () => ({ path: base }) },
+        resolveInsideBase: (dir, name) => path.resolve(dir, name), setTimeout: () => 1, clearTimeout () {},
+    })
+    const observed = { size: undefined, mode: undefined, name: undefined, path: undefined }
+    const editor = new ReferenceEditor()
+    editor.platform = {
+        async startDownload (name, mode, size, filePath) {
+            Object.assign(observed, { name, mode, size, destination: filePath })
+            const transfer = new ReferenceDownload(filePath, mode, size, { powerSaveBlocker: { start: () => 1, stop () {} } })
+            observed.transfer = transfer
+            await transfer.open()
+            return transfer
+        },
+        openPath: filePath => { observed.openPath = filePath },
+    }
+    let fileClosed
+    editor.sftp = { closed$: new Subject(), download (remotePath, transfer) {
+        observed.path = remotePath
+        const closeFile = transfer.file.close.bind(transfer.file)
+        transfer.file.close = () => { fileClosed = closeFile(); return fileClosed }
+        return (async () => { await transfer.write(targetBytes); transfer.close() })()
+    } }
+    await editor.edit({ name: 'alias', fullPath: '/remote/alias', mode: 0o120777, size: listedSize }, editor.sftp)
+    await fileClosed
+    return { observed, actualBytes: fs.readFileSync(path.join(base, 'alias')) }
 }
 
 const failures = []
@@ -240,6 +296,21 @@ await check('fixed 14e2d60 known-size reference still streams a binary file to t
     assert.deepEqual(fs.readFileSync(path.join(base, 'unknown.bin')), REMOTE_BYTES)
 })
 
+for (const [listedSize, targetBytes] of [[0, REMOTE_BYTES], [2, REMOTE_BYTES], [9, REMOTE_BYTES], [7, Buffer.alloc(0)]]) {
+    await check(`fixed 14e2d60 edit accepts alias size ${listedSize} for ${targetBytes.length} target bytes`, async base => {
+        const { observed, actualBytes } = await fixedUpstreamEdit(base, listedSize, targetBytes)
+        assert.equal(observed.name, 'alias')
+        assert.equal(observed.mode, 0o120777)
+        assert.equal(observed.size, listedSize)
+        assert.equal(observed.path, '/remote/alias')
+        assert.equal(observed.transfer.getSize(), listedSize)
+        assert.equal(observed.transfer.getTotalSize(), listedSize)
+        assert.equal(observed.transfer.getCompletedBytes(), targetBytes.length)
+        assert.deepEqual(actualBytes, targetBytes)
+        assert.equal(observed.openPath, observed.destination)
+    })
+}
+
 await check('native direct unknown-size file carries null through the panel adapter as unknown and closes at EOF', async base => {
     const { panel, calls, active, sftp } = await nativeHarness(base)
     const [entry] = await panel.sftp.readdir('/remote')
@@ -264,6 +335,116 @@ await check('native followed file link downloads unknown-size target bytes with 
     assert.equal(calls.opened[0].mode, 0o100640)
     assert.ok(calls.opened[0].size == null, 'followed target unknown size must remain absent at IPC')
     assert.deepEqual(calls.errors, [])
+})
+
+for (const advertisedSize of [0, 2, 9]) {
+    await check(`native symbolic-link edit with listed size ${advertisedSize} keeps alias progress and copies target bytes to EOF`, async base => {
+        const env = await nativeHarness(base, { aliasSize: advertisedSize })
+        const [ , alias ] = await env.panel.sftp.readdir('/remote')
+        const statCalls = env.calls.bridge.filter(call => call.command === 'sftp.stat' || call.command === 'sftp.readlink').length
+        const editor = nativeEditor(env)
+        await editor.edit(alias, env.panel.sftp)
+        const transfer = env.calls.editTransfer
+        assert.equal(env.calls.prepared[0].name, 'alias')
+        assert.equal(env.calls.prepared[0].mode, 0o120777)
+        assert.equal(env.calls.prepared[0].size, undefined, 'link target size is unknown to the native transfer guard')
+        assert.equal(env.calls.bridge.find(call => call.command === 'sftp.downloadOpen').request.path, alias.fullPath)
+        assert.deepEqual(fs.readFileSync(path.join(base, 'editable')), REMOTE_BYTES)
+        assert.equal(transfer.getSize(), advertisedSize, 'UI total retains the alias listed size')
+        assert.equal(transfer.getTotalSize(), advertisedSize)
+        assert.equal(transfer.getCompletedBytes(), REMOTE_BYTES.length)
+        assert.deepEqual(env.calls.events.filter(event => event.command === 'desktop.openPath').map(event => event.request.path), [path.join(base, 'editable')])
+        assert.equal(env.calls.bridge.filter(call => call.command === 'sftp.stat' || call.command === 'sftp.readlink').length, statCalls, 'edit does not add stat or readlink requests')
+        assert.equal(env.active.size, 0)
+        assert.equal(env.sftp.size, 0)
+        assert.deepEqual(env.calls.errors, [])
+    })
+}
+
+await check('native nonzero listed symbolic link to an empty target completes successfully', async base => {
+    const env = await nativeHarness(base, { aliasSize: 7, targetBytes: Buffer.alloc(0) })
+    const [, alias] = await env.panel.sftp.readdir('/remote')
+    await nativeEditor(env).edit(alias, env.panel.sftp)
+    assert.equal(env.calls.prepared[0].size, undefined)
+    assert.deepEqual(fs.readFileSync(path.join(base, 'editable')), Buffer.alloc(0))
+    assert.equal(env.calls.editTransfer.getSize(), 7)
+    assert.equal(env.calls.editTransfer.getCompletedBytes(), 0)
+    assert.equal(env.calls.prepared[0].size, undefined)
+    assert.equal(env.calls.events.filter(event => event.command === 'desktop.openPath').length, 1)
+    assert.equal(env.active.size, 0)
+    assert.equal(env.sftp.size, 0)
+})
+
+await check('native unknown-size symbolic link shows zero UI total and sends unknown IPC size', async base => {
+    const env = await nativeHarness(base, { aliasSize: null })
+    const [, alias] = await env.panel.sftp.readdir('/remote')
+    assert.equal(alias.size, 0)
+    assert.equal(alias.transferSize, undefined)
+    await nativeEditor(env).edit(alias, env.panel.sftp)
+    assert.equal(env.calls.prepared[0].size, undefined)
+    assert.equal(env.calls.editTransfer.getSize(), 0)
+    assert.equal(env.calls.editTransfer.getTotalSize(), 0)
+    assert.equal(env.calls.editTransfer.getCompletedBytes(), REMOTE_BYTES.length)
+    assert.deepEqual(fs.readFileSync(path.join(base, 'editable')), REMOTE_BYTES)
+})
+
+await check('native ordinary file with incorrect positive size rejects and never opens editor', async base => {
+    const env = await nativeHarness(base, { regularSize: REMOTE_BYTES.length + 2 })
+    const entries = await env.panel.sftp.readdir('/remote')
+    const ordinary = entries.find(entry => entry.name === 'regular-wrong')
+    await nativeEditor(env).edit(ordinary, env.panel.sftp)
+    assert.equal(env.calls.prepared[0].size, REMOTE_BYTES.length + 2)
+    assert.equal(env.calls.events.some(event => event.command === 'fileEdit.ready' || event.command === 'desktop.openPath'), false)
+    assert.equal(env.calls.events.some(event => event.command === 'fileEdit.stop'), true)
+    assert.ok(env.calls.errors.some(error => /download size does not match/.test(error)))
+    assert.equal(env.active.size, 0)
+    assert.equal(env.sftp.size, 0)
+    assert.deepEqual(fs.readdirSync(base).filter(name => name.includes('.stage-')), [])
+})
+
+await check('native ordinary file advertised as zero still rejects nonempty bytes and never opens editor', async base => {
+    const env = await nativeHarness(base, { regularSize: 0 })
+    const entries = await env.panel.sftp.readdir('/remote')
+    const ordinary = entries.find(entry => entry.name === 'regular-wrong')
+    await nativeEditor(env).edit(ordinary, env.panel.sftp)
+    assert.equal(env.calls.prepared[0].size, 0)
+    assert.equal(env.calls.events.some(event => event.command === 'fileEdit.ready' || event.command === 'desktop.openPath'), false)
+    assert.equal(env.calls.events.some(event => event.command === 'fileEdit.stop'), true)
+    assert.ok(env.calls.errors.some(error => /transfer exceeds advertised size/.test(error)))
+    assert.equal(env.active.size, 0)
+    assert.equal(env.sftp.size, 0)
+    assert.deepEqual(fs.readdirSync(base).filter(name => name.includes('.stage-')), [])
+})
+
+await check('native symbolic-link read failure cancels local and remote handles and never opens editor', async base => {
+    const env = await nativeHarness(base, { failAfterBytes: 2 })
+    const [, alias] = await env.panel.sftp.readdir('/remote')
+    await nativeEditor(env).edit(alias, env.panel.sftp)
+    assert.equal(env.calls.events.some(event => event.command === 'fileEdit.ready' || event.command === 'desktop.openPath'), false)
+    assert.equal(env.calls.events.some(event => event.command === 'fileEdit.stop'), true)
+    assert.ok(env.calls.errors.some(error => /fixture read failure/.test(error)))
+    assert.equal(env.calls.bridge.filter(call => call.command === 'transfer.write').length, 1, 'failure follows one successfully written chunk')
+    assert.equal(env.active.size, 0)
+    assert.equal(env.sftp.size, 0)
+    assert.equal(env.calls.bridge.some(call => call.command === 'sftp.cancelTransfer'), true)
+    assert.equal(env.calls.bridge.some(call => call.command === 'transfer.cancel'), true)
+    assert.deepEqual(fs.readdirSync(base).filter(name => name.includes('.stage-')), [])
+})
+
+await check('native session close during pending symbolic-link read cancels work and never opens editor', async base => {
+    let closeSession
+    const env = await nativeHarness(base, { closeAfterBytes: 2, closeDuringRead: async () => { await closeSession() } })
+    closeSession = () => env.session.close()
+    const [, alias] = await env.panel.sftp.readdir('/remote')
+    await nativeEditor(env).edit(alias, env.panel.sftp)
+    assert.equal(env.calls.events.some(event => event.command === 'fileEdit.ready' || event.command === 'desktop.openPath'), false)
+    assert.equal(env.calls.events.some(event => event.command === 'fileEdit.stop'), true)
+    assert.equal(env.calls.bridge.filter(call => call.command === 'transfer.write').length, 1, 'session closes after one successful local write')
+    assert.equal(env.active.size, 0)
+    assert.equal(env.sftp.size, 0)
+    assert.equal(env.calls.bridge.some(call => call.command === 'transfer.cancel'), true)
+    assert.deepEqual(fs.readdirSync(base).filter(name => name.includes('.stage-')), [])
+    assert.deepEqual(env.calls.errors, [], 'closing the owning session suppresses a spurious error notification')
 })
 
 await check('native folder download streams unknown-size child to the owned local directory', async base => {
