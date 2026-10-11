@@ -15,5 +15,8 @@ mod edit_tests;
 #[cfg(test)]
 mod upload_tests;
 
+#[cfg(test)]
+mod unknown_size_tests;
+
 pub use manager::SftpManager;
 pub use model::*;
