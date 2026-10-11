@@ -1185,3 +1185,825 @@ async fn manager_keyboard_interactive_empty_challenges_use_real_transport() {
             .unwrap();
     }
 }
+
+#[cfg(unix)]
+#[tokio::test]
+#[ignore = "requires SSH authentication fixture; run yarn test:ssh-auth-integration"]
+async fn keyboard_interactive_dismissal_skips_wire_reply_and_uses_password_candidate() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct DismissalServer(Arc<AtomicUsize>);
+    impl ServerHandler for DismissalServer {
+        type Error = russh::Error;
+
+        async fn auth_keyboard_interactive<'a>(
+            &'a mut self,
+            _: &str,
+            _: &str,
+            response: Option<Response<'a>>,
+        ) -> Result<Auth, Self::Error> {
+            if let Some(response) = response {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                assert_eq!(response.count(), 0);
+                return Ok(Auth::reject());
+            }
+            Ok(Auth::Partial {
+                name: Cow::Borrowed("fixture"),
+                instructions: Cow::Borrowed("dismiss this prompt"),
+                prompts: Cow::Owned(vec![(Cow::Borrowed("Code: "), false)]),
+            })
+        }
+
+        async fn auth_password(&mut self, _: &str, password: &str) -> Result<Auth, Self::Error> {
+            Ok(if password == "saved-secret" {
+                Auth::Accept
+            } else {
+                Auth::reject()
+            })
+        }
+    }
+
+    struct CancelThenPassword;
+    #[async_trait::async_trait]
+    impl SshAuthenticator for CancelThenPassword {
+        async fn authenticate(
+            &self,
+            context: &mut dyn SshAuthContext,
+            username: &str,
+            _: &[crate::ssh::AuthMethodRef],
+        ) -> Result<bool, crate::ssh::SshError> {
+            let dismissed =
+                super::authenticate_keyboard_interactive_with(context, username, |_| async {
+                    Ok(vec![])
+                })
+                .await?;
+            assert!(!dismissed, "dismissal must skip this candidate");
+            context
+                .authenticate_password(username, &SecretString::new("saved-secret".into()))
+                .await
+        }
+    }
+
+    const IO: Duration = Duration::from_secs(10);
+    let host_key = HostKeyAlgorithm::Ed25519.generate();
+    let pinned_key = host_key.public_key().clone();
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let response_count = Arc::new(AtomicUsize::new(0));
+    let handler = DismissalServer(Arc::clone(&response_count));
+    let mut config = server::Config::default();
+    config.keys.push(host_key);
+    let mut tasks = tokio::task::JoinSet::new();
+    tasks.spawn(async move {
+        let (tcp, _) = listener.accept().await.unwrap();
+        let session = server::run_stream(Arc::new(config), tcp, handler)
+            .await
+            .unwrap();
+        let _ = session.await;
+    });
+
+    let engine = super::engine::RusshEngine::new(client::Config::default(), IO);
+    let connected = tokio::time::timeout(
+        IO,
+        engine.connect_with_handler(
+            &SshTarget {
+                host: "127.0.0.1".into(),
+                port,
+                username: "fixture-user".into(),
+            },
+            PinnedHostKeyClient(pinned_key),
+            Arc::new(std::sync::Mutex::new(None)),
+            &CancelThenPassword,
+        ),
+    )
+    .await
+    .expect("wire fixture must finish within timeout")
+    .expect("saved password should authenticate after dismissal");
+    assert_eq!(
+        response_count.load(Ordering::SeqCst),
+        0,
+        "dismissed nonempty challenge must not send a keyboard-interactive reply"
+    );
+    tokio::time::timeout(
+        IO,
+        connected.disconnect(russh::Disconnect::ByApplication, "test complete", "en"),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    tokio::time::timeout(IO, tasks.join_next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+}
+
+#[cfg(unix)]
+#[derive(Clone, Copy)]
+enum PendingChallengeCase {
+    SecondRoundThenPassword,
+    NewKeyboardInteractiveCandidate,
+    PrivateKeyCandidate,
+}
+
+#[cfg(unix)]
+#[derive(Default)]
+struct PendingChallengeObservations {
+    keyboard_interactive_starts: std::sync::atomic::AtomicUsize,
+    keyboard_interactive_answers: std::sync::Mutex<Vec<Vec<String>>>,
+    password_requests: std::sync::atomic::AtomicUsize,
+    key_offers: std::sync::atomic::AtomicUsize,
+    key_requests: std::sync::atomic::AtomicUsize,
+    matched_key: std::sync::atomic::AtomicBool,
+}
+
+#[cfg(unix)]
+struct PendingChallengeServer {
+    case: PendingChallengeCase,
+    observations: Arc<PendingChallengeObservations>,
+    authorized_public_key: Option<String>,
+}
+
+#[cfg(unix)]
+impl Server for PendingChallengeServer {
+    type Handler = Self;
+
+    fn new_client(&mut self, _peer_addr: Option<std::net::SocketAddr>) -> Self {
+        Self {
+            case: self.case,
+            observations: Arc::clone(&self.observations),
+            authorized_public_key: self.authorized_public_key.clone(),
+        }
+    }
+}
+
+#[cfg(unix)]
+fn read_keyboard_interactive_answers(response: Response<'_>) -> Vec<String> {
+    response
+        .map(|answer| String::from_utf8_lossy(&answer).into_owned())
+        .collect()
+}
+
+#[cfg(unix)]
+fn pending_challenge(name: &'static str) -> Auth {
+    Auth::Partial {
+        name: Cow::Borrowed(name),
+        instructions: Cow::Borrowed("fixture instruction"),
+        prompts: Cow::Owned(vec![(Cow::Borrowed("Fixture answer: "), false)]),
+    }
+}
+
+#[cfg(unix)]
+impl ServerHandler for PendingChallengeServer {
+    type Error = russh::Error;
+
+    async fn auth_keyboard_interactive<'a>(
+        &'a mut self,
+        user: &str,
+        _: &str,
+        response: Option<Response<'a>>,
+    ) -> Result<Auth, Self::Error> {
+        assert_eq!(user, "fixture-user");
+        match response {
+            None => {
+                let start = self
+                    .observations
+                    .keyboard_interactive_starts
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(match (self.case, start) {
+                    (PendingChallengeCase::SecondRoundThenPassword, 1) => {
+                        pending_challenge("second round")
+                    }
+                    _ => pending_challenge("first round"),
+                })
+            }
+            Some(response) => {
+                let answers = read_keyboard_interactive_answers(response);
+                self.observations
+                    .keyboard_interactive_answers
+                    .lock()
+                    .unwrap()
+                    .push(answers.clone());
+                Ok(match self.case {
+                    PendingChallengeCase::SecondRoundThenPassword
+                        if answers == ["first-answer"] =>
+                    {
+                        pending_challenge("second round")
+                    }
+                    PendingChallengeCase::NewKeyboardInteractiveCandidate
+                        if answers == [""]
+                            && self
+                                .observations
+                                .keyboard_interactive_starts
+                                .load(std::sync::atomic::Ordering::SeqCst)
+                                == 2 =>
+                    {
+                        Auth::Accept
+                    }
+                    _ => Auth::reject(),
+                })
+            }
+        }
+    }
+
+    async fn auth_password(&mut self, user: &str, password: &str) -> Result<Auth, Self::Error> {
+        assert_eq!(user, "fixture-user");
+        self.observations
+            .password_requests
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(if password == "saved-secret" {
+            Auth::Accept
+        } else {
+            Auth::reject()
+        })
+    }
+
+    async fn auth_publickey_offered(
+        &mut self,
+        user: &str,
+        public_key: &PublicKey,
+    ) -> Result<Auth, Self::Error> {
+        assert_eq!(user, "fixture-user");
+        self.observations
+            .key_offers
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let matches =
+            public_key.to_openssh().ok().as_deref() == self.authorized_public_key.as_deref();
+        if matches {
+            self.observations
+                .matched_key
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(Auth::Accept)
+        } else {
+            Ok(Auth::reject())
+        }
+    }
+
+    async fn auth_publickey(
+        &mut self,
+        user: &str,
+        public_key: &PublicKey,
+    ) -> Result<Auth, Self::Error> {
+        assert_eq!(user, "fixture-user");
+        self.observations
+            .key_requests
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let matches =
+            public_key.to_openssh().ok().as_deref() == self.authorized_public_key.as_deref();
+        if matches {
+            self.observations
+                .matched_key
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(Auth::Accept)
+        } else {
+            Ok(Auth::reject())
+        }
+    }
+}
+
+#[cfg(unix)]
+async fn start_pending_challenge_server(
+    case: PendingChallengeCase,
+    authorized_public_key: Option<PublicKey>,
+) -> (
+    u16,
+    PublicKey,
+    Arc<PendingChallengeObservations>,
+    tokio::task::JoinSet<()>,
+) {
+    let host_key = HostKeyAlgorithm::Ed25519.generate();
+    let pinned_key = host_key.public_key().clone();
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .expect("bind loopback SSH fixture");
+    let port = listener.local_addr().expect("fixture local address").port();
+    let observations = Arc::new(PendingChallengeObservations::default());
+    let handler = PendingChallengeServer {
+        case,
+        observations: Arc::clone(&observations),
+        authorized_public_key: authorized_public_key
+            .map(|key| key.to_openssh().expect("encode authorized client key")),
+    };
+    let mut config = server::Config::default();
+    config.keys.push(host_key);
+    let mut tasks = tokio::task::JoinSet::new();
+    tasks.spawn(async move {
+        let (tcp, _) = listener
+            .accept()
+            .await
+            .expect("accept loopback SSH fixture");
+        let session = server::run_stream(Arc::new(config), tcp, handler)
+            .await
+            .expect("start loopback SSH fixture session");
+        let _ = session.await;
+    });
+    (port, pinned_key, observations, tasks)
+}
+
+#[cfg(unix)]
+fn pending_challenge_target(port: u16) -> SshTarget {
+    SshTarget {
+        host: "127.0.0.1".into(),
+        port,
+        username: "fixture-user".into(),
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+#[ignore = "requires SSH authentication fixture; run yarn test:ssh-auth-integration"]
+async fn keyboard_interactive_second_round_dismissal_uses_password_candidate() {
+    use std::sync::atomic::Ordering;
+
+    struct CancelSecondRoundThenPassword;
+    #[async_trait::async_trait]
+    impl SshAuthenticator for CancelSecondRoundThenPassword {
+        async fn authenticate(
+            &self,
+            context: &mut dyn SshAuthContext,
+            username: &str,
+            _: &[crate::ssh::AuthMethodRef],
+        ) -> Result<bool, crate::ssh::SshError> {
+            let mut round = 0;
+            let accepted = super::authenticate_keyboard_interactive_with(context, username, |_| {
+                round += 1;
+                async move {
+                    Ok(if round == 1 {
+                        vec!["first-answer".into()]
+                    } else {
+                        vec![]
+                    })
+                }
+            })
+            .await?;
+            assert!(
+                !accepted,
+                "second prompt dismissal must skip the KI candidate"
+            );
+            context
+                .authenticate_password(username, &SecretString::new("saved-secret".into()))
+                .await
+        }
+    }
+
+    const IO: Duration = Duration::from_secs(10);
+    let (port, pinned_key, observations, mut tasks) =
+        start_pending_challenge_server(PendingChallengeCase::SecondRoundThenPassword, None).await;
+    let engine = super::engine::RusshEngine::new(client::Config::default(), IO);
+    let connected = tokio::time::timeout(
+        IO,
+        engine.connect_with_handler(
+            &pending_challenge_target(port),
+            PinnedHostKeyClient(pinned_key),
+            Arc::new(std::sync::Mutex::new(None)),
+            &CancelSecondRoundThenPassword,
+        ),
+    )
+    .await
+    .expect("second-round cancellation fixture timed out")
+    .expect("password candidate should authenticate after second-round dismissal");
+    assert_eq!(
+        *observations.keyboard_interactive_answers.lock().unwrap(),
+        [vec!["first-answer".to_owned()]],
+        "peer must receive the first answer and no response for the dismissed second round"
+    );
+    assert_eq!(
+        observations
+            .keyboard_interactive_starts
+            .load(Ordering::SeqCst),
+        1
+    );
+    assert_eq!(observations.password_requests.load(Ordering::SeqCst), 1);
+    tokio::time::timeout(
+        IO,
+        connected.disconnect(russh::Disconnect::ByApplication, "test complete", "en"),
+    )
+    .await
+    .expect("disconnect fixture timed out")
+    .expect("disconnect fixture failed");
+    tokio::time::timeout(IO, tasks.join_next())
+        .await
+        .expect("server task timed out")
+        .expect("server task ended without a result")
+        .expect("server task failed");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+#[ignore = "requires SSH authentication fixture; run yarn test:ssh-auth-integration"]
+async fn keyboard_interactive_dismissal_can_start_another_candidate() {
+    use std::sync::atomic::Ordering;
+
+    struct CancelThenNewKeyboardInteractiveCandidate;
+    #[async_trait::async_trait]
+    impl SshAuthenticator for CancelThenNewKeyboardInteractiveCandidate {
+        async fn authenticate(
+            &self,
+            context: &mut dyn SshAuthContext,
+            username: &str,
+            _: &[crate::ssh::AuthMethodRef],
+        ) -> Result<bool, crate::ssh::SshError> {
+            let first =
+                super::authenticate_keyboard_interactive_with(context, username, |_| async {
+                    Ok(vec![])
+                })
+                .await?;
+            assert!(!first, "first KI candidate must be dismissed");
+            super::authenticate_keyboard_interactive_with(context, username, |_| async {
+                Ok(vec![String::new()])
+            })
+            .await
+        }
+    }
+
+    const IO: Duration = Duration::from_secs(10);
+    let (port, pinned_key, observations, mut tasks) =
+        start_pending_challenge_server(PendingChallengeCase::NewKeyboardInteractiveCandidate, None)
+            .await;
+    let engine = super::engine::RusshEngine::new(client::Config::default(), IO);
+    let connected = tokio::time::timeout(
+        IO,
+        engine.connect_with_handler(
+            &pending_challenge_target(port),
+            PinnedHostKeyClient(pinned_key),
+            Arc::new(std::sync::Mutex::new(None)),
+            &CancelThenNewKeyboardInteractiveCandidate,
+        ),
+    )
+    .await
+    .expect("new keyboard-interactive candidate fixture timed out")
+    .expect("blank response on the second KI candidate should authenticate");
+    assert_eq!(
+        observations
+            .keyboard_interactive_starts
+            .load(Ordering::SeqCst),
+        2,
+        "peer must observe two distinct keyboard-interactive requests"
+    );
+    assert_eq!(
+        *observations.keyboard_interactive_answers.lock().unwrap(),
+        [vec![String::new()]],
+        "only the second candidate's one blank answer must reach the peer"
+    );
+    assert_eq!(observations.password_requests.load(Ordering::SeqCst), 0);
+    tokio::time::timeout(
+        IO,
+        connected.disconnect(russh::Disconnect::ByApplication, "test complete", "en"),
+    )
+    .await
+    .expect("disconnect fixture timed out")
+    .expect("disconnect fixture failed");
+    tokio::time::timeout(IO, tasks.join_next())
+        .await
+        .expect("server task timed out")
+        .expect("server task ended without a result")
+        .expect("server task failed");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+#[ignore = "requires SSH authentication fixture; run yarn test:ssh-auth-integration"]
+async fn keyboard_interactive_dismissal_uses_private_key_candidate() {
+    use std::sync::atomic::Ordering;
+
+    struct CancelThenPrivateKey(Option<super::engine::PrivateKeyMaterial>);
+    #[async_trait::async_trait]
+    impl SshAuthenticator for CancelThenPrivateKey {
+        async fn authenticate(
+            &self,
+            context: &mut dyn SshAuthContext,
+            username: &str,
+            _: &[crate::ssh::AuthMethodRef],
+        ) -> Result<bool, crate::ssh::SshError> {
+            let dismissed =
+                super::authenticate_keyboard_interactive_with(context, username, |_| async {
+                    Ok(vec![])
+                })
+                .await?;
+            assert!(
+                !dismissed,
+                "KI candidate must be dismissed before attempting the key"
+            );
+            context
+                .authenticate_private_key(
+                    username,
+                    self.0.clone().expect("generated client private key"),
+                )
+                .await
+        }
+    }
+
+    const IO: Duration = Duration::from_secs(10);
+    let (private_key, public_key) = private_key_fixture(false);
+    let (port, pinned_key, observations, mut tasks) =
+        start_pending_challenge_server(PendingChallengeCase::PrivateKeyCandidate, Some(public_key))
+            .await;
+    let engine = super::engine::RusshEngine::new(client::Config::default(), IO);
+    let connected = tokio::time::timeout(
+        IO,
+        engine.connect_with_handler(
+            &pending_challenge_target(port),
+            PinnedHostKeyClient(pinned_key),
+            Arc::new(std::sync::Mutex::new(None)),
+            &CancelThenPrivateKey(Some(private_key)),
+        ),
+    )
+    .await
+    .expect("private-key candidate fixture timed out")
+    .expect("verified private key should authenticate after KI dismissal");
+    assert_eq!(
+        observations
+            .keyboard_interactive_starts
+            .load(Ordering::SeqCst),
+        1
+    );
+    assert!(
+        observations
+            .keyboard_interactive_answers
+            .lock()
+            .unwrap()
+            .is_empty(),
+        "dismissed keyboard-interactive challenge must receive no response"
+    );
+    assert_eq!(observations.key_offers.load(Ordering::SeqCst), 1);
+    assert_eq!(observations.key_requests.load(Ordering::SeqCst), 1);
+    assert!(observations.matched_key.load(Ordering::SeqCst));
+    assert_eq!(observations.password_requests.load(Ordering::SeqCst), 0);
+    tokio::time::timeout(
+        IO,
+        connected.disconnect(russh::Disconnect::ByApplication, "test complete", "en"),
+    )
+    .await
+    .expect("disconnect fixture timed out")
+    .expect("disconnect fixture failed");
+    tokio::time::timeout(IO, tasks.join_next())
+        .await
+        .expect("server task timed out")
+        .expect("server task ended without a result")
+        .expect("server task failed");
+}
+#[cfg(unix)]
+#[tokio::test]
+#[ignore = "requires SSH authentication fixture; run yarn test:ssh-auth-integration"]
+async fn keyboard_interactive_dismissal_uses_real_ssh_agent_candidate() {
+    use std::sync::atomic::Ordering;
+
+    struct CancelThenAgent {
+        socket: String,
+    }
+    #[async_trait::async_trait]
+    impl SshAuthenticator for CancelThenAgent {
+        async fn authenticate(
+            &self,
+            context: &mut dyn SshAuthContext,
+            username: &str,
+            _: &[crate::ssh::AuthMethodRef],
+        ) -> Result<bool, crate::ssh::SshError> {
+            let dismissed =
+                super::authenticate_keyboard_interactive_with(context, username, |_| async {
+                    Ok(vec![])
+                })
+                .await?;
+            assert!(
+                !dismissed,
+                "KI candidate must be dismissed before using the agent"
+            );
+            context
+                .authenticate_agent(username, Some(&self.socket))
+                .await
+        }
+    }
+
+    const IO: Duration = Duration::from_secs(10);
+    let agent_output = Command::new("ssh-agent")
+        .arg("-s")
+        .output()
+        .expect("start isolated ssh-agent");
+    assert!(agent_output.status.success(), "ssh-agent failed to start");
+    let agent_output = String::from_utf8(agent_output.stdout).expect("ssh-agent output is UTF-8");
+    let socket = agent_output
+        .lines()
+        .find_map(|line| line.strip_prefix("SSH_AUTH_SOCK=")?.split(';').next())
+        .map(str::to_owned)
+        .expect("ssh-agent did not report its socket");
+    let pid = agent_output
+        .lines()
+        .find_map(|line| line.strip_prefix("SSH_AGENT_PID=")?.split(';').next())
+        .map(str::to_owned)
+        .expect("ssh-agent did not report its PID");
+    let _agent = SshAgentGuard {
+        pid,
+        socket: socket.clone(),
+    };
+
+    let directory = tempdir().expect("create isolated ssh-agent key directory");
+    let key_path = directory.path().join("fixture_ed25519");
+    let generated = Command::new("ssh-keygen")
+        .args(["-q", "-t", "ed25519", "-N", "", "-f"])
+        .arg(&key_path)
+        .output()
+        .expect("generate synthetic Ed25519 key");
+    assert!(
+        generated.status.success(),
+        "ssh-keygen failed to create fixture key"
+    );
+    let public_key_text =
+        fs::read_to_string(key_path.with_extension("pub")).expect("read synthetic public key");
+    let public_key = parse_public_key_base64(
+        public_key_text
+            .split_whitespace()
+            .nth(1)
+            .expect("synthetic public key is malformed"),
+    )
+    .expect("parse synthetic public key");
+    let added = Command::new("ssh-add")
+        .arg("-q")
+        .arg(&key_path)
+        .env("SSH_AUTH_SOCK", &socket)
+        .output()
+        .expect("load synthetic key into isolated ssh-agent");
+    assert!(added.status.success(), "ssh-add failed to load fixture key");
+
+    let (port, pinned_key, observations, mut tasks) =
+        start_pending_challenge_server(PendingChallengeCase::PrivateKeyCandidate, Some(public_key))
+            .await;
+    let engine = super::engine::RusshEngine::new(client::Config::default(), IO);
+    let connected = tokio::time::timeout(
+        IO,
+        engine.connect_with_handler(
+            &pending_challenge_target(port),
+            PinnedHostKeyClient(pinned_key),
+            Arc::new(std::sync::Mutex::new(None)),
+            &CancelThenAgent { socket },
+        ),
+    )
+    .await
+    .expect("ssh-agent candidate fixture timed out")
+    .expect("ssh-agent key should authenticate after KI dismissal");
+    assert_eq!(
+        observations
+            .keyboard_interactive_starts
+            .load(Ordering::SeqCst),
+        1
+    );
+    assert!(observations
+        .keyboard_interactive_answers
+        .lock()
+        .unwrap()
+        .is_empty());
+    assert_eq!(observations.key_offers.load(Ordering::SeqCst), 1);
+    assert_eq!(observations.key_requests.load(Ordering::SeqCst), 1);
+    assert!(observations.matched_key.load(Ordering::SeqCst));
+    assert_eq!(observations.password_requests.load(Ordering::SeqCst), 0);
+    tokio::time::timeout(
+        IO,
+        connected.disconnect(russh::Disconnect::ByApplication, "test complete", "en"),
+    )
+    .await
+    .expect("disconnect fixture timed out")
+    .expect("disconnect fixture failed");
+    tokio::time::timeout(IO, tasks.join_next())
+        .await
+        .expect("server task timed out")
+        .expect("server task ended without a result")
+        .expect("server task failed");
+}
+
+#[cfg(unix)]
+#[derive(Clone, Copy)]
+enum TerminalPromptOutcome {
+    Closed,
+    Timeout,
+    CancelWithoutCandidate,
+    CancelThenWrongPassword,
+}
+
+#[cfg(unix)]
+struct TerminalPromptAuthenticator(TerminalPromptOutcome);
+
+#[cfg(unix)]
+#[async_trait::async_trait]
+impl SshAuthenticator for TerminalPromptAuthenticator {
+    async fn authenticate(
+        &self,
+        context: &mut dyn SshAuthContext,
+        username: &str,
+        _: &[crate::ssh::AuthMethodRef],
+    ) -> Result<bool, crate::ssh::SshError> {
+        use TerminalPromptOutcome::*;
+        match self.0 {
+            Closed => {
+                super::authenticate_keyboard_interactive_with(context, username, |_| async {
+                    Err(crate::ssh::SshError::Closed)
+                })
+                .await
+            }
+            Timeout => {
+                super::authenticate_keyboard_interactive_with(context, username, |_| async {
+                    Err(crate::ssh::SshError::Timeout)
+                })
+                .await
+            }
+            CancelWithoutCandidate | CancelThenWrongPassword => {
+                let dismissed =
+                    super::authenticate_keyboard_interactive_with(context, username, |_| async {
+                        Ok(vec![])
+                    })
+                    .await?;
+                assert!(!dismissed, "empty response must dismiss this candidate");
+                match self.0 {
+                    CancelWithoutCandidate => Ok(false),
+                    CancelThenWrongPassword => {
+                        context
+                            .authenticate_password(
+                                username,
+                                &SecretString::new("wrong-fixture-password".into()),
+                            )
+                            .await
+                    }
+                    _ => unreachable!(),
+                }
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+#[ignore = "requires SSH authentication fixture; run yarn test:ssh-auth-integration"]
+async fn keyboard_interactive_terminal_outcomes_close_without_stray_auth_requests() {
+    use std::sync::atomic::Ordering;
+
+    use TerminalPromptOutcome::*;
+    const IO: Duration = Duration::from_secs(10);
+    for (name, outcome, expected_password_requests, expected_error) in [
+        ("Closed", Closed, 0, "closed"),
+        ("Timeout", Timeout, 0, "timeout"),
+        (
+            "cancel without candidate",
+            CancelWithoutCandidate,
+            0,
+            "authenticationRejected",
+        ),
+        (
+            "cancel then wrong password",
+            CancelThenWrongPassword,
+            1,
+            "authenticationRejected",
+        ),
+    ] {
+        let (port, pinned_key, observations, mut tasks) =
+            start_pending_challenge_server(PendingChallengeCase::PrivateKeyCandidate, None).await;
+        let engine = super::engine::RusshEngine::new(client::Config::default(), IO);
+        let result = tokio::time::timeout(
+            IO,
+            engine.connect_with_handler(
+                &pending_challenge_target(port),
+                PinnedHostKeyClient(pinned_key),
+                Arc::new(std::sync::Mutex::new(None)),
+                &TerminalPromptAuthenticator(outcome),
+            ),
+        )
+        .await
+        .unwrap_or_else(|_| panic!("{name} outcome exceeded bounded connect timeout"));
+        let error = match result {
+            Err(error) => error,
+            Ok(_) => panic!("{name} unexpectedly authenticated"),
+        };
+        assert_eq!(
+            error.code(),
+            expected_error,
+            "{name} unexpected engine error: {error:?}"
+        );
+        assert_eq!(
+            observations
+                .keyboard_interactive_starts
+                .load(Ordering::SeqCst),
+            1,
+            "{name} must have exactly one peer KI start"
+        );
+        assert!(
+            observations
+                .keyboard_interactive_answers
+                .lock()
+                .unwrap()
+                .is_empty(),
+            "{name} must not send a keyboard-interactive answer"
+        );
+        assert_eq!(
+            observations.password_requests.load(Ordering::SeqCst),
+            expected_password_requests,
+            "{name} peer password request count"
+        );
+        assert_eq!(observations.key_offers.load(Ordering::SeqCst), 0);
+        assert_eq!(observations.key_requests.load(Ordering::SeqCst), 0);
+        assert!(!observations.matched_key.load(Ordering::SeqCst));
+        tokio::time::timeout(IO, tasks.join_next())
+            .await
+            .unwrap_or_else(|_| panic!("{name} server task did not stop"))
+            .expect("server task ended without a result")
+            .expect("server task failed");
+    }
+}

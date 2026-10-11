@@ -10,6 +10,8 @@ mod forwarding;
 mod forwarding_tests;
 mod import;
 mod input;
+#[cfg(test)]
+mod keyboard_interactive_tests;
 mod known_hosts;
 mod lifecycle;
 pub mod model;

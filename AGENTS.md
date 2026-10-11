@@ -638,7 +638,19 @@
   no extra password attempt, clean transport closure, and deletion of only the failed account's
   Keychain item. The destination credential survives hop cancellation; synthetic items and the
   test server were cleaned up. Vault and other platforms still need desktop acceptance.
-  Keyboard-interactive cancellation still needs exact baseline comparison and acceptance.
+  Keyboard-interactive prompt rejection skips the candidate without answering a
+  non-empty challenge. Preserve automatic zero-question replies and submitted blank
+  answers; abort, timeout, and transport errors propagate. The fixed-original source
+  controls verify candidate selection, while its locked native binding stalls after
+  prompt rejection. The pinned local russh patch allows the next authentication request
+  to replace a pending challenge; retain its provenance and rerun the real SSH regression
+  when updating the crate. Native helper and loopback tests cover programmatic rejection,
+  second-round cancellation, password/private-key/ssh-agent fallback, and a new
+  keyboard-interactive candidate. The loopback terminal-outcome controls inject callback
+  Closed/Timeout errors and verify error codes, request counts, and transport closure;
+  they do not measure the production authentication deadline. The shared inline panel
+  has no standalone cancel button;
+  Escape gestures, direct/jump desktop behavior, and other platforms remain pending.
   Closing a pending SSH tab now cancels native setup and aborts its registered prompts.
   A registration acknowledgement repeats cancellation if tab closure preceded native setup.
   Each direct/jump transport observes cancellation during reads and writes, including russh's

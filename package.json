@@ -190,7 +190,7 @@
     "test:plugin-operation": "node scripts/test-plugin-operation-contract.mjs",
     "test:ssh-reconnect": "node scripts/test-ssh-reconnect-contract.mjs && node scripts/test-sftp-delete-cancellation.mjs && node scripts/test-tauri-ssh-actions.mjs && node scripts/test-sftp-links.mjs && node scripts/test-sftp-directory-links.mjs && npm run test:sftp-panel",
     "test:device-reconnect": "node scripts/test-device-reconnect-contract.mjs",
-    "test:ssh-session": "node scripts/test-ssh-session-contract.mjs && node scripts/test-ssh-auth-metadata.mjs && node scripts/test-ssh-agent-config.mjs && node scripts/test-ssh-password-prompt.mjs && node scripts/test-ssh-keyboard-interactive.mjs && node scripts/test-ssh-credential-loading.mjs && node scripts/test-ssh-toolbar-ports.mjs",
+    "test:ssh-session": "node scripts/test-ssh-session-contract.mjs && node scripts/test-ssh-auth-metadata.mjs && node scripts/test-ssh-agent-config.mjs && node scripts/test-ssh-password-prompt.mjs && node scripts/test-ssh-keyboard-interactive.mjs && node scripts/test-ssh-keyboard-interactive-cancellation.mjs && node scripts/test-ssh-credential-loading.mjs && node scripts/test-ssh-toolbar-ports.mjs",
     "test:ssh-config-parser": "cargo test --manifest-path src-tauri/Cargo.toml --lib ssh::import::tests::parses_",
     "test:ssh-import": "cargo test --manifest-path src-tauri/Cargo.toml --lib ssh::import::tests",
     "test:ssh-manager-auth": "cargo test --manifest-path src-tauri/Cargo.toml --lib manager_authenticator",
