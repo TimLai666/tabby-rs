@@ -411,9 +411,11 @@ async function runAllTests () {
             return {
                 host: `hop-${index}.test`, port: 2200 + index, username: `user-${index}`,
                 auth: [{ type: 'providedPassword', password: `secret-${index}` }, ...passwordAuth],
+                loadStoredPassword: true,
             }
         }), `${count} hops must connect outermost first with their own credentials`)
         assert.equal(request.host, 'h'); assert.equal(request.username, 'u')
+        assert.equal(request.loadStoredPassword, true)
         assert.deepEqual(request.auth, [{ type: 'providedPassword', password: 'target-secret' }, ...passwordAuth])
         assert.equal(JSON.stringify([profile, hops]), before, 'chain construction must not mutate profiles')
         assert.deepEqual(normalize((await session.connectRequest()).jumpChain), request.jumpChain, 'repeated requests keep the same order')
@@ -451,8 +453,8 @@ async function runAllTests () {
         const request = normalize(await session.connectRequest())
         assert.deepEqual(resolved, ['inherited', 'builtin-hop'])
         assert.deepEqual(request.jumpChain, [
-            { host: 'outer.test', port: 22, username: 'default-user', auth: [{ type: 'providedPassword', password: 'default-secret' }, ...passwordAuth] },
-            { host: 'inner.test', port: 2222, username: 'group-user', auth: [{ type: 'providedPassword', password: 'group-secret' }, ...passwordAuth] },
+            { host: 'outer.test', port: 22, username: 'default-user', auth: [{ type: 'providedPassword', password: 'default-secret' }, ...passwordAuth], loadStoredPassword: true },
+            { host: 'inner.test', port: 2222, username: 'group-user', auth: [{ type: 'providedPassword', password: 'group-secret' }, ...passwordAuth], loadStoredPassword: true },
         ])
     }
     console.log('SSH jump hosts resolve inherited settings and built-in profiles')

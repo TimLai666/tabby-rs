@@ -1,5 +1,7 @@
 pub mod agent;
 mod agent_transport;
+#[cfg(test)]
+mod credential_loading_tests;
 pub mod engine;
 #[cfg(test)]
 mod engine_integration;
