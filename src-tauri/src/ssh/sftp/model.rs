@@ -16,7 +16,7 @@ pub struct RemoteFileEntry {
     pub is_directory: bool,
     pub is_symlink: bool,
     pub mode: u32,
-    pub size: u64,
+    pub size: Option<u64>,
     pub modified: Option<u64>,
     pub is_operable: bool,
     pub unoperable_reason: Option<String>,

@@ -6,12 +6,18 @@ import { RemoteFileEntry } from '../api/hostBridge'
 import { TauriSftpSession } from './sftp'
 
 export interface TauriSftpPanelFile extends SFTPFile {
+    transferSize: number|undefined
     isOperable: boolean
     unoperableReason?: string|null
 }
 
 function toPanelFile (entry: RemoteFileEntry): TauriSftpPanelFile {
-    return { ...entry, modified: new Date((entry.modified ?? 0) * 1000) }
+    // Preserve the original panel display while retaining unknown size for native transfers.
+    return { ...entry, size: entry.size ?? 0, transferSize: entry.size ?? undefined, modified: new Date((entry.modified ?? 0) * 1000) }
+}
+
+export function getSftpDownloadSize (item: SFTPFile|RemoteFileEntry|TauriSftpPanelFile): number|undefined {
+    return 'transferSize' in item ? item.transferSize : item.size ?? undefined
 }
 
 function toPanelError (error: unknown): Error {

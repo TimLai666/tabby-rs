@@ -145,6 +145,13 @@
   exact binary bytes, nested/empty directories, the unchanged folder chooser,
   delayed startup registration, panel reopening, and partial-error cleanup.
   Keep IPC/file-system fixture results separate from native OS drag gestures.
+- Preserve omitted protocol file sizes as null through Native listing/stat. The
+  Native panel adapter keeps the original numeric-zero display and retains a
+  separate optional transferSize. Use getSftpDownloadSize for direct, followed-link,
+  folder-child, and local-editor downloads. Keep known-zero and known-positive
+  overflow/incomplete-close guards. Native protocol/filesystem and renderer fixtures
+  cover unknown sizes, binary EOF, cancellation, and editor requests; supported
+  desktop acceptance remains pending.
 - Uploads reserve a short random sibling staging name with CREATE, EXCLUDE, and
   WRITE. Keep transfer IDs scoped to their SSH session and retain destination
   overwrite policies. Serialized SFTP-peer regressions verify interleaved binary
@@ -213,16 +220,6 @@
   focusing the forwarding editor restores dismissal. Compare this flow in the
   original desktop before changing shared focus behavior or accepting Escape
   handling after row removal.
-
-## P2 — SFTP peers that omit file size are treated as empty files
-
-- `src-tauri/src/ssh/sftp/backend.rs` maps missing size attributes to zero in
-  RemoteFileEntry, while native download descriptors preserve an optional size.
-  Renderer downloads send the entry's zero as an advertised size, so a nonempty
-  file from such a peer is rejected by the existing transfer size guard.
-- Compare the fixed upstream unknown-size flow and preserve a missing size across
-  listing, stat, renderer transfer setup, and IPC. Keep known-size overflow and
-  incomplete-close guards; link support does not resolve this earlier gap.
 
 ## Pending — SSH tab lifecycle platform acceptance
 

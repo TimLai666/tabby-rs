@@ -14,6 +14,7 @@ const POSIX = path.posix
 
 const sharedPanelSource = fs.readFileSync(path.join(root, 'tabby-ssh/src/components/sftpPanel.controller.ts'), 'utf8')
 const panelSource = fs.readFileSync(path.join(root, 'tabby-tauri/src/ssh/sftpPanel.component.ts'), 'utf8')
+const panelTransportSource = fs.readFileSync(path.join(root, 'tabby-tauri/src/ssh/sftpPanelTransport.ts'), 'utf8')
 const sessionSource = fs.readFileSync(path.join(root, 'tabby-tauri/src/ssh/sftp.ts'), 'utf8')
 const bridgeSource = fs.readFileSync(path.join(root, 'tabby-tauri/src/services/tauriHostBridge.service.ts'), 'utf8')
 const tauriPlatformSource = fs.readFileSync(path.join(root, 'tabby-tauri/src/services/platform.service.ts'), 'utf8')
@@ -57,6 +58,16 @@ function functionText (source, name) {
     assert.ok(fn, `function ${name} must exist`)
     return ts.createPrinter().printNode(ts.EmitHint.Unspecified, fn, tree)
 }
+
+function loadSftpDownloadSize () {
+    const module = { exports: {} }
+    const source = `${functionText(panelTransportSource, 'getSftpDownloadSize')}\nmodule.exports = { getSftpDownloadSize }`
+    const code = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS } }).outputText
+    vm.runInNewContext(code, { module, exports: module.exports, Error }, { filename: 'sftpPanelTransport-helper.js' })
+    return module.exports.getSftpDownloadSize
+}
+
+const getSftpDownloadSize = loadSftpDownloadSize()
 
 function transpile (name, program, globals = {}) {
     const result = { exports: {} }
@@ -146,7 +157,7 @@ native.NativePanel = transpile('native-panel', [
         memberText(panelSource, 'TauriSftpPanelComponent', 'showError'),
     ].join('\n')} }`,
     'module.exports = { NativePanel }',
-].join('\n'), { Error, posixPath: POSIX }).NativePanel
+].join('\n'), { Error, posixPath: POSIX, getSftpDownloadSize }).NativePanel
 
 const REL_TARGET = Buffer.from(Array.from({ length: 64 }, (_, index) => (index * 27 + 191) % 256))
 const ABS_TARGET = Buffer.from([0, 1, 2, 251, 252, 3, 4, 5, 6, 7, 255])

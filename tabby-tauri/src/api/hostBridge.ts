@@ -588,7 +588,7 @@ export interface RemoteFileEntry {
     isDirectory: boolean
     isSymlink: boolean
     mode: number
-    size: number
+    size: number | null
     modified: number | null
     isOperable: boolean
     unoperableReason: string | null
@@ -1055,7 +1055,7 @@ export interface HostRequestMap {
         response: number[]
     }
     'fileEdit.prepare': {
-        request: { name: string; mode: number; size: number }
+        request: { name: string; mode: number; size?: number|null }
         response: { id: string; path: string; transfer: TransferDescriptor }
     }
     'fileEdit.ready': { request: { id: string }; response: null }

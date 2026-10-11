@@ -51,7 +51,7 @@ impl FileEditManager {
         &self,
         name: &str,
         mode: u32,
-        size: u64,
+        size: Option<u64>,
         transfers: &TransferManager,
     ) -> Result<EditableFile, AppError> {
         let directory = tempfile::Builder::new().prefix("tabby-edit-").tempdir()?;
@@ -67,7 +67,7 @@ impl FileEditManager {
             .to_str()
             .ok_or_else(|| AppError::InvalidArgument("editor path is not UTF-8".into()))?
             .to_owned();
-        let transfer = transfers.open_download(name, mode, Some(size), &path_text, None, None)?;
+        let transfer = transfers.open_download(name, mode, size, &path_text, None, None)?;
         self.contexts.lock().unwrap().insert(
             id.clone(),
             EditContext {

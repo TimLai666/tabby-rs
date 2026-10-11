@@ -40,7 +40,7 @@ impl RusshSftpBackend {
             is_directory: metadata.file_type().is_dir(),
             is_symlink: metadata.file_type().is_symlink(),
             mode: metadata.permissions.unwrap_or_default(),
-            size: metadata.size.unwrap_or_default(),
+            size: metadata.size,
             modified: metadata.mtime.map(u64::from),
             is_operable,
             unoperable_reason: (!is_operable).then(|| {

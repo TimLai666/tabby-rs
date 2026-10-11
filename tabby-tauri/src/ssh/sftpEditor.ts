@@ -4,7 +4,7 @@ import { FileDownload, FileUpload, NotificationsService } from 'tabby-core'
 import { SFTPFile } from '../../../tabby-ssh/src/api/sftp'
 import { HostBridge } from '../api/hostBridge'
 import { TauriPlatformService } from '../services/platform.service'
-import { TauriSftpPanelTransport } from './sftpPanelTransport'
+import { getSftpDownloadSize, TauriSftpPanelTransport } from './sftpPanelTransport'
 
 @Injectable({ providedIn: 'root' })
 export class TauriSftpEditor {
@@ -60,7 +60,7 @@ export class TauriSftpEditor {
         }
         try {
             if (sftp.isClosed()) { stop(); return }
-            workspace = await this.platform.prepareEditableFile(item.name, item.mode, item.size)
+            workspace = await this.platform.prepareEditableFile(item.name, item.mode, getSftpDownloadSize(item))
             state.downloading = true
             if (isStopped()) { stop(); return }
             await sftp.download(item.fullPath, workspace.transfer)

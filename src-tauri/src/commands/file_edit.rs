@@ -13,7 +13,7 @@ use tauri::{Emitter, State};
 pub struct PrepareRequest {
     name: String,
     mode: u32,
-    size: u64,
+    size: Option<u64>,
 }
 #[derive(serde::Deserialize)]
 pub struct IdRequest {

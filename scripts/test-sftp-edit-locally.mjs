@@ -7,13 +7,22 @@ import { Subject } from 'rxjs'
 import ts from 'typescript'
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..')
 const code=ts.transpileModule(fs.readFileSync(path.join(root,'tabby-tauri/src/ssh/sftpEditor.ts'),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020,experimentalDecorators:true}}).outputText
+const panelTransportSource=fs.readFileSync(path.join(root,'tabby-tauri/src/ssh/sftpPanelTransport.ts'),'utf8')
+const helperTree=ts.createSourceFile('sftpPanelTransport.ts',panelTransportSource,ts.ScriptTarget.Latest,true)
+const helperNode=helperTree.statements.find(node=>ts.isFunctionDeclaration(node)&&node.name?.text==='getSftpDownloadSize')
+assert.ok(helperNode,'getSftpDownloadSize must be exported by the native panel transport')
+const helperText=ts.createPrinter().printNode(ts.EmitHint.Unspecified,helperNode,helperTree)
+const helperModule={exports:{}}
+const helperCode=ts.transpileModule(`${helperText}\nmodule.exports={getSftpDownloadSize}`,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020}}).outputText
+vm.runInNewContext(helperCode,{module:helperModule,exports:helperModule.exports,Error},{filename:'sftpPanelTransport-helper.js'})
+const getSftpDownloadSize=helperModule.exports.getSftpDownloadSize
 function fixture(options={}) {
     let now=0,seq=0,handler,closed=false;const tasks=new Map(),calls=[],notices=[],ended=new Subject()
     const timeout=(fn,delay)=>{const id=++seq;tasks.set(id,{fn,time:now+delay});return id}
     const flush=async()=>{for(let i=0;i<100;i++)await Promise.resolve()}
     const advance=async ms=>{now+=ms;for(const [id,task] of [...tasks])if(task.time<=now){tasks.delete(id);task.fn()}await flush()}
     const module={exports:{}}
-    vm.runInNewContext(code,{module,exports:module.exports,require:id=>id==='@angular/core'?{Injectable:()=>x=>x}:{},setTimeout:timeout,clearTimeout:id=>tasks.delete(id),Error,console})
+    vm.runInNewContext(code,{module,exports:module.exports,require:id=>id==='@angular/core'?{Injectable:()=>x=>x}:id==='./sftpPanelTransport'?{getSftpDownloadSize}:{},setTimeout:timeout,clearTimeout:id=>tasks.delete(id),Error,console})
     const bridge={
         invoke:async(c,r)=>{calls.push([c,r]);if(options.invoke)return options.invoke(c,r)},
         listen:async(event,fn)=>{calls.push(['listen',event]);handler=fn;if(options.listen)await options.listen();return()=>calls.push(['unlisten'])},

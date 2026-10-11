@@ -10,6 +10,7 @@ import { Subject } from 'rxjs'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const sharedPanelSource = fs.readFileSync(path.join(root, 'tabby-ssh/src/components/sftpPanel.controller.ts'), 'utf8')
 const panelSource = fs.readFileSync(path.join(root, 'tabby-tauri/src/ssh/sftpPanel.component.ts'), 'utf8')
+const panelTransportSource = fs.readFileSync(path.join(root, 'tabby-tauri/src/ssh/sftpPanelTransport.ts'), 'utf8')
 const sessionSource = fs.readFileSync(path.join(root, 'tabby-tauri/src/ssh/sftp.ts'), 'utf8')
 const bridgeSource = fs.readFileSync(path.join(root, 'tabby-tauri/src/services/tauriHostBridge.service.ts'), 'utf8')
 const referenceSource = execFileSync('git', ['show', '14e2d60:tabby-ssh/src/components/sftpPanel.component.ts'], { cwd: root, encoding: 'utf8' })
@@ -44,6 +45,16 @@ function functionText (source, name) {
     assert.ok(fn, `function ${name} must exist`)
     return ts.createPrinter().printNode(ts.EmitHint.Unspecified, fn, tree)
 }
+
+function loadSftpDownloadSize () {
+    const module = { exports: {} }
+    const source = `${functionText(panelTransportSource, 'getSftpDownloadSize')}\nmodule.exports = { getSftpDownloadSize }`
+    const code = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS } }).outputText
+    vm.runInNewContext(code, { module, exports: module.exports, Error }, { filename: 'sftpPanelTransport-helper.js' })
+    return module.exports.getSftpDownloadSize
+}
+
+const getSftpDownloadSize = loadSftpDownloadSize()
 
 function transpile (name, program, globals = {}) {
     const result = { exports: {} }
@@ -203,7 +214,7 @@ function nativePanel (overrides = {}) {
         memberText(panelSource, 'TauriSftpPanelComponent', 'calculateFolderSizeAndUpdate'),
     ].join('\n')
     const FolderController = transpile('FolderController', `class FolderController { ${memberText(sharedPanelSource, 'SFTPPanelController', 'downloadFolder')} }; module.exports = FolderController`, { Error })
-    const panel = instantiate('NativePanel', body, { Error, posixPath: path.posix, FolderController })
+    const panel = instantiate('NativePanel', body, { Error, posixPath: path.posix, FolderController, getSftpDownloadSize })
     panel.notifications = { error: message => calls.errors.push(message) }
     panel.path = '/data'
     panel.showError = error => { calls.errors.push(error instanceof Error ? error.message : String(error)) }

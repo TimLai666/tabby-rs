@@ -169,7 +169,9 @@ async fn actual_editor_file_watch_streams_binary_save_back_and_restores_remote_m
     let mut remote = connect(state.clone()).await;
     let local = TransferManager::default();
     let edits = FileEditManager::default();
-    let edit = edits.prepare("note.bin", 0o100640, 4, &local).unwrap();
+    let edit = edits
+        .prepare("note.bin", 0o100640, Some(4), &local)
+        .unwrap();
     let download = remote.open_download("/note.bin").await.unwrap();
     loop {
         let (bytes, _) = remote.read(&download.id, 2).await.unwrap();

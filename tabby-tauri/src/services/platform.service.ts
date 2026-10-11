@@ -93,7 +93,7 @@ export class TauriPlatformService extends PlatformService {
         return this.configPath
     }
 
-    async startDownload (name: string, mode: number, size: number): Promise<FileDownload|null> {
+    async startDownload (name: string, mode: number, size?: number): Promise<FileDownload|null> {
         const path = await this.bridge.invoke('dialog.save', {
             fileName: sanitizeTransferName(name),
             title: null,
@@ -112,14 +112,14 @@ export class TauriPlatformService extends PlatformService {
         return transfer
     }
 
-    async prepareEditableFile (name: string, mode: number, size: number): Promise<{ id: string; path: string; transfer: FileDownload }> {
+    async prepareEditableFile (name: string, mode: number, size?: number): Promise<{ id: string; path: string; transfer: FileDownload }> {
         const edit = await this.bridge.invoke('fileEdit.prepare', { name, mode, size })
         const transfer = new TauriFileDownload(this.bridge, edit.transfer.id, edit.transfer.name, size)
         this.fileTransferStarted.next(transfer)
         return { id: edit.id, path: edit.path, transfer }
     }
 
-    async startDownloadDirectory (name: string, estimatedSize = 0): Promise<DirectoryDownload|null> {
+    async startDownloadDirectory (name: string, estimatedSize = 0): Promise<TauriDirectoryDownload|null> {
         const basePath = await this.pickDirectory()
         if (!basePath) {
             return null
@@ -740,20 +740,20 @@ class TauriFileDownload extends FileDownload {
         private bridge: HostBridge,
         id: string,
         private name: string,
-        private size: number,
+        private size: number|undefined,
     ) {
         super(id)
-        this.setTotalSize(size)
+        this.setTotalSize(size ?? 0)
     }
 
     getName (): string { return this.name }
-    getSize (): number { return this.size }
+    getSize (): number { return this.size ?? 0 }
 
     async write (buffer: Uint8Array): Promise<void> {
         await this.bridge.invoke('transfer.write', { id: this.id, data: Array.from(buffer) })
         this.setRunning()
         this.increaseProgress(buffer.length)
-        if (this.getCompletedBytes() >= this.size) {
+        if (this.getCompletedBytes() >= this.getSize()) {
             this.setCompleted(true)
         }
     }
@@ -772,7 +772,7 @@ class TauriFileDownload extends FileDownload {
     }
 }
 
-class TauriDirectoryDownload extends DirectoryDownload {
+export class TauriDirectoryDownload extends DirectoryDownload {
     constructor (
         private bridge: HostBridge,
         private basePath: string,
@@ -793,7 +793,7 @@ class TauriDirectoryDownload extends DirectoryDownload {
         })
     }
 
-    async createFile (relativePath: string, mode: number, size: number): Promise<FileDownload> {
+    async createFile (relativePath: string, mode: number, size?: number): Promise<FileDownload> {
         const safePath = `${sanitizeTransferName(this.name)}/${sanitizeTransferRelativePath(relativePath)}`
         const descriptor = await this.bridge.invoke('transfer.openDownload', {
             name: relativePath,

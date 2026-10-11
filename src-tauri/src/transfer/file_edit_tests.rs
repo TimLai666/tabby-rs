@@ -7,7 +7,7 @@ fn downloaded(
     bytes: &[u8],
 ) -> EditableFile {
     let edit = manager
-        .prepare("../edit.bin", 0o640, bytes.len() as u64, transfers)
+        .prepare("../edit.bin", 0o640, Some(bytes.len() as u64), transfers)
         .unwrap();
     transfers.write(&edit.transfer.id, bytes).unwrap();
     transfers.close(&edit.transfer.id).unwrap();
@@ -125,7 +125,9 @@ fn unknown_workspace_ids_are_rejected_and_stop_is_idempotent() {
 fn incomplete_download_never_becomes_an_editable_file() {
     let manager = FileEditManager::default();
     let transfers = TransferManager::default();
-    let edit = manager.prepare("note.txt", 0o600, 7, &transfers).unwrap();
+    let edit = manager
+        .prepare("note.txt", 0o600, Some(7), &transfers)
+        .unwrap();
     assert!(manager.ready(&edit.id).is_err());
     transfers.cancel(&edit.transfer.id).unwrap();
     manager.stop(&edit.id).unwrap();

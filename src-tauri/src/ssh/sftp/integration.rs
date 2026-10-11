@@ -493,7 +493,7 @@ async fn runs_real_ssh_shell_and_sftp_lifecycle() {
         .stat("tabby-rs-fixture/data.txt", true)
         .await
         .expect("stat uploaded file");
-    assert_eq!(entry.size, payload.len() as u64);
+    assert_eq!(entry.size, Some(payload.len() as u64));
 
     let download = sftp
         .open_download("tabby-rs-fixture/data.txt")
@@ -664,7 +664,7 @@ mod link_acceptance {
         let target_entry = entry(&listing, "target.bin");
         assert!(!target_entry.is_symlink);
         assert!(!target_entry.is_directory);
-        assert_eq!(target_entry.size, BINARY_PAYLOAD.len() as u64);
+        assert_eq!(target_entry.size, Some(BINARY_PAYLOAD.len() as u64));
         let rel_listing = entry(&listing, "file-rel.link");
         assert!(
             rel_listing.is_symlink,
@@ -687,7 +687,7 @@ mod link_acceptance {
             .expect("stat target file");
         assert!(!target_lstat.is_symlink);
         assert_eq!(target_lstat.mode, target_follow.mode);
-        assert_eq!(target_follow.size, BINARY_PAYLOAD.len() as u64);
+        assert_eq!(target_follow.size, Some(BINARY_PAYLOAD.len() as u64));
 
         for (alias, name, link_target) in [
             (&file_rel, "file-rel.link", "target.bin"),
@@ -702,7 +702,7 @@ mod link_acceptance {
             assert!(!lstat.is_directory);
             assert_eq!(
                 lstat.size,
-                link_target.len() as u64,
+                Some(link_target.len() as u64),
                 "lstat size is the raw link length for {name}"
             );
             let follow = sftp
@@ -711,7 +711,7 @@ mod link_acceptance {
                 .unwrap_or_else(|error| panic!("stat {name} failed: {error}"));
             assert!(!follow.is_symlink, "follow must resolve {name}");
             assert!(!follow.is_directory);
-            assert_eq!(follow.size, BINARY_PAYLOAD.len() as u64);
+            assert_eq!(follow.size, Some(BINARY_PAYLOAD.len() as u64));
             assert_eq!(follow.mode, target_follow.mode, "followed mode for {name}");
             assert_ne!(lstat.mode, follow.mode, "lstat/follow mode for {name}");
         }

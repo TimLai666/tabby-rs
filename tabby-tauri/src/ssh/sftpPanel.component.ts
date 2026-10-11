@@ -8,8 +8,9 @@ import { TauriSftpEditor } from './sftpEditor'
 import { SFTPPanelController } from '../../../tabby-ssh/src/components/sftpPanel.controller'
 
 import { RemoteFileEntry } from '../api/hostBridge'
+import { TauriDirectoryDownload, TauriPlatformService } from '../services/platform.service'
 import { TauriSshSession } from './session'
-import { TauriSftpPanelTransport } from './sftpPanelTransport'
+import { getSftpDownloadSize, TauriSftpPanelTransport } from './sftpPanelTransport'
 import { TauriSftpDeleteModalComponent } from './sftpDeleteModal.component'
 
 @Component({
@@ -21,7 +22,7 @@ export class TauriSftpPanelComponent extends SFTPPanelController<TauriSftpPanelT
     @Input() session!: TauriSshSession
 
     constructor (
-        platform: PlatformService,
+        @Inject(PlatformService) public override platform: TauriPlatformService,
         notifications: NotificationsService,
         ngbModal: NgbModal,
         private translate: TranslateService,
@@ -55,7 +56,7 @@ export class TauriSftpPanelComponent extends SFTPPanelController<TauriSftpPanelT
                 if (stat.isDirectory) {
                     await this.navigate(item.fullPath)
                 } else {
-                    const transfer = await this.platform.startDownload(item.name, stat.mode, stat.size)
+                    const transfer = await this.platform.startDownload(item.name, stat.mode, getSftpDownloadSize(stat))
                     if (transfer) { await this.sftp.download(item.fullPath, transfer) }
                 }
             } catch (error) {
@@ -71,7 +72,7 @@ export class TauriSftpPanelComponent extends SFTPPanelController<TauriSftpPanelT
     async download (item: SFTPFile|RemoteFileEntry|string, requestedMode?: number, requestedSize?: number): Promise<void> {
         if (typeof item === 'string') {
             try {
-                const transfer = await this.platform.startDownload(posixPath.basename(item), requestedMode ?? 0o644, requestedSize ?? 0)
+                const transfer = await this.platform.startDownload(posixPath.basename(item), requestedMode ?? 0o644, requestedSize)
                 if (transfer) { await this.sftp.download(item, transfer) }
             } catch (error) { this.showError(error) }
             return
@@ -82,21 +83,21 @@ export class TauriSftpPanelComponent extends SFTPPanelController<TauriSftpPanelT
         }
         let directory = item.isDirectory
         let mode = item.mode
-        let size = item.size
+        let size = getSftpDownloadSize(item)
         if (item.isSymlink) {
             try {
                 const target = posixPath.resolve(posixPath.dirname(item.fullPath), await this.sftp.readlink(item.fullPath))
                 const stat = await this.sftp.stat(target, true)
                 directory = stat.isDirectory
                 mode = stat.mode
-                size = stat.size
+                size = getSftpDownloadSize(stat)
             } catch (error) {
                 this.showError(error)
                 return
             }
         }
         if (directory) {
-            const folder: SFTPFile = { ...item, modified: item.modified instanceof Date ? item.modified : new Date((item.modified ?? 0) * 1000) }
+            const folder: SFTPFile = { ...item, size: item.size ?? 0, modified: item.modified instanceof Date ? item.modified : new Date((item.modified ?? 0) * 1000) }
             try { await super.downloadFolder(folder) } catch { /* The shared controller already reports the error. */ }
             return
         }
@@ -118,11 +119,11 @@ export class TauriSftpPanelComponent extends SFTPPanelController<TauriSftpPanelT
         return totalSize
     }
 
-    protected override async downloadFolderRecursive (folder: SFTPFile, transfer: DirectoryDownload, relativePath: string): Promise<void> {
+    protected override async downloadFolderRecursive (folder: SFTPFile, transfer: TauriDirectoryDownload, relativePath: string): Promise<void> {
         await this.downloadDirectory(folder, transfer, relativePath)
     }
 
-    private async downloadDirectory (folder: SFTPFile|RemoteFileEntry, transfer: DirectoryDownload, relativePath: string): Promise<void> {
+    private async downloadDirectory (folder: SFTPFile|RemoteFileEntry, transfer: TauriDirectoryDownload, relativePath: string): Promise<void> {
         for (const item of await this.sftp.readdir(folder.fullPath)) {
             if (!item.isOperable) { continue }
             if (transfer.isCancelled()) { throw new Error('Download cancelled') }
@@ -132,7 +133,7 @@ export class TauriSftpPanelComponent extends SFTPPanelController<TauriSftpPanelT
                 await transfer.createDirectory(next)
                 await this.downloadDirectory(item, transfer, next)
             } else {
-                const size = item.isSymlink ? (await this.sftp.stat(item.fullPath, true)).size : item.size
+                const size = getSftpDownloadSize(item.isSymlink ? await this.sftp.stat(item.fullPath, true) : item)
                 const file = await transfer.createFile(next, item.mode, size)
                 await this.sftp.download(item.fullPath, file)
             }
