@@ -153,7 +153,9 @@ export class TauriSshSession extends BaseSession {
             }),
             this.bridge.listen('ssh:authPrompt', prompt => {
                 if (prompt.connectionId === this.connectionId) {
-                    if (prompt.username === true || Boolean(prompt.password ?? prompt.privateKeyHash)) {
+                    if (prompt.storedPassword) {
+                        void this.handleStoredPasswordPrompt(prompt)
+                    } else if (prompt.username === true || Boolean(prompt.password ?? prompt.privateKeyHash)) {
                         void this.handleCredentialPrompt(prompt)
                     } else {
                         this.authPrompt.next(prompt)
@@ -366,6 +368,7 @@ export class TauriSshSession extends BaseSession {
             x11Display: this.injector.get(ConfigService).store.ssh.x11Display || null,
             agentForward: !!options.agentForward,
             agentForwarding,
+            loadStoredPassword: true,
             jumpChain: await this.jumpChain(options.jumpHost),
         }
     }
@@ -442,6 +445,7 @@ export class TauriSshSession extends BaseSession {
                 port: jumpOptions.port ?? 22,
                 username: jumpOptions.user || null,
                 auth: await this.authForOptions(jumpOptions),
+                loadStoredPassword: true,
             })
             current = jumpOptions.jumpHost
         }
@@ -562,6 +566,33 @@ export class TauriSshSession extends BaseSession {
                     this.pendingPasswords.delete(prompt.requestId)
                     this.pendingPassphrases.delete(prompt.requestId)
                     this.logger.warn('SSH credential response could not be sent')
+                })
+            }
+        }
+    }
+
+    private async handleStoredPasswordPrompt (prompt: SshAuthPrompt): Promise<void> {
+        const target = prompt.storedPassword
+        if (!target || !prompt.requestId || this.destroying || this.credentialModals.has(prompt.requestId)) {
+            return
+        }
+        this.credentialModals.set(prompt.requestId, null)
+        let responses: string[] = []
+        let abort = false
+        try {
+            const profile: SSHProfile = {
+                ...this.profile,
+                options: { ...this.profile.options, host: target.host, port: target.port, user: target.username },
+            }
+            const saved = await this.injector.get(TauriPasswordStorageService).loadPassword(profile, target.username)
+            if (!this.credentialModals.has(prompt.requestId)) { return }
+            responses = [saved ?? '']
+        } catch {
+            abort = true
+        } finally {
+            if (this.credentialModals.delete(prompt.requestId)) {
+                await this.bridge.invoke('ssh.authResponse', { requestId: prompt.requestId, responses, ...abort ? { abort: true } : {} }).catch(() => {
+                    this.logger.warn('SSH stored password response could not be sent')
                 })
             }
         }

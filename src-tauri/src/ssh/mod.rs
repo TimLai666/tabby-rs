@@ -497,6 +497,7 @@ impl SshAuthenticator for ManagerAuthenticator<'_> {
                                 echo: true,
                             }],
                             username: true,
+                            stored_password: None,
                             keyboard_interactive: None,
                             saved_password: None,
                             password: None,
@@ -518,12 +519,18 @@ impl SshAuthenticator for ManagerAuthenticator<'_> {
         } else {
             methods
         };
+        let prepared_password = prepare_stored_password(&self.request, username, |prompt| async {
+            let app = self.app.as_ref().ok_or(SshError::Closed)?;
+            self.manager.prompt_for_responses(app, prompt).await
+        })
+        .await?;
         let passwords = resolve_auth_passwords(
             methods,
             &self.request,
             username,
             self.secrets,
             self.credentials,
+            prepared_password.as_ref(),
         )?;
         if context.authenticate_none(username).await? {
             return Ok(true);
@@ -583,6 +590,7 @@ impl SshAuthenticator for ManagerAuthenticator<'_> {
                                     username: username.into(),
                                 }),
                                 username: false,
+                                stored_password: None,
                                 keyboard_interactive: None,
                                 saved_password: None,
                                 private_key_hash: None,
@@ -644,6 +652,7 @@ impl SshAuthenticator for ManagerAuthenticator<'_> {
                                             name: "Private key passphrase".into(),
                                             password: None,
                                             username: false,
+                                            stored_password: None,
                                             keyboard_interactive: None,
                                             saved_password: None,
                                             private_key_hash: Some(hex::encode(Sha512::digest(
@@ -2751,6 +2760,7 @@ fn keyboard_interactive_prompt(
             })
             .collect(),
         username: false,
+        stored_password: None,
         password: None,
         private_key_hash: None,
         keyboard_interactive: Some(SshPasswordPromptTarget {
@@ -2859,6 +2869,7 @@ fn jump_request(
         port: hop.port,
         username: hop.username.clone(),
         auth: hop.auth.clone(),
+        load_stored_password: hop.load_stored_password,
         terminal: root.terminal.clone(),
         keepalive: root.keepalive.clone(),
         environment: BTreeMap::new(),
@@ -2890,6 +2901,54 @@ fn validate_forwarding_request(request: &SshForwardingRequest) -> Result<(), Ssh
     Ok(())
 }
 
+async fn prepare_stored_password<F, Fut>(
+    request: &SshConnectRequest,
+    username: &str,
+    load: F,
+) -> Result<Option<Option<secrecy::SecretString>>, SshError>
+where
+    F: FnOnce(SshAuthPrompt) -> Fut,
+    Fut: std::future::Future<Output = Result<Vec<String>, SshError>>,
+{
+    if !request.load_stored_password {
+        return Ok(None);
+    }
+    let prompt = SshAuthPrompt {
+        request_id: String::new(),
+        id: request.profile_id.clone(),
+        connection_id: request
+            .connection_id
+            .clone()
+            .unwrap_or_else(|| request.profile_id.clone()),
+        name: String::new(),
+        instructions: String::new(),
+        prompts: Vec::new(),
+        username: false,
+        password: None,
+        stored_password: Some(SshPasswordPromptTarget {
+            host: request.host.clone(),
+            port: request.port,
+            username: username.to_owned(),
+        }),
+        private_key_hash: None,
+        keyboard_interactive: None,
+        saved_password: None,
+    };
+    let mut responses = zeroize::Zeroizing::new(load(prompt).await?);
+    if responses.len() != 1 {
+        return Err(SshError::InvalidRequest(
+            "one stored password response is required".into(),
+        ));
+    }
+    let password = responses.remove(0);
+    let password = if password.is_empty() {
+        None
+    } else {
+        Some(secrecy::SecretString::new(password))
+    };
+    Ok(Some(password))
+}
+
 fn auth_method_name(method: &AuthMethodRef) -> &'static str {
     match method {
         AuthMethodRef::ProvidedPassword { .. }
@@ -2912,6 +2971,7 @@ fn resolve_auth_passwords(
     username: &str,
     secrets: &SecretState,
     credentials: &CredentialState,
+    prepared_password: Option<&Option<secrecy::SecretString>>,
 ) -> Result<ResolvedAuthPasswords, SshError> {
     // Snapshot stored credentials before interactive panels can save new values.
     let mut saved = std::collections::HashMap::<String, Option<secrecy::SecretString>>::new();
@@ -2935,19 +2995,23 @@ fn resolve_auth_passwords(
                 _ => return Ok(None),
             };
             if !saved.contains_key(reference) {
-                let value = match resolve_password_ref(
-                    reference,
-                    request,
-                    username,
-                    secrets,
-                    credentials,
-                ) {
-                    Ok(value) => value.filter(|value| !value.expose_secret().is_empty()),
-                    Err(SshError::AuthenticationRejected) => {
-                        storage_unavailable = true;
-                        None
+                let uses_renderer_snapshot = matches!(
+                    reference.as_str(),
+                    "ssh-password://vault" | "ssh-password://keychain"
+                ) && prepared_password.is_some();
+                let value = if uses_renderer_snapshot {
+                    prepared_password
+                        .and_then(|password| password.clone())
+                        .filter(|value| !value.expose_secret().is_empty())
+                } else {
+                    match resolve_password_ref(reference, request, username, secrets, credentials) {
+                        Ok(value) => value.filter(|value| !value.expose_secret().is_empty()),
+                        Err(SshError::AuthenticationRejected) => {
+                            storage_unavailable = true;
+                            None
+                        }
+                        Err(error) => return Err(error),
                     }
-                    Err(error) => return Err(error),
                 };
                 saved.insert(reference.clone(), value);
             }
@@ -3460,6 +3524,7 @@ mod tests {
             agent_forward: false,
             agent_forwarding: None,
             jump_chain: Vec::new(),
+            load_stored_password: false,
         }
     }
 
@@ -3721,6 +3786,7 @@ mod tests {
                 port: 22,
                 username: Some("alice".into()),
                 auth: Vec::new(),
+                load_stored_password: false,
             })
             .collect();
         assert!(validate_request(&value).is_ok());
@@ -4604,6 +4670,7 @@ mod tests {
                 "alice",
                 &secrets,
                 &credentials,
+                None,
             )
             .unwrap();
             let values: Vec<_> = prepared
@@ -4628,6 +4695,7 @@ mod tests {
                 "other-user",
                 &secrets,
                 &credentials,
+                None,
             )
             .unwrap();
             assert!(isolated.values[2].is_none());
@@ -4662,9 +4730,15 @@ mod tests {
             {"type":"password","secretRef":"ssh-password://vault"}
         ]))
         .unwrap();
-        let prepared =
-            super::resolve_auth_passwords(&methods, &request(), "alice", &secrets, &credentials)
-                .unwrap();
+        let prepared = super::resolve_auth_passwords(
+            &methods,
+            &request(),
+            "alice",
+            &secrets,
+            &credentials,
+            None,
+        )
+        .unwrap();
         secrets
             .replace(
                 snapshot("new-secret"),
@@ -4683,9 +4757,15 @@ mod tests {
             let mut target = request();
             target.host = host.into();
             target.port = port;
-            let prepared =
-                super::resolve_auth_passwords(&methods, &target, username, &secrets, &credentials)
-                    .unwrap();
+            let prepared = super::resolve_auth_passwords(
+                &methods,
+                &target,
+                username,
+                &secrets,
+                &credentials,
+                None,
+            )
+            .unwrap();
             assert!(prepared.values.iter().all(Option::is_none));
         }
         let legacy: AuthMethodRef =

@@ -24,6 +24,8 @@ pub struct SshConnectRequest {
     pub agent_forwarding: Option<AgentForwardingOptions>,
     #[serde(default)]
     pub jump_chain: Vec<SshJumpRequest>,
+    #[serde(default)]
+    pub load_stored_password: bool,
 }
 
 impl SshConnectRequest {
@@ -46,6 +48,8 @@ pub struct AgentForwardingOptions {
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SshJumpRequest {
+    #[serde(default)]
+    pub load_stored_password: bool,
     pub host: String,
     pub port: u16,
     pub username: Option<String>,
@@ -287,6 +291,8 @@ pub struct SshAuthPrompt {
     pub username: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub password: Option<SshPasswordPromptTarget>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stored_password: Option<SshPasswordPromptTarget>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub private_key_hash: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

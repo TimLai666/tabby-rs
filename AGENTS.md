@@ -614,12 +614,21 @@
   a Keychain item, one rejection preserves it, and final rejection removes only that item.
   A separate destination credential survives hop rejection. Synthetic items and servers
   were cleaned up. Vault persistence and other platforms still need desktop acceptance.
-- Password lookup must distinguish a missing item from an unreadable store. If a candidate's
-  saved-password lookup fails, exhaustion currently omits the deletion target and allows
-  other authentication candidates to run. This prevents deleting an untried saved password;
-  it does not complete upstream parity. Upstream loads passwords after resolving the account
-  and before authentication. Align Vault unlocking and candidate preparation, including
-  explicit key-only modes, before accepting this flow.
+- Renderer direct and jump requests load stored passwords through the existing password
+  storage service after account resolution and before any authentication method, including
+  none, key-only, and agent modes. Native password and keyboard-interactive candidates use
+  that per-target snapshot without a second store read. Vault unlock rejection or cancellation
+  aborts the connection without a password-deletion target. Keychain read exceptions retain
+  the fixed upstream service contract: they become a missing password, so later candidate
+  exhaustion can request deletion. Legacy native lookups retain their unreadable-store
+  protection. Closing or failing a connection aborts registered native waiters and prevents
+  late credential replies. The shared Vault unlock prompt
+  can remain open for other consumers; session closure does not cancel that global prompt.
+  Renderer fixtures exercise actual session/storage/Vault classes with simulated IPC;
+  native tests cover preparation, snapshots, legacy defaults, and jump flags. Real desktop
+  Vault unlock, expiration, cancellation, mixed jump authentication, and other supported
+  platforms still need acceptance. Requests without the optional loading flag retain the
+  native lookup path, including its existing legacy Vault selector behavior.
 - Password prompt dismissal now skips that candidate, matching upstream, and can delete
   the stored password on final exhaustion. An explicit abort response distinguishes prompt
   setup failure and session teardown from dismissal; abort closes the native waiter without

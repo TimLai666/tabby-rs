@@ -407,9 +407,11 @@ export interface SshConnectRequest {
     agentForward?: boolean
     agentForwarding?: AgentForwardingOptions|null
     jumpChain?: SshJumpRequest[]
+    loadStoredPassword?: boolean
 }
 
 export interface SshJumpRequest {
+    loadStoredPassword?: boolean
     host: string
     port: number
     username?: string|null
@@ -628,6 +630,7 @@ export interface SshAuthPrompt {
     prompts: { text: string; echo: boolean }[]
     username?: boolean
     password?: { host: string; port: number; username: string }
+    storedPassword?: { host: string; port: number; username: string }
     privateKeyHash?: string
     keyboardInteractive?: { host: string; port: number; username: string }
     savedPassword?: string
