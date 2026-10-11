@@ -202,6 +202,16 @@
   native existing-file overwrite and Edit locally against that behavior, including
   commit failures and destination preservation, before accepting upload parity.
 
+## P2 — Native local editing advertises the listed symbolic-link size
+
+- The native context menu offers Edit locally for symbolic links. Editor
+  preparation forwards the listed link size, while the download reads target
+  file bytes. The local known-size guard rejects the transfer when link-text
+  length and target-file length differ.
+- Compare fixed `14e2d60` editor metadata and display before changing this flow.
+  Cover known link length, target bytes, EOF, and cleanup; preserve valid
+  file-size guards and the original visible transfer behavior.
+
 ## P2 — Folder file-link downloads inherit the upstream link mode
 
 - Fixed `14e2d60` folder downloads pass each listed item's mode to createFile,
