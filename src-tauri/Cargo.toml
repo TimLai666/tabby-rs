@@ -77,3 +77,6 @@ objc2-app-kit = { version = "0.3", default-features = false, features = ["std", 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"
 keyring = { version = "=3.6.3", default-features = false, features = ["sync-secret-service", "crypto-rust"] }
+
+[patch.crates-io]
+russh = { path = "vendor/russh" }

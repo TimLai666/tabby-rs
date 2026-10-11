@@ -728,40 +728,23 @@ impl SshAuthenticator for ManagerAuthenticator<'_> {
                     }
                 }
                 AuthMethodRef::KeyboardInteractive { .. } => {
-                    let mut response = context
-                        .authenticate_keyboard_interactive_start(username)
-                        .await?;
-                    loop {
-                        match response {
-                            KeyboardInteractiveResponse::Success => break Ok(true),
-                            KeyboardInteractiveResponse::Failure => break Ok(false),
-                            KeyboardInteractiveResponse::Prompt(prompt) => {
-                                if prompt.prompts.is_empty() {
-                                    response = context
-                                        .authenticate_keyboard_interactive_respond(Vec::new())
-                                        .await?;
-                                    continue;
-                                }
-                                let mut responses = self
-                                    .manager
-                                    .prompt_for_responses(
-                                        self.app.as_ref().ok_or(SshError::Closed)?,
-                                        keyboard_interactive_prompt(
-                                            &self.request,
-                                            username,
-                                            prompt,
-                                            passwords.values[index].clone(),
-                                        ),
-                                    )
-                                    .await?;
-                                let result = context
-                                    .authenticate_keyboard_interactive_respond(responses.clone())
-                                    .await;
-                                responses.zeroize();
-                                response = result?;
-                            }
+                    authenticate_keyboard_interactive_with(context, username, |prompt| {
+                        let saved_password = passwords.values[index].clone();
+                        async move {
+                            self.manager
+                                .prompt_for_responses(
+                                    self.app.as_ref().ok_or(SshError::Closed)?,
+                                    keyboard_interactive_prompt(
+                                        &self.request,
+                                        username,
+                                        prompt,
+                                        saved_password,
+                                    ),
+                                )
+                                .await
                         }
-                    }
+                    })
+                    .await
                 }
             }?;
             if result {
@@ -778,6 +761,43 @@ impl SshAuthenticator for ManagerAuthenticator<'_> {
             port: self.request.port,
             username: username.into(),
         }))
+    }
+}
+
+async fn authenticate_keyboard_interactive_with<F, Fut>(
+    context: &mut dyn SshAuthContext,
+    username: &str,
+    mut prompt: F,
+) -> Result<bool, SshError>
+where
+    F: FnMut(engine::KeyboardInteractivePrompt) -> Fut,
+    Fut: std::future::Future<Output = Result<Vec<String>, SshError>>,
+{
+    let mut response = context
+        .authenticate_keyboard_interactive_start(username)
+        .await?;
+    loop {
+        match response {
+            KeyboardInteractiveResponse::Success => return Ok(true),
+            KeyboardInteractiveResponse::Failure => return Ok(false),
+            KeyboardInteractiveResponse::Prompt(challenge) => {
+                if challenge.prompts.is_empty() {
+                    response = context
+                        .authenticate_keyboard_interactive_respond(Vec::new())
+                        .await?;
+                    continue;
+                }
+                let mut responses = prompt(challenge).await?;
+                if responses.is_empty() {
+                    return Ok(false);
+                }
+                let result = context
+                    .authenticate_keyboard_interactive_respond(responses.clone())
+                    .await;
+                responses.zeroize();
+                response = result?;
+            }
+        }
     }
 }
 
