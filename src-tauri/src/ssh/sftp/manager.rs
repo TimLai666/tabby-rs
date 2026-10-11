@@ -1,5 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
+use rand::{rngs::OsRng, RngCore};
 use russh_sftp::{
     client::{fs::File, SftpSession},
     protocol::OpenFlags,
@@ -133,13 +134,21 @@ impl SftpManager {
             ));
         }
         let id = self.next_transfer_id();
-        let temp_path = format!("{final_path}.tabby-upload-{id}");
+        let mut nonce = [0_u8; 16];
+        OsRng
+            .try_fill_bytes(&mut nonce)
+            .map_err(|error| SshError::Sftp(format!("could not reserve upload name: {error}")))?;
+        let parent = final_path
+            .rsplit_once('/')
+            .map(|(parent, _)| if parent.is_empty() { "/" } else { parent })
+            .unwrap_or(".");
+        let temp_path = path::join(parent, &format!(".tabby-upload-{}", hex::encode(nonce)))?;
         let file = self
             .backend
             .session
             .open_with_flags(
                 temp_path.clone(),
-                OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE,
+                OpenFlags::CREATE | OpenFlags::EXCLUDE | OpenFlags::WRITE,
             )
             .await
             .map_err(|error| SshError::Sftp(error.to_string()))?;

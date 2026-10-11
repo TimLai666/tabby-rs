@@ -145,10 +145,15 @@
   exact binary bytes, nested/empty directories, the unchanged folder chooser,
   delayed startup registration, panel reopening, and partial-error cleanup.
   Keep IPC/file-system fixture results separate from native OS drag gestures.
+- Uploads reserve a short random sibling staging name with CREATE, EXCLUDE, and
+  WRITE. Keep transfer IDs scoped to their SSH session and retain destination
+  overwrite policies. Serialized SFTP-peer regressions verify interleaved binary
+  uploads, cancellation before/after another completion, session shutdown,
+  existing-stage collisions, rename/size error cleanup, and long remote names.
+  These checks establish staging ownership; desktop acceptance remains pending.
 - Still pending: native drag-over hints, original desktop comparison, and supported
   desktop acceptance of native file drops, editing, menu extensions, and folder
   progress.
-  Cross-session upload temporary-name collisions retain their separate P1 entry.
   Verify these before accepting full SFTP parity.
 - Native SFTP resolves remote symbolic links with `readlink` and followed `stat`,
   retaining the alias name/path for downloads and directory navigation. Resolve
@@ -180,17 +185,15 @@
   Refresh after partial errors as well. Component destruction only stops further
   operations and must not close an already closed modal again.
 
-## P1 — SFTP concurrent uploads share temporary names
+## P1 — Native SFTP cannot overwrite an existing OpenSSH destination
 
-- Each SftpManager starts its transfer counter at zero and opens
-  `{final_path}.tabby-upload-{id}` with CREATE, TRUNCATE, and WRITE. Two SSH
-  sessions uploading the same destination can truncate or mix the same temporary
-  file; completion or cancellation can remove the other session's file. This
-  behavior already exists in the base commit.
-- Give each upload a unique temporary path and atomically create it without
-  truncating an existing upload. Verify simultaneous sessions, independent
-  cancellation, rename failure, and destination preservation with an isolated
-  SSH/SFTP peer before accepting concurrent-upload behavior.
+- `SftpManager::close` uses the backend's ordinary SFTP RENAME. OpenSSH rejects
+  that request when the destination already exists. Isolated real-OpenSSH checks
+  reproduce the error before and after the staging-ownership fix, preserve the
+  existing bytes, and clean up the owned test directory.
+- Fixed `14e2d60` upload unlinks the destination before renaming its stage. Verify
+  native existing-file overwrite and Edit locally against that behavior, including
+  commit failures and destination preservation, before accepting upload parity.
 
 ## P2 — Folder file-link downloads inherit the upstream link mode
 
