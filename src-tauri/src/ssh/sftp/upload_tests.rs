@@ -11,7 +11,7 @@ use std::{
     time::Duration,
 };
 use tokio::{
-    net::{TcpListener, TcpStream},
+    io::duplex,
     time::{sleep, timeout},
 };
 
@@ -175,24 +175,21 @@ impl Handler for Peer {
 }
 
 struct Fixture {
-    listener: TcpListener,
     state: Arc<Mutex<Memory>>,
 }
 
 impl Fixture {
     async fn new() -> Self {
         Self {
-            listener: TcpListener::bind(("127.0.0.1", 0)).await.unwrap(),
             state: Arc::new(Mutex::new(Memory::default())),
         }
     }
 
     async fn manager(&mut self) -> SftpManager {
-        let address = self.listener.local_addr().unwrap();
-        let client = TcpStream::connect(address);
-        let (accepted, connected) = tokio::join!(self.listener.accept(), client);
-        let (stream, _) = accepted.unwrap();
-        let client = connected.unwrap();
+        // Keep the real serialized SFTP protocol on independent byte streams.
+        // The library's server loop only ends on EOF; bare TCP resets on shutdown
+        // can retain its handler on Windows even after all upload checks pass.
+        let (client, stream) = duplex(256 * 1024);
         russh_sftp::server::run(stream, Peer(self.state.clone())).await;
         SftpManager::new(SftpSession::new(client).await.unwrap())
     }
