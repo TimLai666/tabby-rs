@@ -44,8 +44,9 @@
   the duration of the call, and `run_process` (`launch.rs:108-117`) uses `Command::status`,
   which blocks until the spawned WinSCP process exits. Cleanup therefore depends on that
   wait returning.
-- `src-tauri/src/commands/app.rs:383-392` — `app_quit` calls `app.exit(0)` immediately.
-  Exiting Tabby RS before WinSCP closes kills the pending `spawn_blocking` task, so the
+- `src-tauri/src/commands/app.rs` — `app_quit` requests application exit; normal
+  requests first confirm window closure, while platform-level startup quit bypasses it.
+  Completed exit before WinSCP closes kills the pending `spawn_blocking` task, so the
   `TempPath` never drops and the converted keys stay in the temp directory.
 - Before WinSCP acceptance is signed off: implement and verify cleanup on application exit
   and on crash recovery, without deleting key files that another process is still using.
@@ -687,8 +688,18 @@
   connection usable; confirming closes the window and its remaining TCP connection.
   Two-window local PTY checks also verify process cleanup. SSH/serial resources,
   cancellation across multiple live windows, and other platforms need acceptance.
-  Separately verify application Quit/Cmd+Q: `app_quit` calls `app.exit(0)` directly,
-  so this window-close fix does not establish application-quit parity.
+  Normal application exit requests now prevent exit while windows remain and ask each
+  window to close through this existing confirmation flow. Platform-level quit during
+  startup uses `force: true` to preserve immediate exit after encrypted-configuration
+  cancellation; it must not wait for an unready renderer. Keep restart and nonzero
+  exit requests unchanged; clear the crash marker only on the actual `Exit` event.
+  `test:telnet-tab-controls` compiles the exact native callback with framework boundary
+  fakes and executes the actual shared AppService methods. It covers pending warnings,
+  cancellation/retry, multiple tabs/windows, failed close requests, and marker timing.
+  Native Quit/Cmd+Q gestures, repeated Quit while a warning is pending, session cleanup,
+  and supported-platform desktop acceptance remain pending. Compare repeated requests
+  with upstream; shared closeWindow has no in-flight guard. These controlled callback
+  and method checks do not establish desktop acceptance.
 - Window event producers must use `emit_to(label)` and the renderer must listen
   through `getCurrentWebviewWindow().listen`. Tauri's default Any listener still
   receives events sent to another label. Keep both halves for focus, movement,

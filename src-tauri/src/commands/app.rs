@@ -410,6 +410,20 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
+    fn quit_request_deserializes_default_and_boolean_force_values() {
+        let default = serde_json::from_str::<super::QuitRequest>("{}").unwrap();
+        assert!(!default.force, "missing force defaults to false");
+
+        let forced = serde_json::from_str::<super::QuitRequest>(r#"{"force":true}"#).unwrap();
+        assert!(forced.force);
+        let normal = serde_json::from_str::<super::QuitRequest>(r#"{"force":false}"#).unwrap();
+        assert!(!normal.force);
+
+        assert!(serde_json::from_str::<super::QuitRequest>(r#"{"force":"true"}"#).is_err());
+        assert!(serde_json::from_str::<super::QuitRequest>(r#"{"force":null}"#).is_err());
+    }
+
+    #[test]
     fn reports_tauri_runtime() {
         let info = current_runtime_info();
         assert_eq!(info.host, "tauri");
