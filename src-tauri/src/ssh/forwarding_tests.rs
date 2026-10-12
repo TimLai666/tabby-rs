@@ -233,3 +233,126 @@ async fn rejected_remote_forward_preserves_rejection_details_and_session() {
     .await
     .unwrap();
 }
+
+struct AllocatedRemotePortServer {
+    listener: TcpListener,
+}
+
+impl server::Handler for AllocatedRemotePortServer {
+    type Error = russh::Error;
+
+    async fn auth_none(&mut self, _: &str) -> Result<server::Auth, Self::Error> {
+        Ok(server::Auth::Accept)
+    }
+
+    async fn channel_open_session(
+        &mut self,
+        _: Channel<server::Msg>,
+        _: &mut server::Session,
+    ) -> Result<bool, Self::Error> {
+        Ok(true)
+    }
+
+    async fn tcpip_forward(
+        &mut self,
+        address: &str,
+        port: &mut u32,
+        _: &mut server::Session,
+    ) -> Result<bool, Self::Error> {
+        assert_eq!(address, "127.0.0.1");
+        let allocated = u32::from(self.listener.local_addr().unwrap().port());
+        assert!(*port == 0 || *port == allocated);
+        *port = allocated;
+        Ok(true)
+    }
+}
+
+async fn remote_control_port_reply(ephemeral: bool) {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        let (host_key, public_key) = loopback_key_pair();
+        let mut config = server::Config::default();
+        config.keys.push(host_key);
+        let ssh_listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let ssh_address = ssh_listener.local_addr().unwrap();
+        let remote_listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let allocated = remote_listener.local_addr().unwrap().port();
+        let mut tasks = tokio::task::JoinSet::new();
+        tasks.spawn(async move {
+            let (tcp, _) = ssh_listener.accept().await.unwrap();
+            let peer = server::run_stream(
+                Arc::new(config),
+                tcp,
+                AllocatedRemotePortServer {
+                    listener: remote_listener,
+                },
+            )
+            .await
+            .unwrap();
+            let _ = peer.await;
+        });
+        let mut handle = client::connect(
+            Arc::new(client::Config::default()),
+            ssh_address,
+            PinnedClient(public_key),
+        )
+        .await
+        .unwrap();
+        assert!(handle.authenticate_none("fixture").await.unwrap().success());
+        let channel = handle.channel_open_session().await.unwrap();
+        let (_reader, writer) = channel.split();
+        let routes = Arc::new(std::sync::Mutex::new(Default::default()));
+        let (sender, receiver) = oneshot::channel();
+        let keep_running = super::handle_control(
+            &mut handle,
+            &writer,
+            &mut None,
+            "port-reply-connection",
+            &routes,
+            super::SshControl::StartRemoteForward {
+                bind_host: "127.0.0.1".into(),
+                bind_port: if ephemeral { 0 } else { allocated },
+                target_address: "127.0.0.1".into(),
+                target_port: 1,
+                cancel: super::pending::CancelSignal::default(),
+                sender,
+            },
+        )
+        .await;
+        assert!(keep_running);
+        let reported = receiver.await.unwrap().unwrap();
+        assert_eq!(
+            reported, allocated,
+            "successful remote start must return its actual listening port"
+        );
+        assert!(
+            routes.lock().unwrap().contains_key(&(
+                "port-reply-connection".into(),
+                "127.0.0.1".into(),
+                u32::from(allocated),
+            )),
+            "incoming forwarded-tcpip lookup must use the actual remote port"
+        );
+        assert!(!routes.lock().unwrap().contains_key(&(
+            "port-reply-connection".into(),
+            "127.0.0.1".into(),
+            0,
+        )));
+        handle
+            .disconnect(russh::Disconnect::ByApplication, "fixture done", "en")
+            .await
+            .unwrap();
+        tasks.join_next().await.unwrap().unwrap();
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn accepted_fixed_remote_forward_keeps_requested_port() {
+    remote_control_port_reply(false).await;
+}
+
+#[tokio::test]
+async fn accepted_ephemeral_remote_forward_keeps_allocated_port() {
+    remote_control_port_reply(true).await;
+}

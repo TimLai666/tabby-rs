@@ -20,6 +20,8 @@ pub mod model;
 mod pending;
 #[cfg(test)]
 mod pty_tests;
+#[cfg(test)]
+mod remote_forwarding_tests;
 pub mod sftp;
 #[cfg(test)]
 mod shell_start_tests;
