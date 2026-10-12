@@ -346,11 +346,16 @@
   Current shared reconnect awaits logical destruction and marks a manual restart;
   the upstream method does neither. Compare automatic reconnect and manual restart
   in the actual desktop before accepting that shared-flow difference.
-- Renderer closure now stops a forwarding ID returned after destruction;
-  regression tests cover the late reply and concurrent pending removal. Native
-  cancellation broadcast timing before listener subscription remains unverified.
-  Reproduce that timing with a hostname bind and confirm the port is released
-  before changing startup to run in the background.
+- Renderer closure stops a forwarding ID returned after destruction; retain the
+  late-reply and concurrent-removal regressions. Keep one monotonic cancellation
+  signal per native forwarding runtime, including listener acceptance, child setup,
+  Remote target connections, and queued DirectTcpip controls. Runtime removal must
+  cancel its children; discarded DirectTcpip replies must own closing ChannelStreams.
+  Loopback TCP/SSH tests verify pre-poll port release, incomplete SOCKS cancellation,
+  pending/late/unread channel replies, runtime removal, and session isolation.
+  Remote relay checks use direct-tcpip helper channels, not server-initiated route
+  lookup or global requests. Desktop cancellation timing remains pending. Reproduce
+  stopping during a hostname bind before changing startup to run in the background.
 - Failed native forwarding starts retain entries until session closure. Verify
   repeated failures, list consumers, and listener cleanup before accepting modal
   forwarding runtime behavior. An open Ports modal also stays bound to its old
