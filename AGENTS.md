@@ -121,7 +121,9 @@
 - Native Edit locally uses an owned temporary copy, the existing streaming
   transfers, a one-second watch grace period and save debounce, serialized
   overwrite uploads, and remote mode restoration. Session closure stops watching
-  and queued saves; completed editor copies remain available to the editor.
+  and queued saves. Keep watcher stop serialized with notification delivery and
+  repeated stops of the same workspace. After stop returns, that watcher must emit
+  no further notifications. Completed editor copies remain available to the editor.
   File watching is scoped to that copy and distinguishes in-place saves from
   replacement. Replacement triggers one final upload and ends watching, matching
   the fixed upstream; later saves require reopening Edit locally. Native SFTP
