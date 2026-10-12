@@ -99,9 +99,10 @@
   retries, pending requests, and owner destruction. A rendered Angular fixture
   verifies the toolbar, help dropdown, Local/Remote/Dynamic additions, removal
   with form restoration, focused-editor Escape, and reconnect at 1100x720 and
-  640x480. Its native
-  IPC is simulated; actual desktop traffic and supported-platform acceptance
-  remain pending.
+  640x480. Its native IPC is simulated. Native macOS Ports acceptance on
+  `3a6b0e14` also covers actual Local/Remote/Dynamic traffic through OpenSSH,
+  removal, and ordinary window-close cleanup. Original desktop comparison and
+  other supported-platform acceptance remain pending.
 - The fixed upstream SFTP Pug and SCSS provide breadcrumb/path editing, filtering,
   translated controls, file permissions, a context menu, and folder drag-and-drop.
   Both hosts use those templates and the shared `SFTPPanelController`, with a
@@ -224,9 +225,9 @@
 
 - Removing the focused row button moves focus to the body in the Angular
   fixture. Escape then does not reach the shared NgbModalWindow listener;
-  focusing the forwarding editor restores dismissal. Compare this flow in the
-  original desktop before changing shared focus behavior or accepting Escape
-  handling after row removal.
+  focusing the forwarding editor restores dismissal. Actual Native macOS at
+  640x480 dismisses the modal with Escape after row removal. Compare the original
+  desktop before changing shared focus behavior or accepting cross-host parity.
 
 ## Pending — SSH tab lifecycle platform acceptance
 
@@ -396,10 +397,22 @@
   forwarding runtime behavior. An open Ports modal also stays bound to its old
   session through reconnect; compare that transition with the locked upstream
   binding before accepting it.
-- macOS desktop failure/success diagnostics and terminal input after all three
-  rejection modes remain unverified: the current fixture cannot be inspected while
-  the Mac is locked. Original desktop comparison and supported-platform checks
-  remain pending.
+- Native macOS Ports acceptance on `3a6b0e14` covers Local, Remote, Dynamic,
+  and allocated Remote port-zero forwarding through an actual OpenSSH peer.
+  Complete binary echoes pass; removing Local, fixed Remote, or Dynamic closes
+  an established relay and rejects new connections. Removing allocated Remote
+  rejects new connections. Recheck these ordinary post-connect flows after changes.
+- An occupied Remote port shows a terminal rejection without adding a modal row.
+  Actual terminal input and a subsequent successful Remote forwarding work on
+  the same SSH connection. Local and Dynamic rejection diagnostics and terminal
+  input still require desktop verification.
+- Actual 1100x720 and 640x480 Native macOS Ports forms and row controls are usable.
+  Closing the owned native window ends its established relay, SSH session, and
+  app process; its isolated saved-profile forwarding settings stay unchanged.
+  Keep this ordinary teardown evidence separate from pending-global-request,
+  full startup-ordering, rejected-cancel retry, and reconnect-modal checks above.
+  Original desktop comparison, other supported platforms, and packaged release
+  acceptance remain pending.
 
 ## Pending — SSH forwarding desktop and Windows acceptance
 
