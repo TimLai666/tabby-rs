@@ -4,7 +4,7 @@ use russh::{client, server, Channel, ChannelId, ChannelMsg, CryptoVec};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
-    sync::{broadcast, oneshot},
+    sync::oneshot,
 };
 
 fn loopback_key_pair() -> (russh::keys::PrivateKey, russh::keys::PublicKey) {
@@ -174,7 +174,7 @@ async fn rejected_remote_forward_preserves_rejection_details_and_session() {
         );
 
         let routes = Arc::new(std::sync::Mutex::new(Default::default()));
-        let (cancel, _) = broadcast::channel(4);
+        let cancel = super::pending::CancelSignal::default();
         let (sender, receiver) = oneshot::channel();
         let keep_running = super::handle_control(
             &mut handle,

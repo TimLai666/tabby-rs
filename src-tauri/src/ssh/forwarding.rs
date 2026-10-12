@@ -1,8 +1,18 @@
-use std::net::IpAddr;
+use std::{net::IpAddr, time::Duration};
 
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{copy_bidirectional, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-use super::model::SshError;
+use tokio::{
+    net::{TcpListener, TcpStream},
+    sync::{mpsc, oneshot},
+    time::timeout,
+};
+
+use super::{
+    model::{SshError, SshForwardingInfo, SshForwardingType},
+    pending::CancelSignal,
+    SshControl,
+};
 
 const MAX_SOCKS_DOMAIN: usize = 255;
 
@@ -187,4 +197,102 @@ mod tests {
         assert!(socks5_connect(&mut server).await.is_err());
         writer.await.unwrap();
     }
+}
+
+pub(super) async fn run_local_forward(
+    info: SshForwardingInfo,
+    listener: TcpListener,
+    control: mpsc::Sender<SshControl>,
+    cancel: CancelSignal,
+) {
+    loop {
+        let accepted = cancel
+            .run(async { listener.accept().await.map_err(|_| SshError::Closed) })
+            .await;
+        let Ok((socket, _peer)) = accepted else {
+            break;
+        };
+        let control = control.clone();
+        let cancel = cancel.clone();
+        let kind = info.kind;
+        let target_address = info.target_address.clone();
+        let target_port = info.target_port;
+        tokio::spawn(async move {
+            let mut socket = socket;
+            let _ = cancel
+                .run(async {
+                    let (target_address, target_port) = if kind == SshForwardingType::Dynamic {
+                        let target =
+                            match timeout(Duration::from_secs(30), socks5_connect(&mut socket))
+                                .await
+                            {
+                                Ok(Ok(target)) => target,
+                                Ok(Err(_)) => {
+                                    let _ = send_socks5_failure(&mut socket, 1).await;
+                                    return Ok(());
+                                }
+                                Err(_) => {
+                                    let _ = send_socks5_failure(&mut socket, 1).await;
+                                    return Ok(());
+                                }
+                            };
+                        send_socks5_success(&mut socket).await?;
+                        target
+                    } else {
+                        (target_address, target_port)
+                    };
+                    let (sender, receiver) = oneshot::channel();
+                    control
+                        .send(SshControl::OpenDirectTcpip {
+                            host: target_address,
+                            port: target_port,
+                            cancel: cancel.clone(),
+                            sender,
+                        })
+                        .await
+                        .map_err(|_| SshError::Closed)?;
+                    let mut ssh_stream = match receiver.await.map_err(|_| SshError::Closed)? {
+                        Ok(stream) => stream,
+                        Err(_) => return Ok(()),
+                    };
+                    let _ = copy_bidirectional(&mut socket, &mut ssh_stream).await;
+                    Ok(())
+                })
+                .await;
+        });
+    }
+}
+
+pub(super) async fn run_remote_forward(
+    channel: russh::Channel<russh::client::Msg>,
+    route: Option<super::RemoteForwardRoute>,
+) -> Result<(), russh::Error> {
+    let Some(route) = route else {
+        let _ = channel.close().await;
+        return Ok::<(), russh::Error>(());
+    };
+    // Convert before entering the cancellable future so dropping the stream enqueues SSH CLOSE.
+    let mut ssh_stream = channel.into_stream();
+    let target = route
+        .cancel
+        .run(async {
+            Ok(TcpStream::connect((route.target_address.as_str(), route.target_port)).await)
+        })
+        .await;
+    let mut target = match target {
+        Ok(Ok(target)) => target,
+        Ok(Err(_)) => {
+            let _ = ssh_stream.shutdown().await;
+            return Ok::<(), russh::Error>(());
+        }
+        Err(_) => return Ok::<(), russh::Error>(()),
+    };
+    let _ = route
+        .cancel
+        .run(async {
+            let _ = copy_bidirectional(&mut target, &mut ssh_stream).await;
+            Ok(())
+        })
+        .await;
+    Ok::<(), russh::Error>(())
 }

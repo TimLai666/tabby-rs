@@ -44,9 +44,9 @@ use serde_json::{Map, Value};
 use sha2::{Digest, Sha512};
 use tauri::{AppHandle, Emitter};
 use tokio::{
-    io::{copy_bidirectional, AsyncWriteExt},
-    net::{TcpListener, TcpStream},
-    sync::{broadcast, mpsc, oneshot},
+    io::copy_bidirectional,
+    net::TcpStream,
+    sync::{mpsc, oneshot},
     time::timeout,
 };
 use zeroize::Zeroize;
@@ -106,14 +106,29 @@ struct SshSession {
 
 struct ForwardingRuntime {
     info: SshForwardingInfo,
-    cancel: broadcast::Sender<()>,
+    cancel: pending::CancelSignal,
+}
+
+impl ForwardingRuntime {
+    fn new(info: SshForwardingInfo) -> Self {
+        Self {
+            info,
+            cancel: pending::CancelSignal::default(),
+        }
+    }
+}
+
+impl Drop for ForwardingRuntime {
+    fn drop(&mut self) {
+        self.cancel.cancel();
+    }
 }
 
 #[derive(Clone)]
 struct RemoteForwardRoute {
     target_address: String,
     target_port: u16,
-    cancel: broadcast::Sender<()>,
+    cancel: pending::CancelSignal,
 }
 
 enum SshControl {
@@ -121,7 +136,8 @@ enum SshControl {
     OpenDirectTcpip {
         host: String,
         port: u16,
-        sender: oneshot::Sender<Result<russh::Channel<client::Msg>, SshError>>,
+        cancel: pending::CancelSignal,
+        sender: oneshot::Sender<Result<russh::ChannelStream<client::Msg>, SshError>>,
     },
     OpenSftp {
         sender: oneshot::Sender<Result<(), SshError>>,
@@ -194,7 +210,7 @@ enum SshControl {
         bind_port: u16,
         target_address: String,
         target_port: u16,
-        cancel: broadcast::Sender<()>,
+        cancel: pending::CancelSignal,
         sender: oneshot::Sender<Result<u16, SshError>>,
     },
     StopRemoteForward {
@@ -277,29 +293,7 @@ impl Handler for SshHandler {
                 connected_port,
             ))
             .cloned();
-        let task = async move {
-            let Some(route) = route else {
-                let _ = channel.close().await;
-                return Ok::<(), russh::Error>(());
-            };
-            let mut ssh_stream = channel.into_stream();
-            let target =
-                TcpStream::connect((route.target_address.as_str(), route.target_port)).await;
-            let Ok(mut target) = target else {
-                let _ = ssh_stream.shutdown().await;
-                return Ok::<(), russh::Error>(());
-            };
-            let mut cancel = route.cancel.subscribe();
-            tokio::select! {
-                _ = copy_bidirectional(&mut target, &mut ssh_stream) => {}
-                _ = cancel.recv() => {
-                    let _ = ssh_stream.shutdown().await;
-                    let _ = target.shutdown().await;
-                }
-            }
-            Ok::<(), russh::Error>(())
-        };
-        tokio::spawn(task);
+        tokio::spawn(forwarding::run_remote_forward(channel, route));
         async { Ok(()) }
     }
 
@@ -1802,7 +1796,6 @@ impl SshManager {
         validate_forwarding_request(&request)?;
         let session = self.session(&request.session_id)?;
         let id = self.new_id("forward");
-        let (cancel, _) = broadcast::channel(4);
         let mut info = SshForwardingInfo {
             id: id.clone(),
             session_id: request.session_id.clone(),
@@ -1814,16 +1807,12 @@ impl SshManager {
             status: SshForwardingStatus::Starting,
             last_error: None,
         };
+        let runtime = ForwardingRuntime::new(info.clone());
+        let cancel = runtime.cancel.clone();
         self.forwardings
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .insert(
-                id.clone(),
-                ForwardingRuntime {
-                    info: info.clone(),
-                    cancel: cancel.clone(),
-                },
-            );
+            .insert(id.clone(), runtime);
         emit_forwarding(&app, &info);
 
         match request.kind {
@@ -1846,14 +1835,17 @@ impl SshManager {
                 self.update_forwarding(info.clone());
                 emit_forwarding(&app, &info);
                 let manager = self.clone();
-                tokio::spawn(run_local_forward(
-                    manager,
-                    app,
-                    info.clone(),
-                    listener,
-                    session.control,
-                    cancel,
-                ));
+                let task_info = info.clone();
+                tokio::spawn(async move {
+                    forwarding::run_local_forward(
+                        task_info.clone(),
+                        listener,
+                        session.control,
+                        cancel,
+                    )
+                    .await;
+                    manager.finish_forwarding(&app, &task_info.id);
+                });
             }
             SshForwardingType::Remote => {
                 let (sender, receiver) = oneshot::channel();
@@ -1896,10 +1888,10 @@ impl SshManager {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .remove(&request.id)
             .ok_or_else(|| SshError::InvalidRequest("forwarding is unknown or closed".into()))?;
-        let mut info = runtime.info;
+        let mut info = runtime.info.clone();
         info.status = SshForwardingStatus::Stopping;
         emit_forwarding(&app, &info);
-        let _ = runtime.cancel.send(());
+        runtime.cancel.cancel();
         if info.kind == SshForwardingType::Remote {
             let session = self.session(&info.session_id)?;
             let (sender, receiver) = oneshot::channel();
@@ -1961,7 +1953,7 @@ impl SshManager {
         else {
             return;
         };
-        let mut info = runtime.info;
+        let mut info = runtime.info.clone();
         info.status = SshForwardingStatus::Stopped;
         emit_forwarding(app, &info);
     }
@@ -1978,7 +1970,7 @@ impl SshManager {
             .collect();
         for id in ids {
             if let Some(runtime) = forwardings.remove(&id) {
-                let _ = runtime.cancel.send(());
+                runtime.cancel.cancel();
             }
         }
         self.remote_routes
@@ -1986,7 +1978,7 @@ impl SshManager {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .retain(|(route_connection_id, _, _), route| {
                 if route_connection_id == connection_id {
-                    let _ = route.cancel.send(());
+                    route.cancel.cancel();
                     false
                 } else {
                     true
@@ -2167,10 +2159,19 @@ async fn handle_control<H: client::Handler>(
             // Let the reader drain queued output before EOF or transport end.
             true
         }
-        SshControl::OpenDirectTcpip { host, port, sender } => {
+        SshControl::OpenDirectTcpip {
+            host,
+            port,
+            sender,
+            cancel,
+        } => {
+            if cancel.is_cancelled() || sender.is_closed() {
+                return true;
+            }
             let result = handle
                 .channel_open_direct_tcpip(host, u32::from(port), "127.0.0.1", 0)
                 .await
+                .map(|channel| channel.into_stream())
                 .map_err(|_| SshError::ChannelOpen);
             let _ = sender.send(result);
             true
@@ -2375,7 +2376,7 @@ async fn handle_control<H: client::Handler>(
                     .unwrap_or_else(|poisoned| poisoned.into_inner())
                     .remove(&(connection_id.into(), bind_host, u32::from(bind_port)))
                 {
-                    let _ = route.cancel.send(());
+                    route.cancel.cancel();
                 }
             }
             let _ = sender.send(result);
@@ -2396,87 +2397,6 @@ async fn handle_control<H: client::Handler>(
             false
         }
     }
-}
-
-async fn run_local_forward(
-    manager: SshManager,
-    app: AppHandle,
-    info: SshForwardingInfo,
-    listener: TcpListener,
-    control: mpsc::Sender<SshControl>,
-    cancel: broadcast::Sender<()>,
-) {
-    let mut cancellation = cancel.subscribe();
-    loop {
-        let accepted = tokio::select! {
-            result = listener.accept() => result,
-            _ = cancellation.recv() => break,
-        };
-        let Ok((mut socket, peer)) = accepted else {
-            break;
-        };
-        let control = control.clone();
-        let cancel = cancel.clone();
-        let kind = info.kind;
-        let target_address = info.target_address.clone();
-        let target_port = info.target_port;
-        tokio::spawn(async move {
-            let (target_address, target_port) = if kind == SshForwardingType::Dynamic {
-                match timeout(
-                    Duration::from_secs(30),
-                    forwarding::socks5_connect(&mut socket),
-                )
-                .await
-                {
-                    Ok(target) => {
-                        let Ok(target) = target else {
-                            let _ = forwarding::send_socks5_failure(&mut socket, 1).await;
-                            return;
-                        };
-                        if forwarding::send_socks5_success(&mut socket).await.is_err() {
-                            return;
-                        }
-                        target
-                    }
-                    Err(_) => {
-                        let _ = forwarding::send_socks5_failure(&mut socket, 1).await;
-                        return;
-                    }
-                }
-            } else {
-                (target_address, target_port)
-            };
-            let (sender, receiver) = oneshot::channel();
-            if control
-                .send(SshControl::OpenDirectTcpip {
-                    host: target_address,
-                    port: target_port,
-                    sender,
-                })
-                .await
-                .is_err()
-            {
-                return;
-            }
-            let Ok(Ok(channel)) = receiver.await else {
-                return;
-            };
-            let mut ssh_stream = channel.into_stream();
-            let mut cancellation = cancel.subscribe();
-            let copy = async {
-                let _ = peer;
-                let _ = tokio::io::copy_bidirectional(&mut socket, &mut ssh_stream).await;
-            };
-            tokio::select! {
-                _ = copy => {}
-                _ = cancellation.recv() => {
-                    let _ = ssh_stream.shutdown().await;
-                    let _ = socket.shutdown().await;
-                }
-            }
-        });
-    }
-    manager.finish_forwarding(&app, &info.id);
 }
 
 enum X11Target {

@@ -85,6 +85,10 @@ impl Default for CancelSignal {
 }
 
 impl CancelSignal {
+    pub(super) fn is_cancelled(&self) -> bool {
+        *self.sender.borrow()
+    }
+
     pub(super) fn cancel(&self) {
         self.sender.send_replace(true);
     }
