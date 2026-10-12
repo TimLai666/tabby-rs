@@ -22,7 +22,7 @@ use super::{
 };
 
 const LIMIT: Duration = Duration::from_secs(5);
-type Routes = Arc<Mutex<HashMap<(String, String, u32), RemoteForwardRoute>>>;
+type Routes = super::RemoteForwardRoutes;
 
 fn key_pair() -> (russh::keys::PrivateKey, russh::keys::PublicKey) {
     let private =
@@ -602,11 +602,12 @@ async fn shared_route_map_isolates_two_connections_with_identical_wire_metadata(
             };
             manager.remote_routes.lock().unwrap().insert(
                 (connection_id.into(), wire_address.into(), wire_port),
-                RemoteForwardRoute {
+                Arc::new(RemoteForwardRoute {
                     target_address: target.ip().to_string(),
                     target_port: target.port(),
                     cancel,
-                },
+                    ready: None,
+                }),
             );
         }
         let channel_a = first.open_forwarded(wire_address, wire_port).await;

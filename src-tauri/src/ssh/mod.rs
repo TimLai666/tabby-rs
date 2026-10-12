@@ -50,7 +50,7 @@ use tauri::{AppHandle, Emitter};
 use tokio::{
     io::copy_bidirectional,
     net::TcpStream,
-    sync::{mpsc, oneshot},
+    sync::{mpsc, oneshot, watch},
     time::timeout,
 };
 use zeroize::Zeroize;
@@ -89,7 +89,8 @@ const VAULT_SECRET_TYPE_PASSPHRASE: &str = "ssh:key-passphrase";
 
 type HostKeySender = oneshot::Sender<HostKeyDecision>;
 type AuthSender = oneshot::Sender<Vec<String>>;
-type RemoteForwardRoutes = Arc<Mutex<HashMap<(String, String, u32), RemoteForwardRoute>>>;
+type RemoteForwardKey = (String, String, u32);
+type RemoteForwardRoutes = Arc<Mutex<HashMap<RemoteForwardKey, Arc<RemoteForwardRoute>>>>;
 
 #[derive(Clone)]
 pub struct SshManager {
@@ -129,11 +130,101 @@ impl Drop for ForwardingRuntime {
     }
 }
 
-#[derive(Clone)]
 struct RemoteForwardRoute {
     target_address: String,
     target_port: u16,
     cancel: pending::CancelSignal,
+    ready: Option<watch::Receiver<Option<u32>>>,
+}
+
+struct RemoteForwardRegistration {
+    routes: RemoteForwardRoutes,
+    key: RemoteForwardKey,
+    route: Arc<RemoteForwardRoute>,
+    previous: Option<Arc<RemoteForwardRoute>>,
+    readiness: Option<watch::Sender<Option<u32>>>,
+}
+
+impl RemoteForwardRegistration {
+    fn begin(
+        routes: &RemoteForwardRoutes,
+        key: RemoteForwardKey,
+        target_address: String,
+        target_port: u16,
+        cancel: pending::CancelSignal,
+    ) -> Self {
+        let (sender, receiver) = watch::channel(None);
+        let route = Arc::new(RemoteForwardRoute {
+            target_address,
+            target_port,
+            cancel,
+            ready: Some(receiver),
+        });
+        let mut map = routes.lock().unwrap_or_else(|error| error.into_inner());
+        let previous = map.get(&key).cloned();
+        if previous.is_none() {
+            map.insert(key.clone(), Arc::clone(&route));
+        }
+        drop(map);
+        Self {
+            routes: Arc::clone(routes),
+            key,
+            route,
+            previous,
+            readiness: Some(sender),
+        }
+    }
+
+    fn commit(&mut self, actual_port: u32) -> bool {
+        if self.route.cancel.is_cancelled() {
+            return false;
+        }
+        let actual_key = (self.key.0.clone(), self.key.1.clone(), actual_port);
+        let mut routes = self
+            .routes
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let Some(current) = routes.get(&self.key) else {
+            return false;
+        };
+        let expected = self.previous.as_ref().unwrap_or(&self.route);
+        if !Arc::ptr_eq(current, expected) || self.route.cancel.is_cancelled() {
+            return false;
+        }
+        if actual_key != self.key && routes.contains_key(&actual_key) {
+            return false;
+        }
+        routes.remove(&self.key);
+        routes.insert(actual_key, Arc::clone(&self.route));
+        self.previous = None;
+        self.readiness
+            .take()
+            .expect("registration readiness sender is present until commit")
+            .send_replace(Some(actual_port));
+        true
+    }
+}
+
+impl Drop for RemoteForwardRegistration {
+    fn drop(&mut self) {
+        let Some(readiness) = self.readiness.take() else {
+            return;
+        };
+        drop(readiness);
+        if self.previous.is_some() {
+            return;
+        }
+        let mut routes = self
+            .routes
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if routes
+            .get(&self.key)
+            .is_some_and(|route| Arc::ptr_eq(route, &self.route))
+        {
+            routes.remove(&self.key);
+        }
+    }
 }
 
 enum SshControl {
@@ -2340,30 +2431,36 @@ async fn handle_control<H: client::Handler>(
             cancel,
             sender,
         } => {
-            let result = handle
+            let mut registration = RemoteForwardRegistration::begin(
+                remote_routes,
+                (
+                    connection_id.into(),
+                    bind_host.clone(),
+                    u32::from(bind_port),
+                ),
+                target_address,
+                target_port,
+                cancel,
+            );
+            match handle
                 .tcpip_forward(bind_host.clone(), u32::from(bind_port))
                 .await
-                .map_err(|error| SshError::Forwarding(error.to_string()));
-            if let Ok(port) = result {
-                let port = if bind_port == 0 {
-                    port
-                } else {
-                    u32::from(bind_port)
-                };
-                remote_routes
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner())
-                    .insert(
-                        (connection_id.into(), bind_host, u32::from(port)),
-                        RemoteForwardRoute {
-                            target_address,
-                            target_port,
-                            cancel,
-                        },
-                    );
-                let _ = sender.send(Ok(port as u16));
-            } else {
-                let _ = sender.send(result.map(|port| port as u16));
+            {
+                Ok(reply_port) => {
+                    let actual_port = if bind_port == 0 {
+                        reply_port
+                    } else {
+                        u32::from(bind_port)
+                    };
+                    if registration.commit(actual_port) {
+                        let _ = sender.send(Ok(actual_port as u16));
+                    } else {
+                        let _ = sender.send(Err(SshError::Closed));
+                    }
+                }
+                Err(error) => {
+                    let _ = sender.send(Err(SshError::Forwarding(error.to_string())));
+                }
             }
             true
         }

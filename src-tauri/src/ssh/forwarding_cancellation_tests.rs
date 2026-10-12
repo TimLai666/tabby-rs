@@ -535,11 +535,15 @@ async fn cancelled_remote_route_does_not_connect_target_and_closes_channel() {
         target_address: address.ip().to_string(),
         target_port: address.port(),
         cancel,
+        ready: None,
     };
-    timeout(LIMIT, forwarding::run_remote_forward(channel, Some(route)))
-        .await
-        .unwrap()
-        .unwrap();
+    timeout(
+        LIMIT,
+        forwarding::run_remote_forward(channel.into_stream(), Some(Arc::new(route)), 0),
+    )
+    .await
+    .unwrap()
+    .unwrap();
     assert!(timeout(Duration::from_millis(250), target.accept())
         .await
         .is_err());
@@ -577,14 +581,24 @@ async fn active_remote_route_cancel_closes_target_and_other_route_keeps_binary_r
         target_address: addr_a.ip().to_string(),
         target_port: addr_a.port(),
         cancel: ca.clone(),
+        ready: None,
     };
     let route_b = super::RemoteForwardRoute {
         target_address: addr_b.ip().to_string(),
         target_port: addr_b.port(),
         cancel: cb.clone(),
+        ready: None,
     };
-    let ja = spawn(forwarding::run_remote_forward(channel_a, Some(route_a)));
-    let jb = spawn(forwarding::run_remote_forward(channel_b, Some(route_b)));
+    let ja = spawn(forwarding::run_remote_forward(
+        channel_a.into_stream(),
+        Some(Arc::new(route_a)),
+        0,
+    ));
+    let jb = spawn(forwarding::run_remote_forward(
+        channel_b.into_stream(),
+        Some(Arc::new(route_b)),
+        0,
+    ));
     let (mut peer_a, _) = timeout(LIMIT, target_a.accept()).await.unwrap().unwrap();
     let (mut peer_b, _) = timeout(LIMIT, target_b.accept()).await.unwrap().unwrap();
     manager.stop_forwardings_for_session("owner-a", "conn-a");

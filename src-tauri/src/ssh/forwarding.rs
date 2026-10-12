@@ -1,10 +1,10 @@
-use std::{net::IpAddr, time::Duration};
+use std::{net::IpAddr, sync::Arc, time::Duration};
 
 use tokio::io::{copy_bidirectional, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use tokio::{
     net::{TcpListener, TcpStream},
-    sync::{mpsc, oneshot},
+    sync::{mpsc, oneshot, watch},
     time::timeout,
 };
 
@@ -270,28 +270,45 @@ pub(super) fn dispatch_remote_forward(
     connected_address: &str,
     connected_port: u32,
 ) {
-    let route = routes
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .get(&(
-            connection_id.into(),
-            connected_address.into(),
-            connected_port,
-        ))
-        .cloned();
-    tokio::spawn(run_remote_forward(channel, route));
+    let route = {
+        let routes = routes.lock().unwrap_or_else(|error| error.into_inner());
+        routes
+            .get(&(
+                connection_id.into(),
+                connected_address.into(),
+                connected_port,
+            ))
+            .cloned()
+            .or_else(|| {
+                routes
+                    .get(&(connection_id.into(), connected_address.into(), 0))
+                    .filter(|route| {
+                        route
+                            .ready
+                            .as_ref()
+                            .is_some_and(|ready| ready.borrow().is_none())
+                    })
+                    .cloned()
+            })
+    };
+    let stream = channel.into_stream();
+    tokio::spawn(run_remote_forward(stream, route, connected_port));
 }
 
 pub(super) async fn run_remote_forward(
-    channel: russh::Channel<russh::client::Msg>,
-    route: Option<super::RemoteForwardRoute>,
+    mut ssh_stream: russh::ChannelStream<russh::client::Msg>,
+    route: Option<Arc<super::RemoteForwardRoute>>,
+    connected_port: u32,
 ) -> Result<(), russh::Error> {
     let Some(route) = route else {
-        let _ = channel.close().await;
         return Ok::<(), russh::Error>(());
     };
-    // Convert before entering the cancellable future so dropping the stream enqueues SSH CLOSE.
-    let mut ssh_stream = channel.into_stream();
+    if let Some(ready) = route.ready.clone() {
+        let actual_port = route.cancel.run(wait_for_remote_forward_ready(ready)).await;
+        if !matches!(actual_port, Ok(actual) if actual == connected_port) {
+            return Ok::<(), russh::Error>(());
+        }
+    }
     let target = route
         .cancel
         .run(async {
@@ -314,4 +331,15 @@ pub(super) async fn run_remote_forward(
         })
         .await;
     Ok::<(), russh::Error>(())
+}
+
+async fn wait_for_remote_forward_ready(
+    mut ready: watch::Receiver<Option<u32>>,
+) -> Result<u32, SshError> {
+    loop {
+        if let Some(port) = *ready.borrow_and_update() {
+            return Ok(port);
+        }
+        ready.changed().await.map_err(|_| SshError::Closed)?;
+    }
 }
