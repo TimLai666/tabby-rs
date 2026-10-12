@@ -7,6 +7,8 @@ pub mod engine;
 mod engine_integration;
 mod forwarding;
 #[cfg(test)]
+mod forwarding_cancellation_tests;
+#[cfg(test)]
 mod forwarding_tests;
 mod import;
 mod input;
