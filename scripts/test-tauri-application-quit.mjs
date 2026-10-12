@@ -116,7 +116,7 @@ async function rendererCases () {
 }
 await rendererCases()
 
-// The callback body is spliced verbatim into the harness; only Tauri boundary APIs are faked.
+// Production callback/command bodies are verbatim; Tauri APIs, app state, and marker cleanup are faked.
 const signature = /(?:pub\s+)?fn\s+on_application_event\s*\(\s*app\s*:\s*&\s*tauri::AppHandle\s*,\s*event\s*:\s*tauri::RunEvent\s*\)\s*(?:->\s*\(\s*\))?\s*\{/m
 const match = signature.exec(current)
 const quitSignature = /(?:pub\s+)?fn\s+app_quit\s*\(\s*request\s*:\s*QuitRequest\s*,[^)]*\)\s*->\s*Result<\(\),\s*AppError>\s*\{/m
