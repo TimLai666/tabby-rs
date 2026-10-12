@@ -365,14 +365,23 @@
   The shared-map identity test injects two routes with identical wire metadata
   and verifies actual channels plus session cleanup; it does not establish two
   peers binding the same physical TCP endpoint or full manager registration.
+  Publish an owned pending Remote route before sending the global request. Keep
+  early channels pending until a successful reply authorizes the exact wire port;
+  port-zero allocation lookup must never become an active wildcard. Preserve
+  existing routes during duplicate requests, and remove only the registration's
+  own marker on failure or drop. Cancelled or removed registrations must not be
+  republished by a late reply. Convert incoming channels to streams before
+  cancellation can drop them. Retain the real-wire tests for fixed/allocated
+  early channels, rejection, direct cancellation, control drop, session cleanup,
+  duplicate rejection, wrong metadata, and 32 ordinary eager-channel echoes.
   Keep these handler/helper checks separate from native manager and desktop
-  acceptance. Reproduce stopping during a hostname bind before changing startup
+  acceptance. Fixed-upstream eager-peer comparison covers post-connect addition;
+  full startup ordering and already-accepted listener cleanup after control drop
+  remain pending. Reproduce stopping during a hostname bind before changing startup
   to run in the background.
-- Verify an incoming forwarded-tcpip channel immediately after global success:
-  the client reply wakes the control task before it registers the route, while
-  channel dispatch reads the map independently. Compare actual packet ordering,
-  first target traffic, and fixed-upstream behavior before changing that ordering.
-  The scheduling concern has no decisive wire reproduction yet.
+- Verify allocated Remote success replies of zero or above `u16::MAX` with a real
+  SSH peer before accepting reply validation. `handle_control` currently casts the
+  allocated `u32` to `u16`; this existing protocol edge case is not covered.
 - Verify rejected Remote cancel requests and retry through the full native manager.
   stop_forwarding removes its runtime before awaiting cancel_tcpip_forward, while
   the control handler removes the route only on success. Passing successful-stop
