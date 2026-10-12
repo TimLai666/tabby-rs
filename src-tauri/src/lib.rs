@@ -246,6 +246,31 @@ pub(crate) fn register_desktop_window_events(window: &tauri::WebviewWindow) {
     });
 }
 
+fn on_application_event(app: &tauri::AppHandle, event: tauri::RunEvent) {
+    match event {
+        tauri::RunEvent::ExitRequested {
+            code: None | Some(0),
+            api,
+            ..
+        } if !app.state::<AppState>().is_force_quit_requested() => {
+            let windows = app.webview_windows();
+            if !windows.is_empty() {
+                api.prevent_exit();
+                for window in windows.into_values() {
+                    if let Err(error) = window.close() {
+                        eprintln!("failed to request window closure: {error}");
+                    }
+                }
+            }
+        }
+        tauri::RunEvent::Exit => {
+            let state = app.state::<AppState>();
+            let _ = crate::diagnostics::crash::clear(state.paths().logs_dir());
+        }
+        _ => {}
+    }
+}
+
 fn release_probe_mode() -> bool {
     [
         "TABBY_RS_BENCHMARK_READY_FILE",
@@ -522,6 +547,7 @@ pub fn run() {
             winscp_convert_key,
             winscp_launch,
         ])
-        .run(tauri::generate_context!())
-        .expect("failed to run Tabby RS");
+        .build(tauri::generate_context!())
+        .expect("failed to build Tabby RS")
+        .run(on_application_event);
 }

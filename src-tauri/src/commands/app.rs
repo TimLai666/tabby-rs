@@ -24,6 +24,12 @@ const INITIAL_CONFIG_YAML: &str = "version: 1\n";
 #[derive(Debug, Default, serde::Deserialize)]
 pub struct EmptyRequest {}
 
+#[derive(Debug, Default, serde::Deserialize)]
+pub struct QuitRequest {
+    #[serde(default)]
+    pub force: bool,
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeInfo {
@@ -381,12 +387,13 @@ pub fn app_benchmark_frame_report(request: BenchmarkFrameReport) -> Result<(), A
 
 #[tauri::command]
 pub fn app_quit(
-    request: EmptyRequest,
+    request: QuitRequest,
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    let _ = request;
-    let _ = crate::diagnostics::crash::clear(state.paths().logs_dir());
+    if request.force {
+        state.request_forced_quit();
+    }
     app.exit(0);
     Ok(())
 }

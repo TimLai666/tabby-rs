@@ -663,7 +663,7 @@ export class TauriPlatformService extends PlatformService {
     }
 
     quit (): void {
-        void this.bridge.invoke('app.quit', {})
+        void this.bridge.invoke('app.quit', { force: true })
     }
 
     getTheme (): PlatformTheme {

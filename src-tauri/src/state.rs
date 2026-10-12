@@ -1,5 +1,5 @@
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
     Arc, Mutex, MutexGuard,
 };
 
@@ -17,6 +17,7 @@ use crate::{
 
 pub struct AppState {
     next_window_id: AtomicU64,
+    force_quit_requested: AtomicBool,
     launches: LaunchQueue,
     storage_lock: Mutex<()>,
     plugin_operations: OperationManager,
@@ -35,6 +36,7 @@ impl AppState {
         launches.push("main", initial_launch.for_new_window());
         Self {
             next_window_id: AtomicU64::new(0),
+            force_quit_requested: AtomicBool::new(false),
             launches,
             storage_lock: Mutex::new(()),
             plugin_operations: OperationManager::default(),
@@ -46,6 +48,14 @@ impl AppState {
 
     pub fn next_window_id(&self) -> u64 {
         self.next_window_id.fetch_add(1, Ordering::Relaxed) + 1
+    }
+
+    pub fn request_forced_quit(&self) {
+        self.force_quit_requested.store(true, Ordering::Release);
+    }
+
+    pub fn is_force_quit_requested(&self) -> bool {
+        self.force_quit_requested.load(Ordering::Acquire)
     }
 
     pub fn launches(&self) -> &LaunchQueue {

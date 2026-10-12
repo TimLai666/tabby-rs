@@ -727,7 +727,7 @@ export interface HostRequestMap {
         response: LaunchContext | null
     }
     'app.quit': {
-        request: Record<string, never>
+        request: { force?: boolean }
         response: null
     }
     'backup.create': {
