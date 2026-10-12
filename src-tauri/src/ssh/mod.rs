@@ -87,6 +87,7 @@ const VAULT_SECRET_TYPE_PASSPHRASE: &str = "ssh:key-passphrase";
 
 type HostKeySender = oneshot::Sender<HostKeyDecision>;
 type AuthSender = oneshot::Sender<Vec<String>>;
+type RemoteForwardRoutes = Arc<Mutex<HashMap<(String, String, u32), RemoteForwardRoute>>>;
 
 #[derive(Clone)]
 pub struct SshManager {
@@ -96,7 +97,7 @@ pub struct SshManager {
     auth_waiters: Arc<Mutex<HashMap<String, AuthSender>>>,
     pending_connections: pending::PendingConnections,
     forwardings: Arc<Mutex<HashMap<String, ForwardingRuntime>>>,
-    remote_routes: Arc<Mutex<HashMap<(String, String, u32), RemoteForwardRoute>>>,
+    remote_routes: RemoteForwardRoutes,
     next_id: Arc<AtomicU64>,
 }
 
@@ -231,7 +232,7 @@ struct SshHandler {
     connection_id: String,
     app: AppHandle,
     host_key_error: Arc<Mutex<Option<SshError>>>,
-    remote_routes: Arc<Mutex<HashMap<(String, String, u32), RemoteForwardRoute>>>,
+    remote_routes: RemoteForwardRoutes,
     agent_forward: bool,
     agent_socket: Option<String>,
     x11: bool,
@@ -285,17 +286,13 @@ impl Handler for SshHandler {
         _originator_port: u32,
         _session: &mut client::Session,
     ) -> impl std::future::Future<Output = Result<(), Self::Error>> + Send {
-        let route = self
-            .remote_routes
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .get(&(
-                self.connection_id.clone(),
-                connected_address.into(),
-                connected_port,
-            ))
-            .cloned();
-        tokio::spawn(forwarding::run_remote_forward(channel, route));
+        forwarding::dispatch_remote_forward(
+            channel,
+            &self.remote_routes,
+            &self.connection_id,
+            connected_address,
+            connected_port,
+        );
         async { Ok(()) }
     }
 
@@ -2143,7 +2140,7 @@ async fn handle_control<H: client::Handler>(
     writer: &russh::ChannelWriteHalf<client::Msg>,
     sftp: &mut Option<sftp::SftpManager>,
     connection_id: &str,
-    remote_routes: &Arc<Mutex<HashMap<(String, String, u32), RemoteForwardRoute>>>,
+    remote_routes: &RemoteForwardRoutes,
     control: SshControl,
 ) -> bool {
     match control {
@@ -2346,6 +2343,11 @@ async fn handle_control<H: client::Handler>(
                 .await
                 .map_err(|error| SshError::Forwarding(error.to_string()));
             if let Ok(port) = result {
+                let port = if bind_port == 0 {
+                    port
+                } else {
+                    u32::from(bind_port)
+                };
                 remote_routes
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner())

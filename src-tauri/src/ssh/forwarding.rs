@@ -263,6 +263,25 @@ pub(super) async fn run_local_forward(
     }
 }
 
+pub(super) fn dispatch_remote_forward(
+    channel: russh::Channel<russh::client::Msg>,
+    routes: &super::RemoteForwardRoutes,
+    connection_id: &str,
+    connected_address: &str,
+    connected_port: u32,
+) {
+    let route = routes
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .get(&(
+            connection_id.into(),
+            connected_address.into(),
+            connected_port,
+        ))
+        .cloned();
+    tokio::spawn(run_remote_forward(channel, route));
+}
+
 pub(super) async fn run_remote_forward(
     channel: russh::Channel<russh::client::Msg>,
     route: Option<super::RemoteForwardRoute>,
