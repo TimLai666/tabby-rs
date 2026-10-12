@@ -355,9 +355,33 @@
   cancel its children; discarded DirectTcpip replies must own closing ChannelStreams.
   Loopback TCP/SSH tests verify pre-poll port release, incomplete SOCKS cancellation,
   pending/late/unread channel replies, runtime removal, and session isolation.
-  Remote relay checks use direct-tcpip helper channels, not server-initiated route
-  lookup or global requests. Desktop cancellation timing remains pending. Reproduce
-  stopping during a hostname bind before changing startup to run in the background.
+  Register and return the configured nonzero Remote port; use the server allocation
+  only when the requested port is zero. Retain both real SSH port-reply regressions
+  when updating the pinned russh crate. Server-initiated forwarded-tcpip tests use
+  the production route lookup and control handler with actual SSH/TCP listeners.
+  They verify specified and allocated ports, binary round trips, exact cancel
+  requests, existing target/channel closure, rejected subsequent TCP connections,
+  unmatched route rejection, retained shell traffic, and a second forwarding route.
+  The shared-map identity test injects two routes with identical wire metadata
+  and verifies actual channels plus session cleanup; it does not establish two
+  peers binding the same physical TCP endpoint or full manager registration.
+  Keep these handler/helper checks separate from native manager and desktop
+  acceptance. Reproduce stopping during a hostname bind before changing startup
+  to run in the background.
+- Verify an incoming forwarded-tcpip channel immediately after global success:
+  the client reply wakes the control task before it registers the route, while
+  channel dispatch reads the map independently. Compare actual packet ordering,
+  first target traffic, and fixed-upstream behavior before changing that ordering.
+  The scheduling concern has no decisive wire reproduction yet.
+- Verify rejected Remote cancel requests and retry through the full native manager.
+  stop_forwarding removes its runtime before awaiting cancel_tcpip_forward, while
+  the control handler removes the route only on success. Passing successful-stop
+  checks do not establish failed-stop recovery.
+- [P2] Restore the fixed upstream Remote forwarding service diagnostics before
+  accepting terminal-message parity. Native unmatched-route and target-connect
+  failure paths close their channels without emitting the original rejection or
+  connection-error text. Use the existing ssh:message flow and check escaping,
+  owning-session delivery, and actual rendered failures.
 - Failed native forwarding starts retain entries until session closure. Verify
   repeated failures, list consumers, and listener cleanup before accepting modal
   forwarding runtime behavior. An open Ports modal also stays bound to its old
