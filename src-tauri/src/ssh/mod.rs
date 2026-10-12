@@ -379,12 +379,22 @@ impl Handler for SshHandler {
         _originator_port: u32,
         _session: &mut client::Session,
     ) -> impl std::future::Future<Output = Result<(), Self::Error>> + Send {
+        let app = self.app.clone();
+        let connection_id = self.connection_id.clone();
         forwarding::dispatch_remote_forward(
             channel,
             &self.remote_routes,
             &self.connection_id,
             connected_address,
             connected_port,
+            move |message| {
+                let _ = app.emit(
+                    "ssh:message",
+                    serde_json::json!({
+                        "connectionId": connection_id, "message": message,
+                    }),
+                );
+            },
         );
         async { Ok(()) }
     }
@@ -456,28 +466,29 @@ async fn forward_x11_channel(
     Ok(())
 }
 
+fn terminal_diagnostic_text(text: &str) -> String {
+    text.chars()
+        .map(|c| {
+            if c.is_control() {
+                c.escape_default().to_string()
+            } else {
+                c.to_string()
+            }
+        })
+        .collect()
+}
+
 fn x11_failure_messages(display: &str, error: &std::io::Error, windows: bool) -> Vec<String> {
-    let terminal_text = |text: &str| -> String {
-        text.chars()
-            .map(|c| {
-                if c.is_control() {
-                    c.escape_default().to_string()
-                } else {
-                    c.to_string()
-                }
-            })
-            .collect()
-    };
     let endpoint = parse_x11_display(display, windows).to_json();
     let mut messages = vec![
         format!(
             "\x1b[41m\x1b[30m X \x1b[39m\x1b[49m Could not connect to the X server: {}",
-            terminal_text(&error.to_string())
+            terminal_diagnostic_text(&error.to_string())
         ),
         format!(
             "    Tabby RS tried to connect to {} based on the DISPLAY environment var ({})",
-            terminal_text(&endpoint),
-            terminal_text(display)
+            terminal_diagnostic_text(&endpoint),
+            terminal_diagnostic_text(display)
         ),
     ];
     if windows {

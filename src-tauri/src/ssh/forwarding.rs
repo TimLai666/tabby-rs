@@ -269,6 +269,7 @@ pub(super) fn dispatch_remote_forward(
     connection_id: &str,
     connected_address: &str,
     connected_port: u32,
+    on_message: impl Fn(String) + Send + 'static,
 ) {
     let route = {
         let routes = routes.lock().unwrap_or_else(|error| error.into_inner());
@@ -292,21 +293,44 @@ pub(super) fn dispatch_remote_forward(
             })
     };
     let stream = channel.into_stream();
-    tokio::spawn(run_remote_forward(stream, route, connected_port));
+    let connected_address = connected_address.to_owned();
+    tokio::spawn(async move {
+        run_remote_forward(
+            stream,
+            route,
+            &connected_address,
+            connected_port,
+            on_message,
+        )
+        .await
+    });
 }
 
 pub(super) async fn run_remote_forward(
     mut ssh_stream: russh::ChannelStream<russh::client::Msg>,
     route: Option<Arc<super::RemoteForwardRoute>>,
+    connected_address: &str,
     connected_port: u32,
+    on_message: impl Fn(String) + Send,
 ) -> Result<(), russh::Error> {
+    let rejection_message = || {
+        format!(
+            "\x1b[41m\x1b[30m X \x1b[39m\x1b[49m Rejected incoming forwarded connection for unrecognized port {}:{connected_port}",
+            super::terminal_diagnostic_text(connected_address),
+        )
+    };
     let Some(route) = route else {
+        on_message(rejection_message());
         return Ok::<(), russh::Error>(());
     };
     if let Some(ready) = route.ready.clone() {
-        let actual_port = route.cancel.run(wait_for_remote_forward_ready(ready)).await;
-        if !matches!(actual_port, Ok(actual) if actual == connected_port) {
-            return Ok::<(), russh::Error>(());
+        match route.cancel.run(wait_for_remote_forward_ready(ready)).await {
+            Ok(actual) if actual == connected_port => {}
+            Ok(_) => {
+                on_message(rejection_message());
+                return Ok::<(), russh::Error>(());
+            }
+            Err(_) => return Ok::<(), russh::Error>(()),
         }
     }
     let target = route
@@ -317,7 +341,13 @@ pub(super) async fn run_remote_forward(
         .await;
     let mut target = match target {
         Ok(Ok(target)) => target,
-        Ok(Err(_)) => {
+        Ok(Err(error)) => {
+            on_message(format!(
+                "\x1b[41m\x1b[30m X \x1b[39m\x1b[49m Could not forward the remote connection to {}:{}: {}",
+                super::terminal_diagnostic_text(&route.target_address),
+                route.target_port,
+                super::terminal_diagnostic_text(&error.to_string()),
+            ));
             let _ = ssh_stream.shutdown().await;
             return Ok::<(), russh::Error>(());
         }

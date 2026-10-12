@@ -539,7 +539,13 @@ async fn cancelled_remote_route_does_not_connect_target_and_closes_channel() {
     };
     timeout(
         LIMIT,
-        forwarding::run_remote_forward(channel.into_stream(), Some(Arc::new(route)), 0),
+        forwarding::run_remote_forward(
+            channel.into_stream(),
+            Some(Arc::new(route)),
+            "127.0.0.1",
+            0,
+            |_| {},
+        ),
     )
     .await
     .unwrap()
@@ -592,12 +598,16 @@ async fn active_remote_route_cancel_closes_target_and_other_route_keeps_binary_r
     let ja = spawn(forwarding::run_remote_forward(
         channel_a.into_stream(),
         Some(Arc::new(route_a)),
+        "127.0.0.1",
         0,
+        |_| {},
     ));
     let jb = spawn(forwarding::run_remote_forward(
         channel_b.into_stream(),
         Some(Arc::new(route_b)),
+        "127.0.0.1",
         0,
+        |_| {},
     ));
     let (mut peer_a, _) = timeout(LIMIT, target_a.accept()).await.unwrap().unwrap();
     let (mut peer_b, _) = timeout(LIMIT, target_b.accept()).await.unwrap().unwrap();

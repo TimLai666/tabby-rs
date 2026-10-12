@@ -41,6 +41,7 @@ struct PinnedClient {
     key: russh::keys::PublicKey,
     routes: Routes,
     connection_id: String,
+    messages: mpsc::UnboundedSender<(String, String)>,
 }
 
 impl client::Handler for PinnedClient {
@@ -62,12 +63,17 @@ impl client::Handler for PinnedClient {
         _: u32,
         _: &mut client::Session,
     ) -> impl std::future::Future<Output = Result<(), Self::Error>> + Send {
+        let messages = self.messages.clone();
+        let connection_id = self.connection_id.clone();
         forwarding::dispatch_remote_forward(
             channel,
             &self.routes,
             &self.connection_id,
             connected_address,
             connected_port,
+            move |message| {
+                let _ = messages.send((connection_id.clone(), message));
+            },
         );
         async { Ok(()) }
     }
@@ -315,6 +321,7 @@ struct Peer {
     accepted_requests: mpsc::UnboundedReceiver<(String, u32)>,
     rejected_requests: mpsc::UnboundedReceiver<(String, u32)>,
     close_events: mpsc::UnboundedReceiver<ChannelId>,
+    messages: mpsc::UnboundedReceiver<(String, String)>,
     server_task: Option<JoinHandle<()>>,
 }
 
@@ -329,6 +336,7 @@ impl Peer {
         let (accepted_sender, accepted_requests) = mpsc::unbounded_channel();
         let (rejected_sender, rejected_requests) = mpsc::unbounded_channel();
         let (close_sender, close_events) = mpsc::unbounded_channel();
+        let (message_sender, messages) = mpsc::unbounded_channel();
         *state
             .accepted_requests
             .lock()
@@ -364,6 +372,7 @@ impl Peer {
                     key: public,
                     routes: routes.clone(),
                     connection_id: connection_id.into(),
+                    messages: message_sender,
                 },
             ),
         )
@@ -388,6 +397,7 @@ impl Peer {
             accepted_requests,
             rejected_requests,
             close_events,
+            messages,
             server_task: Some(server_task),
         }
     }
