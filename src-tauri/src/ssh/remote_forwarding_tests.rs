@@ -1531,3 +1531,307 @@ async fn normal_eager_peer_completes_32_binary_echoes_without_rejections() {
     .await
     .unwrap();
 }
+
+const RED_X: &str = "\x1b[41m\x1b[30m X \x1b[39m\x1b[49m";
+
+fn unrecognized_message(endpoint: &str) -> String {
+    format!("{RED_X} Rejected incoming forwarded connection for unrecognized port {endpoint}")
+}
+
+fn target_failure_prefix(address: &str, port: u16) -> String {
+    format!("{RED_X} Could not forward the remote connection to {address}:{port}: ")
+}
+
+async fn expect_message(peer: &mut Peer) -> String {
+    let (connection_id, message) = timeout(LIMIT, peer.messages.recv())
+        .await
+        .expect("forwarding diagnostic must reach the owning connection")
+        .expect("message observer closed");
+    assert_eq!(connection_id, peer.connection_id);
+    message
+}
+
+async fn assert_no_message(peer: &mut Peer) {
+    if let Ok(Some(extra)) = timeout(Duration::from_millis(250), peer.messages.recv()).await {
+        panic!("unexpected forwarding diagnostic: {extra:?}");
+    }
+}
+
+fn insert_route(
+    routes: &Routes,
+    connection_id: &str,
+    port: u32,
+    target: SocketAddr,
+    cancel: CancelSignal,
+    ready: Option<tokio::sync::watch::Receiver<Option<u32>>>,
+) {
+    routes.lock().unwrap().insert(
+        (connection_id.into(), "127.0.0.1".into(), port),
+        Arc::new(RemoteForwardRoute {
+            target_address: target.ip().to_string(),
+            target_port: target.port(),
+            cancel,
+            ready,
+        }),
+    );
+}
+
+#[tokio::test]
+async fn unknown_route_reports_endpoint_once_closes_and_keeps_shell() {
+    timeout(Duration::from_secs(15), async {
+        let routes = Routes::default();
+        let mut peer = Peer::connect(routes, "diag-unknown").await;
+        let channel = peer.open_forwarded("127.0.0.1", 43210).await;
+        let id = channel.id();
+        assert_server_channel_closed(channel).await;
+        wait_for_channel_close(&mut peer.close_events, &peer.state, id).await;
+        assert_eq!(
+            expect_message(&mut peer).await,
+            unrecognized_message("127.0.0.1:43210")
+        );
+        assert_no_message(&mut peer).await;
+        peer.shell_echo(&[0x00, 0xff, 0x1b, 0x80, b'k']).await;
+        peer.cleanup().await;
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn unknown_route_escapes_untrusted_endpoint_and_preserves_unicode() {
+    timeout(Duration::from_secs(15), async {
+        let mut peer = Peer::connect(Routes::default(), "diag-escape").await;
+        let hostile = "ev\x1b]0;pwn\x07\r\n\u{9b}31m-é漢🙂";
+        let channel = peer.open_forwarded(hostile, 7).await;
+        let id = channel.id();
+        assert_server_channel_closed(channel).await;
+        wait_for_channel_close(&mut peer.close_events, &peer.state, id).await;
+        let message = expect_message(&mut peer).await;
+        let escaped = "ev\\u{1b}]0;pwn\\u{7}\\r\\n\\u{9b}31m-é漢🙂";
+        assert_eq!(message, unrecognized_message(&format!("{escaped}:7")));
+        let rest = message.strip_prefix(RED_X).unwrap();
+        assert!(
+            !rest.chars().any(char::is_control),
+            "only the fixed badge may carry terminal controls: {rest:?}"
+        );
+        assert_no_message(&mut peer).await;
+        peer.shell_echo(b"shell-after-escape").await;
+        peer.cleanup().await;
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn refused_target_reports_once_then_same_route_recovers_after_listen() {
+    timeout(Duration::from_secs(20), async {
+        let routes = Routes::default();
+        let mut peer = Peer::connect(routes.clone(), "diag-refused").await;
+        let released = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let target = released.local_addr().unwrap();
+        let port = peer.start_remote(0, target, CancelSignal::default()).await;
+        // Hold the target listener until the remote listener is allocated so they
+        // cannot take the same ephemeral port. macOS leaves a bound non-listening
+        // socket pending, so confirm real refusal after releasing this listener.
+        drop(released);
+        let refusal = timeout(LIMIT, TcpStream::connect(target))
+            .await
+            .unwrap()
+            .expect_err("released target port must refuse before the wire probe");
+        assert_eq!(refusal.kind(), std::io::ErrorKind::ConnectionRefused);
+        let channel = peer.open_forwarded("127.0.0.1", u32::from(port)).await;
+        let id = channel.id();
+        assert_server_channel_closed(channel).await;
+        wait_for_channel_close(&mut peer.close_events, &peer.state, id).await;
+        let message = expect_message(&mut peer).await;
+        let prefix = target_failure_prefix("127.0.0.1", target.port());
+        let reason = message
+            .strip_prefix(&prefix)
+            .unwrap_or_else(|| panic!("unexpected target diagnostic: {message:?}"));
+        assert_eq!(reason, refusal.to_string());
+        assert_no_message(&mut peer).await;
+        peer.shell_echo(b"shell-after-refusal").await;
+
+        let listener = TcpListener::bind(target)
+            .await
+            .expect("released target port must be rebindable for recovery");
+        assert!(routes.lock().unwrap().contains_key(&(
+            "diag-refused".into(),
+            "127.0.0.1".into(),
+            u32::from(port)
+        )));
+        echo_remote(port, &listener, &[0x00, 0x9b, 0xff, 0x1b, 0x42]).await;
+        assert_no_message(&mut peer).await;
+        peer.shell_echo(b"shell-after-recovery").await;
+        peer.stop_remote("127.0.0.1", port).await;
+        peer.cleanup().await;
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn cancelled_matching_route_closes_silently_without_target() {
+    timeout(Duration::from_secs(15), async {
+        let routes = Routes::default();
+        let mut peer = Peer::connect(routes.clone(), "diag-cancelled").await;
+        let target = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let cancel = CancelSignal::default();
+        cancel.cancel();
+        insert_route(
+            &routes,
+            "diag-cancelled",
+            43211,
+            target.local_addr().unwrap(),
+            cancel,
+            None,
+        );
+        let channel = peer.open_forwarded("127.0.0.1", 43211).await;
+        let id = channel.id();
+        assert_server_channel_closed(channel).await;
+        wait_for_channel_close(&mut peer.close_events, &peer.state, id).await;
+        assert!(timeout(Duration::from_millis(250), target.accept())
+            .await
+            .is_err());
+        assert_no_message(&mut peer).await;
+        peer.shell_echo(b"shell-after-cancelled").await;
+        peer.cleanup().await;
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn pending_allocated_route_reports_mismatched_incoming_port() {
+    timeout(Duration::from_secs(15), async {
+        let routes = Routes::default();
+        let mut peer = Peer::connect(routes.clone(), "diag-mismatch").await;
+        let target = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let (ready, receiver) = tokio::sync::watch::channel(None);
+        insert_route(
+            &routes,
+            "diag-mismatch",
+            0,
+            target.local_addr().unwrap(),
+            CancelSignal::default(),
+            Some(receiver),
+        );
+        let mut channel = peer.open_forwarded("127.0.0.1", 43212).await;
+        let id = channel.id();
+        assert_channel_waits_without_target(&mut peer.close_events, &mut channel, &target).await;
+        assert_no_message(&mut peer).await;
+        ready.send(Some(43213)).unwrap();
+        wait_for_channel_close(&mut peer.close_events, &peer.state, id).await;
+        assert_eq!(
+            expect_message(&mut peer).await,
+            unrecognized_message("127.0.0.1:43212")
+        );
+        assert!(timeout(Duration::from_millis(250), target.accept())
+            .await
+            .is_err());
+        assert_no_message(&mut peer).await;
+        peer.shell_echo(b"shell-after-mismatch").await;
+        drop(channel);
+        peer.cleanup().await;
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn pending_route_cancel_or_closed_readiness_closes_silently() {
+    timeout(Duration::from_secs(20), async {
+        let routes = Routes::default();
+        let mut peer = Peer::connect(routes.clone(), "diag-pending").await;
+        let target = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        for cancel_route in [true, false] {
+            let cancel = CancelSignal::default();
+            let (ready, receiver) = tokio::sync::watch::channel(None);
+            insert_route(
+                &routes,
+                "diag-pending",
+                0,
+                target.local_addr().unwrap(),
+                cancel.clone(),
+                Some(receiver),
+            );
+            let mut channel = peer.open_forwarded("127.0.0.1", 43214).await;
+            let id = channel.id();
+            assert_channel_waits_without_target(&mut peer.close_events, &mut channel, &target)
+                .await;
+            routes.lock().unwrap().clear();
+            if cancel_route {
+                cancel.cancel();
+                wait_for_channel_close(&mut peer.close_events, &peer.state, id).await;
+                drop(ready);
+            } else {
+                drop(ready);
+                wait_for_channel_close(&mut peer.close_events, &peer.state, id).await;
+            }
+            assert!(timeout(Duration::from_millis(250), target.accept())
+                .await
+                .is_err());
+            assert_no_message(&mut peer).await;
+            peer.shell_echo(b"shell-after-pending").await;
+            drop(channel);
+        }
+        peer.cleanup().await;
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn shared_routes_deliver_diagnostic_only_to_incoming_owner() {
+    timeout(Duration::from_secs(15), async {
+        let routes = Routes::default();
+        let mut owner = Peer::connect(routes.clone(), "diag-owner-a").await;
+        let mut other = Peer::connect(routes.clone(), "diag-owner-b").await;
+        let target = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        insert_route(
+            &routes,
+            "diag-owner-a",
+            43215,
+            target.local_addr().unwrap(),
+            CancelSignal::default(),
+            None,
+        );
+        let active = owner.open_forwarded("127.0.0.1", 43215).await;
+        let (mut target_socket, _) = timeout(LIMIT, target.accept()).await.unwrap().unwrap();
+        let mut relay = active.into_stream();
+
+        let rejected = other.open_forwarded("127.0.0.1", 43215).await;
+        let id = rejected.id();
+        assert_server_channel_closed(rejected).await;
+        wait_for_channel_close(&mut other.close_events, &other.state, id).await;
+        assert_eq!(
+            expect_message(&mut other).await,
+            unrecognized_message("127.0.0.1:43215")
+        );
+        assert_no_message(&mut other).await;
+        assert_no_message(&mut owner).await;
+
+        let payload = [0xa5, 0x00, 0xff, 0x1b];
+        relay.write_all(&payload).await.unwrap();
+        let mut received = [0; 4];
+        timeout(LIMIT, target_socket.read_exact(&mut received))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(received, payload);
+        target_socket.write_all(&payload).await.unwrap();
+        let mut echoed = [0; 4];
+        timeout(LIMIT, relay.read_exact(&mut echoed))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(echoed, payload);
+        owner.shell_echo(b"owner-shell").await;
+        other.shell_echo(b"other-shell").await;
+        drop(relay);
+        owner.cleanup().await;
+        other.cleanup().await;
+    })
+    .await
+    .unwrap();
+}

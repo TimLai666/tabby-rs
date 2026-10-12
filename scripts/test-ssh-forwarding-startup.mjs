@@ -394,6 +394,42 @@ async function runCurrent () {
         })
     })
 
+    await check('forwarded-channel-message-owner-and-ended-session', async () => {
+        const bridgeA = makeBridge()
+        const bridgeB = makeBridge()
+        const sessionA = create(makeProfile([]), bridgeA)
+        const sessionB = create(makeProfile([]), bridgeB)
+        const messagesA = [], messagesB = []
+        sessionA.serviceMessage$.subscribe(message => messagesA.push(message))
+        sessionB.serviceMessage$.subscribe(message => messagesB.push(message))
+        try {
+            await Promise.all([sessionA.start(), sessionB.start()])
+            const idA = bridgeA.calls.find(call => call.name === 'ssh.connect').request.connectionId
+            const idB = bridgeB.calls.find(call => call.name === 'ssh.connect').request.connectionId
+            assert.notEqual(idA, idB, 'two SSH connections have independent event identities')
+            const receiveA = bridgeA.listeners.get('ssh:message')
+            const receiveB = bridgeB.listeners.get('ssh:message')
+            const broadcast = payload => { receiveA(payload); receiveB(payload) }
+            const unknown = failureBadge + ' Rejected incoming forwarded connection for unrecognized port example.test:4321'
+            broadcast({ connectionId: idA, message: unknown })
+            assert.deepEqual(messagesA, [unknown], 'unrecognized-channel message reaches its owner without changing ANSI or text')
+            assert.deepEqual(messagesB, [], 'another active SSH tab does not receive the diagnostic')
+            assert.equal(sessionA.open, true, 'an incoming-channel error keeps its owner authenticated')
+            assert.equal(sessionB.open, true, 'the other connection remains usable')
+            await sessionA.destroy()
+            const failedTarget = failureBadge + ' Could not forward the remote connection to 127.0.0.1:4322: fixture native connection refused'
+            broadcast({ connectionId: idA, message: 'late owner-A diagnostic' })
+            broadcast({ connectionId: idB, message: failedTarget })
+            assert.deepEqual(messagesA, [unknown], 'ended owner receives no late diagnostics or another owner message')
+            assert.deepEqual(messagesB, [failedTarget], 'remaining owner receives its own target failure intact')
+            assert.equal(bridgeA.listeners.size, 0, 'ended owner releases all event listeners')
+            assert.equal(sessionB.open, true, 'target failure does not close the surviving session')
+        } finally {
+            await Promise.all([sessionA.destroy(), sessionB.destroy()])
+        }
+        assert.equal(bridgeB.listeners.size, 0, 'remaining owner releases its listeners on teardown')
+    })
+
     await check('output-during-pending-destroy', async () => {
         // Native controls can await a peer reply while close is queued. Late output
         // must not turn a closing session into an unbounded pre-connect buffer.
