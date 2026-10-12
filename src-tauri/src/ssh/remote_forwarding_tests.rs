@@ -448,13 +448,10 @@ async fn specified_and_allocated_remote_ports_relay_binary_and_keep_shell() {
                 "127.0.0.1".into(),
                 u32::from(port)
             )));
-            assert!(timeout(
-                Duration::from_millis(250),
-                TcpStream::connect(("127.0.0.1", port))
-            )
-            .await
-            .unwrap()
-            .is_err());
+            assert!(timeout(LIMIT, TcpStream::connect(("127.0.0.1", port)))
+                .await
+                .unwrap()
+                .is_err());
         }
         peer.cleanup().await;
     })
@@ -502,13 +499,10 @@ async fn cancel_closes_active_target_and_channel_without_stopping_another_route(
             0,
             "cancel must close the forwarded peer channel"
         );
-        assert!(timeout(
-            Duration::from_millis(250),
-            TcpStream::connect(("127.0.0.1", port_a))
-        )
-        .await
-        .unwrap()
-        .is_err());
+        assert!(timeout(LIMIT, TcpStream::connect(("127.0.0.1", port_a)))
+            .await
+            .unwrap()
+            .is_err());
         assert!(manager.remote_routes.lock().unwrap().contains_key(&(
             "cancel-connection".into(),
             "127.0.0.1".into(),
