@@ -387,11 +387,18 @@
   stop_forwarding removes its runtime before awaiting cancel_tcpip_forward, while
   the control handler removes the route only on success. Passing successful-stop
   checks do not establish failed-stop recovery.
-- [P2] Restore the fixed upstream Remote forwarding service diagnostics before
-  accepting terminal-message parity. Native unmatched-route and target-connect
-  failure paths close their channels without emitting the original rejection or
-  connection-error text. Use the existing ssh:message flow and check escaping,
-  owning-session delivery, and actual rendered failures.
+- Remote incoming-channel failures use the existing ssh:message event with the
+  owning connectionId. Preserve the fixed upstream red X badge and rejection or
+  target-connection-error prefix, escape untrusted terminal controls, and retain
+  the native I/O reason. Cancellation and closed readiness stay silent.
+  Retain real-SSH regressions for unmatched endpoints, printable Unicode,
+  target refusal and same-route recovery, allocated-port mismatch, cancellation,
+  closed readiness, decoded CHANNEL_CLOSE, usable shell input, and owner isolation.
+  The actual renderer-session fixture also checks another and ended owner.
+  Native macOS target refusal displays the diagnostic at 1100x720 and 640x480;
+  terminal input and the same forwarding route remain usable after recovery.
+  Unmatched-endpoint desktop rendering, full upstream error-text comparison,
+  other supported platforms, and packaged-release acceptance remain pending.
 - Failed native forwarding starts retain entries until session closure. Verify
   repeated failures, list consumers, and listener cleanup before accepting modal
   forwarding runtime behavior. An open Ports modal also stays bound to its old
