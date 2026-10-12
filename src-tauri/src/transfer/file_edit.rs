@@ -9,10 +9,7 @@ use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::{
     collections::HashMap,
     path::PathBuf,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
-    },
+    sync::{Arc, Mutex},
 };
 use tempfile::TempDir;
 
@@ -34,12 +31,15 @@ struct EditContext {
     directory: Option<TempDir>,
     path: PathBuf,
     ready: bool,
-    active: Arc<AtomicBool>,
+    active: Arc<Mutex<bool>>,
     watcher: Option<RecommendedWatcher>,
 }
 impl Drop for EditContext {
     fn drop(&mut self) {
-        self.active.store(false, Ordering::SeqCst);
+        *self
+            .active
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = false;
     }
 }
 #[derive(Default)]
@@ -74,7 +74,7 @@ impl FileEditManager {
                 directory: Some(directory),
                 path,
                 ready: false,
-                active: Arc::new(AtomicBool::new(true)),
+                active: Arc::new(Mutex::new(true)),
                 watcher: None,
             },
         );
@@ -126,7 +126,9 @@ impl FileEditManager {
         let event_id = id.to_owned();
         let mut watcher =
             notify::recommended_watcher(move |result: notify::Result<notify::Event>| {
-                if !active.load(Ordering::SeqCst) {
+                // Keep delivery inside the lock so stop waits for an in-flight callback.
+                let active = active.lock().unwrap_or_else(|error| error.into_inner());
+                if !*active {
                     return;
                 }
                 let (event, message) = match result {
@@ -166,8 +168,9 @@ impl FileEditManager {
         Ok(())
     }
     pub fn stop(&self, id: &str) -> Result<(), AppError> {
-        let removed = self.contexts.lock().unwrap().remove(id);
-        drop(removed);
+        // Concurrent stops must wait for the first stop's callback drain as well.
+        let mut contexts = self.contexts.lock().unwrap();
+        drop(contexts.remove(id));
         Ok(())
     }
 }
