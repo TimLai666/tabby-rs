@@ -399,6 +399,38 @@
   terminal input and the same forwarding route remain usable after recovery.
   Unmatched-endpoint desktop rendering, full upstream error-text comparison,
   other supported platforms, and packaged-release acceptance remain pending.
+- Local and Dynamic forwarded-channel rejections emit the existing ssh:message
+  event with the owning connectionId. Use the fixed upstream red X badge,
+  requested destination, configured forwarding description, and native rejection
+  reason. Keep configured port-zero descriptions distinct from allocated listener
+  ports, and escape untrusted terminal controls while preserving printable Unicode.
+  A rejected child closes without stopping its listener or authenticated shell.
+  Cancellation and ordinary successful relay completion stay silent.
+  Retain src-tauri/src/ssh/local_forwarding_tests.rs real-SSH checks for Local and
+  Dynamic rejection and same-listener recovery, binary relay and shell input,
+  observed normal EOF, pending cancellation with a late rejection, hostile SOCKS
+  domain controls, and independent listener callbacks. The actual renderer-session
+  fixture checks matching, other, and ended owners. Native macOS loopback checks
+  display Local and Dynamic errors at 1100x720 and 640x480, preserve terminal input,
+  and keep diagnostics isolated between two SSH tabs in one native manager.
+  Dynamic forwarding recovers binary traffic and normal EOF on the same listener.
+  Ordinary window closure ends both established relays, both SSH transports, and
+  all four listeners. Local same-listener desktop recovery, original desktop
+  comparison, other supported platforms, and packaged release acceptance remain
+  pending.
+- Compare Dynamic SOCKS failure timing and Local originator metadata with the
+  fixed upstream before accepting parity. Native currently replies SOCKS success
+  before direct-tcpip approval; the locked upstream rejection probe returns 0502.
+  Native Local forwarding supplies 127.0.0.1:0 as the originator, while the upstream
+  Local listener passes the accepted client's address and port. Upstream Dynamic
+  forwarding uses the same 127.0.0.1:0 fallback as native. Diagnostic acceptance
+  does not resolve these existing differences; no exception is approved.
+- Reproduce the macOS owned-window blank state and forwarding-echo timeout before
+  accepting long-lived native SSH sessions. A sampled affected process had idle
+  AppKit and Tokio threads; no callback or mutex deadlock was established. A fresh
+  process passed binary forwarding, rejection, same-Dynamic-listener recovery,
+  terminal input, and ordinary close. Those passing checks do not explain the
+  earlier timeout or establish recovery of that affected process.
 - Failed native forwarding starts retain entries until session closure. Verify
   repeated failures, list consumers, and listener cleanup before accepting modal
   forwarding runtime behavior. An open Ports modal also stays bound to its old
@@ -411,8 +443,7 @@
   rejects new connections. Recheck these ordinary post-connect flows after changes.
 - An occupied Remote port shows a terminal rejection without adding a modal row.
   Actual terminal input and a subsequent successful Remote forwarding work on
-  the same SSH connection. Local and Dynamic rejection diagnostics and terminal
-  input still require desktop verification.
+  the same SSH connection.
 - Actual 1100x720 and 640x480 Native macOS Ports forms and row controls are usable.
   Closing the owned native window ends its established relay, SSH session, and
   app process; its isolated saved-profile forwarding settings stay unchanged.
