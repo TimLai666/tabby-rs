@@ -213,7 +213,20 @@ pub(crate) fn register_desktop_window_events(window: &tauri::WebviewWindow) {
                 .launches()
                 .remove(emitter.label());
         }
+        tauri::WindowEvent::DragDrop(
+            tauri::DragDropEvent::Enter { position, .. } | tauri::DragDropEvent::Over { position },
+        ) => {
+            let _ = emitter.emit_to(
+                emitter.label(),
+                "desktop:fileDrag",
+                serde_json::json!({ "x": position.x, "y": position.y }),
+            );
+        }
+        tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Leave) => {
+            let _ = emitter.emit_to(emitter.label(), "desktop:fileDrag", serde_json::Value::Null);
+        }
         tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, position }) => {
+            let _ = emitter.emit_to(emitter.label(), "desktop:fileDrag", serde_json::Value::Null);
             let _ = emitter.emit_to(
                 emitter.label(),
                 "desktop:fileDrop",

@@ -32,6 +32,7 @@ import {
 export class TauriPlatformService extends PlatformService {
     supportsPluginManagement = false
     readonly fileDropped$ = new Subject<HostEventMap['desktop:fileDrop']>()
+    readonly fileDragged$ = new Subject<HostEventMap['desktop:fileDrag']>()
     readonly fileDropReady: Promise<() => void>
     private clipboardText = ''
     private configRevision: string | null = null
@@ -48,8 +49,19 @@ export class TauriPlatformService extends PlatformService {
         private zone: NgZone,
     ) {
         super()
-        this.fileDropReady = this.bridge.listen('desktop:fileDrop', event => this.fileDropped$.next(event))
+        this.fileDropReady = this.initializeFileDrop()
         void this.initializeDesktopEvents()
+    }
+
+    private async initializeFileDrop (): Promise<() => void> {
+        const stopDrop = await this.bridge.listen('desktop:fileDrop', event => this.fileDropped$.next(event))
+        try {
+            const stopDrag = await this.bridge.listen('desktop:fileDrag', event => this.fileDragged$.next(event))
+            return () => { try { stopDrop() } finally { stopDrag() } }
+        } catch (error) {
+            stopDrop()
+            throw error
+        }
     }
 
     readClipboard (): string {

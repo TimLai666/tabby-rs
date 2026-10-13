@@ -1314,6 +1314,7 @@ export interface HostEventMap {
     'desktop:windowResized': { width: number; height: number }
     'desktop:windowCloseRequested': null
     'desktop:fileDrop': { paths: string[]; x: number; y: number }
+    'desktop:fileDrag': { x: number; y: number }|null
     'desktop:themeChanged': 'system' | 'light' | 'dark'
     'desktop:displayMetricsChanged': number
     'fileEdit:changed': { id: string; event: 'change'|'rename'|'error'; message?: string|null }

@@ -9,7 +9,7 @@ import { TauriPlatformService } from './services/platform.service'
 @Directive({ selector: '[dropZone]' })
 export class TauriFileDropDirective implements OnInit, OnDestroy {
     private destroyed = false
-    private subscription?: Subscription
+    private subscription = new Subscription()
 
     constructor (
         private el: ElementRef,
@@ -19,15 +19,25 @@ export class TauriFileDropDirective implements OnInit, OnDestroy {
     ) { }
 
     ngOnInit (): void {
-        this.subscription = this.platform.fileDropped$.subscribe(event => { void this.onDrop(event) })
+        this.subscription.add(this.platform.fileDropped$.subscribe(event => { void this.onDrop(event) }))
+        this.subscription.add(this.platform.fileDragged$.subscribe(event => this.onDrag(event)))
     }
 
     ngOnDestroy (): void {
         this.destroyed = true
-        this.subscription?.unsubscribe()
+        this.subscription.unsubscribe()
+        this.dropZone.setHovered(false)
+    }
+
+    private onDrag (event: HostEventMap['desktop:fileDrag']): void {
+        if (this.destroyed) { return }
+        const position = event && this.platform.getFileDropPosition(event)
+        const target = position && document.elementFromPoint(position.x, position.y)
+        this.dropZone.setHovered(target?.closest('[dropZone]') === this.el.nativeElement)
     }
 
     private async onDrop (event: HostEventMap['desktop:fileDrop']): Promise<void> {
+        this.dropZone.setHovered(false)
         if (this.isDestroyed() || !event.paths.length) { return }
         const position = this.platform.getFileDropPosition(event)
         const target = document.elementFromPoint(position.x, position.y)

@@ -17,31 +17,37 @@ export class DropZoneDirective implements AfterViewInit {
 
     ngAfterViewInit (): void {
         this.el.nativeElement.addEventListener('dragover', () => {
-            if (!this.dropHint) {
-                this.dropHint = document.createElement('div')
-                this.dropHint.className = 'drop-zone-hint'
-                this.dropHint.innerHTML = require('./dropZone.directive.pug')
-                this.el.nativeElement.appendChild(this.dropHint)
-                setTimeout(() => {
-                    this.dropHint!.classList.add('visible')
-                })
-            }
+            this.setHovered(true)
         })
         this.el.nativeElement.addEventListener('drop', async (event: DragEvent) => {
-            this.removeHint()
+            this.setHovered(false)
             this.transfer.emit(await this.platform.startUploadFromDragEvent(event, true))
         })
         this.el.nativeElement.addEventListener('dragleave', () => {
-            this.removeHint()
+            this.setHovered(false)
+        })
+    }
+
+    setHovered (hovered: boolean): void {
+        if (!hovered) { this.removeHint(); return }
+        if (this.dropHint) { return }
+        const element = document.createElement('div')
+        this.dropHint = element
+        element.className = 'drop-zone-hint'
+        element.innerHTML = require('./dropZone.directive.pug')
+        this.el.nativeElement.appendChild(element)
+        setTimeout(() => {
+            if (this.dropHint === element) { element.classList.add('visible') }
         })
     }
 
     private removeHint () {
         const element = this.dropHint
+        if (!element) { return }
         delete this.dropHint
-        element?.classList.remove('visible')
+        element.classList.remove('visible')
         setTimeout(() => {
-            element?.remove()
+            element.remove()
         }, 500)
     }
 }
