@@ -430,12 +430,21 @@
   Native Local forwarding supplies 127.0.0.1:0 as the originator, while the upstream
   Local listener passes the accepted client's address and port. Upstream Dynamic
   forwarding uses the same 127.0.0.1:0 fallback as native. No exception is approved.
-- P2: Unsupported SOCKS requests can receive two failure replies. For BIND, the
-  parser writes the ten-byte 0507 reply and run_local_forward writes another
-  ten-byte 0501 reply on the same error. A native macOS probe receives both replies
-  before a connection reset. Keep this parser failure separate from valid CONNECT
-  approval handling. Give failure replies one owner and compare invalid-request
-  behavior with the fixed upstream before accepting parser parity.
+- Dynamic SOCKS parsing must match the published @luminati-io/socksv5 0.0.7
+  used by the fixed upstream. Let the parser own authentication and request
+  failures: unsupported authentication returns only 05ff, completed BIND/UDP
+  returns only 0507, and malformed requests close silently. Validate version
+  and command as their bytes arrive; parse the complete destination before
+  rejecting BIND/UDP. Preserve all 255 authentication methods, ignored reserved
+  bytes, zero ports, empty domains, replacement UTF-8 decoding, and expanded
+  eight-group IPv6 metadata passed to SSH. Incomplete handshakes wait for client
+  closure or forwarding/session cancellation, without a separate parser deadline.
+  Shutdown rejected Dynamic clients before draining unread bytes with a fixed
+  buffer inside the existing cancellation scope. Retain real-TCP/SSH regressions
+  for exact replies plus EOF, pipelined input, same-listener binary recovery,
+  a held handshake beyond 30 seconds, and cancellation of write-held clients.
+  Published-server probes simulate the SSH decision and explicitly clean up
+  their owned sockets; they do not establish original desktop acceptance.
 - Reproduce the macOS owned-window blank state and forwarding-echo timeout before
   accepting long-lived native SSH sessions. A sampled affected process had idle
   AppKit and Tokio threads; no callback or mutex deadlock was established. A fresh
