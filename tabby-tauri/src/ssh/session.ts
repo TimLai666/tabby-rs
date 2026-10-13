@@ -22,6 +22,7 @@ import { TauriPasswordStorageService } from '../services/passwordStorage.service
 export class TauriSshSession extends BaseSession {
     private id: string|null = null
     private destroying = false
+    private listenersEnded = false
     private connecting = false
     authUsername: string|null = null
     activePrivateKey = false
@@ -118,67 +119,86 @@ export class TauriSshSession extends BaseSession {
     }
 
     async start (): Promise<void> {
-        if (this.open || this.destroying) {
+        if (this.open || this.destroying || this.listenersEnded) {
             return
         }
-        const unlisteners = await Promise.all([
-            this.bridge.listen('ssh:message', event => {
-                if (event.connectionId === this.connectionId && !this.destroying) {
-                    this.serviceMessage.next(event.message)
-                }
-            }),
-            this.bridge.listen('ssh:output', event => {
-                if (event.connectionId === this.connectionId && !this.destroying) {
-                    if (!this.id) {
-                        this.pendingOutput.push({ data: event.data, extended: event.extended })
-                        return
+        try {
+            await Promise.all([
+                this.bridge.listen('ssh:message', event => {
+                    if (event.connectionId === this.connectionId && !this.destroying && !this.listenersEnded) {
+                        this.serviceMessage.next(event.message)
                     }
-                    this.emitOutput(Buffer.from(event.data))
-                }
-            }),
-            this.bridge.listen('ssh:exit', event => {
-                if (event.connectionId === this.connectionId) {
-                    if (!this.id) {
-                        this.pendingExit = event
-                    } else if (this.open) {
-                        this.reportExit(event)
-                        void this.destroy()
+                }),
+                this.bridge.listen('ssh:output', event => {
+                    if (event.connectionId === this.connectionId && !this.destroying && !this.listenersEnded) {
+                        if (!this.id) {
+                            this.pendingOutput.push({ data: event.data, extended: event.extended })
+                            return
+                        }
+                        this.emitOutput(Buffer.from(event.data))
                     }
-                }
-            }),
-            this.bridge.listen('ssh:hostKeyPrompt', prompt => {
-                if (prompt.connectionId === this.connectionId) {
-                    void this.handleHostKeyPrompt(prompt)
-                }
-            }),
-            this.bridge.listen('ssh:authPrompt', prompt => {
-                if (prompt.connectionId === this.connectionId) {
-                    if (prompt.storedPassword) {
-                        void this.handleStoredPasswordPrompt(prompt)
-                    } else if (prompt.username === true || Boolean(prompt.password ?? prompt.privateKeyHash)) {
-                        void this.handleCredentialPrompt(prompt)
-                    } else {
-                        this.authPrompt.next(prompt)
+                }),
+                this.bridge.listen('ssh:exit', event => {
+                    if (!this.destroying && !this.listenersEnded && event.connectionId === this.connectionId) {
+                        if (!this.id) {
+                            this.pendingExit = event
+                        } else if (this.open) {
+                            this.reportExit(event)
+                            void this.destroy()
+                        }
                     }
+                }),
+                this.bridge.listen('ssh:hostKeyPrompt', prompt => {
+                    if (!this.destroying && !this.listenersEnded && prompt.connectionId === this.connectionId) {
+                        void this.handleHostKeyPrompt(prompt)
+                    }
+                }),
+                this.bridge.listen('ssh:authPrompt', prompt => {
+                    if (!this.destroying && !this.listenersEnded && prompt.connectionId === this.connectionId) {
+                        if (prompt.storedPassword) {
+                            void this.handleStoredPasswordPrompt(prompt)
+                        } else if (prompt.username === true || Boolean(prompt.password ?? prompt.privateKeyHash)) {
+                            void this.handleCredentialPrompt(prompt)
+                        } else {
+                            this.authPrompt.next(prompt)
+                        }
+                    }
+                }),
+                this.bridge.listen('ssh:passwordAccepted', event => {
+                    if (!this.destroying && !this.listenersEnded && event.connectionId === this.connectionId) {
+                        void this.saveAcceptedPassword(event.requestId)
+                    }
+                }),
+                this.bridge.listen('ssh:privateKeyUnlocked', event => {
+                    if (!this.destroying && !this.listenersEnded && event.connectionId === this.connectionId) {
+                        void this.saveUnlockedPassphrase(event.requestId)
+                    }
+                }),
+            ].map(async registration => {
+                const unlisten = await registration
+                if (this.destroying || this.listenersEnded) {
+                    unlisten()
+                } else {
+                    this.unlisteners.push(unlisten)
                 }
-            }),
-            this.bridge.listen('ssh:passwordAccepted', event => {
-                if (event.connectionId === this.connectionId) {
-                    void this.saveAcceptedPassword(event.requestId)
+            }))
+        } catch (error) {
+            // Preserve startup errors for the tab; explicit cancellation stays separate.
+            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+            if (!this.destroying) {
+                try {
+                    this.endListening()
+                    await super.destroy()
+                } catch (cleanupError) {
+                    this.logger.debug('SSH listener cleanup failed after registration error', cleanupError)
                 }
-            }),
-            this.bridge.listen('ssh:privateKeyUnlocked', event => {
-                if (event.connectionId === this.connectionId) {
-                    void this.saveUnlockedPassphrase(event.requestId)
-                }
-            }),
-        ])
+            }
+            throw error
+        }
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
         if (this.destroying) {
-            for (const unlisten of unlisteners) { unlisten() }
             return
         }
-        this.unlisteners.push(...unlisteners)
 
         const request = await this.connectRequest()
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
@@ -289,12 +309,20 @@ export class TauriSshSession extends BaseSession {
                 this.logger.debug('SSH close failed after session end', error)
             })
         }
+        const listenersEnded = this.listenersEnded
+        this.endListening()
+        if (!listenersEnded) {
+            await super.destroy()
+        }
+    }
+
+    private endListening (): void {
+        this.listenersEnded = true
         for (const unlisten of this.unlisteners.splice(0)) {
             unlisten()
         }
         this.authPrompt.complete()
         this.serviceMessage.complete()
-        await super.destroy()
     }
 
     async gracefullyKillProcess (): Promise<void> {

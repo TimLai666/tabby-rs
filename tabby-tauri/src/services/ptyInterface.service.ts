@@ -126,9 +126,14 @@ export class TauriPTYProxy extends PTYProxy {
         bridge: HostBridge,
     ): Promise<TauriPTYProxy> {
         const proxy = new TauriPTYProxy(response, bridge)
-        await proxy.startListening()
-        await bridge.invoke('pty.attach', { id: response.id })
-        return proxy
+        try {
+            await proxy.startListening()
+            await bridge.invoke('pty.attach', { id: response.id })
+            return proxy
+        } catch (error) {
+            proxy.stopListening()
+            throw error
+        }
     }
 
     override getID (): string {
@@ -175,14 +180,18 @@ export class TauriPTYProxy extends PTYProxy {
         if (this.detached) {
             return
         }
-        this.detached = true
-        for (const unlisten of this.unlisteners.splice(0)) {
-            unlisten()
-        }
+        this.stopListening()
         this.handlers.clear()
         this.queuedOutput = []
         void this.bridge.invoke('pty.detach', { id: this.response.id })
             .catch(error => console.warn('PTY detach failed:', error))
+    }
+
+    private stopListening (): void {
+        this.detached = true
+        for (const unlisten of this.unlisteners.splice(0)) {
+            unlisten()
+        }
     }
 
     override resize (columns: number, rows: number): Promise<void> {
@@ -227,16 +236,14 @@ export class TauriPTYProxy extends PTYProxy {
     }
 
     private async startListening (): Promise<void> {
-        this.unlisteners.push(
-            await this.bridge.listen('pty:output', payload => this.onOutput(payload)),
-            await this.bridge.listen('pty:exit', payload => this.onExit(payload)),
-            await this.bridge.listen('pty:error', payload => this.onError(payload)),
-            await this.bridge.listen('sudo:prompt', payload => this.onSudoPrompt(payload)),
-        )
+        this.unlisteners.push(await this.bridge.listen('pty:output', payload => this.onOutput(payload)))
+        this.unlisteners.push(await this.bridge.listen('pty:exit', payload => this.onExit(payload)))
+        this.unlisteners.push(await this.bridge.listen('pty:error', payload => this.onError(payload)))
+        this.unlisteners.push(await this.bridge.listen('sudo:prompt', payload => this.onSudoPrompt(payload)))
     }
 
     private onOutput (payload: PtyOutputEvent): void {
-        if (payload.id !== this.response.id) {
+        if (this.detached || payload.id !== this.response.id) {
             return
         }
         if (this.expectedSequence !== null && payload.sequence !== this.expectedSequence) {
@@ -259,7 +266,7 @@ export class TauriPTYProxy extends PTYProxy {
     }
 
     private onExit (payload: PtyExitEvent): void {
-        if (payload.id !== this.response.id) {
+        if (this.detached || payload.id !== this.response.id) {
             return
         }
         this.pendingExit = payload
@@ -271,7 +278,7 @@ export class TauriPTYProxy extends PTYProxy {
     }
 
     private onError (payload: PtyErrorEvent): void {
-        if (payload.id !== this.response.id) {
+        if (this.detached || payload.id !== this.response.id) {
             return
         }
         console.warn(`PTY ${payload.code}: ${payload.details}`)
@@ -281,7 +288,7 @@ export class TauriPTYProxy extends PTYProxy {
     }
 
     private onSudoPrompt (payload: SudoPromptEvent): void {
-        if (payload.sessionId !== this.response.id) {
+        if (this.detached || payload.sessionId !== this.response.id) {
             return
         }
         void this.bridge.invoke('sudo.respond', { promptId: payload.promptId })

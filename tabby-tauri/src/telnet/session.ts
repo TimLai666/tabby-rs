@@ -63,39 +63,57 @@ export class TauriTelnetSession extends BaseSession {
         if (this.open || this.destroying) {
             return
         }
-        this.unlisteners.push(...await Promise.all([
-            this.bridge.listen('telnet:output', event => {
-                if (event.connectionId !== this.connectionId) {
-                    return
-                }
-                if (!this.id) {
-                    this.pendingOutput.push(event.data)
+        try {
+            await Promise.all([
+                this.bridge.listen('telnet:output', event => {
+                    if (this.destroying || event.connectionId !== this.connectionId) {
+                        return
+                    }
+                    if (!this.id) {
+                        this.pendingOutput.push(event.data)
+                    } else {
+                        this.emitOutput(Buffer.from(event.data))
+                    }
+                }),
+                this.bridge.listen('telnet:message', event => {
+                    if (event.connectionId === this.connectionId && !this.destroying) {
+                        this.serviceMessage.next(event.message)
+                    }
+                }),
+                this.bridge.listen('telnet:echo', event => {
+                    if (event.connectionId === this.connectionId && !this.destroying) {
+                        this.handleEcho(event)
+                    }
+                }),
+                this.bridge.listen('telnet:exit', event => {
+                    if (this.destroying || event.connectionId !== this.connectionId) {
+                        return
+                    }
+                    if (!this.id) {
+                        this.pendingExit = event.reason
+                    } else if (this.open) {
+                        this.serviceMessage.next(`Connection closed: ${event.reason}`)
+                        void this.destroy()
+                    }
+                }),
+            ].map(async registration => {
+                const unlisten = await registration
+                if (this.destroying) {
+                    unlisten()
                 } else {
-                    this.emitOutput(Buffer.from(event.data))
+                    this.unlisteners.push(unlisten)
                 }
-            }),
-            this.bridge.listen('telnet:message', event => {
-                if (event.connectionId === this.connectionId) {
-                    this.serviceMessage.next(event.message)
-                }
-            }),
-            this.bridge.listen('telnet:echo', event => {
-                if (event.connectionId === this.connectionId) {
-                    this.handleEcho(event)
-                }
-            }),
-            this.bridge.listen('telnet:exit', event => {
-                if (event.connectionId !== this.connectionId) {
-                    return
-                }
-                if (!this.id) {
-                    this.pendingExit = event.reason
-                } else if (this.open) {
-                    this.serviceMessage.next(`Connection closed: ${event.reason}`)
-                    void this.destroy()
-                }
-            }),
-        ]))
+            }))
+        } catch (error) {
+            await this.destroy().catch(cleanupError => {
+                this.logger.debug('Telnet listener cleanup failed after registration error', cleanupError)
+            })
+            throw error
+        }
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+        if (this.destroying) {
+            return
+        }
 
         const options = this.profile.options
         const info = await this.bridge.invoke('telnet.connect', {
@@ -152,11 +170,11 @@ export class TauriTelnetSession extends BaseSession {
         this.destroying = true
         const id = this.id
         this.id = null
-        if (id) {
-            await this.bridge.invoke('telnet.close', { id }).catch(error => this.logger.debug('Telnet close failed after session end', error))
-        }
         for (const unlisten of this.unlisteners.splice(0)) {
             unlisten()
+        }
+        if (id) {
+            await this.bridge.invoke('telnet.close', { id }).catch(error => this.logger.debug('Telnet close failed after session end', error))
         }
         this.serviceMessage.complete()
         await super.destroy()

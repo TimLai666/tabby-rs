@@ -71,26 +71,46 @@ export class TauriSerialSession extends BaseSession {
         if (this.open || this.destroying) {
             return
         }
-        this.unlisteners.push(...await Promise.all([
-            this.bridge.listen('serial:output', event => {
-                if (event.connectionId === this.connectionId) {
+        try {
+            await Promise.all([
+                this.bridge.listen('serial:output', event => {
+                    if (this.destroying || event.connectionId !== this.connectionId) {
+                        return
+                    }
                     if (!this.id) {
                         this.pendingOutput.push(event.data)
                     } else {
                         this.emitOutput(Buffer.from(event.data))
                     }
-                }
-            }),
-            this.bridge.listen('serial:connectionState', event => {
-                if (event.connectionId === this.connectionId) {
+                }),
+                this.bridge.listen('serial:connectionState', event => {
+                    if (this.destroying || event.connectionId !== this.connectionId) {
+                        return
+                    }
                     if (!this.id) {
                         this.pendingState = event
                     } else {
                         this.handleState(event)
                     }
+                }),
+            ].map(async registration => {
+                const unlisten = await registration
+                if (this.destroying) {
+                    unlisten()
+                } else {
+                    this.unlisteners.push(unlisten)
                 }
-            }),
-        ]))
+            }))
+        } catch (error) {
+            await this.destroy().catch(cleanupError => {
+                this.logger.debug('Serial listener cleanup failed after registration error', cleanupError)
+            })
+            throw error
+        }
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+        if (this.destroying) {
+            return
+        }
 
         const options = this.profile.options
         const request: SerialOpenRequest = {
@@ -169,11 +189,11 @@ export class TauriSerialSession extends BaseSession {
         this.writeQueue.close()
         const id = this.id
         this.id = null
-        if (id) {
-            await this.bridge.invoke('serial.close', { id }).catch(error => this.logger.debug('Serial close failed after session end', error))
-        }
         for (const unlisten of this.unlisteners.splice(0)) {
             unlisten()
+        }
+        if (id) {
+            await this.bridge.invoke('serial.close', { id }).catch(error => this.logger.debug('Serial close failed after session end', error))
         }
         this.serviceMessage.complete()
         await super.destroy()
