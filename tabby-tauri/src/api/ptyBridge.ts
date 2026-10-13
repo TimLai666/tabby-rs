@@ -31,6 +31,13 @@ declare module './hostBridge' {
             request: { id: string }
             response: null
         }
+        // Fresh startup failures after `pty.spawn` returned an id: terminate the
+        // orphaned child, close its detached flow, drop restore eligibility and
+        // remove its manager record. Unknown or already discarded ids are a no-op.
+        'pty.discard': {
+            request: { id: string }
+            response: null
+        }
         'pty.write': {
             request: { id: string; data: number[] }
             response: null

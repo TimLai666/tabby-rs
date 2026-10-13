@@ -83,11 +83,11 @@ impl PtySession {
     }
 
     pub fn is_alive(&self) -> bool {
-        !self.exited.load(Ordering::Acquire)
+        !self.completed.load(Ordering::Acquire) && !self.exited.load(Ordering::Acquire)
     }
 
     pub fn can_restore(&self) -> bool {
-        !self.exit_emitted.load(Ordering::Acquire)
+        !self.completed.load(Ordering::Acquire) && !self.exit_emitted.load(Ordering::Acquire)
     }
 
     pub fn attach(&self, app: &AppHandle) {
@@ -199,6 +199,42 @@ impl PtySession {
             .unwrap_or_else(|error| error.into_inner())
             .kill()
             .map_err(PtyError::from)
+    }
+
+    pub fn discard(&self) -> Result<(), PtyError> {
+        let _killer = self
+            .killer
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if self.completed.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        if !self.exited.load(Ordering::Acquire) {
+            #[cfg(unix)]
+            {
+                let result = unsafe { libc::kill(self.pid as libc::pid_t, libc::SIGKILL) };
+                if result != 0 {
+                    let error = std::io::Error::last_os_error();
+                    if error.raw_os_error() != Some(libc::ESRCH) {
+                        return Err(PtyError::Io(error.to_string()));
+                    }
+                }
+            }
+
+            #[cfg(windows)]
+            terminate_process(self.pid)?;
+        }
+
+        self.attached.store(false, Ordering::Release);
+        self.flow.close();
+        if self
+            .completed
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
+            (self.on_completed)(&self.id);
+        }
+        Ok(())
     }
 
     pub fn start(
@@ -314,7 +350,8 @@ impl PtySession {
     }
 
     fn maybe_emit_exit(&self, app: &AppHandle) {
-        if !self.attached.load(Ordering::Acquire)
+        if self.completed.load(Ordering::Acquire)
+            || !self.attached.load(Ordering::Acquire)
             || !self.reader_done.load(Ordering::Acquire)
             || self.exit_emitted.load(Ordering::Acquire)
         {
@@ -371,3 +408,61 @@ impl PtySession {
         }
     }
 }
+
+#[cfg(windows)]
+fn terminate_process(pid: u32) -> Result<(), PtyError> {
+    use windows_sys::Win32::{
+        Foundation::{CloseHandle, ERROR_INVALID_PARAMETER, STILL_ACTIVE},
+        System::Threading::{
+            GetExitCodeProcess, OpenProcess, TerminateProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+            PROCESS_TERMINATE,
+        },
+    };
+
+    let process = unsafe {
+        OpenProcess(
+            PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION,
+            0,
+            pid,
+        )
+    };
+    if process.is_null() {
+        let error = std::io::Error::last_os_error();
+        if error.raw_os_error() == Some(ERROR_INVALID_PARAMETER as i32) {
+            return Ok(());
+        }
+        return Err(PtyError::Io(error.to_string()));
+    }
+
+    let terminated = unsafe { TerminateProcess(process, 1) };
+    let terminate_error = if terminated == 0 {
+        Some(std::io::Error::last_os_error())
+    } else {
+        None
+    };
+    let result = if let Some(error) = terminate_error {
+        let mut exit_code = 0;
+        let has_exited = unsafe { GetExitCodeProcess(process, &mut exit_code) } != 0
+            && exit_code != STILL_ACTIVE as u32;
+        if has_exited {
+            Ok(())
+        } else {
+            Err(PtyError::Io(error.to_string()))
+        }
+    } else {
+        Ok(())
+    };
+
+    let closed = unsafe { CloseHandle(process) };
+    let close_error = if closed == 0 {
+        Some(std::io::Error::last_os_error())
+    } else {
+        None
+    };
+    match (result, close_error) {
+        (Err(error), _) => Err(error),
+        (Ok(()), Some(error)) => Err(PtyError::Io(error.to_string())),
+        (Ok(()), None) => Ok(()),
+    }
+}
+

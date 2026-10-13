@@ -59,8 +59,8 @@ use commands::{
         plugins_uninstall, plugins_update,
     },
     pty::{
-        pty_ack, pty_attach, pty_detach, pty_exists, pty_get_children, pty_get_cwd, pty_get_pid,
-        pty_get_true_pid, pty_is_alive, pty_kill, pty_resize, pty_spawn, pty_write,
+        pty_ack, pty_attach, pty_detach, pty_discard, pty_exists, pty_get_children, pty_get_cwd,
+        pty_get_pid, pty_get_true_pid, pty_is_alive, pty_kill, pty_resize, pty_spawn, pty_write,
     },
     secrets::{secret_import_execute, secret_import_plan},
     serial::{
@@ -459,6 +459,7 @@ pub fn run() {
             pty_write,
             pty_resize,
             pty_kill,
+            pty_discard,
             pty_ack,
             pty_get_pid,
             pty_get_true_pid,

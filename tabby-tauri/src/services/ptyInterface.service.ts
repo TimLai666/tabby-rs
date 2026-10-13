@@ -57,7 +57,19 @@ export class TauriPTYInterface extends PTYInterface {
                 secretRef: options.sudoSecretRef ?? null,
             } : null,
         })
-        return TauriPTYProxy.create(response, this.bridge)
+        try {
+            return await TauriPTYProxy.create(response, this.bridge)
+        } catch (error) {
+            // The native spawn already created a tracked session; releasing
+            // listeners is not enough, so discard that orphaned child before
+            // rethrowing the original startup failure.
+            try {
+                await this.bridge.invoke('pty.discard', { id: response.id })
+            } catch (discardError) {
+                console.warn('Failed to discard the PTY session after a fresh startup failure:', discardError)
+            }
+            throw error
+        }
     }
 
     override async restore (id: string): Promise<PTYProxy|null> {

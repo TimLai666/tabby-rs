@@ -74,6 +74,14 @@ pub fn pty_kill(
 }
 
 #[tauri::command]
+pub fn pty_discard(
+    manager: State<'_, Arc<PtyManager>>,
+    request: PtyIdRequest,
+) -> Result<(), AppError> {
+    manager.discard(&request.id)
+}
+
+#[tauri::command]
 pub fn pty_ack(
     manager: State<'_, Arc<PtyManager>>,
     request: PtyAckRequest,

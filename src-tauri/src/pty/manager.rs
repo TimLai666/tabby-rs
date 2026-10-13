@@ -116,6 +116,13 @@ impl PtyManager {
         self.live_session(id)?.kill(signal).map_err(AppError::from)
     }
 
+    pub fn discard(&self, id: &str) -> Result<(), AppError> {
+        if let Some(session) = self.session(id) {
+            session.discard().map_err(AppError::from)?;
+        }
+        Ok(())
+    }
+
     pub fn ack(&self, id: &str, bytes: usize) -> Result<(), AppError> {
         self.session_or_error(id)?.ack(bytes);
         Ok(())
