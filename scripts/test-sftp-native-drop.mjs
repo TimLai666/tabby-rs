@@ -23,7 +23,7 @@ let seq = 0
 function platformFor(failPath) {
     const calls = [], transfers = [], entries = { '/local/folder': directory, '/local/plain.txt': tree('plain.txt', false) }
     const platform = Object.create(native.TauriPlatformService.prototype)
-    platform.runtimeInfo = { platform: 'windows' }; platform.fileDropped$ = new rx.Subject()
+    platform.runtimeInfo = { platform: 'windows' }; platform.fileDropped$ = new rx.Subject(); platform.fileDragged$ = new rx.Subject()
     platform.fileTransferStarted = new rx.Subject(); platform.fileTransferStarted.subscribe(t => transfers.push(t))
     platform.bridge = { invoke: async (command, request) => {
         calls.push([command, request])
@@ -75,8 +75,8 @@ const targetElement = { closest: () => ownedElement }, ownedElement = {}
 let expectedPoint = [50,40]
 let hit = targetElement, errors = [], emitted = []
 const globals = { document: { elementFromPoint: (x,y) => { assert.equal(x,expectedPoint[0]); assert.equal(y,expectedPoint[1]); return hit } }, window: { devicePixelRatio: 2 } }
-const directive = load(source('tabby-tauri/src/fileDrop.directive.ts'), { 'tabby-core': core, '../../tabby-core/src/directives/dropZone.directive': {}, './api/hostBridge': {}, './services/platform.service': {} }, globals).TauriFileDropDirective
-function instance(platform) { return new directive({ nativeElement: ownedElement }, { transfer: { emit: t => emitted.push(t) } }, platform, { error: e => errors.push(e) }) }
+const directive = load(source('tabby-tauri/src/fileDrop.directive.ts'), { 'tabby-core': core, '../../tabby-core/src/directives/dropZone.directive': { DropZoneDirective: class { setHovered () {} } }, './api/hostBridge': {}, './services/platform.service': {} }, globals).TauriFileDropDirective
+function instance(platform) { return new directive({ nativeElement: ownedElement }, { transfer: { emit: t => emitted.push(t) }, setHovered: () => {} }, platform, { error: e => errors.push(e) }) }
 async function emitDrop(platform) { platform.fileDropped$.next(event); await new Promise(resolve => setImmediate(resolve)) }
 const event = { paths: ['/local/folder','/local/plain.txt'], x: 100, y: 80 }
 await check('native SFTP drop emits exactly one shared tree at scaled coordinates', async () => {
@@ -98,7 +98,7 @@ await check('failed native preparation reports actual error', async () => {
 })
 await check('destruction during preparation cancels and never emits', async () => {
     let resolve; const waiting = new Promise(r => resolve = r); const { platform } = platformFor(); const result = await platform.startUploadFromPaths(['/local/folder'], true)
-    const waitingPlatform = { startUploadFromPaths: () => waiting, getFileDropPosition: () => ({ x:50,y:40 }), fileDropped$: new rx.Subject() }
+    const waitingPlatform = { startUploadFromPaths: () => waiting, getFileDropPosition: () => ({ x:50,y:40 }), fileDropped$: new rx.Subject(), fileDragged$: new rx.Subject() }
     const d = instance(waitingPlatform); d.ngOnInit(); const count = emitted.length
     waitingPlatform.fileDropped$.next(event); d.ngOnDestroy(); resolve(result); await new Promise(r => setImmediate(r)); assert.equal(emitted.length, count)
     assert.equal(result.getChildrens()[0].getChildrens()[0].getChildrens()[0].isCancelled(), true)
