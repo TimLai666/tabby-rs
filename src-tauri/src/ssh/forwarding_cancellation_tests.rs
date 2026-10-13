@@ -489,6 +489,7 @@ async fn queued_late_direct_open_after_dropped_receiver_is_not_started() {
         SshControl::OpenDirectTcpip {
             host: "127.0.0.1".into(),
             port: 9,
+            originator: ([127, 0, 0, 1], 0).into(),
             cancel: super::pending::CancelSignal::default(),
             sender: tx,
         },
@@ -517,6 +518,7 @@ async fn late_direct_open_reply_after_receiver_drop_closes_ssh_channel() {
         SshControl::OpenDirectTcpip {
             host: "127.0.0.1".into(),
             port: 9,
+            originator: ([127, 0, 0, 1], 0).into(),
             cancel: super::pending::CancelSignal::default(),
             sender: tx,
         },
@@ -688,6 +690,7 @@ async fn delivered_direct_open_is_closed_if_receiver_is_dropped_before_poll() {
             SshControl::OpenDirectTcpip {
                 host: "127.0.0.1".into(),
                 port: 9,
+                originator: ([127, 0, 0, 1], 0).into(),
                 cancel: super::pending::CancelSignal::default(),
                 sender,
             },
@@ -729,6 +732,7 @@ async fn cancelled_queued_direct_open_is_not_started_with_live_receiver() {
             SshControl::OpenDirectTcpip {
                 host: "127.0.0.1".into(),
                 port: 9,
+                originator: ([127, 0, 0, 1], 0).into(),
                 cancel,
                 sender,
             },

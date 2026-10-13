@@ -229,7 +229,7 @@ pub(super) async fn run_local_forward(
         let accepted = cancel
             .run(async { listener.accept().await.map_err(|_| SshError::Closed) })
             .await;
-        let Ok((socket, _peer)) = accepted else {
+        let Ok((socket, peer)) = accepted else {
             break;
         };
         let control = control.clone();
@@ -259,6 +259,11 @@ pub(super) async fn run_local_forward(
                         .send(SshControl::OpenDirectTcpip {
                             host: target_address.clone(),
                             port: target_port,
+                            originator: if kind == SshForwardingType::Dynamic {
+                                ([127, 0, 0, 1], 0).into()
+                            } else {
+                                peer
+                            },
                             cancel: cancel.clone(),
                             sender,
                         })

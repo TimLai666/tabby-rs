@@ -235,6 +235,7 @@ enum SshControl {
     OpenDirectTcpip {
         host: String,
         port: u16,
+        originator: std::net::SocketAddr,
         cancel: pending::CancelSignal,
         sender: oneshot::Sender<Result<russh::ChannelStream<client::Msg>, SshError>>,
     },
@@ -2286,6 +2287,7 @@ async fn handle_control<H: client::Handler>(
         SshControl::OpenDirectTcpip {
             host,
             port,
+            originator,
             sender,
             cancel,
         } => {
@@ -2293,7 +2295,12 @@ async fn handle_control<H: client::Handler>(
                 return true;
             }
             let result = handle
-                .channel_open_direct_tcpip(host, u32::from(port), "127.0.0.1", 0)
+                .channel_open_direct_tcpip(
+                    host,
+                    u32::from(port),
+                    originator.ip().to_string(),
+                    u32::from(originator.port()),
+                )
                 .await
                 .map(|channel| channel.into_stream())
                 .map_err(|error| SshError::Forwarding(error.to_string()));
