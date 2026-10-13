@@ -249,7 +249,6 @@ pub(super) async fn run_local_forward(
                                     return Ok(());
                                 }
                             };
-                        send_socks5_success(&mut socket).await?;
                         target
                     } else {
                         (target_address, target_port)
@@ -275,10 +274,16 @@ pub(super) async fn run_local_forward(
                                     description,
                                     super::terminal_diagnostic_text(&error.to_string()),
                                 ));
+                                if kind == SshForwardingType::Dynamic {
+                                    let _ = socket.write_all(&[5, 2]).await;
+                                }
                             }
                             return Ok(());
                         }
                     };
+                    if kind == SshForwardingType::Dynamic {
+                        send_socks5_success(&mut socket).await?;
+                    }
                     let _ = copy_bidirectional(&mut socket, &mut ssh_stream).await;
                     Ok(())
                 })
