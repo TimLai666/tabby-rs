@@ -62,12 +62,13 @@ mod tauri {
 ${body}
 #[cfg(test)] mod tests { use super::*; #[test] fn drag_payloads_are_owned_and_drop_is_emitted_once(){ let calls=Arc::new(Mutex::new(Vec::new())); let window=tauri::WebviewWindow::new("sftp-window",calls.clone()); register_desktop_window_events(&window); let got=calls.lock().unwrap().clone(); assert_eq!(got.iter().map(|e|e.1.as_str()).collect::<Vec<_>>(),vec!["desktop:fileDrag","desktop:fileDrag","desktop:fileDrag","desktop:fileDrag","desktop:fileDrop"]); assert!(got.iter().all(|e|e.0=="sftp-window")); assert_eq!(got[0].2,Value::Text("point:4.5:9.25".into())); assert_eq!(got[1].2,Value::Text("point:7.0:11.5".into())); assert_eq!(got[2].2,Value::Null); assert_eq!(got[3].2,Value::Null); assert_eq!(got[4].2,Value::FileDrop(vec!["/tmp/a.bin".into()],10.0,20.0)); } }
 `
-        const file = path.join(tmp, 'harness.rs'), binary = path.join(tmp, 'harness')
+        const file = path.join(tmp, 'harness.rs'), binary = path.join(tmp, process.platform === 'win32' ? 'harness.exe' : 'harness')
         fs.writeFileSync(file, rust)
         const built = spawnSync(process.env.RUSTC || 'rustc', ['--test', file, '-o', binary], { encoding: 'utf8', timeout: 30000 })
-        assert.equal(built.status, 0, `extracted production callback must compile against framework boundary fakes:\n${built.stderr}`)
+        assert.equal(built.status, 0, `extracted production callback must compile against framework boundary fakes:\n${built.error ?? ''}\n${built.stdout ?? ''}${built.stderr ?? ''}`)
+        assert.ok(fs.existsSync(binary), `compiled callback test executable must exist: ${binary}`)
         const result = spawnSync(binary, [], { encoding: 'utf8', timeout: 30000 })
-        assert.equal(result.status, 0, result.stdout + result.stderr)
+        assert.equal(result.status, 0, `callback test executable ${binary}: ${result.error ?? ''}; signal=${result.signal ?? 'none'}\n${result.stdout ?? ''}${result.stderr ?? ''}`)
         assert.match(result.stdout, /1 passed/)
     } finally { fs.rmSync(tmp, { recursive: true, force: true }) }
 })
