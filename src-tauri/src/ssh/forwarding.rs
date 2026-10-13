@@ -1,11 +1,10 @@
-use std::{net::IpAddr, sync::Arc, time::Duration};
+use std::{net::IpAddr, sync::Arc};
 
 use tokio::io::{copy_bidirectional, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use tokio::{
     net::{TcpListener, TcpStream},
     sync::{mpsc, oneshot, watch},
-    time::timeout,
 };
 
 use super::{
@@ -13,8 +12,6 @@ use super::{
     pending::CancelSignal,
     SshControl,
 };
-
-const MAX_SOCKS_DOMAIN: usize = 255;
 
 // Production local/dynamic listener setup; its I/O failures are preserved at the bridge.
 pub(super) async fn bind_listener(
@@ -48,8 +45,13 @@ where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     let version = stream.read_u8().await.map_err(|_| SshError::Closed)?;
+    if version != 5 {
+        return Err(SshError::InvalidRequest(
+            "SOCKS5 greeting is invalid".into(),
+        ));
+    }
     let method_count = stream.read_u8().await.map_err(|_| SshError::Closed)? as usize;
-    if version != 5 || method_count == 0 || method_count > 32 {
+    if method_count == 0 {
         return Err(SshError::InvalidRequest(
             "SOCKS5 greeting is invalid".into(),
         ));
@@ -73,18 +75,17 @@ where
         .await
         .map_err(|_| SshError::Closed)?;
 
-    let mut header = [0; 4];
-    stream
-        .read_exact(&mut header)
-        .await
-        .map_err(|_| SshError::Closed)?;
-    if header[0] != 5 || header[1] != 1 || header[2] != 0 {
-        send_socks5_failure(stream, 7).await?;
-        return Err(SshError::InvalidRequest(
-            "SOCKS5 request is unsupported".into(),
-        ));
+    if stream.read_u8().await.map_err(|_| SshError::Closed)? != 5 {
+        return Err(SshError::InvalidRequest("SOCKS5 request is invalid".into()));
     }
-    let host = match header[3] {
+    let command = stream.read_u8().await.map_err(|_| SshError::Closed)?;
+    if !matches!(command, 1..=3) {
+        return Err(SshError::InvalidRequest("SOCKS5 command is invalid".into()));
+    }
+    // The fixed upstream parser ignores the reserved byte.
+    let _reserved = stream.read_u8().await.map_err(|_| SshError::Closed)?;
+    let address_type = stream.read_u8().await.map_err(|_| SshError::Closed)?;
+    let host = match address_type {
         1 => {
             let mut bytes = [0; 4];
             stream
@@ -95,17 +96,12 @@ where
         }
         3 => {
             let length = stream.read_u8().await.map_err(|_| SshError::Closed)? as usize;
-            if length == 0 || length > MAX_SOCKS_DOMAIN {
-                send_socks5_failure(stream, 8).await?;
-                return Err(SshError::InvalidRequest("SOCKS5 domain is invalid".into()));
-            }
             let mut bytes = vec![0; length];
             stream
                 .read_exact(&mut bytes)
                 .await
                 .map_err(|_| SshError::Closed)?;
-            String::from_utf8(bytes)
-                .map_err(|_| SshError::InvalidRequest("SOCKS5 domain is invalid".into()))?
+            String::from_utf8_lossy(&bytes).into_owned()
         }
         4 => {
             let mut bytes = [0; 16];
@@ -113,19 +109,24 @@ where
                 .read_exact(&mut bytes)
                 .await
                 .map_err(|_| SshError::Closed)?;
-            IpAddr::from(bytes).to_string()
+            bytes
+                .chunks_exact(2)
+                .map(|part| format!("{:04x}", u16::from_be_bytes([part[0], part[1]])))
+                .collect::<Vec<_>>()
+                .join(":")
         }
         _ => {
-            send_socks5_failure(stream, 8).await?;
             return Err(SshError::InvalidRequest(
                 "SOCKS5 address type is unsupported".into(),
             ));
         }
     };
     let port = stream.read_u16().await.map_err(|_| SshError::Closed)?;
-    if port == 0 {
-        send_socks5_failure(stream, 8).await?;
-        return Err(SshError::InvalidRequest("SOCKS5 port is invalid".into()));
+    if command != 1 {
+        send_socks5_failure(stream, 7).await?;
+        return Err(SshError::InvalidRequest(
+            "SOCKS5 request is unsupported".into(),
+        ));
     }
     Ok((host, port))
 }
@@ -145,7 +146,7 @@ where
     S: AsyncWrite + Unpin,
 {
     stream
-        .write_all(&[5, code, 0, 1, 0, 0, 0, 0, 0, 0])
+        .write_all(&[5, code])
         .await
         .map_err(|_| SshError::Closed)
 }
@@ -199,6 +200,14 @@ mod tests {
     }
 }
 
+// Send EOF before draining unread pipelined bytes, avoiding a TCP reset on rejection.
+// Both callers run inside the forwarding cancellation signal.
+async fn close_socks5_client(socket: &mut TcpStream) {
+    if socket.shutdown().await.is_ok() {
+        let _ = tokio::io::copy(socket, &mut tokio::io::sink()).await;
+    }
+}
+
 pub(super) async fn run_local_forward(
     info: SshForwardingInfo,
     listener: TcpListener,
@@ -235,21 +244,13 @@ pub(super) async fn run_local_forward(
             let _ = cancel
                 .run(async {
                     let (target_address, target_port) = if kind == SshForwardingType::Dynamic {
-                        let target =
-                            match timeout(Duration::from_secs(30), socks5_connect(&mut socket))
-                                .await
-                            {
-                                Ok(Ok(target)) => target,
-                                Ok(Err(_)) => {
-                                    let _ = send_socks5_failure(&mut socket, 1).await;
-                                    return Ok(());
-                                }
-                                Err(_) => {
-                                    let _ = send_socks5_failure(&mut socket, 1).await;
-                                    return Ok(());
-                                }
-                            };
-                        target
+                        match socks5_connect(&mut socket).await {
+                            Ok(target) => target,
+                            Err(_) => {
+                                close_socks5_client(&mut socket).await;
+                                return Ok(());
+                            }
+                        }
                     } else {
                         (target_address, target_port)
                     };
@@ -275,7 +276,8 @@ pub(super) async fn run_local_forward(
                                     super::terminal_diagnostic_text(&error.to_string()),
                                 ));
                                 if kind == SshForwardingType::Dynamic {
-                                    let _ = socket.write_all(&[5, 2]).await;
+                                    let _ = send_socks5_failure(&mut socket, 2).await;
+                                    close_socks5_client(&mut socket).await;
                                 }
                             }
                             return Ok(());
