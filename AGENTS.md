@@ -426,10 +426,16 @@
   binary echo, same-listener Local and Dynamic recovery, usable terminal input,
   and ordinary window closure. The controlled upstream timing probe simulates
   the SSH decision boundary; it is not original desktop acceptance.
-- Compare Local originator metadata with the fixed upstream before accepting parity.
-  Native Local forwarding supplies 127.0.0.1:0 as the originator, while the upstream
-  Local listener passes the accepted client's address and port. Upstream Dynamic
-  forwarding uses the same 127.0.0.1:0 fallback as native. No exception is approved.
+- Local direct-tcpip originators must use each accepted client's IP address and
+  port, matching the fixed upstream. Carry that endpoint with its own child
+  request and preserve IPv4, IPv6, and IPv4-mapped IPv6 address text. Dynamic
+  forwarding must keep the upstream 127.0.0.1:0 fallback for every client family.
+  Retain real-SSH regressions for exact destination/source metadata, concurrent
+  client pairing, rejection followed by same-listener recovery, binary relay,
+  EOF, usable shell input, and quiet success. Check mapped addresses with an
+  actual peer before claiming their wire representation matches upstream.
+  Native OpenSSH metadata and method probes do not establish original desktop
+  comparison, other supported platforms, or packaged-release acceptance.
 - Dynamic SOCKS parsing must match the published @luminati-io/socksv5 0.0.7
   used by the fixed upstream. Let the parser own authentication and request
   failures: unsupported authentication returns only 05ff, completed BIND/UDP
