@@ -413,18 +413,29 @@
   fixture checks matching, other, and ended owners. Native macOS loopback checks
   display Local and Dynamic errors at 1100x720 and 640x480, preserve terminal input,
   and keep diagnostics isolated between two SSH tabs in one native manager.
-  Dynamic forwarding recovers binary traffic and normal EOF on the same listener.
-  Ordinary window closure ends both established relays, both SSH transports, and
-  all four listeners. Local same-listener desktop recovery, original desktop
-  comparison, other supported platforms, and packaged release acceptance remain
-  pending.
-- Compare Dynamic SOCKS failure timing and Local originator metadata with the
-  fixed upstream before accepting parity. Native currently replies SOCKS success
-  before direct-tcpip approval; the locked upstream rejection probe returns 0502.
+  Local and Dynamic forwarding recover binary traffic and normal EOF on the same
+  listeners after target refusal. Ordinary window closure ends established relays,
+  SSH transports, and listeners. Original desktop comparison, other supported
+  platforms, and packaged release acceptance remain pending.
+- Dynamic CONNECT success must wait for direct-tcpip approval. On channel rejection,
+  return exactly 0502 and close the child, matching the fixed upstream method and
+  published @luminati-io/socksv5 0.0.7. Retain real-SSH regressions for held approval
+  and rejection, no response while pending, success before pipelined binary data,
+  and silent cancellation before late approval or rejection. Native macOS checks
+  verify exact denial bytes and EOF, the ten-byte success reply before a complete
+  binary echo, same-listener Local and Dynamic recovery, usable terminal input,
+  and ordinary window closure. The controlled upstream timing probe simulates
+  the SSH decision boundary; it is not original desktop acceptance.
+- Compare Local originator metadata with the fixed upstream before accepting parity.
   Native Local forwarding supplies 127.0.0.1:0 as the originator, while the upstream
   Local listener passes the accepted client's address and port. Upstream Dynamic
-  forwarding uses the same 127.0.0.1:0 fallback as native. Diagnostic acceptance
-  does not resolve these existing differences; no exception is approved.
+  forwarding uses the same 127.0.0.1:0 fallback as native. No exception is approved.
+- P2: Unsupported SOCKS requests can receive two failure replies. For BIND, the
+  parser writes the ten-byte 0507 reply and run_local_forward writes another
+  ten-byte 0501 reply on the same error. A native macOS probe receives both replies
+  before a connection reset. Keep this parser failure separate from valid CONNECT
+  approval handling. Give failure replies one owner and compare invalid-request
+  behavior with the fixed upstream before accepting parser parity.
 - Reproduce the macOS owned-window blank state and forwarding-echo timeout before
   accepting long-lived native SSH sessions. A sampled affected process had idle
   AppKit and Tokio threads; no callback or mutex deadlock was established. A fresh
