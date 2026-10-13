@@ -846,6 +846,20 @@
   cleanup. Verify server connections and PTY processes after closing a secondary
   window before accepting cleanup; the native managers do not handle window
   destruction by owner. Do not assume the passing permission tests prove cleanup.
+- Retain each successful SSH, Telnet, and serial event registration as it resolves.
+  Registration failure ends the renderer session and releases completed and late
+  registrations. Preserve SSH startup error reporting by the owning tab; explicit
+  closure and replaced owners keep stale errors silent. Closing during registration
+  must skip native connect/open.
+  Telnet and serial detach listeners before awaiting native close; queued callbacks
+  must ignore an ended owner. PTY proxy creation failures release their own listeners
+  without killing or detaching an existing native PTY. Serial settings destruction
+  ignores late list/event results and releases late registration acknowledgements.
+  `test:connector-login-scripts` includes `scripts/test-connector-listener-lifecycle.mjs`,
+  which executes the actual classes with framework/native bridge boundaries simulated.
+  These checks do not establish native transport cancellation or desktop acceptance.
+  Telnet TCP connect and serial open can remain in flight before the native ID is
+  returned; compare cancellation with the original desktop before accepting that flow.
 - Launch requests use a per-window native queue and a scoped `app:launch` wake-up.
   Register the listener before draining `app.initialLaunch`, serialize reads, and
   retain requests until Angular readiness. Preserve the original CLI handlers and
