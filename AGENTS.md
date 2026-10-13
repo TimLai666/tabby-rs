@@ -138,16 +138,23 @@
   supported-platform desktop behavior.
 - Native file drops on a shared SFTP drop zone use the existing streaming upload
   tree, preserve mixed top-level file/folder names and empty directories, and do not
-  paste local paths into the SSH terminal. Bootstrap awaits one native file-drop
-  listener; panels and terminals subscribe synchronously and release their own
-  subscriptions. Windows/Linux coordinates use physical pixels; the pinned Wry
-  macOS implementation supplies AppKit points despite its PhysicalPosition type.
+  paste local paths into the SSH terminal. Bootstrap awaits both native drop and
+  hover listeners; panels and terminals subscribe synchronously and release
+  their own subscriptions. Windows/Linux coordinates use physical pixels; the
+  pinned Wry macOS implementation supplies AppKit points despite its
+  PhysicalPosition type.
   Preparation errors cancel opened handles; a removed panel cancels late
   preparations. Upload errors cancel remaining tree leaves without cancelling
   completed files. `test:sftp-panel` includes `scripts/test-sftp-native-drop.mjs`.
   Rendered Angular checks at 1100x720 and 640x480 cover mixed file/folder drops,
   exact binary bytes, nested/empty directories, the unchanged folder chooser,
   delayed startup registration, panel reopening, and partial-error cleanup.
+  Native drag-over uses the shared DropZoneDirective hint through the owning
+  window's desktop:fileDrag event and nearest drop-zone hit. Clear it on leave,
+  drop, an overlay hit, or panel destruction. Retain the original hint markup,
+  styles, and fade, and guard deferred show callbacks against stale ownership.
+  Include scripts/test-sftp-drag-hover.mjs in test:sftp-panel for event ordering,
+  listener readiness/cleanup, coordinates, ownership, and hint lifecycle.
   Keep IPC/file-system fixture results separate from native OS drag gestures.
 - Preserve omitted protocol file sizes as null through Native listing/stat. The
   Native panel adapter keeps the original numeric-zero display and retains a
@@ -166,9 +173,9 @@
   uploads, cancellation before/after another completion, session shutdown,
   existing-stage collisions, rename/size error cleanup, and long remote names.
   These checks establish staging ownership; desktop acceptance remains pending.
-- Still pending: native drag-over hints, original desktop comparison, and supported
-  desktop acceptance of native file drops, editing, menu extensions, and folder
-  progress.
+- Still pending: native OS drag gestures, original desktop comparison, and
+  supported desktop acceptance of native file drops, editing, menu extensions,
+  and folder progress.
   Verify these before accepting full SFTP parity.
 - Native SFTP resolves remote symbolic links with `readlink` and followed `stat`,
   retaining the alias name/path for downloads and directory navigation. Resolve
@@ -997,3 +1004,12 @@
 - Investigate the shared-checkout heap growth before claiming an in-place lint
   pass. Preserve both the failed Main run and passing local run, and verify the
   source hashes when using the local copy for acceptance.
+
+## P2 — Existing Rust Clippy warnings
+
+- On Rust 1.97.0, `cargo clippy --locked --offline --manifest-path src-tauri/Cargo.toml --lib -- -D warnings`
+  reports 106 diagnostics on both
+  `f8d241f2` and the native drag-over hint change. The messages and source
+  locations match exactly; none points to the changed `src/lib.rs` callback.
+- Resolve the existing diagnostics before introducing a strict Clippy CI gate.
+  Passing Rust tests and builds do not establish a strict Clippy pass.
