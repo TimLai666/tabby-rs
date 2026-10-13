@@ -73,6 +73,7 @@ struct Peer {
     reject: Arc<Mutex<bool>>,
     gate: Arc<Mutex<Option<oneshot::Receiver<()>>>>,
     requested: mpsc::UnboundedSender<(String, u32)>,
+    originators: mpsc::UnboundedSender<(String, u32)>,
 }
 impl server::Handler for Peer {
     type Error = russh::Error;
@@ -98,11 +99,14 @@ impl server::Handler for Peer {
         _: Channel<server::Msg>,
         host: &str,
         port: u32,
-        _: &str,
-        _: u32,
+        originator_host: &str,
+        originator_port: u32,
         _: &mut server::Session,
     ) -> Result<bool, Self::Error> {
         let _ = self.requested.send((host.to_owned(), port));
+        let _ = self
+            .originators
+            .send((originator_host.to_owned(), originator_port));
         let gate = { self.gate.lock().unwrap().take() };
         if let Some(gate) = gate {
             let _ = timeout(LIMIT, gate).await;
@@ -141,6 +145,7 @@ struct SshPeer {
     handle: client::Handle<Pinned>,
     server: AbortTask<()>,
     requested: mpsc::UnboundedReceiver<(String, u32)>,
+    originators: mpsc::UnboundedReceiver<(String, u32)>,
     reject: Arc<Mutex<bool>>,
 }
 impl SshPeer {
@@ -160,6 +165,7 @@ impl SshPeer {
         let gate = Arc::new(Mutex::new(gate));
         let server_gate = gate.clone();
         let (request_tx, requested) = mpsc::unbounded_channel();
+        let (originator_tx, originators) = mpsc::unbounded_channel();
         // Keep the server alive until cleanup disconnects the SSH client.
         let server = spawn(async move {
             let (tcp, _) = timeout(LIMIT, listener.accept()).await.unwrap().unwrap();
@@ -170,6 +176,7 @@ impl SshPeer {
                     reject: server_reject,
                     gate: server_gate,
                     requested: request_tx,
+                    originators: originator_tx,
                 },
             )
             .await
@@ -197,6 +204,7 @@ impl SshPeer {
             handle,
             server,
             requested,
+            originators,
             reject,
         }
     }
@@ -1265,4 +1273,337 @@ async fn socks_parser_incomplete_connect_has_no_native_30_second_deadline() {
         "cancelled listener address was not released"
     );
     peer.cleanup().await;
+}
+
+async fn run_local_bound(
+    item: SshForwardingInfo,
+    bind_address: std::net::SocketAddr,
+    cancel: CancelSignal,
+    messages: Messages,
+) -> (
+    std::net::SocketAddr,
+    mpsc::Receiver<SshControl>,
+    AbortTask<()>,
+) {
+    let listener = TcpListener::bind(bind_address)
+        .await
+        .unwrap_or_else(|error| {
+            if bind_address.is_ipv6() {
+                panic!("IPv6 loopback bind failed at {bind_address}: {error}");
+            }
+            panic!("loopback bind failed at {bind_address}: {error}");
+        });
+    let address = listener.local_addr().unwrap();
+    let (tx, rx) = mpsc::channel(8);
+    let task = spawn(forwarding::run_local_forward(
+        item,
+        listener,
+        tx,
+        cancel,
+        move |message| messages.lock().unwrap().push(message),
+    ));
+    (address, rx, task)
+}
+
+async fn assert_originator_request(
+    peer: &mut SshPeer,
+    controls: &mut mpsc::Receiver<SshControl>,
+    expected_source: std::net::SocketAddr,
+    expected_target: &str,
+    expected_port: u32,
+) {
+    let command = timeout(LIMIT, controls.recv()).await.unwrap().unwrap();
+    assert_originator_control(
+        peer,
+        command,
+        expected_source,
+        expected_target,
+        expected_port,
+    )
+    .await;
+}
+
+async fn assert_originator_control(
+    peer: &mut SshPeer,
+    command: SshControl,
+    expected_source: std::net::SocketAddr,
+    expected_target: &str,
+    expected_port: u32,
+) {
+    assert!(peer.control(command).await);
+    assert_eq!(
+        timeout(LIMIT, peer.requested.recv())
+            .await
+            .unwrap()
+            .unwrap(),
+        (expected_target.to_owned(), expected_port),
+        "SSH destination metadata"
+    );
+    assert_eq!(
+        timeout(LIMIT, peer.originators.recv())
+            .await
+            .unwrap()
+            .unwrap(),
+        (
+            expected_source.ip().to_string(),
+            u32::from(expected_source.port())
+        ),
+        "SSH originator metadata"
+    );
+}
+
+async fn assert_originator_relay(
+    peer: &mut SshPeer,
+    controls: &mut mpsc::Receiver<SshControl>,
+    socket: &mut TcpStream,
+    source: std::net::SocketAddr,
+    target: &str,
+    port: u16,
+    dynamic: bool,
+) {
+    assert_originator_request(peer, controls, source, target, u32::from(port)).await;
+    if dynamic {
+        let mut reply = [0; 10];
+        timeout(LIMIT, socket.read_exact(&mut reply))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(reply, [5, 0, 0, 1, 0, 0, 0, 0, 0, 0]);
+    }
+    let payload = [0, 0xff, 0x80, 0x41, 0x00, 0xfe];
+    write_bounded(socket, &payload).await;
+    let mut echoed = [0; 6];
+    timeout(LIMIT, socket.read_exact(&mut echoed))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(echoed, payload);
+    timeout(LIMIT, socket.shutdown()).await.unwrap().unwrap();
+    assert_eof(socket).await;
+}
+
+#[tokio::test]
+async fn originator_local_ipv4_source_matches_real_ssh_request() {
+    let mut peer = SshPeer::new(false, None).await;
+    let mut item = info(SshForwardingType::Local);
+    item.target_address = "configured-target.example".into();
+    item.target_port = 2209;
+    let cancel = CancelSignal::default();
+    let _cancel_guard = CancelOnDrop(cancel.clone());
+    let messages = Arc::new(Mutex::new(Vec::new()));
+    let (addr, mut controls, task) = run_local_bound(
+        item,
+        "127.0.0.1:0".parse().unwrap(),
+        cancel.clone(),
+        messages.clone(),
+    )
+    .await;
+    let mut socket = timeout(LIMIT, TcpStream::connect(addr))
+        .await
+        .unwrap()
+        .unwrap();
+    let source = socket.local_addr().unwrap();
+    assert_originator_relay(
+        &mut peer,
+        &mut controls,
+        &mut socket,
+        source,
+        "configured-target.example",
+        2209,
+        false,
+    )
+    .await;
+    peer.shell_echo(b"shell remains usable").await;
+    assert!(messages.lock().unwrap().is_empty());
+    cancel.cancel();
+    drop(socket);
+    drop(controls);
+    task.finish().await;
+    peer.cleanup().await;
+}
+
+#[tokio::test]
+async fn originator_local_ipv6_concurrent_clients_keep_channel_sources_paired() {
+    let mut peer = SshPeer::new(false, None).await;
+    let mut item = info(SshForwardingType::Local);
+    item.bind_host = "::1".into();
+    item.target_address = "configured-v6-target.example".into();
+    item.target_port = 2222;
+    let cancel = CancelSignal::default();
+    let _cancel_guard = CancelOnDrop(cancel.clone());
+    let messages = Arc::new(Mutex::new(Vec::new()));
+    let (addr, mut controls, task) = run_local_bound(
+        item,
+        "[::1]:0".parse().unwrap(),
+        cancel.clone(),
+        messages.clone(),
+    )
+    .await;
+
+    // Keep both accepted TCP clients alive before servicing either SSH channel.
+    let mut first = timeout(LIMIT, TcpStream::connect(addr))
+        .await
+        .unwrap()
+        .unwrap();
+    let first_source = first.local_addr().unwrap();
+    let first_command = timeout(LIMIT, controls.recv()).await.unwrap().unwrap();
+    let mut second = timeout(LIMIT, TcpStream::connect(addr))
+        .await
+        .unwrap()
+        .unwrap();
+    let second_source = second.local_addr().unwrap();
+    let second_command = timeout(LIMIT, controls.recv()).await.unwrap().unwrap();
+    assert_ne!(first_source.port(), second_source.port());
+
+    assert_originator_control(
+        &mut peer,
+        first_command,
+        first_source,
+        "configured-v6-target.example",
+        2222,
+    )
+    .await;
+    assert_originator_control(
+        &mut peer,
+        second_command,
+        second_source,
+        "configured-v6-target.example",
+        2222,
+    )
+    .await;
+    let first_payload = [0x01, 0xff, 0x80, 0x11];
+    let second_payload = [0x02, 0x00, 0xfe, 0x22];
+    write_bounded(&mut first, &first_payload).await;
+    write_bounded(&mut second, &second_payload).await;
+    let mut first_echo = [0; 4];
+    let mut second_echo = [0; 4];
+    timeout(LIMIT, first.read_exact(&mut first_echo))
+        .await
+        .unwrap()
+        .unwrap();
+    timeout(LIMIT, second.read_exact(&mut second_echo))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(first_echo, first_payload);
+    assert_eq!(second_echo, second_payload);
+    timeout(LIMIT, first.shutdown()).await.unwrap().unwrap();
+    timeout(LIMIT, second.shutdown()).await.unwrap().unwrap();
+    assert_eof(&mut first).await;
+    assert_eof(&mut second).await;
+    peer.shell_echo(b"shell after concurrent forwards").await;
+    assert!(messages.lock().unwrap().is_empty());
+
+    cancel.cancel();
+    drop(first);
+    drop(second);
+    drop(controls);
+    task.finish().await;
+    peer.cleanup().await;
+}
+
+#[tokio::test]
+async fn originator_local_rejection_then_recovery_tracks_each_source() {
+    let mut peer = SshPeer::new(true, None).await;
+    let mut item = info(SshForwardingType::Local);
+    item.target_address = "recovery-target.example".into();
+    item.target_port = 2299;
+    let cancel = CancelSignal::default();
+    let _cancel_guard = CancelOnDrop(cancel.clone());
+    let messages = Arc::new(Mutex::new(Vec::new()));
+    let (addr, mut controls, task) = run_local_bound(
+        item,
+        "127.0.0.1:0".parse().unwrap(),
+        cancel.clone(),
+        messages.clone(),
+    )
+    .await;
+
+    let mut rejected = timeout(LIMIT, TcpStream::connect(addr))
+        .await
+        .unwrap()
+        .unwrap();
+    let rejected_source = rejected.local_addr().unwrap();
+    assert_originator_request(
+        &mut peer,
+        &mut controls,
+        rejected_source,
+        "recovery-target.example",
+        2299,
+    )
+    .await;
+    assert_eof(&mut rejected).await;
+    assert_eq!(messages.lock().unwrap().len(), 1);
+
+    *peer.reject.lock().unwrap() = false;
+    let mut recovered = timeout(LIMIT, TcpStream::connect(addr))
+        .await
+        .unwrap()
+        .unwrap();
+    let recovered_source = recovered.local_addr().unwrap();
+    assert_originator_relay(
+        &mut peer,
+        &mut controls,
+        &mut recovered,
+        recovered_source,
+        "recovery-target.example",
+        2299,
+        false,
+    )
+    .await;
+    peer.shell_echo(b"shell after source recovery").await;
+    assert_eq!(messages.lock().unwrap().len(), 1);
+
+    cancel.cancel();
+    drop(rejected);
+    drop(recovered);
+    drop(controls);
+    task.finish().await;
+    peer.cleanup().await;
+}
+
+async fn originator_dynamic_fallback_flow(bind_address: std::net::SocketAddr) {
+    let mut peer = SshPeer::new(false, None).await;
+    let mut item = info(SshForwardingType::Dynamic);
+    item.bind_host = bind_address.ip().to_string();
+    let cancel = CancelSignal::default();
+    let _cancel_guard = CancelOnDrop(cancel.clone());
+    let messages = Arc::new(Mutex::new(Vec::new()));
+    let (addr, mut controls, task) =
+        run_local_bound(item, bind_address, cancel.clone(), messages.clone()).await;
+    let target = "dynamic-originator-target.example";
+    let mut socket = open_local_peer(SshForwardingType::Dynamic, addr, target, 2323).await;
+    let source = socket.local_addr().unwrap();
+    assert_ne!(
+        (source.ip().to_string(), source.port()),
+        ("127.0.0.1".to_owned(), 0),
+        "actual Dynamic client endpoint must differ from the fallback originator"
+    );
+    assert_originator_relay(
+        &mut peer,
+        &mut controls,
+        &mut socket,
+        "127.0.0.1:0".parse().unwrap(),
+        target,
+        2323,
+        true,
+    )
+    .await;
+    peer.shell_echo(b"shell after dynamic forward").await;
+    assert!(messages.lock().unwrap().is_empty());
+    cancel.cancel();
+    drop(socket);
+    drop(controls);
+    task.finish().await;
+    peer.cleanup().await;
+}
+
+#[tokio::test]
+async fn originator_dynamic_ipv4_keeps_fallback_source() {
+    originator_dynamic_fallback_flow("127.0.0.1:0".parse().unwrap()).await;
+}
+
+#[tokio::test]
+async fn originator_dynamic_ipv6_keeps_fallback_source() {
+    originator_dynamic_fallback_flow("[::1]:0".parse().unwrap()).await;
 }
