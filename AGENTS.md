@@ -789,9 +789,19 @@
   multi-hop cancellation, Vault behavior, and other platforms still need desktop acceptance.
   Agent errors continue to fall through as in upstream; a disconnect swallowed by that path
   can reach exhaustion, unlike an error propagated out of authentication.
-  Upstream also catches failures inside prompted-password and private-key attempts, whereas
-  some corresponding native errors propagate. Compare disconnects in those methods before
-  accepting their fallback and saved-password deletion behavior.
+  Keep a transport closed before an authentication request distinct from one closed after
+  transmission. The pinned russh reply waiter treats a closed reply channel as ordinary
+  authentication failure. Real SSH comparisons show an after-request private-key disconnect
+  reaching candidate exhaustion in both hosts.
+  The fixed original catches prompted-password and private-key request errors; Native
+  propagates the corresponding AuthenticationRejected without a password-deletion target.
+  Before-request disconnect controls exercise the actual Native ManagerAuthenticator for
+  keys and the actual password-response helper; full password-prompt propagation is checked
+  in source. Original controls execute the fixed method and its locked native binding.
+  Decide whether to retain Native's saved-password protection on these before-request errors
+  or mirror the original deletion before accepting that behavior difference. No exception
+  is accepted yet. Actual modal interruption, saved-credential persistence, Vault behavior,
+  and supported-platform desktop acceptance remain pending.
 - Upstream's keyboard-interactive panel saves on consent without awaiting storage. Verify
   pending saves cannot restore a rejected password after deletion, especially during Vault
   unlock or expiration. This ordering remains unverified, not an accepted parity result.
