@@ -209,6 +209,11 @@ impl SshPeer {
         .await;
         let _ = self.server.finish().await;
     }
+    // Lets a spawned control task own the peer while the test observes server requests.
+    fn detach_requests(&mut self) -> mpsc::UnboundedReceiver<(String, u32)> {
+        let (_, empty) = mpsc::unbounded_channel();
+        std::mem::replace(&mut self.requested, empty)
+    }
     async fn native_rejection(&mut self, host: &str, port: u16) -> String {
         timeout(
             LIMIT,
@@ -334,6 +339,42 @@ async fn assert_eof(socket: &mut TcpStream) {
     );
 }
 
+// SOCKS5 "connection not allowed by ruleset": the upstream denial is exactly two bytes.
+async fn assert_socks_denial(socket: &mut TcpStream) {
+    let mut denial = [0; 2];
+    timeout(LIMIT, socket.read_exact(&mut denial))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(denial, [5, 2]);
+}
+
+// Only meaningful after the real SSH request was observed; the 100ms window is
+// the observation period in which no application response may appear.
+async fn assert_no_client_bytes(socket: &mut TcpStream) {
+    let mut byte = [0];
+    assert!(
+        timeout(Duration::from_millis(100), socket.read(&mut byte))
+            .await
+            .is_err(),
+        "client received bytes before the SSH result"
+    );
+}
+
+struct CancelOnDrop(CancelSignal);
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        self.0.cancel();
+    }
+}
+
+fn spawn_control(mut peer: SshPeer, command: SshControl) -> AbortTask<(SshPeer, bool)> {
+    spawn(async move {
+        let keep = peer.control(command).await;
+        (peer, keep)
+    })
+}
+
 async fn rejection_and_recovery(kind: SshForwardingType, requested_host: &str, port: u16) {
     let mut peer = SshPeer::new(true, None).await;
     let native = peer.native_rejection(requested_host, port).await;
@@ -364,12 +405,7 @@ async fn rejection_and_recovery(kind: SshForwardingType, requested_host: &str, p
         (requested_host.to_owned(), u32::from(port))
     );
     if kind == SshForwardingType::Dynamic {
-        let mut socks_reply = [0; 10];
-        timeout(LIMIT, socket.read_exact(&mut socks_reply))
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(socks_reply, [5, 0, 0, 1, 0, 0, 0, 0, 0, 0]);
+        assert_socks_denial(&mut socket).await;
     }
     assert_eof(&mut socket).await;
     let diagnostic = messages.lock().unwrap().clone();
@@ -600,12 +636,7 @@ async fn dynamic_hostile_controls_are_escaped_and_unicode_is_kept() {
             .unwrap(),
         (requested.to_owned(), 9)
     );
-    let mut socks_reply = [0; 10];
-    timeout(LIMIT, socket.read_exact(&mut socks_reply))
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(socks_reply, [5, 0, 0, 1, 0, 0, 0, 0, 0, 0]);
+    assert_socks_denial(&mut socket).await;
     assert_eof(&mut socket).await;
     let result = messages.lock().unwrap().clone();
     assert_eq!(result.len(), 1);
@@ -621,4 +652,183 @@ async fn dynamic_hostile_controls_are_escaped_and_unicode_is_kept() {
     cancel.cancel();
     task.finish().await;
     peer.cleanup().await;
+}
+
+#[tokio::test]
+async fn dynamic_success_waits_for_ssh_approval_and_orders_binary() {
+    let host = "approved.example";
+    let (release, gate) = oneshot::channel();
+    let mut peer = SshPeer::new(false, Some(gate)).await;
+    let mut requested = peer.detach_requests();
+    let messages = Arc::new(Mutex::new(Vec::new()));
+    let cancel = CancelSignal::default();
+    let _cancel_guard = CancelOnDrop(cancel.clone());
+    let (addr, mut controls, task) = run_local(
+        info(SshForwardingType::Dynamic),
+        cancel.clone(),
+        messages.clone(),
+    )
+    .await;
+    let mut socket = open_local_peer(SshForwardingType::Dynamic, addr, host, 2209).await;
+    let command = timeout(LIMIT, controls.recv()).await.unwrap().unwrap();
+    let control = spawn_control(peer, command);
+    assert_eq!(
+        timeout(LIMIT, requested.recv()).await.unwrap().unwrap(),
+        (host.to_owned(), 2209)
+    );
+    // Non-text bytes pipelined right after CONNECT must wait behind the SSH result.
+    let payload = [0x00, 0xff, 0x80, 0x0d, 0x0a, 0x1b];
+    write_bounded(&mut socket, &payload).await;
+    assert_no_client_bytes(&mut socket).await;
+    assert!(messages.lock().unwrap().is_empty());
+
+    release.send(()).unwrap();
+    let (mut peer, keep) = control.finish().await;
+    assert!(keep);
+    let mut success = [0; 10];
+    timeout(LIMIT, socket.read_exact(&mut success))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(success, [5, 0, 0, 1, 0, 0, 0, 0, 0, 0]);
+    let mut echoed = [0; 6];
+    timeout(LIMIT, socket.read_exact(&mut echoed))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(echoed, payload);
+    timeout(LIMIT, socket.shutdown())
+        .await
+        .expect("socket shutdown exceeded deadline")
+        .unwrap();
+    assert_eof(&mut socket).await;
+    peer.shell_echo(b"shell still works").await;
+    assert!(messages.lock().unwrap().is_empty());
+
+    drop(socket);
+    drop(controls);
+    cancel.cancel();
+    task.finish().await;
+    peer.cleanup().await;
+}
+
+#[tokio::test]
+async fn dynamic_rejection_waits_for_ssh_approval() {
+    let host = "requested.example";
+    let (release, gate) = oneshot::channel();
+    let mut peer = SshPeer::new(true, Some(gate)).await;
+    let mut requested = peer.detach_requests();
+    let messages = Arc::new(Mutex::new(Vec::new()));
+    let cancel = CancelSignal::default();
+    let _cancel_guard = CancelOnDrop(cancel.clone());
+    let (addr, mut controls, task) = run_local(
+        info(SshForwardingType::Dynamic),
+        cancel.clone(),
+        messages.clone(),
+    )
+    .await;
+    let mut socket = open_local_peer(SshForwardingType::Dynamic, addr, host, 2209).await;
+    let command = timeout(LIMIT, controls.recv()).await.unwrap().unwrap();
+    let control = spawn_control(peer, command);
+    assert_eq!(
+        timeout(LIMIT, requested.recv()).await.unwrap().unwrap(),
+        (host.to_owned(), 2209)
+    );
+    assert_no_client_bytes(&mut socket).await;
+    assert!(messages.lock().unwrap().is_empty());
+
+    release.send(()).unwrap();
+    let (mut peer, keep) = control.finish().await;
+    assert!(keep);
+    assert_socks_denial(&mut socket).await;
+    assert_eof(&mut socket).await;
+    // The gate was consumed by the forwarded request, so this probe is rejected immediately.
+    let native = peer.native_rejection(host, 2209).await;
+    assert_eq!(
+        timeout(LIMIT, requested.recv()).await.unwrap().unwrap(),
+        (host.to_owned(), 2209)
+    );
+    assert_eq!(
+        messages.lock().unwrap().clone(),
+        vec![format!(
+            "{BADGE} Remote has rejected the forwarded connection to {host}:2209 via (dynamic) 127.0.0.1:0: {native}"
+        )]
+    );
+
+    // Same listener recovers after the held rejection.
+    *peer.reject.lock().unwrap() = false;
+    let mut recovered = open_local_peer(SshForwardingType::Dynamic, addr, host, 2209).await;
+    let command = timeout(LIMIT, controls.recv()).await.unwrap().unwrap();
+    assert!(peer.control(command).await);
+    assert_eq!(
+        timeout(LIMIT, requested.recv()).await.unwrap().unwrap(),
+        (host.to_owned(), 2209)
+    );
+    let mut success = [0; 10];
+    timeout(LIMIT, recovered.read_exact(&mut success))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(success, [5, 0, 0, 1, 0, 0, 0, 0, 0, 0]);
+    let payload = [0x22, 0, 0xfd];
+    write_bounded(&mut recovered, &payload).await;
+    let mut echoed = [0; 3];
+    timeout(LIMIT, recovered.read_exact(&mut echoed))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(echoed, payload);
+    peer.shell_echo(b"shell after rejection").await;
+    assert_eq!(messages.lock().unwrap().len(), 1);
+
+    drop(recovered);
+    drop(socket);
+    drop(controls);
+    cancel.cancel();
+    task.finish().await;
+    peer.cleanup().await;
+}
+
+async fn cancelled_pending_dynamic_is_silent(reject: bool) {
+    let host = "late.example";
+    let (release, gate) = oneshot::channel();
+    let mut peer = SshPeer::new(reject, Some(gate)).await;
+    let mut requested = peer.detach_requests();
+    let messages = Arc::new(Mutex::new(Vec::new()));
+    let cancel = CancelSignal::default();
+    let _cancel_guard = CancelOnDrop(cancel.clone());
+    let (addr, mut controls, task) = run_local(
+        info(SshForwardingType::Dynamic),
+        cancel.clone(),
+        messages.clone(),
+    )
+    .await;
+    let mut socket = open_local_peer(SshForwardingType::Dynamic, addr, host, 9).await;
+    let command = timeout(LIMIT, controls.recv()).await.unwrap().unwrap();
+    let control = spawn_control(peer, command);
+    assert_eq!(
+        timeout(LIMIT, requested.recv()).await.unwrap().unwrap(),
+        (host.to_owned(), 9)
+    );
+
+    // Cancellation must close the client without waiting for the held SSH result.
+    cancel.cancel();
+    assert_eof(&mut socket).await;
+    release.send(()).unwrap();
+    let (mut peer, keep) = control.finish().await;
+    assert!(keep);
+    assert!(messages.lock().unwrap().is_empty());
+    peer.shell_echo(b"shell after late result").await;
+    assert!(messages.lock().unwrap().is_empty());
+
+    drop(socket);
+    drop(controls);
+    task.finish().await;
+    peer.cleanup().await;
+}
+
+#[tokio::test]
+async fn cancelled_pending_dynamic_is_silent_for_late_approval_and_rejection() {
+    cancelled_pending_dynamic_is_silent(false).await;
+    cancelled_pending_dynamic_is_silent(true).await;
 }
