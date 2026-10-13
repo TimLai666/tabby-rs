@@ -106,6 +106,7 @@ pub struct SshManager {
 
 #[derive(Clone)]
 struct SshSession {
+    connection_id: String,
     control: mpsc::Sender<SshControl>,
     input: mpsc::Sender<input::ShellWrite>,
 }
@@ -1457,7 +1458,14 @@ impl SshManager {
         self.sessions
             .lock()
             .unwrap_or_else(|error| error.into_inner())
-            .insert(id.clone(), SshSession { control, input });
+            .insert(
+                id.clone(),
+                SshSession {
+                    connection_id: connection_id.clone(),
+                    control,
+                    input,
+                },
+            );
         tauri::async_runtime::spawn(async move {
             let mut pending = pending;
             let mut sftp = None;
@@ -1938,13 +1946,24 @@ impl SshManager {
                 self.update_forwarding(info.clone());
                 emit_forwarding(&app, &info);
                 let manager = self.clone();
-                let task_info = info.clone();
+                let mut task_info = info.clone();
+                task_info.bind_port = request.bind_port;
+                let connection_id = session.connection_id.clone();
+                let message_app = app.clone();
                 tokio::spawn(async move {
                     forwarding::run_local_forward(
                         task_info.clone(),
                         listener,
                         session.control,
                         cancel,
+                        move |message| {
+                            let _ = message_app.emit(
+                                "ssh:message",
+                                serde_json::json!({
+                                    "connectionId": connection_id, "message": message,
+                                }),
+                            );
+                        },
                     )
                     .await;
                     manager.finish_forwarding(&app, &task_info.id);
@@ -2275,7 +2294,7 @@ async fn handle_control<H: client::Handler>(
                 .channel_open_direct_tcpip(host, u32::from(port), "127.0.0.1", 0)
                 .await
                 .map(|channel| channel.into_stream())
-                .map_err(|_| SshError::ChannelOpen);
+                .map_err(|error| SshError::Forwarding(error.to_string()));
             let _ = sender.send(result);
             true
         }
@@ -5572,6 +5591,7 @@ mod tests {
         manager.sessions.lock().unwrap().insert(
             "first".into(),
             SshSession {
+                connection_id: "first".into(),
                 control: first_sender,
                 input: first_input,
             },
@@ -5579,6 +5599,7 @@ mod tests {
         manager.sessions.lock().unwrap().insert(
             "second".into(),
             SshSession {
+                connection_id: "second".into(),
                 control: second_sender,
                 input: second_input,
             },

@@ -277,7 +277,13 @@ async fn local_and_dynamic_cancel_before_first_poll_release_exact_port() {
         let cancel = add_runtime(&manager, item.clone());
         manager.stop_forwardings_for_session(id, "conn");
         let (tx, _rx) = mpsc::channel(2);
-        let task = spawn(forwarding::run_local_forward(item, listener, tx, cancel));
+        let task = spawn(forwarding::run_local_forward(
+            item,
+            listener,
+            tx,
+            cancel,
+            |_| {},
+        ));
         finish(task).await;
         assert_eq!(
             timeout(LIMIT, TcpListener::bind(address))
@@ -299,7 +305,13 @@ async fn socks_greeting_then_pending_request_is_closed_on_cancel() {
     let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
     let address = listener.local_addr().unwrap();
     let (tx, mut rx) = mpsc::channel(2);
-    let task = spawn(forwarding::run_local_forward(item, listener, tx, cancel));
+    let task = spawn(forwarding::run_local_forward(
+        item,
+        listener,
+        tx,
+        cancel,
+        |_| {},
+    ));
     let mut peer = connect_tcp(address).await;
     peer.write_all(&[5, 1]).await.unwrap();
     // The server is waiting for the method byte; completing the greeting synchronizes its response.
@@ -332,7 +344,13 @@ async fn incomplete_socks_greeting_is_closed_on_cancel() {
     let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
     let address = listener.local_addr().unwrap();
     let (tx, _rx) = mpsc::channel(2);
-    let task = spawn(forwarding::run_local_forward(item, listener, tx, cancel));
+    let task = spawn(forwarding::run_local_forward(
+        item,
+        listener,
+        tx,
+        cancel,
+        |_| {},
+    ));
     let mut peer = connect_tcp(address).await;
     peer.write_all(&[5, 1]).await.unwrap();
     manager.stop_forwardings_for_session("owner-incomplete", "conn");
@@ -354,7 +372,13 @@ async fn pending_local_open_reply_cancellation_closes_peer_and_drops_receiver() 
     let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
     let address = listener.local_addr().unwrap();
     let (tx, mut rx) = mpsc::channel(2);
-    let task = spawn(forwarding::run_local_forward(item, listener, tx, cancel));
+    let task = spawn(forwarding::run_local_forward(
+        item,
+        listener,
+        tx,
+        cancel,
+        |_| {},
+    ));
     let mut peer = connect_tcp(address).await;
     let command = timeout(LIMIT, rx.recv()).await.unwrap().unwrap();
     let sender = match command {
@@ -379,7 +403,13 @@ async fn removing_runtime_cancels_pending_child_peer() {
     let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
     let address = listener.local_addr().unwrap();
     let (tx, mut rx) = mpsc::channel(2);
-    let task = spawn(forwarding::run_local_forward(item, listener, tx, cancel));
+    let task = spawn(forwarding::run_local_forward(
+        item,
+        listener,
+        tx,
+        cancel,
+        |_| {},
+    ));
     let mut peer = connect_tcp(address).await;
     let _open = timeout(LIMIT, rx.recv()).await.unwrap().unwrap();
     manager.forwardings.lock().unwrap().remove("local");
@@ -404,8 +434,8 @@ async fn session_stop_isolated_and_other_local_binary_relay_survives() {
     let ab = lb.local_addr().unwrap();
     let (ta, mut ra) = mpsc::channel(2);
     let (tb, mut rb) = mpsc::channel(2);
-    let ja = spawn(forwarding::run_local_forward(a, la, ta, ca));
-    let jb = spawn(forwarding::run_local_forward(b, lb, tb, cb));
+    let ja = spawn(forwarding::run_local_forward(a, la, ta, ca, |_| {}));
+    let jb = spawn(forwarding::run_local_forward(b, lb, tb, cb, |_| {}));
     let mut pa = connect_tcp(aa).await;
     let _ = timeout(LIMIT, ra.recv()).await.unwrap().unwrap();
     manager.stop_forwardings_for_session("owner-a", "conn-a");

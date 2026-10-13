@@ -204,7 +204,18 @@ pub(super) async fn run_local_forward(
     listener: TcpListener,
     control: mpsc::Sender<SshControl>,
     cancel: CancelSignal,
+    on_message: impl Fn(String) + Send + Sync + 'static,
 ) {
+    let on_message = Arc::new(on_message);
+    let description = if info.kind == SshForwardingType::Dynamic {
+        format!("(dynamic) {}:{}", info.bind_host, info.bind_port)
+    } else {
+        format!(
+            "(local) {}:{} → (remote) {}:{}",
+            info.bind_host, info.bind_port, info.target_address, info.target_port
+        )
+    };
+    let description = super::terminal_diagnostic_text(&description);
     loop {
         let accepted = cancel
             .run(async { listener.accept().await.map_err(|_| SshError::Closed) })
@@ -217,6 +228,8 @@ pub(super) async fn run_local_forward(
         let kind = info.kind;
         let target_address = info.target_address.clone();
         let target_port = info.target_port;
+        let on_message = on_message.clone();
+        let description = description.clone();
         tokio::spawn(async move {
             let mut socket = socket;
             let _ = cancel
@@ -244,7 +257,7 @@ pub(super) async fn run_local_forward(
                     let (sender, receiver) = oneshot::channel();
                     control
                         .send(SshControl::OpenDirectTcpip {
-                            host: target_address,
+                            host: target_address.clone(),
                             port: target_port,
                             cancel: cancel.clone(),
                             sender,
@@ -253,7 +266,18 @@ pub(super) async fn run_local_forward(
                         .map_err(|_| SshError::Closed)?;
                     let mut ssh_stream = match receiver.await.map_err(|_| SshError::Closed)? {
                         Ok(stream) => stream,
-                        Err(_) => return Ok(()),
+                        Err(error) => {
+                            if !cancel.is_cancelled() {
+                                on_message(format!(
+                                    "\x1b[41m\x1b[30m X \x1b[39m\x1b[49m Remote has rejected the forwarded connection to {}:{} via {}: {}",
+                                    super::terminal_diagnostic_text(&target_address),
+                                    target_port,
+                                    description,
+                                    super::terminal_diagnostic_text(&error.to_string()),
+                                ));
+                            }
+                            return Ok(());
+                        }
                     };
                     let _ = copy_bidirectional(&mut socket, &mut ssh_stream).await;
                     Ok(())
