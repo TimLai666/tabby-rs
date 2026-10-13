@@ -154,7 +154,7 @@
     "test:tauri-event-names": "node scripts/test-tauri-event-names.mjs",
     "test:profile-tree": "node scripts/test-profile-tree-contract.mjs",
     "test:login-scripts-settings": "node scripts/test-login-scripts-settings-contract.mjs",
-    "test:connector-login-scripts": "node scripts/test-connector-login-scripts.mjs",
+    "test:connector-login-scripts": "node scripts/test-connector-login-scripts.mjs && node scripts/test-connector-listener-lifecycle.mjs",
     "test:connector-errors": "node scripts/test-connector-errors.mjs",
     "test:serial-write-queue": "node scripts/test-serial-write-queue.mjs",
     "test:serial-tab-controls": "node scripts/test-serial-tab-controls.mjs",
