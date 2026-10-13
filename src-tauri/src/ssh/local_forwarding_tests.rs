@@ -832,3 +832,437 @@ async fn cancelled_pending_dynamic_is_silent_for_late_approval_and_rejection() {
     cancelled_pending_dynamic_is_silent(false).await;
     cancelled_pending_dynamic_is_silent(true).await;
 }
+
+async fn socks_parser_listener() -> (
+    std::net::SocketAddr,
+    mpsc::Receiver<SshControl>,
+    CancelSignal,
+    Messages,
+    AbortTask<()>,
+) {
+    let cancel = CancelSignal::default();
+    let messages = Arc::new(Mutex::new(Vec::new()));
+    let (addr, controls, task) = run_local(
+        info(SshForwardingType::Dynamic),
+        cancel.clone(),
+        messages.clone(),
+    )
+    .await;
+    (addr, controls, cancel, messages, task)
+}
+
+async fn socks_parser_connect(addr: std::net::SocketAddr, request: &[u8]) -> TcpStream {
+    let mut socket = timeout(LIMIT, TcpStream::connect(addr))
+        .await
+        .unwrap()
+        .unwrap();
+    write_bounded(&mut socket, &[5, 1, 0]).await;
+    let mut greeting = [0; 2];
+    timeout(LIMIT, socket.read_exact(&mut greeting))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(greeting, [5, 0]);
+    write_bounded(&mut socket, request).await;
+    socket
+}
+
+#[tokio::test]
+async fn socks_parser_greeting_errors_and_method_limits() {
+    let mut peer = SshPeer::new(true, None).await;
+    let (addr, mut controls, cancel, messages, task) = socks_parser_listener().await;
+    for greeting in [&[4][..], &[4, 1, 0][..], &[5, 0][..]] {
+        let mut socket = timeout(LIMIT, TcpStream::connect(addr))
+            .await
+            .unwrap()
+            .unwrap();
+        write_bounded(&mut socket, greeting).await;
+        assert_eof(&mut socket).await;
+        drop(socket);
+    }
+    assert!(controls.try_recv().is_err());
+    assert!(messages.lock().unwrap().is_empty());
+    let mut unsupported = timeout(LIMIT, TcpStream::connect(addr))
+        .await
+        .unwrap()
+        .unwrap();
+    write_bounded(
+        &mut unsupported,
+        &[
+            5, 2, 1, 2, 5, 1, 0, 5, 1, 0, 1, 127, 0, 0, 1, 8, 0xa1, 0, 0xff, 0x80,
+        ],
+    )
+    .await;
+    let mut response = [0; 2];
+    timeout(LIMIT, unsupported.read_exact(&mut response))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(response, [5, 0xff]);
+    assert_eof(&mut unsupported).await;
+
+    // Both boundary-sized method lists contain no-auth as their final method.
+    for count in [33usize, 255] {
+        let mut socket = timeout(LIMIT, TcpStream::connect(addr))
+            .await
+            .unwrap()
+            .unwrap();
+        let mut greeting = vec![5, count as u8];
+        greeting.resize(count + 2, 2);
+        *greeting.last_mut().unwrap() = 0;
+        write_bounded(&mut socket, &greeting).await;
+        let mut selected = [0; 2];
+        timeout(LIMIT, socket.read_exact(&mut selected))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(selected, [5, 0]);
+        write_bounded(&mut socket, &[5, 1, 0, 1, 127, 0, 0, 1, 8, 0xa1]).await;
+        let command = timeout(LIMIT, controls.recv()).await.unwrap().unwrap();
+        assert!(peer.control(command).await);
+        assert_eq!(
+            timeout(LIMIT, peer.requested.recv())
+                .await
+                .unwrap()
+                .unwrap(),
+            ("127.0.0.1".into(), 2209)
+        );
+        let mut denial = [0; 2];
+        timeout(LIMIT, socket.read_exact(&mut denial))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(denial, [5, 2]);
+        assert_eof(&mut socket).await;
+        drop(socket);
+    }
+    assert!(controls.try_recv().is_err());
+    assert_eq!(messages.lock().unwrap().len(), 2);
+    drop(controls);
+    cancel.cancel();
+    task.finish().await;
+    peer.cleanup().await;
+}
+
+#[tokio::test]
+async fn socks_parser_complete_bind_udp_and_invalid_headers_close_without_ssh() {
+    let mut peer = SshPeer::new(true, None).await;
+    let (addr, mut controls, cancel, messages, task) = socks_parser_listener().await;
+    let cases: &[(&str, &[u8], Option<[u8; 2]>)] = &[
+        (
+            "bind-ipv4",
+            &[5, 2, 0, 1, 127, 0, 0, 1, 8, 0xa1],
+            Some([5, 7]),
+        ),
+        (
+            "udp-ipv4",
+            &[5, 3, 0, 1, 127, 0, 0, 1, 8, 0xa1],
+            Some([5, 7]),
+        ),
+        (
+            "bind-domain",
+            &[5, 2, 0, 3, 4, b't', b'e', b's', b't', 8, 0xa1],
+            Some([5, 7]),
+        ),
+        (
+            "udp-ipv6",
+            &[
+                5, 3, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 8, 0xa1,
+            ],
+            Some([5, 7]),
+        ),
+        ("wrong-version", &[4, 1, 0, 1, 127, 0, 0, 1, 8, 0xa1], None),
+        (
+            "unknown-command",
+            &[5, 4, 0, 1, 127, 0, 0, 1, 8, 0xa1],
+            None,
+        ),
+        ("unknown-atyp", &[5, 1, 0, 2, 127, 0, 0, 1, 8, 0xa1], None),
+    ];
+    for (name, request, first_reply) in cases {
+        let mut socket = socks_parser_connect(addr, request).await;
+        if let Some(expected) = first_reply {
+            let mut reply = [0; 2];
+            timeout(LIMIT, socket.read_exact(&mut reply))
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(&reply, expected, "{name}");
+        }
+        assert_eof(&mut socket).await;
+        assert!(controls.try_recv().is_err(), "{name} reached SSH control");
+        assert!(
+            messages.lock().unwrap().is_empty(),
+            "{name} emitted diagnostic"
+        );
+        drop(socket);
+    }
+
+    // Header-only invalid requests and complete pipelined tails have the same wire result.
+    for request in [
+        &[5, 4][..],
+        &[5, 4, 0, 1, 127, 0, 0, 1, 8, 0xa1, 0x41, 0x42][..],
+        &[4][..],
+        &[4, 1, 0, 1, 127, 0, 0, 1, 8, 0xa1, 0x41][..],
+        &[5, 1, 0, 2][..],
+        &[5, 1, 0, 2, 127, 0, 0, 1, 8, 0xa1, 0x41, 0x42][..],
+    ] {
+        let mut socket = socks_parser_connect(addr, request).await;
+        assert_eof(&mut socket).await;
+        assert!(controls.try_recv().is_err());
+        assert!(messages.lock().unwrap().is_empty());
+        drop(socket);
+    }
+    let mut truncated = socks_parser_connect(addr, &[5, 1, 0, 1, 127]).await;
+    timeout(LIMIT, truncated.shutdown()).await.unwrap().unwrap();
+    assert_eof(&mut truncated).await;
+    assert!(controls.try_recv().is_err());
+    assert!(messages.lock().unwrap().is_empty());
+    peer.shell_echo(b"parser-rejection-keeps-ssh-alive").await;
+    drop(controls);
+    cancel.cancel();
+    task.finish().await;
+    peer.cleanup().await;
+}
+
+#[tokio::test]
+async fn socks_parser_connect_metadata_matches_compatibility_inputs() {
+    let mut peer = SshPeer::new(true, None).await;
+    let (addr, mut controls, cancel, messages, task) = socks_parser_listener().await;
+    let cases: &[(&[u8], &str, u32)] = &[
+        (&[5, 1, 9, 1, 127, 0, 0, 1, 8, 0xa1], "127.0.0.1", 2209),
+        (&[5, 1, 0, 1, 127, 0, 0, 1, 0, 0], "127.0.0.1", 0),
+        (&[5, 1, 0, 3, 0, 8, 0xa1], "", 2209),
+        (&[5, 1, 0, 3, 2, 0xff, b'a', 8, 0xa1], "�a", 2209),
+        (
+            &[
+                5, 1, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 8, 0xa1,
+            ],
+            "0000:0000:0000:0000:0000:0000:0000:0001",
+            2209,
+        ),
+    ];
+    for (request, expected_host, expected_port) in cases {
+        let mut socket = socks_parser_connect(addr, request).await;
+        let command = timeout(LIMIT, controls.recv()).await.unwrap().unwrap();
+        assert!(peer.control(command).await);
+        assert_eq!(
+            timeout(LIMIT, peer.requested.recv())
+                .await
+                .unwrap()
+                .unwrap(),
+            ((*expected_host).into(), *expected_port)
+        );
+        let mut denial = [0; 2];
+        timeout(LIMIT, socket.read_exact(&mut denial))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(denial, [5, 2]);
+        assert_eof(&mut socket).await;
+        drop(socket);
+    }
+    assert_eq!(messages.lock().unwrap().len(), cases.len());
+    drop(controls);
+    cancel.cancel();
+    task.finish().await;
+    peer.cleanup().await;
+}
+
+#[tokio::test]
+async fn socks_parser_pipelined_invalid_then_valid_reuses_listener() {
+    let mut peer = SshPeer::new(false, None).await;
+    let (addr, mut controls, cancel, messages, task) = socks_parser_listener().await;
+    let mut invalid =
+        socks_parser_connect(addr, &[5, 4, 0, 1, 127, 0, 0, 1, 8, 0xa1, 0, 0xff, 0x80]).await;
+    assert_eof(&mut invalid).await;
+    drop(invalid);
+    assert!(controls.try_recv().is_err());
+    assert!(messages.lock().unwrap().is_empty());
+
+    let mut valid = socks_parser_connect(addr, &[5, 1, 0, 1, 127, 0, 0, 1, 8, 0xa1]).await;
+    write_bounded(&mut valid, &[0, 0xff, 0x80, 0x42]).await;
+    let command = timeout(LIMIT, controls.recv()).await.unwrap().unwrap();
+    assert!(peer.control(command).await);
+    assert_eq!(
+        timeout(LIMIT, peer.requested.recv())
+            .await
+            .unwrap()
+            .unwrap(),
+        ("127.0.0.1".into(), 2209)
+    );
+    let mut success = [0; 10];
+    timeout(LIMIT, valid.read_exact(&mut success))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(success, [5, 0, 0, 1, 0, 0, 0, 0, 0, 0]);
+    let mut echoed = [0; 4];
+    timeout(LIMIT, valid.read_exact(&mut echoed))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(echoed, [0, 0xff, 0x80, 0x42]);
+    timeout(LIMIT, valid.shutdown()).await.unwrap().unwrap();
+    assert_eof(&mut valid).await;
+    assert!(messages.lock().unwrap().is_empty());
+    drop(valid);
+    drop(controls);
+    cancel.cancel();
+    task.finish().await;
+    peer.cleanup().await;
+}
+
+#[tokio::test]
+async fn socks_parser_incomplete_bind_waits_and_cancellation_closes_write_held_client() {
+    let mut peer = SshPeer::new(true, None).await;
+    let (addr, mut controls, cancel, messages, task) = socks_parser_listener().await;
+
+    let mut bind = timeout(LIMIT, TcpStream::connect(addr))
+        .await
+        .unwrap()
+        .unwrap();
+    write_bounded(&mut bind, &[5, 1, 0]).await;
+    let mut greeting = [0; 2];
+    timeout(LIMIT, bind.read_exact(&mut greeting))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(greeting, [5, 0]);
+    write_bounded(&mut bind, &[5, 2, 0, 1, 127, 0, 0, 1, 8]).await;
+    assert!(
+        timeout(Duration::from_millis(200), async {
+            let mut byte = [0];
+            bind.read(&mut byte).await
+        })
+        .await
+        .is_err(),
+        "incomplete BIND received a premature response"
+    );
+    assert!(controls.try_recv().is_err());
+    assert!(messages.lock().unwrap().is_empty());
+    write_bounded(&mut bind, &[0xa1]).await;
+    let mut refusal = [0; 2];
+    timeout(LIMIT, bind.read_exact(&mut refusal))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(refusal, [5, 7]);
+    assert_eof(&mut bind).await;
+    // Keep the rejected client write half open until cancellation.
+
+    // A second incomplete BIND remains open until listener cancellation.
+    let mut held_bind = timeout(LIMIT, TcpStream::connect(addr))
+        .await
+        .unwrap()
+        .unwrap();
+    write_bounded(&mut held_bind, &[5, 1, 0]).await;
+    timeout(LIMIT, held_bind.read_exact(&mut greeting))
+        .await
+        .unwrap()
+        .unwrap();
+    write_bounded(&mut held_bind, &[5, 2, 0, 1, 127, 0, 0, 1, 8]).await;
+    assert!(
+        timeout(Duration::from_millis(200), async {
+            let mut byte = [0];
+            held_bind.read(&mut byte).await
+        })
+        .await
+        .is_err(),
+        "held incomplete BIND received a premature response"
+    );
+
+    // Pipeline application bytes behind a valid CONNECT that SSH rejects.
+    let mut denied = timeout(LIMIT, TcpStream::connect(addr))
+        .await
+        .unwrap()
+        .unwrap();
+    write_bounded(&mut denied, &[5, 1, 0]).await;
+    timeout(LIMIT, denied.read_exact(&mut greeting))
+        .await
+        .unwrap()
+        .unwrap();
+    let mut request_and_tail = vec![5, 1, 0, 1, 127, 0, 0, 1, 8, 0xa1];
+    request_and_tail.extend_from_slice(&[0, 0xff, 0x80, 0x42]);
+    write_bounded(&mut denied, &request_and_tail).await;
+    let command = timeout(LIMIT, controls.recv()).await.unwrap().unwrap();
+    assert!(peer.control(command).await);
+    assert_eq!(
+        timeout(LIMIT, peer.requested.recv())
+            .await
+            .unwrap()
+            .unwrap(),
+        ("127.0.0.1".into(), 2209)
+    );
+    let mut denial = [0; 2];
+    timeout(LIMIT, denied.read_exact(&mut denial))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(denial, [5, 2]);
+    assert_eof(&mut denied).await;
+    assert_eq!(messages.lock().unwrap().len(), 1);
+
+    cancel.cancel();
+    assert_eof(&mut held_bind).await;
+    for socket in [&mut bind, &mut held_bind, &mut denied] {
+        let write_side_closed = timeout(LIMIT, async {
+            let buffer = [0xa5; 1024];
+            loop {
+                match socket.write(&buffer).await {
+                    Ok(0) | Err(_) => break true,
+                    Ok(_) => {}
+                }
+            }
+        })
+        .await;
+        assert!(
+            write_side_closed.is_ok(),
+            "cancelled task kept draining client writes"
+        );
+    }
+    assert!(controls.try_recv().is_err());
+    drop(bind);
+    drop(held_bind);
+    drop(denied);
+    drop(controls);
+    task.finish().await;
+    peer.cleanup().await;
+}
+
+#[tokio::test]
+async fn socks_parser_incomplete_connect_has_no_native_30_second_deadline() {
+    let mut peer = SshPeer::new(true, None).await;
+    let (addr, mut controls, cancel, messages, task) = socks_parser_listener().await;
+    let mut socket = timeout(LIMIT, TcpStream::connect(addr))
+        .await
+        .unwrap()
+        .unwrap();
+    write_bounded(&mut socket, &[5, 1, 0]).await;
+    let mut greeting = [0; 2];
+    timeout(LIMIT, socket.read_exact(&mut greeting))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(greeting, [5, 0]);
+    write_bounded(&mut socket, &[5, 1, 0, 1, 127, 0, 0, 1, 8]).await;
+    assert!(
+        timeout(Duration::from_secs(31), socket.read(&mut [0]))
+            .await
+            .is_err(),
+        "incomplete CONNECT produced a response within 31 seconds"
+    );
+    assert!(controls.try_recv().is_err());
+    assert!(messages.lock().unwrap().is_empty());
+    cancel.cancel();
+    assert_eof(&mut socket).await;
+    assert!(controls.try_recv().is_err());
+    drop(socket);
+    drop(controls);
+    task.finish().await;
+    assert!(
+        TcpListener::bind(addr).await.is_ok(),
+        "cancelled listener address was not released"
+    );
+    peer.cleanup().await;
+}
