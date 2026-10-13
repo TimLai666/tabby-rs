@@ -20,6 +20,16 @@
   Windows Rust test evidence:
   https://github.com/TimLai666/tabby-rs/actions/runs/36343754549/job/108688735753
 
+## P2 — Windows ordinary PTY termination result needs verification
+
+- `src-tauri/src/pty/session.rs` delegates ordinary unsignalled kill to the
+  `portable-pty = 0.9.0` child killer. Its ConPTY `WinChildKiller::kill` returns
+  an error for a nonzero `TerminateProcess` result and success for zero.
+  Verify the actual ordinary terminal-close result on Windows and correct the
+  adapter without changing the shared signal contract. Fresh-startup discard
+  uses its own native termination result handling; it does not validate ordinary
+  kill or replace Windows desktop acceptance.
+
 ## Pending — Linux desktop and packaging acceptance
 
 - `cargo test --locked --manifest-path src-tauri/Cargo.toml` passes on Linux x64
@@ -858,6 +868,20 @@
   `test:connector-login-scripts` includes `scripts/test-connector-listener-lifecycle.mjs`,
   which executes the actual classes with framework/native bridge boundaries simulated.
   These checks do not establish native transport cancellation or desktop acceptance.
+  A fresh PTY spawn owns its native session until proxy creation succeeds. If
+  listener installation or attach fails, await `pty.discard` for that new ID,
+  preserve the original startup error, and report any cleanup failure.
+  Discard force-terminates that child, closes detached output flow, removes its
+  manager record, and ends restore eligibility. Missing IDs are idempotent;
+  unknown termination errors retain the record for retry. Restore and shared
+  proxy creation must preserve an existing PTY. Verify fresh failure, normal
+  spawn, restored sessions, real child termination, and blocked-reader cleanup.
+  Current native process fixtures construct sessions and inject manager records;
+  their flow waiter does not execute the production reader or Wry command path.
+  Before accepting full reader/thread cleanup, verify a bounded native reader
+  fixture whose spawned descendants retain a PTY descriptor, plus desktop failure
+  handling on each platform. Do not infer that acceptance from the single-child
+  and flow-reservation checks.
   Telnet TCP connect and serial open can remain in flight before the native ID is
   returned; compare cancellation with the original desktop before accepting that flow.
 - Launch requests use a per-window native queue and a scoped `app:launch` wake-up.
