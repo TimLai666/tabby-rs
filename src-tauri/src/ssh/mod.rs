@@ -16,6 +16,8 @@ mod input;
 mod keyboard_interactive_tests;
 mod known_hosts;
 mod lifecycle;
+#[cfg(test)]
+mod local_forwarding_tests;
 pub mod model;
 mod pending;
 #[cfg(test)]
