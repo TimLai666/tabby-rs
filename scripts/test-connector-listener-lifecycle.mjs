@@ -500,6 +500,11 @@ class PtyBridge {
     callWaiters = []
     invokeWaiters = []
     attachGate = null
+    spawnResponse = { id: 'pty-startup', pid: 330 }
+    existsResult = true
+    pidResult = 330
+    discardGate = null
+    discardError = null
     listen (name, callback) {
         const gate = deferred()
         const entry = { name, callback, gate, disposerCalls: 0 }
@@ -514,6 +519,13 @@ class PtyBridge {
         this.invokes.push({ name, request })
         for (const waiter of this.invokeWaiters.splice(0)) if (this.invokes.length >= waiter.count) waiter.resolve()
         if (name === 'pty.attach' && this.attachGate) return this.attachGate.promise
+        if (name === 'pty.spawn') return Promise.resolve(this.spawnResponse)
+        if (name === 'pty.exists') return Promise.resolve(this.existsResult)
+        if (name === 'pty.getPid') return Promise.resolve(this.pidResult)
+        if (name === 'pty.discard') {
+            if (this.discardGate) return this.discardGate.promise
+            if (this.discardError) return Promise.reject(this.discardError)
+        }
         return Promise.resolve({})
     }
     waitForCalls (count) {
@@ -541,6 +553,10 @@ class PtyBridge {
 
 function ptyClass () {
     return load('tabby-tauri/src/services/ptyInterface.service.ts').TauriPTYProxy
+}
+function ptyInterface (bridge, prepare = async options => options) {
+    const Interface = load('tabby-tauri/src/services/ptyInterface.service.ts').TauriPTYInterface
+    return new Interface({ prepare }, bridge)
 }
 async function ackPTYListener (bridge, absoluteIndex) {
     await within(bridge.waitForCalls(absoluteIndex + 1), `PTY listener ${absoluteIndex} registration`)
@@ -657,6 +673,182 @@ await check('PTY: callbacks queued before listener removal cannot emit or respon
     } finally {
         proxy?.unsubscribeAll()
         await creating?.then(() => undefined, () => undefined)
+        await bridge.cleanup()
+    }
+})
+
+for (let failedIndex = 0; failedIndex < 4; failedIndex++) {
+    await check(`PTY startup: fresh spawn listener ${failedIndex} failure awaits discard and preserves rejection`, true, async () => {
+        const bridge = new PtyBridge(), rejection = new Error(`PTY startup listener ${failedIndex} rejected`)
+        bridge.spawnResponse = { id: `pty-startup-listener-${failedIndex}`, pid: 330 + failedIndex }
+        bridge.discardGate = deferred()
+        const preparedOptions = []
+        const api = ptyInterface(bridge, async options => { preparedOptions.push(options); return { prepared: true } })
+        let starting, settled = false
+        try {
+            starting = api.spawn('fixture-command', ['arg'], { cwd: '/fixture', cols: 90, rows: 31 })
+                .then(value => ({ type: 'value', value }), error => ({ type: 'error', error }))
+            starting.then(() => { settled = true })
+            await within(bridge.waitForInvokes(1), 'fresh PTY native spawn')
+            for (let i = 0; i < failedIndex; i++) await ackPTYListener(bridge, i)
+            await within(bridge.waitForCalls(failedIndex + 1), `listener ${failedIndex} registration`)
+            bridge.calls[failedIndex].gate.reject(rejection)
+            const beforeDiscard = await within(Promise.race([
+                bridge.waitForInvokes(2).then(() => 'discard'),
+                starting.then(() => 'settled'),
+            ]), 'fresh PTY discard or premature startup settlement')
+            assert.equal(beforeDiscard, 'discard', 'spawn must await pty.discard before rejecting')
+            const discard = bridge.invokes.find(x => x.name === 'pty.discard')
+            assert.ok(discard, 'fresh spawn failure must invoke pty.discard')
+            assert.deepEqual({ ...discard.request }, { id: bridge.spawnResponse.id })
+            expectAll([
+                ['all acknowledged listeners were released', () => assert.equal(bridge.active.size, 0)],
+                ['each acknowledged listener disposer ran once', () => assert.ok(bridge.calls.slice(0, failedIndex).every(x => x.disposerCalls === 1))],
+            ])
+            await settle()
+            assert.equal(settled, false, 'startup rejection must wait for discard completion')
+            bridge.discardGate.resolve(null)
+            const outcome = await within(starting, 'fresh PTY startup rejection')
+            expectAll([
+                ['original listener rejection preserved', () => assert.equal(outcome.type === 'error' && outcome.error, rejection)],
+                ['prepare received requested command and dimensions', () => {
+                    assert.equal(preparedOptions.length, 1)
+                    assert.equal(preparedOptions[0].command, 'fixture-command')
+                    assert.deepEqual(preparedOptions[0].args, ['arg'])
+                    assert.equal(preparedOptions[0].width, 90)
+                    assert.equal(preparedOptions[0].height, 31)
+                }],
+                ['discard targets exactly the spawned id', () => assert.equal(discard.request.id, bridge.spawnResponse.id)],
+            ])
+        } finally {
+            for (const entry of bridge.calls) entry.gate.resolve()
+            bridge.discardGate.resolve(null)
+            await starting?.then(() => undefined)
+            await bridge.cleanup()
+        }
+    })
+}
+
+await check('PTY startup: attach failure awaits discard and keeps the attach error when cleanup rejects', true, async () => {
+    const bridge = new PtyBridge(), attachError = new Error('native PTY attach rejected')
+    const discardError = new Error('native PTY discard failed')
+    bridge.spawnResponse = { id: 'pty-startup-attach-failure', pid: 340 }
+    bridge.attachGate = deferred()
+    bridge.discardError = discardError
+    const warningsBefore = moduleWarnings.length
+    let starting
+    try {
+        starting = ptyInterface(bridge).spawn('fixture-command', [])
+            .then(value => ({ type: 'value', value }), error => ({ type: 'error', error }))
+        await within(bridge.waitForInvokes(1), 'fresh PTY native spawn')
+        for (let i = 0; i < 4; i++) await ackPTYListener(bridge, i)
+        await within(bridge.waitForInvokes(2), 'PTY attach invocation')
+        bridge.attachGate.reject(attachError)
+        const beforeDiscard = await within(Promise.race([
+            bridge.waitForInvokes(3).then(() => 'discard'),
+            starting.then(() => 'settled'),
+        ]), 'PTY discard or premature attach-failure settlement')
+        assert.equal(beforeDiscard, 'discard', 'spawn must await pty.discard after attach rejection')
+        const outcome = await within(starting, 'PTY attach failure after discard rejection')
+        expectAll([
+            ['attach rejection remains the caller error', () => assert.equal(outcome.type === 'error' && outcome.error, attachError)],
+            ['discard targets the fresh PTY id', () => assert.deepEqual({ ...bridge.invokes.find(x => x.name === 'pty.discard')?.request }, { id: bridge.spawnResponse.id })],
+            ['discard failure is reported as a warning', () => assert.ok(moduleWarnings.slice(warningsBefore).some(args => args.join(' ').includes(discardError.message)))],
+            ['listener subscriptions were released', () => assert.equal(bridge.active.size, 0)],
+            ['all four listener disposers ran once', () => assert.ok(bridge.calls.every(x => x.disposerCalls === 1))],
+        ])
+    } finally {
+        bridge.attachGate.resolve({})
+        for (const entry of bridge.calls) entry.gate.resolve()
+        await starting?.then(() => undefined)
+        await bridge.cleanup()
+    }
+})
+
+await check('PTY startup: preparation and native spawn failures do not discard; successful spawn remains attached', false, async () => {
+    const prepareError = new Error('prepare failed'), nativeSpawnError = new Error('native spawn failed')
+    const prepareBridge = new PtyBridge()
+    let prepared
+    try {
+        const api = ptyInterface(prepareBridge, async options => { prepared = options; throw prepareError })
+        const outcome = await within(api.spawn('prepare-fixture', ['x']).then(() => null, error => error), 'prepare failure')
+        expectAll([
+            ['prepare rejection preserved', () => assert.equal(outcome, prepareError)],
+            ['prepare failure did not invoke native spawn or discard', () => assert.equal(prepareBridge.invokes.some(x => ['pty.spawn', 'pty.discard'].includes(x.name)), false)],
+            ['prepare received command options', () => assert.equal(prepared.command, 'prepare-fixture')],
+        ])
+    } finally { await prepareBridge.cleanup() }
+
+    const spawnBridge = new PtyBridge()
+    spawnBridge.invoke = function (name, request) {
+        this.invokes.push({ name, request })
+        for (const waiter of this.invokeWaiters.splice(0)) if (this.invokes.length >= waiter.count) waiter.resolve()
+        if (name === 'pty.spawn') return Promise.reject(nativeSpawnError)
+        return Promise.resolve({})
+    }
+    try {
+        const api = ptyInterface(spawnBridge)
+        const outcome = await within(api.spawn('native-fixture', []).then(() => null, error => error), 'native spawn failure')
+        assert.equal(outcome, nativeSpawnError)
+        assert.equal(spawnBridge.invokes.some(x => x.name === 'pty.discard'), false)
+    } finally { await spawnBridge.cleanup() }
+
+    const successBridge = new PtyBridge()
+    successBridge.spawnResponse = { id: 'pty-startup-success', pid: 341 }
+    let proxy
+    try {
+        const pending = ptyInterface(successBridge).spawn('success-fixture', [])
+        await within(successBridge.waitForInvokes(1), 'successful native spawn')
+        for (let i = 0; i < 4; i++) await ackPTYListener(successBridge, i)
+        proxy = await within(pending, 'successful fresh PTY startup')
+        expectAll([
+            ['successful spawn returns its PTY proxy', () => assert.equal(proxy.getID(), successBridge.spawnResponse.id)],
+            ['success does not discard the PTY', () => assert.equal(successBridge.invokes.some(x => x.name === 'pty.discard'), false)],
+            ['success attaches the native PTY', () => assert.ok(successBridge.invokes.some(x => x.name === 'pty.attach' && x.request.id === proxy.getID()))],
+        ])
+    } finally {
+        proxy?.unsubscribeAll()
+        await successBridge.cleanup()
+    }
+})
+
+await check('PTY restore: success, missing session, listener failure and attach failure never discard existing ids', false, async () => {
+    const bridge = new PtyBridge(), api = ptyInterface(bridge)
+    let proxy
+    try {
+        bridge.existsResult = false
+        assert.equal(await within(api.restore('pty-existing-missing'), 'restore missing PTY'), null)
+        bridge.existsResult = true
+        bridge.pidResult = 342
+        bridge.spawnResponse = { id: 'unused', pid: 0 }
+        const restoring = api.restore('pty-existing-success')
+        for (let i = 0; i < 4; i++) await ackPTYListener(bridge, i)
+        proxy = await within(restoring, 'restore existing PTY')
+        assert.equal(proxy.getID(), 'pty-existing-success')
+        proxy.unsubscribeAll()
+        proxy = null
+
+        const listenerFailure = api.restore('pty-existing-listener-failure')
+        await within(bridge.waitForCalls(5), 'restore listener registration')
+        const restoreListenerError = new Error('restore listener failed')
+        bridge.calls[4].gate.reject(restoreListenerError)
+        assert.equal(await within(listenerFailure, 'restore listener error handled'), null)
+
+        bridge.attachGate = deferred()
+        const attachFailure = api.restore('pty-existing-attach-failure')
+        for (let i = 5; i < 9; i++) await ackPTYListener(bridge, i)
+        await within(bridge.waitForInvokes(5), 'restore attach invocation')
+        bridge.attachGate.reject(new Error('restore attach failed'))
+        assert.equal(await within(attachFailure, 'restore attach error handled'), null)
+        expectAll([
+            ['restore never discards an existing PTY', () => assert.equal(bridge.invokes.some(x => x.name === 'pty.discard'), false)],
+            ['restore requests use existing ids', () => assert.ok(bridge.invokes.filter(x => x.name === 'pty.exists').every(x => x.request.id.startsWith('pty-existing-')))],
+            ['restore success only attaches its existing id', () => assert.ok(bridge.invokes.some(x => x.name === 'pty.attach' && x.request.id === 'pty-existing-success'))],
+        ])
+    } finally {
+        proxy?.unsubscribeAll()
+        bridge.attachGate?.resolve({})
+        for (const entry of bridge.calls) entry.gate.resolve()
         await bridge.cleanup()
     }
 })

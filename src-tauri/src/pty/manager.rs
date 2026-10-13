@@ -229,7 +229,158 @@ fn new_session_id() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::new_session_id;
+    use std::{
+        collections::BTreeMap,
+        sync::Arc,
+        thread,
+        time::{Duration, Instant},
+    };
+
+    use portable_pty::Child;
+
+    use super::{new_session_id, PtyManager};
+    use crate::pty::{
+        backend::{PortablePtyBackend, PtyBackend, SpawnedPty},
+        model::SpawnSpec,
+        session::PtySession,
+    };
+
+    struct ChildCleanup(Option<Box<dyn Child + Send + Sync>>);
+
+    impl ChildCleanup {
+        fn is_running(&mut self) -> bool {
+            self.0
+                .as_mut()
+                .expect("child cleanup handle is present")
+                .try_wait()
+                .expect("PTY child status can be queried")
+                .is_none()
+        }
+
+        fn wait_for_exit(&mut self) -> bool {
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while Instant::now() < deadline {
+                if !self.is_running() {
+                    return true;
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            !self.is_running()
+        }
+    }
+
+    impl Drop for ChildCleanup {
+        fn drop(&mut self) {
+            if let Some(mut child) = self.0.take() {
+                let still_running = match child.try_wait() {
+                    Ok(Some(_)) => false,
+                    Ok(None) => true,
+                    Err(_) => {
+                        let _ = child.kill();
+                        false
+                    }
+                };
+                if still_running {
+                    #[cfg(unix)]
+                    if let Some(pid) = child.process_id() {
+                        unsafe {
+                            libc::kill(pid as libc::pid_t, libc::SIGKILL);
+                        }
+                    }
+                    #[cfg(windows)]
+                    {
+                        let _ = child.kill();
+                    }
+                }
+                let _ = child.wait();
+            }
+        }
+    }
+
+    fn fixture_spec() -> SpawnSpec {
+        let mut environment = BTreeMap::new();
+        if let Some(path) = std::env::var_os("PATH") {
+            environment.insert("PATH".into(), path.to_string_lossy().into_owned());
+        }
+
+        #[cfg(unix)]
+        let (executable, arguments) = (
+            "/bin/sh".to_owned(),
+            vec!["-c".to_owned(), "exec sleep 60".to_owned()],
+        );
+
+        #[cfg(windows)]
+        let (executable, arguments) = {
+            let command_processor = std::env::var_os("COMSPEC")
+                .or_else(|| std::env::var_os("ComSpec"))
+                .expect("Windows PTY test requires COMSPEC");
+            for name in ["SystemRoot", "WINDIR", "TEMP", "TMP"] {
+                if let Some(value) = std::env::var_os(name) {
+                    environment.insert(name.to_owned(), value.to_string_lossy().into_owned());
+                }
+            }
+            (
+                command_processor.to_string_lossy().into_owned(),
+                vec!["/c".to_owned(), "pause".to_owned()],
+            )
+        };
+
+        SpawnSpec {
+            executable,
+            arguments,
+            cwd: None,
+            environment,
+            columns: 80,
+            rows: 24,
+            shell_type: None,
+            sudo: None,
+        }
+    }
+
+    fn spawn_fixture() -> SpawnedPty {
+        PortablePtyBackend
+            .spawn(&fixture_spec())
+            .expect("real PTY child spawns")
+    }
+
+    fn register_fixture(manager: &PtyManager, id: &str) -> ChildCleanup {
+        let spawned = spawn_fixture();
+        let SpawnedPty {
+            master,
+            reader: _reader,
+            writer,
+            killer,
+            child,
+            pid,
+        } = spawned;
+        let cleanup = ChildCleanup(Some(child));
+        let started_at = manager.processes.start_time(pid);
+        let sessions = Arc::downgrade(&manager.sessions);
+        let on_completed = Arc::new(move |completed_id: &str| {
+            if let Some(sessions) = sessions.upgrade() {
+                sessions
+                    .write()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .remove(completed_id);
+            }
+        });
+        let session = Arc::new(PtySession::new(
+            id.to_owned(),
+            pid,
+            started_at,
+            master,
+            writer,
+            killer,
+            None,
+            on_completed,
+        ));
+        manager
+            .sessions
+            .write()
+            .unwrap_or_else(|error| error.into_inner())
+            .insert(id.to_owned(), session);
+        cleanup
+    }
 
     #[test]
     fn session_ids_are_random_uuid_v4_values() {
@@ -239,5 +390,36 @@ mod tests {
         assert_eq!(first.len(), 36);
         assert_eq!(&first[14..15], "4");
         assert!(matches!(&first[19..20], "8" | "9" | "a" | "b"));
+    }
+
+    #[test]
+    fn discard_reaps_real_child_removes_only_its_record_and_missing_ids_are_idempotent() {
+        let manager = PtyManager::new(Arc::new(PortablePtyBackend));
+        let mut discarded_child = register_fixture(&manager, "discard-fixture");
+        let mut retained_child = register_fixture(&manager, "retained-fixture");
+
+        assert!(manager.exists("discard-fixture"));
+        assert!(manager.exists("retained-fixture"));
+        assert!(retained_child.is_running());
+
+        manager.discard("discard-fixture").unwrap();
+        assert!(
+            discarded_child.wait_for_exit(),
+            "discard must terminate and reap the real child"
+        );
+        assert!(!manager.exists("discard-fixture"));
+        assert!(!manager
+            .sessions
+            .read()
+            .unwrap_or_else(|error| error.into_inner())
+            .contains_key("discard-fixture"));
+
+        assert!(manager.discard("discard-fixture").is_ok());
+        assert!(manager.discard("unknown-fixture").is_ok());
+        assert!(manager.exists("retained-fixture"));
+        assert!(
+            retained_child.is_running(),
+            "discard must leave another child alive"
+        );
     }
 }

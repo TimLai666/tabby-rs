@@ -466,3 +466,210 @@ fn terminate_process(pid: u32) -> Result<(), PtyError> {
     }
 }
 
+#[cfg(test)]
+mod discard_tests {
+    use std::{
+        collections::BTreeMap,
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            mpsc, Arc,
+        },
+        thread::{self, JoinHandle},
+        time::Duration,
+    };
+
+    use portable_pty::Child;
+
+    use super::PtySession;
+    use crate::pty::{
+        backend::{PortablePtyBackend, PtyBackend},
+        model::SpawnSpec,
+    };
+
+    struct ChildCleanup(Option<Box<dyn Child + Send + Sync>>);
+
+    impl ChildCleanup {
+        fn wait_for_exit(&mut self) -> bool {
+            for _ in 0..300 {
+                if self
+                    .0
+                    .as_mut()
+                    .expect("child cleanup handle is present")
+                    .try_wait()
+                    .expect("PTY child status can be queried")
+                    .is_some()
+                {
+                    return true;
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            false
+        }
+    }
+
+    impl Drop for ChildCleanup {
+        fn drop(&mut self) {
+            if let Some(mut child) = self.0.take() {
+                let still_running = match child.try_wait() {
+                    Ok(Some(_)) => false,
+                    Ok(None) => true,
+                    Err(_) => {
+                        let _ = child.kill();
+                        false
+                    }
+                };
+                if still_running {
+                    #[cfg(unix)]
+                    if let Some(pid) = child.process_id() {
+                        unsafe {
+                            libc::kill(pid as libc::pid_t, libc::SIGKILL);
+                        }
+                    }
+                    #[cfg(windows)]
+                    {
+                        let _ = child.kill();
+                    }
+                }
+                let _ = child.wait();
+            }
+        }
+    }
+
+    struct ReserveCleanup {
+        flow: Arc<super::super::flow::FlowControl>,
+        worker: Option<JoinHandle<()>>,
+    }
+
+    impl ReserveCleanup {
+        fn join(mut self) {
+            self.worker
+                .take()
+                .expect("reserve worker is present")
+                .join()
+                .expect("reserve worker exits after flow closes");
+        }
+    }
+
+    impl Drop for ReserveCleanup {
+        fn drop(&mut self) {
+            self.flow.close();
+            if let Some(worker) = self.worker.take() {
+                let _ = worker.join();
+            }
+        }
+    }
+
+    fn fixture_spec() -> SpawnSpec {
+        let mut environment = BTreeMap::new();
+        if let Some(path) = std::env::var_os("PATH") {
+            environment.insert("PATH".into(), path.to_string_lossy().into_owned());
+        }
+
+        #[cfg(unix)]
+        let (executable, arguments) = (
+            "/bin/sh".to_owned(),
+            vec!["-c".to_owned(), "exec sleep 60".to_owned()],
+        );
+
+        #[cfg(windows)]
+        let (executable, arguments) = {
+            let command_processor = std::env::var_os("COMSPEC")
+                .or_else(|| std::env::var_os("ComSpec"))
+                .expect("Windows PTY test requires COMSPEC");
+            for name in ["SystemRoot", "WINDIR", "TEMP", "TMP"] {
+                if let Some(value) = std::env::var_os(name) {
+                    environment.insert(name.to_owned(), value.to_string_lossy().into_owned());
+                }
+            }
+            (
+                command_processor.to_string_lossy().into_owned(),
+                vec!["/c".to_owned(), "pause".to_owned()],
+            )
+        };
+
+        SpawnSpec {
+            executable,
+            arguments,
+            cwd: None,
+            environment,
+            columns: 80,
+            rows: 24,
+            shell_type: None,
+            sudo: None,
+        }
+    }
+
+    #[test]
+    fn discard_closes_detached_flow_wakes_blocked_reserve_and_completes_once() {
+        let spawned = PortablePtyBackend
+            .spawn(&fixture_spec())
+            .expect("real PTY child spawns");
+        let crate::pty::backend::SpawnedPty {
+            master,
+            reader: _reader,
+            writer,
+            killer,
+            child,
+            pid,
+        } = spawned;
+        let mut child_cleanup = ChildCleanup(Some(child));
+        let completed = Arc::new(AtomicUsize::new(0));
+        let completion_counter = Arc::clone(&completed);
+        let session = Arc::new(PtySession::new(
+            "discard-flow-fixture".into(),
+            pid,
+            None,
+            master,
+            writer,
+            killer,
+            None,
+            Arc::new(move |_| {
+                completion_counter.fetch_add(1, Ordering::SeqCst);
+            }),
+        ));
+
+        let flow = Arc::clone(&session.flow);
+        let (started, waiting) = mpsc::channel();
+        let (reserved, result) = mpsc::channel();
+        let waiter = thread::spawn(move || {
+            started.send(()).unwrap();
+            reserved.send(flow.reserve(1)).unwrap();
+        });
+        let waiter_cleanup = ReserveCleanup {
+            flow: Arc::clone(&session.flow),
+            worker: Some(waiter),
+        };
+        waiting.recv_timeout(Duration::from_secs(1)).unwrap();
+        thread::sleep(Duration::from_millis(25));
+
+        let first_discard = session.discard();
+        let second_discard = session.discard();
+        if first_discard.is_err() || second_discard.is_err() {
+            session.flow.close();
+        }
+        let reservation_succeeded = result
+            .recv_timeout(Duration::from_secs(1))
+            .expect("discard must wake a blocked detached reserve");
+        waiter_cleanup.join();
+        first_discard.unwrap();
+        second_discard.unwrap();
+
+        assert!(
+            !reservation_succeeded,
+            "closed flow must release reserve with false"
+        );
+        assert!(
+            child_cleanup.wait_for_exit(),
+            "discard must terminate the real PTY child"
+        );
+        assert!(
+            !session.is_alive(),
+            "discarded session must no longer report alive"
+        );
+        assert!(
+            !session.can_restore(),
+            "discarded session must no longer be restorable"
+        );
+        assert_eq!(completed.load(Ordering::SeqCst), 1);
+    }
+}
