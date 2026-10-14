@@ -1,2 +1,2 @@
-.title((dblclick)='hostWindow.toggleMaximize()') Tabby RS
+.title((dblclick)='$event.stopPropagation(); hostWindow.toggleMaximize()') Tabby RS
 window-controls(*ngIf="!hideControls")
