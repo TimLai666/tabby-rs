@@ -19,6 +19,7 @@ enum SftpTransfer {
         file: File,
         temp_path: String,
         final_path: String,
+        overwrite_policy: SftpOverwritePolicy,
         descriptor: SftpTransferDescriptor,
     },
     Download {
@@ -166,6 +167,7 @@ impl SftpManager {
                 file,
                 temp_path,
                 final_path,
+                overwrite_policy: policy,
                 descriptor: descriptor.clone(),
             },
         );
@@ -281,6 +283,7 @@ impl SftpManager {
                 mut file,
                 temp_path,
                 final_path,
+                overwrite_policy,
                 mut descriptor,
             } => {
                 if descriptor
@@ -296,7 +299,15 @@ impl SftpManager {
                     let _ = self.backend.session.remove_file(&temp_path).await;
                     return Err(SshError::Sftp(error.to_string()));
                 }
-                if let Err(error) = self.backend.rename(&temp_path, &final_path).await {
+                let commit = match overwrite_policy {
+                    SftpOverwritePolicy::Overwrite => {
+                        self.backend.replace_file(&temp_path, &final_path).await
+                    }
+                    SftpOverwritePolicy::Skip | SftpOverwritePolicy::Rename => {
+                        self.backend.rename(&temp_path, &final_path).await
+                    }
+                };
+                if let Err(error) = commit {
                     let _ = self.backend.session.remove_file(&temp_path).await;
                     return Err(error);
                 }

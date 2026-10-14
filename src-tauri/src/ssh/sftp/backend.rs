@@ -31,6 +31,23 @@ impl RusshSftpBackend {
         }
     }
 
+    pub(crate) async fn replace_file(&self, from: &str, to: &str) -> SftpResult<()> {
+        let from = super::model::checked_path(from)?;
+        let to = super::model::checked_path(to)?;
+        if self
+            .session
+            .posix_rename(&from, &to)
+            .await
+            .map_err(|error| SshError::Sftp(error.to_string()))?
+        {
+            return Ok(());
+        }
+        self.session
+            .rename(from, to)
+            .await
+            .map_err(|error| SshError::Sftp(error.to_string()))
+    }
+
     fn entry(path: String, metadata: &russh_sftp::client::fs::Metadata) -> RemoteFileEntry {
         let name = path::basename(&path);
         let is_operable = !name.contains('\u{FFFD}');
