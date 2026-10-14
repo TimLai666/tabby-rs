@@ -72,6 +72,11 @@ impl PtyManager {
             on_completed,
         ));
 
+        #[cfg(unix)]
+        if let Some(stop) = spawned.stop {
+            session.install_stop(stop);
+        }
+
         self.sessions
             .write()
             .unwrap_or_else(|error| error.into_inner())
@@ -440,6 +445,7 @@ mod tests {
             killer,
             child,
             pid,
+            ..
         } = spawned;
         let (child, child_reaped) = ChildCleanup::new(child);
         let reader_drained = Arc::new(AtomicBool::new(false));

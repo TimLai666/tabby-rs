@@ -1,5 +1,6 @@
 use std::{
     io::{Read, Write},
+    sync::mpsc,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex,
@@ -26,8 +27,8 @@ pub struct PtySession {
     id: String,
     pid: u32,
     started_at: Option<u64>,
-    master: Mutex<Box<dyn MasterPty + Send>>,
-    writer: Mutex<Box<dyn Write + Send>>,
+    master: Mutex<Option<Box<dyn MasterPty + Send>>>,
+    writer: Mutex<Option<Box<dyn Write + Send>>>,
     killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
     flow: Arc<FlowControl>,
     sudo: Mutex<SudoPromptBroker>,
@@ -38,6 +39,10 @@ pub struct PtySession {
     reader_done: AtomicBool,
     exit_emitted: AtomicBool,
     completed: AtomicBool,
+    stopping: AtomicBool,
+    native_handles_closing: AtomicBool,
+    #[cfg(unix)]
+    stop: Mutex<Option<super::io::UnixStopHandle>>,
     exit_event: Mutex<Option<PtyExitEvent>>,
     on_completed: CompletionHandler,
 }
@@ -57,8 +62,8 @@ impl PtySession {
             id,
             pid,
             started_at,
-            master: Mutex::new(master),
-            writer: Mutex::new(writer),
+            master: Mutex::new(Some(master)),
+            writer: Mutex::new(Some(writer)),
             killer: Mutex::new(killer),
             flow: Arc::new(FlowControl::new(MAX_UNACKED_BYTES)),
             sudo: Mutex::new(SudoPromptBroker::new(sudo)),
@@ -69,6 +74,10 @@ impl PtySession {
             reader_done: AtomicBool::new(false),
             exit_emitted: AtomicBool::new(false),
             completed: AtomicBool::new(false),
+            stopping: AtomicBool::new(false),
+            native_handles_closing: AtomicBool::new(false),
+            #[cfg(unix)]
+            stop: Mutex::new(None),
             exit_event: Mutex::new(None),
             on_completed,
         }
@@ -133,6 +142,9 @@ impl PtySession {
             .writer
             .lock()
             .unwrap_or_else(|error| error.into_inner());
+        let writer = writer
+            .as_mut()
+            .ok_or_else(|| PtyError::Io("PTY writer is closed".into()))?;
         writer.write_all(data)?;
         writer.flush()?;
         Ok(())
@@ -164,6 +176,9 @@ impl PtySession {
             .master
             .lock()
             .unwrap_or_else(|error| error.into_inner());
+        let master = master
+            .as_ref()
+            .ok_or_else(|| PtyError::Io("PTY master is closed".into()))?;
         master
             .resize(PtySize {
                 rows,
@@ -226,12 +241,14 @@ impl PtySession {
         }
 
         self.attached.store(false, Ordering::Release);
-        self.flow.close();
-        if self
+        let completed = self
             .completed
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_ok()
-        {
+            .is_ok();
+        self.begin_stop_io();
+        self.flow.close();
+        self.finish_stop_io();
+        if completed {
             (self.on_completed)(&self.id);
         }
         Ok(())
@@ -247,60 +264,132 @@ impl PtySession {
         self.start_waiter(child, app);
     }
 
+    #[cfg(unix)]
+    pub fn install_stop(&self, stop: super::io::UnixStopHandle) {
+        *self.stop.lock().unwrap_or_else(|error| error.into_inner()) = Some(stop);
+    }
+
+    fn begin_stop_io(&self) {
+        self.stopping.store(true, Ordering::Release);
+    }
+
+    fn finish_stop_io(&self) {
+        #[cfg(unix)]
+        {
+            if let Some(stop) = self
+                .stop
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .as_ref()
+            {
+                stop.cancel();
+            }
+        }
+        if self
+            .native_handles_closing
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return;
+        }
+
+        #[cfg(windows)]
+        {
+            use std::sync::TryLockError;
+
+            let (writer, busy) = match self.writer.try_lock() {
+                Ok(mut guard) => (guard.take(), false),
+                Err(TryLockError::Poisoned(error)) => (error.into_inner().take(), false),
+                Err(TryLockError::WouldBlock) => (None, true),
+            };
+            let master = self
+                .master
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .take();
+            drop(writer);
+            drop(master);
+            if busy {
+                let writer = self
+                    .writer
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .take();
+                drop(writer);
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            let writer = self
+                .writer
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .take();
+            let master = self
+                .master
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .take();
+            drop(writer);
+            drop(master);
+        }
+    }
+
     fn start_reader<R: tauri::Runtime>(
         self: &Arc<Self>,
         mut reader: Box<dyn Read + Send>,
         app: AppHandle<R>,
     ) {
-        let session = Arc::clone(self);
+        let (sender, receiver) = mpsc::sync_channel::<std::io::Result<Vec<u8>>>(1);
         thread::spawn(move || {
             let mut buffer = vec![0u8; MAX_CHUNK_BYTES];
             loop {
                 match reader.read(&mut buffer) {
                     Ok(0) => break,
                     Ok(length) => {
-                        if !session.flow.reserve(length) {
+                        if sender.send(Ok(buffer[..length].to_vec())).is_err() {
                             break;
-                        }
-                        let sudo_prompt = session
-                            .sudo
-                            .lock()
-                            .unwrap_or_else(|error| error.into_inner())
-                            .inspect(&session.id, &buffer[..length]);
-                        let sequence = session.sequence.fetch_add(1, Ordering::AcqRel);
-                        let payload = PtyOutputEvent {
-                            id: session.id.clone(),
-                            sequence,
-                            data: buffer[..length].to_vec(),
-                        };
-                        if let Err(error) = app.emit("pty:output", payload) {
-                            session.flow.ack(length);
-                            let _ = app.emit(
-                                "pty:error",
-                                PtyErrorEvent {
-                                    id: session.id.clone(),
-                                    code: "eventEmissionFailed".into(),
-                                    details: error.to_string(),
-                                },
-                            );
-                            break;
-                        }
-                        if let Some(prompt) = sudo_prompt {
-                            if let Err(error) = app.emit("sudo:prompt", prompt) {
-                                let _ = app.emit(
-                                    "pty:error",
-                                    PtyErrorEvent {
-                                        id: session.id.clone(),
-                                        code: "sudoPromptEmissionFailed".into(),
-                                        details: error.to_string(),
-                                    },
-                                );
-                            }
                         }
                     }
                     Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
                     Err(error) => {
-                        if session.is_alive() {
+                        let _ = sender.send(Err(error));
+                        break;
+                    }
+                }
+            }
+        });
+
+        let session = Arc::clone(self);
+        thread::spawn(move || {
+            loop {
+                let message = receiver.recv();
+                if session.completed.load(Ordering::Acquire) {
+                    if message.is_err() {
+                        break;
+                    }
+                    continue;
+                }
+
+                match message {
+                    Ok(Ok(data)) => {
+                        let length = data.len();
+                        if !session.flow.reserve(length) {
+                            if session.completed.load(Ordering::Acquire) {
+                                continue;
+                            }
+                            break;
+                        }
+                        if !session.emit_reserved_output(&app, &data) {
+                            drop(receiver);
+                            session.begin_stop_io();
+                            session.flow.close();
+                            session.finish_stop_io();
+                            break;
+                        }
+                    }
+                    Ok(Err(error)) => {
+                        if session.is_alive() && !session.stopping.load(Ordering::Acquire) {
                             let _ = app.emit(
                                 "pty:error",
                                 PtyErrorEvent {
@@ -312,11 +401,52 @@ impl PtySession {
                         }
                         break;
                     }
+                    Err(_) => break,
                 }
             }
             session.reader_done.store(true, Ordering::Release);
             session.maybe_emit_exit(&app);
         });
+    }
+
+    fn emit_reserved_output<R: tauri::Runtime>(&self, app: &AppHandle<R>, data: &[u8]) -> bool {
+        let length = data.len();
+        let sudo_prompt = self
+            .sudo
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .inspect(&self.id, data);
+        let sequence = self.sequence.fetch_add(1, Ordering::AcqRel);
+        let payload = PtyOutputEvent {
+            id: self.id.clone(),
+            sequence,
+            data: data.to_vec(),
+        };
+        if let Err(error) = app.emit("pty:output", payload) {
+            self.flow.ack(length);
+            let _ = app.emit(
+                "pty:error",
+                PtyErrorEvent {
+                    id: self.id.clone(),
+                    code: "eventEmissionFailed".into(),
+                    details: error.to_string(),
+                },
+            );
+            return false;
+        }
+        if let Some(prompt) = sudo_prompt {
+            if let Err(error) = app.emit("sudo:prompt", prompt) {
+                let _ = app.emit(
+                    "pty:error",
+                    PtyErrorEvent {
+                        id: self.id.clone(),
+                        code: "sudoPromptEmissionFailed".into(),
+                        details: error.to_string(),
+                    },
+                );
+            }
+        }
+        true
     }
 
     fn start_waiter<R: tauri::Runtime>(
@@ -353,6 +483,10 @@ impl PtySession {
                 .exit_event
                 .lock()
                 .unwrap_or_else(|error| error.into_inner()) = Some(event);
+            session.maybe_emit_exit(&app);
+            thread::sleep(std::time::Duration::from_millis(200));
+            session.begin_stop_io();
+            session.finish_stop_io();
             session.maybe_emit_exit(&app);
         });
     }
@@ -676,6 +810,7 @@ mod discard_tests {
             killer,
             child,
             pid,
+            ..
         } = spawned;
         let output_cleanup = OutputCleanup::start(reader, Arc::new(AtomicBool::new(false)));
         let mut child_cleanup = ChildCleanup::new(child, Arc::new(AtomicBool::new(false)));
@@ -767,6 +902,7 @@ mod discard_tests {
                 killer,
                 child,
                 pid,
+                ..
             } = spawned;
 
             let _output_cleanup = OutputCleanup::start(reader, Arc::clone(&drained));

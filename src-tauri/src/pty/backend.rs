@@ -4,6 +4,8 @@ use portable_pty::{
     native_pty_system, Child, ChildKiller, CommandBuilder, MasterPty, PtySize, PtySystem,
 };
 
+#[cfg(unix)]
+use super::io;
 use super::model::SpawnSpec;
 
 #[derive(Debug, thiserror::Error)]
@@ -29,6 +31,8 @@ pub struct SpawnedPty {
     pub child: Box<dyn Child + Send + Sync>,
     pub killer: Box<dyn ChildKiller + Send + Sync>,
     pub pid: u32,
+    #[cfg(unix)]
+    pub stop: Option<io::UnixStopHandle>,
 }
 
 pub trait PtyBackend: Send + Sync {
@@ -50,6 +54,14 @@ impl PtyBackend for PortablePtyBackend {
             })
             .map_err(|error| PtyError::Spawn(error.to_string()))?;
 
+        #[cfg(unix)]
+        let (stop, poll_master) = {
+            let fd = pair.master.as_raw_fd().ok_or_else(|| {
+                PtyError::Io("native PTY master does not expose a poll descriptor".into())
+            })?;
+            io::setup(fd).map_err(|error| PtyError::Io(error.to_string()))?
+        };
+
         let mut command = CommandBuilder::new(&spec.executable);
         command.args(&spec.arguments);
         command.env_clear();
@@ -60,12 +72,6 @@ impl PtyBackend for PortablePtyBackend {
             command.cwd(cwd);
         }
 
-        let child = pair
-            .slave
-            .spawn_command(command)
-            .map_err(|error| PtyError::Spawn(error.to_string()))?;
-        let pid = child.process_id().ok_or(PtyError::MissingPid)?;
-        let killer = child.clone_killer();
         let reader = pair
             .master
             .try_clone_reader()
@@ -74,6 +80,21 @@ impl PtyBackend for PortablePtyBackend {
             .master
             .take_writer()
             .map_err(|error| PtyError::Io(error.to_string()))?;
+        #[cfg(unix)]
+        let (reader, writer) = {
+            let reader = io::wrap_reader(reader, poll_master.try_clone()?, stop.token());
+            let writer = io::wrap_writer(writer, poll_master, stop.token());
+            (
+                Box::new(reader) as Box<dyn Read + Send>,
+                Box::new(writer) as Box<dyn Write + Send>,
+            )
+        };
+        let child = pair
+            .slave
+            .spawn_command(command)
+            .map_err(|error| PtyError::Spawn(error.to_string()))?;
+        let pid = child.process_id().ok_or(PtyError::MissingPid)?;
+        let killer = child.clone_killer();
         drop(pair.slave);
 
         Ok(SpawnedPty {
@@ -83,6 +104,8 @@ impl PtyBackend for PortablePtyBackend {
             child,
             killer,
             pid,
+            #[cfg(unix)]
+            stop: Some(stop),
         })
     }
 }
