@@ -493,8 +493,9 @@ mod discard_tests {
     }
 
     impl OutputCleanup {
-        fn start(mut reader: Box<dyn Read + Send>, drained: Arc<AtomicBool>) -> Self {
+        fn start(reader: Box<dyn Read + Send>, drained: Arc<AtomicBool>) -> Self {
             let worker = thread::spawn(move || {
+                let mut reader = crate::pty::test_support::TraceReader::new(reader);
                 let result = io::copy(&mut reader, &mut io::sink());
                 if result.is_ok() {
                     drained.store(true, Ordering::Release);

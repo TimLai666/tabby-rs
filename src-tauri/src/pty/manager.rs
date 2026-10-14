@@ -231,25 +231,43 @@ fn new_session_id() -> String {
 mod tests {
     use std::{
         collections::BTreeMap,
-        sync::Arc,
-        thread,
+        io,
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc, Mutex,
+        },
+        thread::{self, JoinHandle},
         time::{Duration, Instant},
     };
 
     use portable_pty::Child;
 
-    use super::{new_session_id, PtyManager};
+    use super::{new_session_id, PtyManager, SessionMap};
     use crate::pty::{
         backend::{PortablePtyBackend, PtyBackend, SpawnedPty},
         model::SpawnSpec,
         session::PtySession,
     };
 
-    struct ChildCleanup(Option<Box<dyn Child + Send + Sync>>);
+    struct ChildCleanup {
+        child: Option<Box<dyn Child + Send + Sync>>,
+        reaped: Arc<AtomicBool>,
+    }
 
     impl ChildCleanup {
+        fn new(child: Box<dyn Child + Send + Sync>) -> (Self, Arc<AtomicBool>) {
+            let reaped = Arc::new(AtomicBool::new(false));
+            (
+                Self {
+                    child: Some(child),
+                    reaped: Arc::clone(&reaped),
+                },
+                reaped,
+            )
+        }
+
         fn is_running(&mut self) -> bool {
-            self.0
+            self.child
                 .as_mut()
                 .expect("child cleanup handle is present")
                 .try_wait()
@@ -267,32 +285,102 @@ mod tests {
             }
             !self.is_running()
         }
+
+        fn finish(&mut self) -> Result<(), String> {
+            if let Some(mut child) = self.child.take() {
+                let still_running = child
+                    .try_wait()
+                    .map_err(|error| format!("could not inspect PTY child: {error}"))?
+                    .is_none();
+                if still_running {
+                    #[cfg(unix)]
+                    if let Some(pid) = child.process_id() {
+                        let result = unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+                        if result != 0 {
+                            let error = io::Error::last_os_error();
+                            if error.raw_os_error() != Some(libc::ESRCH) {
+                                return Err(format!("could not terminate PTY child: {error}"));
+                            }
+                        }
+                    }
+                    #[cfg(not(unix))]
+                    child
+                        .kill()
+                        .map_err(|error| format!("could not terminate PTY child: {error}"))?;
+                }
+                child
+                    .wait()
+                    .map_err(|error| format!("could not reap PTY child: {error}"))?;
+                self.reaped.store(true, Ordering::Release);
+            }
+            Ok(())
+        }
     }
 
     impl Drop for ChildCleanup {
         fn drop(&mut self) {
-            if let Some(mut child) = self.0.take() {
-                let still_running = match child.try_wait() {
-                    Ok(Some(_)) => false,
-                    Ok(None) => true,
-                    Err(_) => {
-                        let _ = child.kill();
-                        false
-                    }
-                };
-                if still_running {
-                    #[cfg(unix)]
-                    if let Some(pid) = child.process_id() {
-                        unsafe {
-                            libc::kill(pid as libc::pid_t, libc::SIGKILL);
-                        }
-                    }
-                    #[cfg(windows)]
-                    {
-                        let _ = child.kill();
-                    }
+            let _ = self.finish();
+        }
+    }
+
+    #[derive(Clone)]
+    struct CleanupSignals {
+        child_reaped: Arc<AtomicBool>,
+        reader_drained: Arc<AtomicBool>,
+    }
+
+    struct RegisteredFixtureCleanup {
+        sessions: SessionMap,
+        id: String,
+        child: ChildCleanup,
+        reader: Option<JoinHandle<io::Result<u64>>>,
+        signals: CleanupSignals,
+    }
+
+    impl RegisteredFixtureCleanup {
+        fn signals(&self) -> CleanupSignals {
+            self.signals.clone()
+        }
+
+        fn is_running(&mut self) -> bool {
+            self.child.is_running()
+        }
+
+        fn wait_for_exit(&mut self) -> bool {
+            self.child.wait_for_exit()
+        }
+
+        fn finish(&mut self) -> Result<(), String> {
+            let record = {
+                self.sessions
+                    .write()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .remove(&self.id)
+            };
+            drop(record);
+
+            let child_result = self.child.finish();
+            let reader_result = self.reader.take().map(|reader| {
+                reader
+                    .join()
+                    .map_err(|_| "PTY reader drain thread panicked".to_owned())?
+                    .map(|_| ())
+                    .map_err(|error| format!("PTY reader drain failed: {error}"))
+            });
+            match (child_result, reader_result) {
+                (Ok(()), Some(Ok(())) | None) => Ok(()),
+                (Err(child_error), Some(Err(reader_error))) => {
+                    Err(format!("{child_error}; {reader_error}"))
                 }
-                let _ = child.wait();
+                (Err(error), _) | (Ok(()), Some(Err(error))) => Err(error),
+            }
+        }
+    }
+
+    impl Drop for RegisteredFixtureCleanup {
+        fn drop(&mut self) {
+            if let Err(error) = self.finish() {
+                eprintln!("PTY fixture cleanup failed for {}: {error}", self.id);
             }
         }
     }
@@ -343,21 +431,42 @@ mod tests {
             .expect("real PTY child spawns")
     }
 
-    fn register_fixture(manager: &PtyManager, id: &str) -> ChildCleanup {
+    fn register_fixture(manager: &PtyManager, id: &str) -> RegisteredFixtureCleanup {
         let spawned = spawn_fixture();
         let SpawnedPty {
             master,
-            reader: _reader,
+            reader,
             writer,
             killer,
             child,
             pid,
         } = spawned;
-        let cleanup = ChildCleanup(Some(child));
+        let (child, child_reaped) = ChildCleanup::new(child);
+        let reader_drained = Arc::new(AtomicBool::new(false));
+        let drain_completed = Arc::clone(&reader_drained);
+        let reader = thread::spawn(move || {
+            let mut reader = crate::pty::test_support::TraceReader::new(reader);
+            let result = io::copy(&mut reader, &mut io::sink());
+            if result.is_ok() {
+                drain_completed.store(true, Ordering::Release);
+            }
+            result
+        });
+        let sessions = Arc::clone(&manager.sessions);
+        let cleanup = RegisteredFixtureCleanup {
+            sessions: Arc::clone(&sessions),
+            id: id.to_owned(),
+            child,
+            reader: Some(reader),
+            signals: CleanupSignals {
+                child_reaped,
+                reader_drained,
+            },
+        };
         let started_at = manager.processes.start_time(pid);
-        let sessions = Arc::downgrade(&manager.sessions);
+        let sessions_weak = Arc::downgrade(&sessions);
         let on_completed = Arc::new(move |completed_id: &str| {
-            if let Some(sessions) = sessions.upgrade() {
+            if let Some(sessions) = sessions_weak.upgrade() {
                 sessions
                     .write()
                     .unwrap_or_else(|error| error.into_inner())
@@ -374,8 +483,7 @@ mod tests {
             None,
             on_completed,
         ));
-        manager
-            .sessions
+        sessions
             .write()
             .unwrap_or_else(|error| error.into_inner())
             .insert(id.to_owned(), session);
@@ -394,6 +502,11 @@ mod tests {
 
     #[test]
     fn discard_reaps_real_child_removes_only_its_record_and_missing_ids_are_idempotent() {
+        let test_name = "pty::manager::tests::discard_reaps_real_child_removes_only_its_record_and_missing_ids_are_idempotent";
+        if !crate::pty::test_support::run_bounded(test_name) {
+            return;
+        }
+
         let manager = PtyManager::new(Arc::new(PortablePtyBackend));
         let mut discarded_child = register_fixture(&manager, "discard-fixture");
         let mut retained_child = register_fixture(&manager, "retained-fixture");
@@ -420,6 +533,62 @@ mod tests {
         assert!(
             retained_child.is_running(),
             "discard must leave another child alive"
+        );
+
+        discarded_child
+            .finish()
+            .expect("discarded PTY fixture cleanup succeeds");
+        retained_child
+            .finish()
+            .expect("retained PTY fixture cleanup succeeds");
+    }
+
+    #[test]
+    fn panic_after_fixture_registration_cleans_its_record_child_and_reader() {
+        let test_name = "pty::manager::tests::panic_after_fixture_registration_cleans_its_record_child_and_reader";
+        if !crate::pty::test_support::run_bounded(test_name) {
+            return;
+        }
+
+        let started_at = Instant::now();
+        let manager = PtyManager::new(Arc::new(PortablePtyBackend));
+        let signal_slot = Arc::new(Mutex::new(None));
+        let worker_signal_slot = Arc::clone(&signal_slot);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let fixture = register_fixture(&manager, "panic-registration-fixture");
+            *worker_signal_slot
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()) = Some(fixture.signals());
+            assert!(manager.exists("panic-registration-fixture"));
+            panic!("intentional panic after PTY fixture registration");
+        }));
+
+        assert!(result.is_err(), "the cleanup control must catch its panic");
+        assert!(
+            !manager.exists("panic-registration-fixture"),
+            "panic cleanup must remove the registered PTY session"
+        );
+        assert!(!manager
+            .sessions
+            .read()
+            .unwrap_or_else(|error| error.into_inner())
+            .contains_key("panic-registration-fixture"));
+        let signals = signal_slot
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .take()
+            .expect("panic cleanup signals were captured");
+        assert!(
+            signals.child_reaped.load(Ordering::Acquire),
+            "panic cleanup must terminate and reap the real PTY child"
+        );
+        assert!(
+            signals.reader_drained.load(Ordering::Acquire),
+            "panic cleanup must finish draining the real PTY output"
+        );
+        assert!(
+            started_at.elapsed() < Duration::from_secs(10),
+            "PTY fixture panic cleanup must finish within 10 seconds"
         );
     }
 }

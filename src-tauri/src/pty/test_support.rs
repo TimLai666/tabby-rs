@@ -1,4 +1,5 @@
 use std::{
+    io::{self, Read},
     process::{Command, Stdio},
     thread,
     time::{Duration, Instant},
@@ -6,6 +7,41 @@ use std::{
 
 const WORKER_FLAG: &str = "TABBY_PTY_TEST_WORKER";
 const DEADLINE: Duration = Duration::from_secs(15);
+
+pub(crate) struct TraceReader<R> {
+    inner: R,
+    logged_chunks: usize,
+}
+
+impl<R> TraceReader<R> {
+    pub(crate) fn new(inner: R) -> Self {
+        Self {
+            inner,
+            logged_chunks: 0,
+        }
+    }
+}
+
+impl<R: Read> Read for TraceReader<R> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        let length = self.inner.read(buffer)?;
+        if length > 0 && self.logged_chunks < 4 {
+            let sample = &buffer[..length.min(64)];
+            let mut hex = String::with_capacity(sample.len() * 2);
+            for byte in sample {
+                use std::fmt::Write as _;
+                write!(&mut hex, "{byte:02X}").expect("writing to a String succeeds");
+            }
+            eprintln!(
+                "PTY_READER_TRACE chunk={} sampled={} hex={hex}",
+                self.logged_chunks + 1,
+                sample.len()
+            );
+            self.logged_chunks += 1;
+        }
+        Ok(length)
+    }
+}
 
 fn kill_and_reap(
     worker: &mut std::process::Child,
