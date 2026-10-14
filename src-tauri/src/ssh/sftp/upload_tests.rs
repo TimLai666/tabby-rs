@@ -2,9 +2,14 @@
 use super::{SftpManager, SftpOverwritePolicy};
 use russh_sftp::{
     client::SftpSession,
-    protocol::{Attrs, Data, FileAttributes, FileMode, Handle, OpenFlags, Status, StatusCode},
+    protocol::{
+        Attrs, Data, FileAttributes, FileMode, Handle, OpenFlags, Packet, Status, StatusCode,
+        Version,
+    },
     server::{Handler, StatusReply},
 };
+
+const POSIX_RENAME: &str = "posix-rename@openssh.com";
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
@@ -43,6 +48,16 @@ impl Handler for Peer {
 
     fn unimplemented(&self) -> Self::Error {
         StatusReply::new(StatusCode::OpUnsupported)
+    }
+
+    async fn init(
+        &mut self,
+        _version: u32,
+        _extensions: HashMap<String, String>,
+    ) -> Result<Version, Self::Error> {
+        let mut version = Version::new();
+        version.extensions.insert(POSIX_RENAME.into(), "1".into());
+        Ok(version)
     }
 
     async fn stat(&mut self, id: u32, path: String) -> Result<Attrs, Self::Error> {
@@ -160,6 +175,9 @@ impl Handler for Peer {
             state.fail_rename = false;
             return Err(StatusReply::new(StatusCode::Failure));
         }
+        if state.files.contains_key(&to) {
+            return Err(StatusReply::new(StatusCode::Failure));
+        }
         let bytes = state
             .files
             .remove(&from)
@@ -168,10 +186,44 @@ impl Handler for Peer {
         Ok(ok(id))
     }
 
+    async fn extended(
+        &mut self,
+        id: u32,
+        request: String,
+        data: Vec<u8>,
+    ) -> Result<Packet, Self::Error> {
+        let mut state = self.0.lock().unwrap();
+        if request != POSIX_RENAME {
+            return Err(StatusReply::new(StatusCode::OpUnsupported));
+        }
+        let mut offset = 0;
+        let from = take_string(&data, &mut offset);
+        let to = take_string(&data, &mut offset);
+        assert_eq!(offset, data.len());
+        if state.fail_rename {
+            state.fail_rename = false;
+            return Err(StatusReply::new(StatusCode::Failure));
+        }
+        let bytes = state
+            .files
+            .remove(&from)
+            .ok_or_else(|| StatusReply::new(StatusCode::NoSuchFile))?;
+        state.files.insert(to, bytes);
+        Ok(Packet::Status(ok(id)))
+    }
+
     async fn remove(&mut self, id: u32, path: String) -> Result<Status, Self::Error> {
         self.0.lock().unwrap().files.remove(&path);
         Ok(ok(id))
     }
+}
+
+fn take_string(data: &[u8], offset: &mut usize) -> String {
+    let len = u32::from_be_bytes(data[*offset..*offset + 4].try_into().unwrap()) as usize;
+    *offset += 4;
+    let value = String::from_utf8(data[*offset..*offset + len].to_vec()).unwrap();
+    *offset += len;
+    value
 }
 
 struct Fixture {

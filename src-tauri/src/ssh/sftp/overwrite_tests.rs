@@ -30,6 +30,10 @@ struct Memory {
     fail_posix_rename: bool,
     extension_version: Option<String>,
     extended_reply_injection: Option<ExtendedReplyInjection>,
+    permissive_rename: bool,
+    symlinks: HashMap<String, String>,
+    lstat_failure: Option<StatusCode>,
+    create_target_after_absent_lstat: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -94,7 +98,36 @@ impl Handler for Peer {
     }
 
     async fn lstat(&mut self, id: u32, path: String) -> Result<Attrs, Self::Error> {
-        self.stat(id, path).await
+        let mut state = self.0.lock().unwrap();
+        state.events.push(format!("lstat:{path}"));
+        if let Some(status) = state.lstat_failure.take() {
+            return Err(StatusReply::new(status));
+        }
+        if state.create_target_after_absent_lstat {
+            state.create_target_after_absent_lstat = false;
+            state.files.insert(path.clone(), b"competitor".to_vec());
+            return Err(StatusReply::new(StatusCode::NoSuchFile));
+        }
+        if let Some(target) = state.symlinks.get(&path) {
+            let mut attrs = FileAttributes {
+                size: Some(target.len() as u64),
+                permissions: Some(0o120777),
+                ..Default::default()
+            };
+            attrs.set_type(FileMode::LNK);
+            return Ok(Attrs { id, attrs });
+        }
+        let bytes = state
+            .files
+            .get(&path)
+            .ok_or_else(|| StatusReply::new(StatusCode::NoSuchFile))?;
+        let mut attrs = FileAttributes {
+            size: Some(bytes.len() as u64),
+            permissions: Some(0o644),
+            ..Default::default()
+        };
+        attrs.set_type(FileMode::REG);
+        Ok(Attrs { id, attrs })
     }
 
     async fn open(
@@ -157,13 +190,18 @@ impl Handler for Peer {
         let mut state = self.0.lock().unwrap();
         state.events.push(format!("rename:{from}:{to}"));
         // SFTP v3 RENAME has OpenSSH's no-existing-destination behavior.
-        if state.files.contains_key(&to) {
+        if !state.permissive_rename
+            && (state.files.contains_key(&to) || state.symlinks.contains_key(&to))
+        {
             return Err(StatusReply::new(StatusCode::Failure));
         }
         let bytes = state
             .files
             .remove(&from)
             .ok_or_else(|| StatusReply::new(StatusCode::NoSuchFile))?;
+        if state.permissive_rename {
+            state.symlinks.remove(&to);
+        }
         state.files.insert(to, bytes);
         Ok(ok(id))
     }
@@ -612,4 +650,219 @@ async fn posix_rename_rejects_unexpected_reply_without_changing_destination() {
     );
     drop(state);
     finish(fixture, vec![manager]).await;
+}
+
+#[tokio::test]
+async fn legacy_existing_destinations_are_refused_without_mutation() {
+    for version in [None, Some("2")] {
+        for (old, link) in [(vec![0, 255, 128], false), (vec![], false), (vec![], true)] {
+            let fixture = Fixture::with_extension(version);
+            {
+                let mut state = fixture.state.lock().unwrap();
+                state.permissive_rename = true;
+                if link {
+                    state.symlinks.insert("/target".into(), "/missing".into());
+                } else {
+                    state.files.insert("/target".into(), old.clone());
+                }
+            }
+            let mut manager = fixture.manager().await;
+            let upload = manager
+                .open_upload("/target", Some(1), SftpOverwritePolicy::Overwrite)
+                .await
+                .unwrap();
+            let temp = stage(&fixture.state, 0);
+            manager.write(&upload.id, &[7]).await.unwrap();
+            let error = manager
+                .close(&upload.id)
+                .await
+                .expect_err("unsupported overwrite must fail before mutation")
+                .to_string()
+                .to_lowercase();
+            for word in ["atomic", "support", "preserv", "different name"] {
+                assert!(error.contains(word), "missing {word} in {error}");
+            }
+            {
+                let state = fixture.state.lock().unwrap();
+                if link {
+                    assert_eq!(state.symlinks["/target"], "/missing");
+                    assert!(!state.files.contains_key("/target"));
+                } else {
+                    assert_eq!(state.files["/target"], old);
+                }
+                assert!(!state.files.contains_key(&temp));
+                assert!(state.handles.is_empty());
+                assert!(
+                    !state.events.iter().any(|event| event.starts_with("rename:")
+                        || event.starts_with("extended:")
+                        || event == "remove:/target")
+                );
+                assert!(state
+                    .events
+                    .iter()
+                    .any(|event| event == &format!("remove:{temp}")));
+            }
+            finish(fixture, vec![manager]).await;
+        }
+    }
+}
+
+#[tokio::test]
+async fn legacy_new_destinations_keep_binary_empty_and_unknown_size_uploads() {
+    for version in [None, Some("2")] {
+        let fixture = Fixture::with_extension(version);
+        let mut manager = fixture.manager().await;
+        for (path, size, bytes) in [
+            ("/binary", Some(3), vec![0, 255, 128]),
+            ("/empty", Some(0), vec![]),
+            ("/utf8-\u{4e2d}\u{6587}", None, vec![128, 0, 7]),
+        ] {
+            let upload = manager
+                .open_upload(path, size, SftpOverwritePolicy::Overwrite)
+                .await
+                .unwrap();
+            let temp = fixture.state.lock().unwrap().opened.last().unwrap().clone();
+            if !bytes.is_empty() {
+                manager.write(&upload.id, &bytes).await.unwrap();
+            }
+            assert_eq!(manager.close(&upload.id).await.unwrap().state, "completed");
+            let state = fixture.state.lock().unwrap();
+            assert_eq!(state.files[path], bytes);
+            assert!(!state.files.contains_key(&temp));
+            assert!(state
+                .events
+                .iter()
+                .any(|event| event == &format!("rename:{temp}:{path}")));
+            assert!(!state
+                .events
+                .iter()
+                .any(|event| event.starts_with("extended:")));
+        }
+        finish(fixture, vec![manager]).await;
+    }
+}
+
+#[tokio::test]
+async fn legacy_metadata_errors_do_not_authorize_rename() {
+    for status in [StatusCode::PermissionDenied, StatusCode::Failure] {
+        let fixture = Fixture::with_extension(None);
+        let mut manager = fixture.manager().await;
+        let upload = manager
+            .open_upload("/target", Some(1), SftpOverwritePolicy::Overwrite)
+            .await
+            .unwrap();
+        let temp = stage(&fixture.state, 0);
+        manager.write(&upload.id, &[7]).await.unwrap();
+        fixture.state.lock().unwrap().lstat_failure = Some(status);
+        let error = manager
+            .close(&upload.id)
+            .await
+            .expect_err("metadata error must stop commit")
+            .to_string();
+        assert!(error.contains(&status.to_string()), "{error}");
+        {
+            let state = fixture.state.lock().unwrap();
+            assert!(!state.files.contains_key("/target"));
+            assert!(!state.files.contains_key(&temp));
+            assert!(state.handles.is_empty());
+            assert!(
+                !state.events.iter().any(|event| event.starts_with("rename:")
+                    || event.starts_with("extended:")
+                    || event == "remove:/target")
+            );
+        }
+        finish(fixture, vec![manager]).await;
+    }
+}
+
+#[tokio::test]
+async fn legacy_late_competitor_survives_strict_rename() {
+    let fixture = Fixture::with_extension(None);
+    let mut manager = fixture.manager().await;
+    let upload = manager
+        .open_upload("/target", Some(1), SftpOverwritePolicy::Overwrite)
+        .await
+        .unwrap();
+    let temp = stage(&fixture.state, 0);
+    manager.write(&upload.id, &[7]).await.unwrap();
+    {
+        let mut state = fixture.state.lock().unwrap();
+        state.events.clear();
+        state.create_target_after_absent_lstat = true;
+    }
+    assert!(
+        manager.close(&upload.id).await.is_err(),
+        "late competitor must reject ordinary RENAME"
+    );
+    {
+        let state = fixture.state.lock().unwrap();
+        assert_eq!(state.files["/target"], b"competitor");
+        assert!(!state.files.contains_key(&temp));
+        assert!(state.handles.is_empty());
+        assert!(state.events.iter().any(|event| event == "lstat:/target"));
+        assert!(state
+            .events
+            .iter()
+            .any(|event| event == &format!("rename:{temp}:/target")));
+        assert!(!state
+            .events
+            .iter()
+            .any(|event| event.starts_with("extended:") || event == "remove:/target"));
+    }
+    finish(fixture, vec![manager]).await;
+}
+
+#[tokio::test]
+async fn legacy_refusal_cleans_only_owned_stage() {
+    let fixture = Fixture::with_extension(None);
+    fixture.insert_target();
+    fixture.state.lock().unwrap().permissive_rename = true;
+    let mut first = fixture.manager().await;
+    let mut second = fixture.manager().await;
+    let a = first
+        .open_upload("/target", Some(1), SftpOverwritePolicy::Overwrite)
+        .await
+        .unwrap();
+    let a_stage = stage(&fixture.state, 0);
+    let b = second
+        .open_upload("/target", Some(2), SftpOverwritePolicy::Overwrite)
+        .await
+        .unwrap();
+    let b_stage = stage(&fixture.state, 1);
+    first.write(&a.id, &[7]).await.unwrap();
+    second.write(&b.id, &[8, 255]).await.unwrap();
+    second.stat(&b_stage, false).await.unwrap();
+    assert!(
+        first.close(&a.id).await.is_err(),
+        "unsupported overwrite must refuse"
+    );
+    {
+        let state = fixture.state.lock().unwrap();
+        assert_eq!(state.files["/target"], b"original");
+        assert!(!state.files.contains_key(&a_stage));
+        assert_eq!(state.files[&b_stage], [8, 255]);
+        assert!(state.handles.values().any(|path| path == &b_stage));
+        assert!(
+            !state.events.iter().any(|event| event.starts_with("rename:")
+                || event.starts_with("extended:")
+                || event == "remove:/target")
+        );
+    }
+    second.cancel(&b.id).await.unwrap();
+    // File::drop queues CLOSE without awaiting its reply, as in the existing
+    // link-cancellation fixtures. Observe peer completion within their bound.
+    timeout(Duration::from_secs(5), async {
+        while !fixture.state.lock().unwrap().handles.is_empty() {
+            sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("cancelled peer handle was not released");
+    {
+        let state = fixture.state.lock().unwrap();
+        assert_eq!(state.files["/target"], b"original");
+        assert!(!state.files.contains_key(&b_stage));
+        assert!(state.handles.is_empty());
+    }
+    finish(fixture, vec![first, second]).await;
 }

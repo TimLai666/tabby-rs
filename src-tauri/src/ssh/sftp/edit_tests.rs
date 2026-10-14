@@ -2,7 +2,10 @@ use super::{SftpManager, SftpOverwritePolicy};
 use crate::transfer::{file_edit::FileEditManager, manager::TransferManager};
 use russh_sftp::{
     client::SftpSession,
-    protocol::{Attrs, Data, FileAttributes, FileMode, Handle, OpenFlags, Status, StatusCode},
+    protocol::{
+        Attrs, Data, FileAttributes, FileMode, Handle, OpenFlags, Packet, Status, StatusCode,
+        Version,
+    },
     server::{Handler, StatusReply},
 };
 use std::{
@@ -31,6 +34,17 @@ impl Handler for Peer {
     type Error = StatusReply;
     fn unimplemented(&self) -> Self::Error {
         StatusReply::new(StatusCode::OpUnsupported)
+    }
+    async fn init(
+        &mut self,
+        _version: u32,
+        _extensions: HashMap<String, String>,
+    ) -> Result<Version, Self::Error> {
+        let mut version = Version::new();
+        version
+            .extensions
+            .insert("posix-rename@openssh.com".into(), "1".into());
+        Ok(version)
     }
     async fn stat(&mut self, id: u32, path: String) -> Result<Attrs, Self::Error> {
         let state = self.0.lock().unwrap();
@@ -115,12 +129,43 @@ impl Handler for Peer {
     }
     async fn rename(&mut self, id: u32, from: String, to: String) -> Result<Status, Self::Error> {
         let mut state = self.0.lock().unwrap();
+        if state.files.contains_key(&to) {
+            return Err(StatusReply::new(StatusCode::Failure));
+        }
         let file = state
             .files
             .remove(&from)
             .ok_or_else(|| StatusReply::new(StatusCode::NoSuchFile))?;
         state.files.insert(to, file);
         Ok(ok(id))
+    }
+    async fn extended(
+        &mut self,
+        id: u32,
+        request: String,
+        data: Vec<u8>,
+    ) -> Result<Packet, Self::Error> {
+        if request != "posix-rename@openssh.com" {
+            return Err(StatusReply::new(StatusCode::OpUnsupported));
+        }
+        let mut offset = 0;
+        let mut take_string = || {
+            let len = u32::from_be_bytes(data[offset..offset + 4].try_into().unwrap()) as usize;
+            offset += 4;
+            let value = String::from_utf8(data[offset..offset + len].to_vec()).unwrap();
+            offset += len;
+            value
+        };
+        let from = take_string();
+        let to = take_string();
+        assert_eq!(offset, data.len());
+        let mut state = self.0.lock().unwrap();
+        let file = state
+            .files
+            .remove(&from)
+            .ok_or_else(|| StatusReply::new(StatusCode::NoSuchFile))?;
+        state.files.insert(to, file);
+        Ok(Packet::Status(ok(id)))
     }
     async fn remove(&mut self, id: u32, path: String) -> Result<Status, Self::Error> {
         self.0.lock().unwrap().files.remove(&path);
