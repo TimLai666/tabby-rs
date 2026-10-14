@@ -53,6 +53,10 @@ export class TauriPlatformService extends PlatformService {
         void this.initializeDesktopEvents()
     }
 
+    override get supportsWindowEffects (): boolean {
+        return this.runtimeInfo.platform === 'windows' || this.runtimeInfo.platform === 'macos'
+    }
+
     private async initializeFileDrop (): Promise<() => void> {
         const stopDrop = await this.bridge.listen('desktop:fileDrop', event => this.fileDropped$.next(event))
         try {

@@ -215,6 +215,8 @@ export abstract class PlatformService {
     supportsWindowControls = false
     supportsPluginManagement = true
 
+    get supportsWindowEffects (): boolean { return this.supportsWindowControls }
+
     get fileTransferStarted$ (): Observable<FileTransfer> { return this.fileTransferStarted }
     get displayMetricsChanged$ (): Observable<void> { return this.displayMetricsChanged }
     get themeChanged$ (): Observable<PlatformTheme> { return this.themeChanged }
