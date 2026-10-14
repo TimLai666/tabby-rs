@@ -217,15 +217,28 @@
   Refresh after partial errors as well. Component destruction only stops further
   operations and must not close an already closed modal again.
 
-## P1 — Native SFTP cannot overwrite an existing OpenSSH destination
+## Pending — SFTP overwrite compatibility and desktop acceptance
 
-- `SftpManager::close` uses the backend's ordinary SFTP RENAME. OpenSSH rejects
-  that request when the destination already exists. Isolated real-OpenSSH checks
-  reproduce the error before and after the staging-ownership fix, preserve the
-  existing bytes, and clean up the owned test directory.
-- Fixed `14e2d60` upload unlinks the destination before renaming its stage. Verify
-  native existing-file overwrite and Edit locally against that behavior, including
-  commit failures and destination preservation, before accepting upload parity.
+- Explicit Overwrite commits a closed staging file with OpenSSH POSIX rename
+  when the server advertises version 1. Skip and Rename retain ordinary SFTP
+  RENAME. Keep failed replacement cleanup scoped to the upload's owned stage.
+- The local russh-sftp 2.4.0 patch exposes the negotiated operation. Read
+  src-tauri/vendor/russh-sftp/TABBY-RS-PATCHES.md before updating that dependency.
+  Retain serialized protocol coverage for capability versions, typed status
+  errors, unexpected replies, binary/empty uploads, cancellation, and sessions
+  sharing a destination. Isolated Unix OpenSSH tests verify existing-file
+  overwrites and native mode restoration.
+- Without the supported extension, uploads retain ordinary RENAME. Servers that
+  reject an existing destination can still fail the overwrite. Fixed 14e2d60
+  removes the old destination first, which can lose it if the following rename
+  fails. That fallback decision remains unresolved. Do not add destination
+  deletion or record an accepted parity exception without the user's decision.
+- A server rejection preserves the previous destination in the tested fixtures.
+  A lost connection or response after replacement leaves the remote result
+  uncertain; do not promise destination preservation from a transport error.
+- Verify rendered overwrite uploads and Edit locally with an actual external
+  editor on the supported desktops. Native protocol checks and separate
+  renderer/IPC fixtures do not establish full SFTP or platform acceptance.
 
 ## P2 — Folder file-link downloads inherit the upstream link mode
 
