@@ -601,12 +601,19 @@ mod discard_tests {
 
     #[test]
     fn discard_closes_detached_flow_wakes_blocked_reserve_and_completes_once() {
+        let test_name =
+            "pty::session::discard_tests::discard_closes_detached_flow_wakes_blocked_reserve_and_completes_once";
+        if !crate::pty::test_support::run_bounded(test_name) {
+            return;
+        }
+        eprintln!("PTY_DISCARD_STAGE entry");
+
         let spawned = PortablePtyBackend
             .spawn(&fixture_spec())
             .expect("real PTY child spawns");
         let crate::pty::backend::SpawnedPty {
             master,
-            reader: _reader,
+            reader,
             writer,
             killer,
             child,
@@ -642,8 +649,11 @@ mod discard_tests {
         waiting.recv_timeout(Duration::from_secs(1)).unwrap();
         thread::sleep(Duration::from_millis(25));
 
+        eprintln!("PTY_DISCARD_STAGE before first discard");
         let first_discard = session.discard();
+        eprintln!("PTY_DISCARD_STAGE after first discard");
         let second_discard = session.discard();
+        eprintln!("PTY_DISCARD_STAGE after duplicate discard");
         if first_discard.is_err() || second_discard.is_err() {
             session.flow.close();
         }
@@ -651,6 +661,7 @@ mod discard_tests {
             .recv_timeout(Duration::from_secs(1))
             .expect("discard must wake a blocked detached reserve");
         waiter_cleanup.join();
+        eprintln!("PTY_DISCARD_STAGE after flow join");
         first_discard.unwrap();
         second_discard.unwrap();
 
@@ -658,18 +669,24 @@ mod discard_tests {
             !reservation_succeeded,
             "closed flow must release reserve with false"
         );
+        eprintln!("PTY_DISCARD_STAGE before child wait");
+        let child_exited = child_cleanup.wait_for_exit();
+        eprintln!("PTY_DISCARD_STAGE after child wait");
+        assert!(child_exited, "discard must terminate the real PTY child");
+        let is_alive = session.is_alive();
+        let can_restore = session.can_restore();
+        assert!(!is_alive, "discarded session must no longer report alive");
         assert!(
-            child_cleanup.wait_for_exit(),
-            "discard must terminate the real PTY child"
-        );
-        assert!(
-            !session.is_alive(),
-            "discarded session must no longer report alive"
-        );
-        assert!(
-            !session.can_restore(),
+            !can_restore,
             "discarded session must no longer be restorable"
         );
         assert_eq!(completed.load(Ordering::SeqCst), 1);
+
+        eprintln!("PTY_DISCARD_STAGE before explicit session drop");
+        drop(session);
+        eprintln!("PTY_DISCARD_STAGE after explicit session drop");
+        eprintln!("PTY_DISCARD_STAGE before explicit reader drop");
+        drop(reader);
+        eprintln!("PTY_DISCARD_STAGE after explicit reader drop");
     }
 }
