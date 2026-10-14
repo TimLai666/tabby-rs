@@ -13,8 +13,8 @@ API are unchanged. A new Tabby terminal has its own cursor; failed renderer
 startup must be able to close it before any cursor-position query is answered.
 
 When updating portable-pty, compare the native CreatePseudoConsole flags and run
-the bounded native discard, retained-session, and panic-cleanup regression tests
-on Windows, plus the existing cross-platform suites. Remove this local Cargo
+the bounded native discard, retained-session, panic-cleanup, and production-reader
+regressions on Windows, plus the existing cross-platform suites. Remove this local Cargo
 patch only after equivalent fresh-terminal initialization and startup-failure
 cleanup are verified in the replacement source. A version number alone is not
 acceptance evidence.

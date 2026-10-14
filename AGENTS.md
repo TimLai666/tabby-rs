@@ -880,8 +880,18 @@
   `src-tauri/vendor/portable-pty/TABBY-RS-PATCHES.md` before updating the crate
   or its Windows PTY creation flags. Preserve the other native flags and verify
   bounded native discard and panic cleanup before accepting a replacement.
-  Current native process fixtures construct sessions and inject manager records;
-  their flow waiter does not execute the production reader or Wry command path.
+  Flow-reservation fixtures construct sessions and inject manager records; retain
+  those checks separately from actual native reader coverage.
+  `src-tauri/src/pty/reader_tests.rs` must run PortablePtyBackend through the actual
+  manager spawn and session reader/waiter loops. Its Tauri MockRuntime replaces
+  only the framework boundary. Observe real Read and child wait results, close
+  the actual reader handle before recording its drop, and require the final
+  Session Weak reference to expire without retaining an extra test Arc. Verify
+  quiet direct-child discard, a descendant retaining terminal handles, natural
+  EOF, and an unaffected second session with bounded workers and owned cleanup.
+  Confirm descendant readiness before discard; do not require Windows console
+  clients to survive explicit console closure. These checks do not accept Wry
+  command delivery, renderer startup failures, or platform desktop behavior.
   Standalone session fixtures must keep output draining on a separate test thread
   through session destruction, then join that thread. Construct the output guard
   before the child guard and session so unwinding terminates the child before
