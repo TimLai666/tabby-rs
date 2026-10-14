@@ -1,7 +1,10 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use russh_sftp::client::SftpSession;
+use russh_sftp::{
+    client::{error::Error as SftpClientError, SftpSession},
+    protocol::StatusCode,
+};
 
 use super::{model::RemoteFileEntry, path};
 use crate::ssh::model::SshError;
@@ -41,6 +44,16 @@ impl RusshSftpBackend {
             .map_err(|error| SshError::Sftp(error.to_string()))?
         {
             return Ok(());
+        }
+        match self.session.symlink_metadata(to.clone()).await {
+            Ok(_) => {
+                return Err(SshError::Sftp(
+                    "SFTP server does not support atomic replacement; existing destination preserved. Choose a different name.".into(),
+                ));
+            }
+            Err(SftpClientError::Status(status))
+                if status.status_code == StatusCode::NoSuchFile => {}
+            Err(error) => return Err(SshError::Sftp(error.to_string())),
         }
         self.session
             .rename(from, to)
