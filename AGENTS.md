@@ -878,6 +878,10 @@
   spawn, restored sessions, real child termination, and blocked-reader cleanup.
   Current native process fixtures construct sessions and inject manager records;
   their flow waiter does not execute the production reader or Wry command path.
+  Standalone session fixtures must keep output draining on a separate test thread
+  through session destruction, then join that thread. Construct the output guard
+  before the child guard and session so unwinding terminates the child before
+  joining output. Keep the process boundary and deadline for native teardown tests.
   Before accepting full reader/thread cleanup, verify a bounded native reader
   fixture whose spawned descendants retain a PTY descriptor, plus desktop failure
   handling on each platform. Do not infer that acceptance from the single-child
