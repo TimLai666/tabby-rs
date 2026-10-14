@@ -602,3 +602,7 @@ mod tests {
 #[cfg(test)]
 #[path = "reader_tests.rs"]
 mod reader_tests;
+
+#[cfg(all(test, windows))]
+#[path = "kill_tests.rs"]
+mod kill_tests;
