@@ -38,9 +38,9 @@ impl PtyManager {
         }
     }
 
-    pub fn spawn(
+    pub fn spawn<R: tauri::Runtime>(
         &self,
-        app: AppHandle,
+        app: AppHandle<R>,
         request: PtySpawnRequest,
     ) -> Result<PtySpawnResponse, AppError> {
         let spec = SpawnSpec::try_from(request)?;
@@ -92,7 +92,7 @@ impl PtyManager {
             .unwrap_or(false)
     }
 
-    pub fn attach(&self, app: &AppHandle, id: &str) -> Result<(), AppError> {
+    pub fn attach<R: tauri::Runtime>(&self, app: &AppHandle<R>, id: &str) -> Result<(), AppError> {
         self.session_or_error(id)?.attach(app);
         Ok(())
     }
@@ -592,3 +592,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "reader_tests.rs"]
+mod reader_tests;

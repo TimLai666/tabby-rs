@@ -90,7 +90,7 @@ impl PtySession {
         !self.completed.load(Ordering::Acquire) && !self.exit_emitted.load(Ordering::Acquire)
     }
 
-    pub fn attach(&self, app: &AppHandle) {
+    pub fn attach<R: tauri::Runtime>(&self, app: &AppHandle<R>) {
         self.attached.store(true, Ordering::Release);
         let dropped = self
             .dropped_bytes
@@ -237,17 +237,21 @@ impl PtySession {
         Ok(())
     }
 
-    pub fn start(
+    pub fn start<R: tauri::Runtime>(
         self: &Arc<Self>,
         reader: Box<dyn Read + Send>,
         child: Box<dyn Child + Send + Sync>,
-        app: AppHandle,
+        app: AppHandle<R>,
     ) {
         self.start_reader(reader, app.clone());
         self.start_waiter(child, app);
     }
 
-    fn start_reader(self: &Arc<Self>, mut reader: Box<dyn Read + Send>, app: AppHandle) {
+    fn start_reader<R: tauri::Runtime>(
+        self: &Arc<Self>,
+        mut reader: Box<dyn Read + Send>,
+        app: AppHandle<R>,
+    ) {
         let session = Arc::clone(self);
         thread::spawn(move || {
             let mut buffer = vec![0u8; MAX_CHUNK_BYTES];
@@ -315,7 +319,11 @@ impl PtySession {
         });
     }
 
-    fn start_waiter(self: &Arc<Self>, mut child: Box<dyn Child + Send + Sync>, app: AppHandle) {
+    fn start_waiter<R: tauri::Runtime>(
+        self: &Arc<Self>,
+        mut child: Box<dyn Child + Send + Sync>,
+        app: AppHandle<R>,
+    ) {
         let session = Arc::clone(self);
         thread::spawn(move || {
             let event = match child.wait() {
@@ -349,7 +357,7 @@ impl PtySession {
         });
     }
 
-    fn maybe_emit_exit(&self, app: &AppHandle) {
+    fn maybe_emit_exit<R: tauri::Runtime>(&self, app: &AppHandle<R>) {
         if self.completed.load(Ordering::Acquire)
             || !self.attached.load(Ordering::Acquire)
             || !self.reader_done.load(Ordering::Acquire)
