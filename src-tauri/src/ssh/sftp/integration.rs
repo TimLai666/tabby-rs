@@ -800,3 +800,6 @@ mod link_acceptance {
         drop(data);
     }
 }
+
+#[path = "overwrite_integration.rs"]
+mod overwrite_acceptance;
