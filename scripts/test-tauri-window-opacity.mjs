@@ -9,6 +9,16 @@ const cargo = fs.readFileSync(path.join(root, 'src-tauri/Cargo.toml'), 'utf8')
 const platform = fs.readFileSync(path.join(root, 'src-tauri/src/platform/mod.rs'), 'utf8')
 const desktop = fs.readFileSync(path.join(root, 'src-tauri/src/desktop.rs'), 'utf8')
 const hostWindow = fs.readFileSync(path.join(root, 'tabby-tauri/src/services/hostWindow.service.ts'), 'utf8')
+const config = JSON.parse(fs.readFileSync(path.join(root, 'src-tauri/tauri.conf.json'), 'utf8'))
+const nativeDesktop = fs.readFileSync(path.join(root, 'src-tauri/src/commands/desktop.rs'), 'utf8')
+
+assert.equal(config.app.macOSPrivateApi, true, 'macOS transparent webviews require the declared Tauri capability')
+assert.match(cargo, /tauri\s*=\s*\{[^\n]*features\s*=\s*\[[^\]]*"macos-private-api"/,
+    'direct Cargo builds must enable macOS transparent webviews')
+assert.equal(config.app.windows.find(window => window.label === 'main')?.transparent, true,
+    'the primary native window must allow the renderer background to be transparent')
+assert.match(nativeDesktop, /WebviewWindowBuilder::new\([\s\S]*?\.transparent\(true\)/,
+    'new native windows must retain the primary window transparency')
 
 assert.match(
     cargo,

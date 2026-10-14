@@ -1,5 +1,8 @@
 use crate::{desktop::VibrancyOptions, error::AppError};
 
+#[cfg(all(test, target_os = "macos"))]
+mod material_tests;
+
 pub fn set_window_opacity(window: &tauri::WebviewWindow, opacity: f64) -> Result<(), AppError> {
     validate_opacity(opacity)?;
 
