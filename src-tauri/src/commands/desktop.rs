@@ -75,6 +75,7 @@ pub(crate) fn create_window(
             .title("Tabby RS")
             .inner_size(1100.0, 720.0)
             .min_inner_size(640.0, 480.0)
+            .transparent(true)
             .visible(false);
     #[cfg(target_os = "macos")]
     let builder = builder

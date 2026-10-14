@@ -50,7 +50,7 @@ fn set_macos_window_opacity(window: &tauri::WebviewWindow, opacity: f64) -> Resu
                     .ns_window()
                     .map_err(|error| AppError::Io(error.to_string()))?;
                 let native_window: &NSWindow = unsafe { &*native_window.cast() };
-                native_window.setOpaque(opacity >= 0.999);
+                native_window.setOpaque(false);
                 native_window.setAlphaValue(opacity);
                 Ok(())
             })();
@@ -134,7 +134,44 @@ pub fn set_window_vibrancy(
         return Ok(());
     }
 
-    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    #[cfg(target_os = "macos")]
+    {
+        use std::sync::mpsc::sync_channel;
+
+        let (sender, receiver) = sync_channel(1);
+        let window = window.clone();
+        let main_window = window.clone();
+        let enabled = options.enabled;
+        window
+            .run_on_main_thread(move || {
+                let result = (|| {
+                    while window_vibrancy::clear_vibrancy(&main_window)
+                        .map_err(|error| AppError::Io(error.to_string()))?
+                    {}
+
+                    if enabled {
+                        let material =
+                            macos_vibrancy_material(sysinfo::System::kernel_version().as_deref());
+                        window_vibrancy::apply_vibrancy(
+                            &main_window,
+                            material,
+                            Some(window_vibrancy::NSVisualEffectState::Active),
+                            None,
+                        )
+                        .map_err(|error| AppError::Io(error.to_string()))?;
+                    }
+                    Ok(())
+                })();
+                let _ = sender.send(result);
+            })
+            .map_err(|error| AppError::Io(error.to_string()))?;
+
+        return receiver
+            .recv()
+            .map_err(|error| AppError::Io(error.to_string()))?;
+    }
+
+    #[cfg(target_os = "windows")]
     {
         use tauri::window::EffectsBuilder;
 
@@ -157,7 +194,7 @@ pub fn set_window_vibrancy(
     Ok(())
 }
 
-#[cfg(any(target_os = "windows", target_os = "macos"))]
+#[cfg(target_os = "windows")]
 fn parse_effect(value: &str) -> Option<tauri::window::Effect> {
     use tauri::window::Effect;
     match value.to_ascii_lowercase().as_str() {
@@ -181,8 +218,17 @@ fn default_effect() -> tauri::window::Effect {
 }
 
 #[cfg(target_os = "macos")]
-fn default_effect() -> tauri::window::Effect {
-    tauri::window::Effect::UnderWindowBackground
+fn macos_vibrancy_material(version: Option<&str>) -> window_vibrancy::NSVisualEffectMaterial {
+    // The fixed upstream 14e2d60 macos-release table recognizes Darwin 18..=25
+    // as macOS 10.14+. Unrecognized releases keep its Dark fallback.
+    let major = version
+        .and_then(|version| version.split('.').next())
+        .and_then(|major| major.parse::<u32>().ok());
+
+    match major {
+        Some(18..=25) => window_vibrancy::NSVisualEffectMaterial::FullScreenUI,
+        _ => window_vibrancy::NSVisualEffectMaterial::Dark,
+    }
 }
 
 #[cfg(test)]
