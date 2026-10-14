@@ -32,7 +32,7 @@ The icon has no display typography or embedded lettering. The application UI use
 
 ## Layout
 
-The mark remains centered in a square canvas and uses 80% of the original arrow geometry, leaving a clear margin without losing its dimensional silhouette. Desktop icon canvases use black; application pages and tray images remain transparent. The Tauri window opens at 1100×720 logical pixels with a 640×480 minimum, preserving a compact terminal-first workspace. On macOS, the title bar is an overlay so the dark tab strip forms one continuous top chrome instead of a separate white native band.
+The mark remains centered in a square canvas and uses 80% of the original arrow geometry, leaving a clear margin without losing its dimensional silhouette. Desktop icon canvases use black; application pages and tray images remain transparent. The Tauri window opens at 1100×720 logical pixels with a 640×480 minimum, preserving a compact terminal-first workspace. On macOS, Thin and Full use an overlay title bar so the dark tab strip forms one continuous top chrome. Native uses the operating system title bar. A frame change applies through the existing restart action.
 
 ## Elevation & Depth
 

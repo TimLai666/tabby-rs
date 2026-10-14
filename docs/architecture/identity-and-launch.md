@@ -104,4 +104,8 @@ An approved window close marks its label as closing before requesting native des
 
 Normal application exit requests (`None` or exit code `0`) prevent exit while windows remain and request each window's existing close confirmation. A cancelled window retains its tabs; approved windows close through the same scoped renderer flow. With no windows, exit proceeds. Platform-level quit during startup sends the optional `force: true` request and exits without renderer confirmation, preserving the encrypted-configuration cancellation path. Restart and nonzero exit codes retain their original behavior. The host clears the crash marker only when the event loop actually exits.
 
+macOS frame selection is captured from the first raw bootstrap configuration and retained for every window in that process. Native uses the system title bar; Thin and Full use hidden native chrome with the shared renderer layout. Missing or unknown raw selections, including encrypted wrappers without an appearance field, use Thin. The renderer receives the snapshot through bootstrap data and applies it before showing its owning window.
+
+The shared restart action invokes `app.restart`, which requests a Tauri process restart. The framework restart environment retains only the executable argument, so consumed terminal commands and deep links are not replayed by manual or updater restarts. Initial launch parsing and single-instance delivery retain the original process arguments. Keep the managed restart environment in place before Tauri builds its default environment.
+
 Safe-mode and configuration behavior remain owned by their respective milestones. Keeping those concerns out of the window builder preserves one launch contract without duplicating their implementations.

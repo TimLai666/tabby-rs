@@ -866,10 +866,29 @@
   verify production secondary creation and command delivery separately.
   AppKit property checks do not accept composited pixels, user gestures,
   supported-platform desktop parity, or installers.
-- Native Window frame selection still requires a backend implementation and
-  comparison with the fixed upstream. Current native creation uses a fixed macOS
-  overlay title bar, and WindowStatePatch has no frame field. Do not expose frame
-  options or accept complete Window settings parity from effect-control checks.
+- macOS Window frame uses the first raw bootstrap configuration captured for
+  the process, matching the fixed upstream constructor. Native restores the system
+  title bar; Thin and Full share hidden native chrome and the existing renderer
+  layout. Secondary windows retain that process snapshot until restart. Keep
+  missing or unknown selections on Thin; an encrypted wrapper without appearance
+  also uses Thin. Do not substitute the decrypted ConfigService selection.
+- Pass the cached frame through app.bootstrap and the renderer runtime provider.
+  Apply it in the owning window's ready request before visibility. A frame change
+  uses the shared restart action and the native app.restart command, which requests
+  a process restart. Retain the existing special restart exit-code handling.
+- Retain titlebar controls, outer bounds, opacity, transparency, and the existing
+  first responder when changing the macOS style mask. Retain
+  scripts/test-tauri-window-frame.mjs and the opt-in window_frame_native example.
+  Their controlled renderer and AppKit property checks do not establish native
+  command delivery, keyboard input, window dragging, composited desktop pixels,
+  fullscreen transitions, or production secondary-window creation.
+- Window frame controls remain unavailable on Windows and Linux until their
+  backends are implemented and compared with the fixed upstream. Windows needs
+  its original native controls overlay; do not substitute a borderless window
+  that hides its controls. Verify CSS drag regions on each native WebView.
+- Verify actual process replacement, restored startup configuration, all-window
+  closure, and native session cleanup before accepting restart parity. A browser
+  reload fixture only verifies renderer delivery and persistence.
 
 ## Pending — native window lifecycle and event isolation
 
