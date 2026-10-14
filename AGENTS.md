@@ -849,6 +849,23 @@
 - Retain test:tauri-opacity coverage for actual platform classes and shared
   template visibility. Verify persisted slider/toggle changes and actual native
   visual effects on supported desktops before accepting window appearance parity.
+- Main and secondary native windows must retain transparent webviews. Keep the
+  macOS private-api Cargo feature aligned with app.macOSPrivateApi in the config.
+  Opacity changes must not make the macOS NSWindow opaque when alpha returns to 1.
+- macOS vibrancy must execute and return native errors on the main thread.
+  Clear all window-vibrancy layers for that window before applying one active
+  effect, and remove them when disabled. Preserve the fixed 14e2d60 macos-release
+  table: Darwin 18 through 25 select FullScreenUI; earlier and unrecognized
+  releases select Dark. Compare the fixed upstream table before updating this rule.
+- Retain the material boundary unit tests and the opt-in
+  cargo run --manifest-path src-tauri/Cargo.toml --example window_effects_native
+  check. That example uses hidden Wry windows, actual primary configuration,
+  empty incognito webviews, and the production platform module with boundary
+  data shapes. It checks native effects, alpha, resizing, isolation, and errors
+  after destruction. Its secondary window uses the primary configuration;
+  verify production secondary creation and command delivery separately.
+  AppKit property checks do not accept composited pixels, user gestures,
+  supported-platform desktop parity, or installers.
 - Native Window frame selection still requires a backend implementation and
   comparison with the fixed upstream. Current native creation uses a fixed macOS
   overlay title bar, and WindowStatePatch has no frame field. Do not expose frame
