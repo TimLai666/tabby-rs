@@ -889,6 +889,13 @@
   Session Weak reference to expire without retaining an extra test Arc. Verify
   quiet direct-child discard, a descendant retaining terminal handles, natural
   EOF, and an unaffected second session with bounded workers and owned cleanup.
+  Native cleanup must wake a blocked read and write. Keep native reading
+  independent of attachment and acknowledgement waits with a bounded output
+  queue; preserve already-read bytes for later publication. On Unix, keep both
+  sides nonblocking. On Windows, close the console without first waiting for
+  a mutex held by a blocked native write, and keep output draining during close.
+  Verify a pending native write, natural exit with a retained descendant,
+  complete output after delayed attachment, and a large live binary round trip.
   Confirm descendant readiness before discard; do not require Windows console
   clients to survive explicit console closure. These checks do not accept Wry
   command delivery, renderer startup failures, or platform desktop behavior.
