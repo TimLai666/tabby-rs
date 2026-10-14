@@ -1,6 +1,11 @@
-use std::sync::{
-    atomic::{AtomicBool, AtomicU64, Ordering},
-    Arc, Mutex, MutexGuard,
+mod window_frame;
+
+use std::{
+    collections::BTreeMap,
+    sync::{
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc, Mutex, MutexGuard,
+    },
 };
 
 use crate::{
@@ -24,6 +29,7 @@ pub struct AppState {
     paths: AppPaths,
     persisted_state: Mutex<TabbyRsState>,
     update_manager: Arc<UpdateManager>,
+    startup_window_frame: window_frame::StartupWindowFrame,
 }
 
 impl AppState {
@@ -43,11 +49,16 @@ impl AppState {
             paths,
             persisted_state: Mutex::new(persisted_state),
             update_manager: Arc::new(UpdateManager::default()),
+            startup_window_frame: window_frame::StartupWindowFrame::default(),
         }
     }
 
     pub fn next_window_id(&self) -> u64 {
         self.next_window_id.fetch_add(1, Ordering::Relaxed) + 1
+    }
+
+    pub fn startup_window_frame(&self, config: &BTreeMap<String, serde_json::Value>) -> &str {
+        self.startup_window_frame.get(config)
     }
 
     pub fn request_forced_quit(&self) {

@@ -30,7 +30,7 @@ use std::sync::Arc;
 use commands::{
     app::{
         app_benchmark_frame_report, app_benchmark_ready, app_bootstrap, app_installer_smoke_ready,
-        app_quit, app_runtime_info,
+        app_quit, app_restart, app_runtime_info,
     },
     backup::{backup_create, backup_list, backup_restore},
     config::{config_read, config_write},
@@ -297,6 +297,12 @@ fn release_probe_mode() -> bool {
     })
 }
 
+fn restart_environment(env: tauri::Env) -> tauri::Env {
+    let mut env = env;
+    env.args_os.truncate(1);
+    env
+}
+
 pub fn run() {
     if crate::update::rollback::maybe_run_update_rollback_helper() {
         return;
@@ -304,6 +310,7 @@ pub fn run() {
     let initial_launch = initial_launch_context();
     let (launch_sender, launch_receiver) = std::sync::mpsc::channel::<LaunchContext>();
     let mut builder = tauri::Builder::default()
+        .manage(restart_environment(tauri::Env::default()))
         .manage(launch_sender)
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
@@ -397,6 +404,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             app_bootstrap,
+            app_restart,
             app_runtime_info,
             app_benchmark_ready,
             app_benchmark_frame_report,

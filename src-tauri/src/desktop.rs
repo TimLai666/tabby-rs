@@ -31,6 +31,7 @@ pub struct WindowBounds {
 #[derive(Debug, Clone, Default, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WindowStatePatch {
+    pub frame: Option<String>,
     pub visible: Option<bool>,
     pub always_on_top: Option<bool>,
     pub fullscreen: Option<bool>,

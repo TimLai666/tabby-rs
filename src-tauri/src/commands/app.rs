@@ -70,6 +70,7 @@ pub struct PluginInfo {
 #[serde(rename_all = "camelCase")]
 pub struct BootstrapData {
     pub config: BTreeMap<String, serde_json::Value>,
+    pub window_frame: String,
     pub executable: String,
     pub is_main_window: bool,
     #[serde(rename = "windowID")]
@@ -287,6 +288,7 @@ pub fn app_bootstrap(
     let _ = request;
     fs::create_dir_all(state.paths().plugins_dir())?;
     let config = bootstrap_config(&state)?;
+    let window_frame = state.startup_window_frame(&config).to_owned();
 
     let previous = state.persisted_state();
     let discovered = if previous.safe_mode.attempt_id.is_some() {
@@ -340,6 +342,7 @@ pub fn app_bootstrap(
 
     Ok(BootstrapData {
         config,
+        window_frame,
         executable: state.paths().executable().to_string_lossy().into_owned(),
         is_main_window: window.label() == "main",
         window_id: state.next_window_id(),
@@ -349,6 +352,13 @@ pub fn app_bootstrap(
         safe_mode_reason,
         safe_mode_suspected_plugins: suspected_plugins,
     })
+}
+
+#[tauri::command]
+pub fn app_restart(app: AppHandle, request: EmptyRequest) -> Result<(), AppError> {
+    let _ = request;
+    app.request_restart();
+    Ok(())
 }
 
 #[tauri::command]
@@ -559,6 +569,7 @@ mod tests {
     fn preserves_legacy_window_id_field_name() {
         let data = BootstrapData {
             config: Default::default(),
+            window_frame: "thin".into(),
             executable: "tabby-rs".into(),
             is_main_window: true,
             window_id: 1,

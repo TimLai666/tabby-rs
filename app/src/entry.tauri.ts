@@ -223,7 +223,7 @@ async function main (): Promise<void> {
     const bootstrapOptions = {
         debug: false,
         extraProviders: [
-            { provide: TAURI_RUNTIME_INFO, useValue: runtimeInfo },
+            { provide: TAURI_RUNTIME_INFO, useValue: { ...runtimeInfo, startupWindowFrame: bootstrapData.windowFrame } },
         ],
     }
 

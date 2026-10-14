@@ -102,6 +102,9 @@ pub fn window_apply_state(
     window: tauri::WebviewWindow,
     request: WindowStatePatch,
 ) -> Result<(), AppError> {
+    if let Some(frame) = request.frame.as_deref() {
+        crate::platform::set_window_frame(&window, frame)?;
+    }
     if let Some(title) = request.title.as_deref() {
         window.set_title(title).map_err(io_error)?;
     }

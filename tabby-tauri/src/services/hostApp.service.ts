@@ -23,6 +23,7 @@ export class TauriHostAppService extends HostAppService {
     readonly platform: Platform
     readonly configPlatform: Platform
     private readonly detectedWindowsBuild: number|undefined
+    private readonly startupWindowFrame: 'native' | 'thin' | 'full'
 
     get windowsBuild (): number|undefined {
         return this.detectedWindowsBuild
@@ -42,6 +43,9 @@ export class TauriHostAppService extends HostAppService {
         this.platform = mapPlatform(runtimeInfo.platform)
         this.configPlatform = this.platform
         this.detectedWindowsBuild = runtimeInfo.windowsBuild ?? undefined
+        this.startupWindowFrame = runtimeInfo.startupWindowFrame === 'native' || runtimeInfo.startupWindowFrame === 'full'
+            ? runtimeInfo.startupWindowFrame
+            : 'thin'
 
         void this.bridge.listen('app:launch', () => this.readLaunchRequests()).then(() => {
             this.readLaunchRequests()
@@ -58,7 +62,10 @@ export class TauriHostAppService extends HostAppService {
     }
 
     emitReady (): void {
-        void this.bridge.invoke('window.applyState', { visible: true }).catch(error => {
+        const state = this.platform === Platform.macOS
+            ? { frame: this.startupWindowFrame, visible: true }
+            : { visible: true }
+        void this.bridge.invoke('window.applyState', state).catch(error => {
             this.logger.warn('Failed to show ready window:', error)
         })
         this.ready = true
@@ -69,7 +76,9 @@ export class TauriHostAppService extends HostAppService {
     }
 
     relaunch (): void {
-        window.location.reload()
+        void this.bridge.invoke('app.restart', {}).catch(error => {
+            this.logger.warn('Failed to restart the application:', error)
+        })
     }
 
     quit (): void {

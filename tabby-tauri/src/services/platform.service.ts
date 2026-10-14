@@ -49,6 +49,7 @@ export class TauriPlatformService extends PlatformService {
         private zone: NgZone,
     ) {
         super()
+        this.supportsWindowControls = runtimeInfo.platform === 'macos'
         this.fileDropReady = this.initializeFileDrop()
         void this.initializeDesktopEvents()
     }

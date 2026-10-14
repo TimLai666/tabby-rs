@@ -42,6 +42,7 @@ export interface RuntimeInfo {
     benchmarkReadyFile: string | null
     benchmarkFrameReportFile: string | null
     installerSmokeReadyFile: string | null
+    startupWindowFrame?: 'native' | 'thin' | 'full'
 }
 
 export interface BenchmarkFrameReport {
@@ -322,6 +323,7 @@ export interface VibrancyOptions {
 }
 
 export interface WindowStatePatch {
+    frame?: 'native' | 'thin' | 'full'
     visible?: boolean
     alwaysOnTop?: boolean
     fullscreen?: boolean
@@ -704,7 +706,7 @@ export interface WinSCPConnectionOptions {
 export interface HostRequestMap {
     'app.bootstrap': {
         request: Record<string, never>
-        response: BootstrapData
+        response: BootstrapData & { windowFrame: 'native' | 'thin' | 'full' }
     }
     'app.runtimeInfo': {
         request: Record<string, never>
@@ -728,6 +730,10 @@ export interface HostRequestMap {
     }
     'app.quit': {
         request: { force?: boolean }
+        response: null
+    }
+    'app.restart': {
+        request: Record<string, never>
         response: null
     }
     'backup.create': {
