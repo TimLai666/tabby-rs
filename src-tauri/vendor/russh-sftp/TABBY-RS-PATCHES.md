@@ -15,7 +15,10 @@ Server status errors and unexpected replies remain errors. Ordinary rename is
 unchanged.
 
 Tabby RS uses this method to commit explicit overwrite uploads after closing the
-owned staging file. Skip and Rename uploads retain ordinary SFTP RENAME.
+owned staging file. Without the supported extension, Tabby RS checks LSTAT and
+refuses replacement of an existing entry. Only NoSuchFile permits ordinary
+RENAME for a new destination. See the approved SFTP overwrite safety exception
+in docs/release-acceptance.md. Skip and Rename uploads retain ordinary SFTP RENAME.
 
 Before upgrading or removing this patch, run the SFTP protocol regressions in
 src/ssh/sftp/overwrite_tests.rs and the isolated Unix OpenSSH integration tests.

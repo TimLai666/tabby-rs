@@ -134,6 +134,53 @@ forwarding, jump hosts, platform behavior, and the remaining manual checks keep
 their existing acceptance requirements. Keep their feature manifest entries
 pending until the complete feature scope has been verified.
 
+## Approved SFTP overwrite safety exception
+
+Tabby RS refuses to replace an existing destination when the SFTP server does
+not advertise version 1 of posix-rename@openssh.com. The error explains that
+atomic replacement is unsupported, the existing destination was preserved,
+and the upload needs a different name. The check uses LSTAT so a dangling
+symbolic link also counts as an existing entry. New destinations can use
+ordinary SFTP RENAME after an explicit NoSuchFile response. Other metadata
+errors stop the commit.
+
+The fixed 14e2d60 upload in tabby-ssh/src/session/sftp.ts deletes the destination
+before renaming the staging file. A failed rename after that deletion can lose
+the previous file. The user approved preserving the old file and reporting
+failure as a narrow exception to complete parity. The timestamp below records
+the approval when it was received by this task:
+
+```json
+{
+  "id": "ssh.sftp.nonatomic-overwrite",
+  "baseline": "14e2d60b9b6dee84a53c37f05eefeb803787de04",
+  "approval": {
+    "decision": "accepted-difference",
+    "approver": "user",
+    "approvedAt": "2026-10-14T10:12:58Z"
+  }
+}
+```
+
+RusshSftpBackend::replace_file in src-tauri/src/ssh/sftp/backend.rs implements
+this rule. The serialized protocol fixtures in
+src-tauri/src/ssh/sftp/overwrite_tests.rs verify unsupported and mismatched
+capabilities, preserved binary/empty files and dangling links, metadata
+failures, new files, a competing destination, and isolated staging cleanup.
+The supported-capability and concurrent-upload checks remain in that file and
+src-tauri/src/ssh/sftp/upload_tests.rs. Run them with:
+
+```text
+cargo test --locked --manifest-path src-tauri/Cargo.toml --lib ssh::sftp
+```
+
+Apply this exception only to existing-destination replacement without the
+supported extension. Supported OpenSSH replacement, ordinary file creation,
+Skip and Rename policies, and all desktop checks keep their existing acceptance
+requirements. A lost connection or reply after a mutation leaves the remote
+result uncertain. Keep the SFTP and platform manifest entries pending until
+their complete scopes have been verified.
+
 ## Windows x64
 
 Run on a real Windows host matching the currently supported Tauri/CI

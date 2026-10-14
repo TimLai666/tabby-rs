@@ -228,11 +228,13 @@
   errors, unexpected replies, binary/empty uploads, cancellation, and sessions
   sharing a destination. Isolated Unix OpenSSH tests verify existing-file
   overwrites and native mode restoration.
-- Without the supported extension, uploads retain ordinary RENAME. Servers that
-  reject an existing destination can still fail the overwrite. Fixed 14e2d60
-  removes the old destination first, which can lose it if the following rename
-  fails. That fallback decision remains unresolved. Do not add destination
-  deletion or record an accepted parity exception without the user's decision.
+- Without the supported extension, LSTAT the destination at commit. Reject an
+  existing entry, including a dangling symlink, with an explicit unsupported
+  atomic-replacement error and different-name guidance. Preserve that entry.
+  Permit ordinary RENAME only after a typed NoSuchFile response; propagate
+  other metadata errors. Retain strict-RENAME race coverage and keep cleanup
+  scoped to the owned stage. Read the approved SFTP overwrite safety exception
+  in docs/release-acceptance.md before changing this behavior.
 - A server rejection preserves the previous destination in the tested fixtures.
   A lost connection or response after replacement leaves the remote result
   uncertain; do not promise destination preservation from a transport error.
