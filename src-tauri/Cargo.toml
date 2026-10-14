@@ -80,3 +80,4 @@ keyring = { version = "=3.6.3", default-features = false, features = ["sync-secr
 
 [patch.crates-io]
 russh = { path = "vendor/russh" }
+portable-pty = { path = "vendor/portable-pty" }
