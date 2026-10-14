@@ -840,6 +840,20 @@
   prompts; jump authentication does not share that deadline. Verify slow interactive
   login against upstream before accepting timeout parity.
 
+## Pending — native window appearance settings acceptance
+
+- Keep opacity and vibrancy visibility separate from window-frame support.
+  Native supportsWindowEffects must match the Windows/macOS Rust capabilities;
+  Linux and Web must not expose unsupported native effects. Preserve legacy
+  hosts through the existing supportsWindowControls default.
+- Retain test:tauri-opacity coverage for actual platform classes and shared
+  template visibility. Verify persisted slider/toggle changes and actual native
+  visual effects on supported desktops before accepting window appearance parity.
+- Native Window frame selection still requires a backend implementation and
+  comparison with the fixed upstream. Current native creation uses a fixed macOS
+  overlay title bar, and WindowStatePatch has no frame field. Do not expose frame
+  options or accept complete Window settings parity from effect-control checks.
+
 ## Pending — native window lifecycle and event isolation
 
 - Native `CloseRequested` must call `prevent_close()` before requesting renderer
