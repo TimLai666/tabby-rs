@@ -84,7 +84,7 @@ function visible (label, platform) {
     assert.ok(condition, 'row is capability gated: ' + label)
     return Boolean(Function('platform', 'return ' + condition)(platform))
 }
-for (const [platform, expected] of [['macos', true], ['windows', true], ['linux', false]]) {
+for (const [platform, expected, frameExpected] of [['macos', true, true], ['windows', true, false], ['linux', false, false]]) {
     const instance = new native.TauriPlatformService({
         listen: async () => () => {},
         invoke: async () => '',
@@ -92,7 +92,7 @@ for (const [platform, expected] of [['macos', true], ['windows', true], ['linux'
     await instance.fileDropReady
     assert.equal(visible('Opacity', instance), expected, platform + ' opacity row')
     assert.equal(visible('Vibrancy', instance), expected, platform + ' vibrancy row')
-    assert.equal(visible('Window frame', instance), false, 'unsupported native frame remains hidden')
+    assert.equal(visible('Window frame', instance), frameExpected, 'window frame controls are visible on macOS only')
 }
 const legacy = new core.PlatformService()
 for (const supportsWindowControls of [false, true]) {

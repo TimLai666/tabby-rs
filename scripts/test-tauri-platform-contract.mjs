@@ -58,7 +58,7 @@ const windowBuilder = desktop.match(/pub\(crate\) fn create_window\([\s\S]*?\r?\
 assert.ok(windowBuilder, 'The shared new-window builder must exist')
 assert.match(windowBuilder, /let builder\s*=\s*tauri::WebviewWindowBuilder::new\([^;]*?\.visible\(false\)/)
 assert.match(windowBuilder, /#\[cfg\(target_os = "macos"\)\]\s*let builder = builder\s*\.title_bar_style\(tauri::TitleBarStyle::Overlay\)\s*\.hidden_title\(true\);/)
-assert.match(hostApp, /emitReady \(\): void \{[\s\S]*?window\.applyState', \{ visible: true \}/)
+await import('./test-tauri-window-frame.mjs')
 assert.ok(capabilities.permissions.includes('notification:default'))
 assert.match(tauriEntry, /import ['"]\.\/tauri-polyfills['"]\r?\n/)
 assert.match(tauriEntry, /import ['"]source-sans-pro\/source-sans-pro\.css['"]\r?\n/)

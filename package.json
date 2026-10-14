@@ -186,7 +186,7 @@
     "test:tauri-platform": "node scripts/test-tauri-platform-contract.mjs",
     "test:tab-body-lifecycle": "node scripts/test-tab-body-lifecycle.mjs",
     "test:app-root-recovery": "node scripts/test-app-root-recovery-contract.mjs",
-    "test:tauri-opacity": "node scripts/test-tauri-window-opacity.mjs",
+    "test:tauri-opacity": "node scripts/test-tauri-window-opacity.mjs && node scripts/test-tauri-window-frame.mjs",
     "test:plugin-operation": "node scripts/test-plugin-operation-contract.mjs",
     "test:ssh-reconnect": "node scripts/test-ssh-reconnect-contract.mjs && node scripts/test-sftp-delete-cancellation.mjs && node scripts/test-tauri-ssh-actions.mjs && node scripts/test-sftp-links.mjs && node scripts/test-sftp-directory-links.mjs && npm run test:sftp-panel",
     "test:device-reconnect": "node scripts/test-device-reconnect-contract.mjs",

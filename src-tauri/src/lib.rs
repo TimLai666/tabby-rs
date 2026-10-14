@@ -297,6 +297,9 @@ fn release_probe_mode() -> bool {
     })
 }
 
+#[cfg(test)]
+mod restart_tests;
+
 fn restart_environment(env: tauri::Env) -> tauri::Env {
     let mut env = env;
     env.args_os.truncate(1);

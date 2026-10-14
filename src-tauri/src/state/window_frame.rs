@@ -24,3 +24,7 @@ impl StartupWindowFrame {
             .as_str()
     }
 }
+
+#[cfg(test)]
+#[path = "window_frame_tests.rs"]
+mod tests;

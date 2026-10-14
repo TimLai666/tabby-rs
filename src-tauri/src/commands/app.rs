@@ -581,6 +581,7 @@ mod tests {
         };
         let value = serde_json::to_value(data).unwrap();
         assert_eq!(value["windowID"], 1);
+        assert_eq!(value["windowFrame"], "thin");
         assert!(value.get("windowId").is_none());
     }
 
