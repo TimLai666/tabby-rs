@@ -876,6 +876,10 @@
   unknown termination errors retain the record for retry. Restore and shared
   proxy creation must preserve an existing PTY. Verify fresh failure, normal
   spawn, restored sessions, real child termination, and blocked-reader cleanup.
+  Windows fresh sessions must omit parent cursor inheritance. Read
+  `src-tauri/vendor/portable-pty/TABBY-RS-PATCHES.md` before updating the crate
+  or its Windows PTY creation flags. Preserve the other native flags and verify
+  bounded native discard and panic cleanup before accepting a replacement.
   Current native process fixtures construct sessions and inject manager records;
   their flow waiter does not execute the production reader or Wry command path.
   Standalone session fixtures must keep output draining on a separate test thread
