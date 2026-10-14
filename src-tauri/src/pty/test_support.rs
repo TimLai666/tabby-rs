@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-const WORKER_FLAG: &str = "TABBY_PTY_DISCARD_DIAGNOSTIC_WORKER_55BAE351";
+const WORKER_FLAG: &str = "TABBY_PTY_TEST_WORKER";
 const DEADLINE: Duration = Duration::from_secs(15);
 
 fn kill_and_reap(

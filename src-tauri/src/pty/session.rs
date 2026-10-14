@@ -470,12 +470,13 @@ fn terminate_process(pid: u32) -> Result<(), PtyError> {
 mod discard_tests {
     use std::{
         collections::BTreeMap,
+        io::{self, Read},
         sync::{
-            atomic::{AtomicUsize, Ordering},
+            atomic::{AtomicBool, AtomicUsize, Ordering},
             mpsc, Arc,
         },
         thread::{self, JoinHandle},
-        time::Duration,
+        time::{Duration, Instant},
     };
 
     use portable_pty::Child;
@@ -486,19 +487,66 @@ mod discard_tests {
         model::SpawnSpec,
     };
 
-    struct ChildCleanup(Option<Box<dyn Child + Send + Sync>>);
+    struct OutputCleanup {
+        worker: Option<JoinHandle<io::Result<u64>>>,
+    }
+
+    impl OutputCleanup {
+        fn start(mut reader: Box<dyn Read + Send>, drained: Arc<AtomicBool>) -> Self {
+            let worker = thread::spawn(move || {
+                let result = io::copy(&mut reader, &mut io::sink());
+                if result.is_ok() {
+                    drained.store(true, Ordering::Release);
+                }
+                result
+            });
+            Self {
+                worker: Some(worker),
+            }
+        }
+
+        fn join(mut self) {
+            self.worker
+                .take()
+                .expect("output drain thread is present")
+                .join()
+                .expect("output drain thread does not panic")
+                .expect("PTY output drain succeeds");
+        }
+    }
+
+    impl Drop for OutputCleanup {
+        fn drop(&mut self) {
+            if let Some(drain) = self.worker.take() {
+                let _ = drain.join();
+            }
+        }
+    }
+
+    struct ChildCleanup {
+        child: Option<Box<dyn Child + Send + Sync>>,
+        exited: Arc<AtomicBool>,
+    }
 
     impl ChildCleanup {
+        fn new(child: Box<dyn Child + Send + Sync>, exited: Arc<AtomicBool>) -> Self {
+            Self {
+                child: Some(child),
+                exited,
+            }
+        }
+
         fn wait_for_exit(&mut self) -> bool {
             for _ in 0..300 {
                 if self
-                    .0
+                    .child
                     .as_mut()
                     .expect("child cleanup handle is present")
                     .try_wait()
                     .expect("PTY child status can be queried")
                     .is_some()
                 {
+                    self.exited.store(true, Ordering::Release);
                     return true;
                 }
                 thread::sleep(Duration::from_millis(10));
@@ -509,7 +557,7 @@ mod discard_tests {
 
     impl Drop for ChildCleanup {
         fn drop(&mut self) {
-            if let Some(mut child) = self.0.take() {
+            if let Some(mut child) = self.child.take() {
                 let still_running = match child.try_wait() {
                     Ok(Some(_)) => false,
                     Ok(None) => true,
@@ -530,7 +578,9 @@ mod discard_tests {
                         let _ = child.kill();
                     }
                 }
-                let _ = child.wait();
+                if child.wait().is_ok() {
+                    self.exited.store(true, Ordering::Release);
+                }
             }
         }
     }
@@ -606,7 +656,6 @@ mod discard_tests {
         if !crate::pty::test_support::run_bounded(test_name) {
             return;
         }
-        eprintln!("PTY_DISCARD_STAGE entry");
 
         let spawned = PortablePtyBackend
             .spawn(&fixture_spec())
@@ -619,7 +668,8 @@ mod discard_tests {
             child,
             pid,
         } = spawned;
-        let mut child_cleanup = ChildCleanup(Some(child));
+        let output_cleanup = OutputCleanup::start(reader, Arc::new(AtomicBool::new(false)));
+        let mut child_cleanup = ChildCleanup::new(child, Arc::new(AtomicBool::new(false)));
         let completed = Arc::new(AtomicUsize::new(0));
         let completion_counter = Arc::clone(&completed);
         let session = Arc::new(PtySession::new(
@@ -649,11 +699,8 @@ mod discard_tests {
         waiting.recv_timeout(Duration::from_secs(1)).unwrap();
         thread::sleep(Duration::from_millis(25));
 
-        eprintln!("PTY_DISCARD_STAGE before first discard");
         let first_discard = session.discard();
-        eprintln!("PTY_DISCARD_STAGE after first discard");
         let second_discard = session.discard();
-        eprintln!("PTY_DISCARD_STAGE after duplicate discard");
         if first_discard.is_err() || second_discard.is_err() {
             session.flow.close();
         }
@@ -661,7 +708,6 @@ mod discard_tests {
             .recv_timeout(Duration::from_secs(1))
             .expect("discard must wake a blocked detached reserve");
         waiter_cleanup.join();
-        eprintln!("PTY_DISCARD_STAGE after flow join");
         first_discard.unwrap();
         second_discard.unwrap();
 
@@ -669,24 +715,79 @@ mod discard_tests {
             !reservation_succeeded,
             "closed flow must release reserve with false"
         );
-        eprintln!("PTY_DISCARD_STAGE before child wait");
-        let child_exited = child_cleanup.wait_for_exit();
-        eprintln!("PTY_DISCARD_STAGE after child wait");
-        assert!(child_exited, "discard must terminate the real PTY child");
-        let is_alive = session.is_alive();
-        let can_restore = session.can_restore();
-        assert!(!is_alive, "discarded session must no longer report alive");
         assert!(
-            !can_restore,
+            child_cleanup.wait_for_exit(),
+            "discard must terminate the real PTY child"
+        );
+        assert!(
+            !session.is_alive(),
+            "discarded session must no longer report alive"
+        );
+        assert!(
+            !session.can_restore(),
             "discarded session must no longer be restorable"
         );
         assert_eq!(completed.load(Ordering::SeqCst), 1);
 
-        eprintln!("PTY_DISCARD_STAGE before explicit session drop");
+        eprintln!("PTY_DISCARD_STAGE before session drop");
         drop(session);
-        eprintln!("PTY_DISCARD_STAGE after explicit session drop");
-        eprintln!("PTY_DISCARD_STAGE before explicit reader drop");
-        drop(reader);
-        eprintln!("PTY_DISCARD_STAGE after explicit reader drop");
+        eprintln!("PTY_DISCARD_STAGE after session drop");
+        output_cleanup.join();
+        eprintln!("PTY_DISCARD_STAGE after output drain joined");
+    }
+
+    #[test]
+    fn panic_unwinds_session_child_and_output_cleanup_within_bound() {
+        let test_name =
+            "pty::session::discard_tests::panic_unwinds_session_child_and_output_cleanup_within_bound";
+        if !crate::pty::test_support::run_bounded(test_name) {
+            return;
+        }
+
+        let started_at = Instant::now();
+        let drained = Arc::new(AtomicBool::new(false));
+        let child_exited = Arc::new(AtomicBool::new(false));
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let spawned = PortablePtyBackend
+                .spawn(&fixture_spec())
+                .expect("real PTY child spawns for panic cleanup control");
+            let crate::pty::backend::SpawnedPty {
+                master,
+                reader,
+                writer,
+                killer,
+                child,
+                pid,
+            } = spawned;
+
+            let _output_cleanup = OutputCleanup::start(reader, Arc::clone(&drained));
+            let _child_cleanup = ChildCleanup::new(child, Arc::clone(&child_exited));
+            let _session = Arc::new(PtySession::new(
+                "discard-panic-cleanup-control".into(),
+                pid,
+                None,
+                master,
+                writer,
+                killer,
+                None,
+                Arc::new(|_| {}),
+            ));
+
+            panic!("intentional panic to verify PTY fixture cleanup order");
+        }));
+
+        assert!(result.is_err(), "the cleanup control must catch its panic");
+        assert!(
+            child_exited.load(Ordering::Acquire),
+            "panic cleanup must terminate and reap the real PTY child"
+        );
+        assert!(
+            drained.load(Ordering::Acquire),
+            "panic cleanup must finish draining the real PTY output"
+        );
+        assert!(
+            started_at.elapsed() < Duration::from_secs(10),
+            "PTY fixture panic cleanup must finish within 10 seconds"
+        );
     }
 }
