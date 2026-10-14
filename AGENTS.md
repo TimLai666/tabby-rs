@@ -20,15 +20,21 @@
   Windows Rust test evidence:
   https://github.com/TimLai666/tabby-rs/actions/runs/36343754549/job/108688735753
 
-## P2 — Windows ordinary PTY termination result needs verification
+## Pending - Windows ordinary terminal-close desktop acceptance
 
-- `src-tauri/src/pty/session.rs` delegates ordinary unsignalled kill to the
-  `portable-pty = 0.9.0` child killer. Its ConPTY `WinChildKiller::kill` returns
-  an error for a nonzero `TerminateProcess` result and success for zero.
-  Verify the actual ordinary terminal-close result on Windows and correct the
-  adapter without changing the shared signal contract. Fresh-startup discard
-  uses its own native termination result handling; it does not validate ordinary
-  kill or replace Windows desktop acceptance.
+- Ordinary unsignalled PTY kill uses the vendored portable-pty 0.9.0 cloned
+  child killer. Both ConPTY termination branches follow Win32 BOOL results:
+  nonzero succeeds and zero returns the native error. Keep the direct
+  WinChild::kill best-effort wrapper and the existing shared signal contract.
+- src-tauri/src/pty/kill_tests.rs uses bounded real ConPTY processes. It checks
+  cloned-killer success and exit code 1, the native error after a held child
+  exits with code 7, retained direct-kill behavior, and actual manager spawn/kill
+  with an unaffected second session. The Tauri MockRuntime replaces only the
+  framework boundary. These checks do not accept Wry command delivery,
+  rendered close gestures, descendant cleanup, or installer behavior.
+- Verify ordinary terminal close against the original Windows desktop before
+  accepting that flow. Fresh-startup discard uses separate native termination
+  handling and does not replace ordinary-kill or desktop acceptance.
 
 ## Pending — Linux desktop and packaging acceptance
 
