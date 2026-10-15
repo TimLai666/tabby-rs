@@ -167,7 +167,7 @@ fn portable_paths_keep_spaces_and_non_ascii_filesystem_identity() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("可攜式 資料");
     fs::create_dir(&root).unwrap();
-    let expected = root.join("data/webview");
+    let expected = root.join("data").join("webview");
     let mut config = config_with_windows(json!([window("main", "Main", "old", false)]));
 
     assert_eq!(data_directory(Some(&root)), Some(expected.clone()));
