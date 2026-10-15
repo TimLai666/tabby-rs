@@ -70,6 +70,35 @@ pub fn run(executable: &Path, data: &Path, output: &Path) -> Vec<Check> {
                 &output.join(format!("electron-{mode}.png")),
                 true,
             )?;
+            let caption = if mode == "native" {
+                serde_json::Value::Null
+            } else {
+                super::caption::measure(handle, child.0.id(), mode, output)?
+            };
+            if mode != "native" {
+                for state in ["restored", "maximized"] {
+                    let middle = caption[state]["rows"]
+                        .as_array()
+                        .and_then(|rows| rows.iter().find(|row| row["outerLogicalY"] == 15))
+                        .and_then(|row| row["runs"].as_array())
+                        .ok_or("reference caption map has no middle row")?;
+                    for hit in [8, 9, 20] {
+                        if !middle.iter().any(|run| run["hit"] == hit) {
+                            return Err(format!(
+                                "{mode}/{state} is missing native caption hit {hit}"
+                            ));
+                        }
+                    }
+                }
+                if caption["restored"]["maximized"] != false
+                    || caption["maximized"]["maximized"] != true
+                {
+                    return Err(
+                        "reference caption states did not transition from restored to maximized"
+                            .into(),
+                    );
+                }
+            }
             fs::OpenOptions::new()
                 .write(true)
                 .create_new(true)
@@ -89,7 +118,7 @@ pub fn run(executable: &Path, data: &Path, output: &Path) -> Vec<Check> {
                 return Err(format!("reference failed: {status}"));
             }
             Ok(
-                json!({"manifest":manifest,"captureWidth":image.width,"captureHeight":image.height,"ownedChildExited":true}),
+                json!({"manifest":manifest,"captureWidth":image.width,"captureHeight":image.height,"caption":caption,"ownedChildExited":true}),
             )
         })();
         checks.push(check(

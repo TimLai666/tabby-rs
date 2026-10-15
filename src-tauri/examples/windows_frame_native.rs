@@ -1,6 +1,9 @@
 //! Windows/Wry frame regression driver. Run with --help for isolated paths.
 
 #[cfg(windows)]
+#[path = "windows_frame_native/caption.rs"]
+mod caption;
+#[cfg(windows)]
 #[path = "windows_frame_native/checks.rs"]
 mod checks;
 #[cfg(windows)]
