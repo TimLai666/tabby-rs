@@ -550,6 +550,232 @@ fn working_directory_matches(actual: &str, expected: &str) -> bool {
     }
 }
 
+#[cfg(test)]
+mod cwd_matching_tests {
+    use super::*;
+
+    fn args(parts: &[&str]) -> Vec<String> {
+        parts.iter().map(|part| (*part).to_owned()).collect()
+    }
+
+    fn receipt(argv: &[String], cwd: &str) -> Receipt {
+        Receipt {
+            argv: argv.to_vec(),
+            cwd: cwd.to_owned(),
+        }
+    }
+
+    #[test]
+    fn full_argv_and_identical_cwd_match() {
+        let base = tempfile::tempdir().expect("private directory");
+        let cwd = owned_cwd(base.path(), "cwd");
+        let argv = args(&["tabby-rs", "--exact", "native_instance_worker"]);
+        let receipts = vec![receipt(&argv, &cwd)];
+
+        assert!(
+            has_record(&receipts, &argv, &cwd),
+            "identical argv and working directory must match"
+        );
+        assert!(working_directory_matches(&cwd, &cwd));
+    }
+
+    #[test]
+    fn changed_missing_added_or_reordered_arguments_do_not_match() {
+        let base = tempfile::tempdir().expect("private directory");
+        let cwd = owned_cwd(base.path(), "cwd");
+        let argv = args(&["tabby-rs", "--exact", "native_instance_worker"]);
+        let receipts = vec![receipt(&argv, &cwd)];
+
+        let mut changed = argv.clone();
+        changed[2] = "another_worker".to_owned();
+        assert!(
+            !has_record(&receipts, &changed, &cwd),
+            "a changed argument must not match"
+        );
+
+        let missing = argv[..argv.len() - 1].to_vec();
+        assert!(
+            !has_record(&receipts, &missing, &cwd),
+            "a missing argument must not match"
+        );
+
+        let mut added = argv.clone();
+        added.push("--nocapture".to_owned());
+        assert!(
+            !has_record(&receipts, &added, &cwd),
+            "an added argument must not match"
+        );
+
+        let reordered = vec![argv[0].clone(), argv[2].clone(), argv[1].clone()];
+        assert!(
+            !has_record(&receipts, &reordered, &cwd),
+            "a reordered argument list must not match"
+        );
+    }
+
+    #[test]
+    fn same_argv_in_a_different_directory_does_not_match() {
+        let base = tempfile::tempdir().expect("private directory");
+        let cwd_a = owned_cwd(base.path(), "a");
+        let cwd_b = owned_cwd(base.path(), "b");
+        assert_ne!(cwd_a, cwd_b, "two owned working directories must differ");
+
+        let argv = args(&["tabby-rs", "--exact", "native_instance_worker"]);
+        let receipts = vec![receipt(&argv, &cwd_a)];
+
+        assert!(has_record(&receipts, &argv, &cwd_a));
+        assert!(
+            !has_record(&receipts, &argv, &cwd_b),
+            "the same argv in a different directory must not match"
+        );
+        assert!(!working_directory_matches(&cwd_a, &cwd_b));
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn unix_matcher_keeps_exact_string_semantics() {
+        let base = tempfile::tempdir().expect("private directory");
+        let cwd = owned_cwd(base.path(), "cwd");
+        assert!(working_directory_matches(&cwd, &cwd));
+
+        let alias = format!("{cwd}/.");
+        assert_ne!(alias, cwd, "the dot alias is a different string");
+        assert!(
+            !working_directory_matches(&alias, &cwd),
+            "the matcher must not accept a dot alias on Unix"
+        );
+        assert!(!working_directory_matches(&cwd, &alias));
+    }
+
+    #[cfg(windows)]
+    fn normal_spelling(verbatim: &str) -> String {
+        if let Some(rest) = verbatim.strip_prefix(r"\\?\UNC\") {
+            format!(r"\\{rest}")
+        } else if let Some(rest) = verbatim.strip_prefix(r"\\?\") {
+            rest.to_owned()
+        } else {
+            verbatim.to_owned()
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_verbatim_and_normal_spellings_of_one_directory_match_both_ways() {
+        let base = tempfile::tempdir().expect("private directory");
+        let verbatim = fs::canonicalize(base.path())
+            .expect("canonical temp directory")
+            .to_string_lossy()
+            .into_owned();
+        let normal = normal_spelling(&verbatim);
+
+        assert!(
+            !normal.starts_with(r"\\?\"),
+            "the normal spelling must not carry the verbatim prefix"
+        );
+        assert!(Path::new(&normal).is_absolute());
+        assert!(
+            working_directory_matches(&verbatim, &normal),
+            "a verbatim actual path must match its normal expected spelling"
+        );
+        assert!(
+            working_directory_matches(&normal, &verbatim),
+            "a normal actual spelling must match its verbatim expected path"
+        );
+
+        let argv = args(&["tabby-rs", "--exact", "native_instance_worker"]);
+        assert!(
+            has_record(&[receipt(&argv, &verbatim)], &argv, &normal),
+            "a verbatim receipt cwd must match a normal expected cwd"
+        );
+        assert!(
+            has_record(&[receipt(&argv, &normal)], &argv, &verbatim),
+            "a normal receipt cwd must match a verbatim expected cwd"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_missing_paths_never_match_even_when_identical() {
+        let base = tempfile::tempdir().expect("private directory");
+        let existing = owned_cwd(base.path(), "existing");
+        let missing = base
+            .path()
+            .join("does-not-exist")
+            .to_string_lossy()
+            .into_owned();
+        assert!(fs::canonicalize(&existing).is_ok());
+        assert!(!Path::new(&missing).exists());
+        assert!(Path::new(&missing).is_absolute());
+
+        assert!(
+            !working_directory_matches(&missing, &missing),
+            "identical strings for a missing path must not be treated as equal"
+        );
+        assert!(
+            !working_directory_matches(&existing, &missing),
+            "an existing directory must not match a missing path"
+        );
+        assert!(
+            !working_directory_matches(&missing, &existing),
+            "a missing path must not match an existing directory"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_non_absolute_spellings_never_match_an_existing_directory() {
+        let base = tempfile::tempdir().expect("private directory");
+        let existing = owned_cwd(base.path(), "existing");
+        assert!(fs::canonicalize(&existing).is_ok());
+
+        for candidate in ["", "folder", r"C:folder", r"\folder"] {
+            assert!(
+                !Path::new(candidate).is_absolute(),
+                "{candidate:?} must not be treated as absolute"
+            );
+            assert!(
+                !working_directory_matches(candidate, &existing),
+                "{candidate:?} as actual must not match an existing directory"
+            );
+            assert!(
+                !working_directory_matches(&existing, candidate),
+                "{candidate:?} as expected must not match an existing directory"
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_relative_path_never_matches_even_when_it_resolves_to_the_same_directory() {
+        let cwd = env::current_dir().expect("current directory");
+        let base = tempfile::tempdir_in(&cwd).expect("temp directory inside the current directory");
+        let relative = base
+            .path()
+            .file_name()
+            .expect("temp directory name")
+            .to_string_lossy()
+            .into_owned();
+        let canonical = fs::canonicalize(base.path()).expect("canonical temp directory");
+
+        assert!(!Path::new(&relative).is_absolute());
+        assert_eq!(
+            fs::canonicalize(&relative).expect("the relative spelling resolves"),
+            canonical,
+            "the relative spelling resolves to the same real directory"
+        );
+
+        let canonical = canonical.to_string_lossy().into_owned();
+        assert!(
+            !working_directory_matches(&relative, &canonical),
+            "a relative actual path must not match an absolute working directory"
+        );
+        assert!(
+            !working_directory_matches(&canonical, &relative),
+            "an absolute actual path must not match a relative expected path"
+        );
+    }
+}
+
 fn wait_for_receipt(path: &Path, deadline: Instant, argv: &[String], cwd: &str, what: &str) {
     loop {
         let receipts = read_receipts(path);
