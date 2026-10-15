@@ -614,7 +614,7 @@ unsafe extern "system" fn legacy_window_proc(
         WM_NCCREATE => {
             let create = &*(lparam as *const CREATESTRUCTW);
             set_window_context(hwnd, create.lpCreateParams.cast());
-            1
+            DefWindowProcW(hwnd, message, wparam, lparam)
         }
         WM_CREATE => 0,
         WM_COPYDATA => {
