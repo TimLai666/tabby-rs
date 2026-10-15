@@ -16,11 +16,17 @@ const bridge = read('tabby-tauri/src/api/hostBridge.ts')
 const capability = JSON.parse(read('src-tauri/capabilities/default.json'))
 const windowEvents = ['desktop:windowFocused', 'desktop:windowMoved', 'desktop:windowResized',
     'desktop:windowCloseRequested', 'desktop:fileDrop', 'desktop:themeChanged', 'desktop:displayMetricsChanged']
-const scopedEvents = [...windowEvents, 'app:launch']
+const scopedEvents = [...windowEvents, 'desktop:windowCaptionControls', 'app:launch']
 const bridgeCode = ts.transpileModule(read('tabby-tauri/src/services/tauriHostBridge.service.ts'), {
     compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS, experimentalDecorators: true },
 }).outputText
 const listeners = []
+const invocations = []
+const captionResponses = new Map([
+    ['main', { revision: 3, visible: true, scale: 1, layout: { clip: { x: 600, y: 0, width: 137, height: 32 }, buttons: [] },
+        pointer: { hovered: null, pressed: null }, maximized: false, active: true }],
+    ['window-1', null],
+])
 function makeBridge (label) {
     const subscribe = target => async (event, handler) => {
         const entry = { target, event, handler }
@@ -29,6 +35,12 @@ function makeBridge (label) {
     }
     const exports = {}
     vm.runInNewContext(bridgeCode, { exports, window: { __TAURI__: {
+        core: { invoke: async (command, args) => {
+            invocations.push({ label, command, args: JSON.parse(JSON.stringify(args)) })
+            const response = captionResponses.get(label)
+            if (response instanceof Error) throw response
+            return response
+        } },
         event: { listen: subscribe(null) },
         webviewWindow: { getCurrentWebviewWindow: () => ({ listen: subscribe(label) }) },
     } }, require: name => {
@@ -39,6 +51,15 @@ function makeBridge (label) {
     return new exports.TauriHostBridge()
 }
 const windows = [makeBridge('main'), makeBridge('window-1')]
+for (const [i, label] of ['main', 'window-1'].entries()) {
+    assert.equal(await windows[i].invoke('window.getCaptionState', {}), captionResponses.get(label))
+    assert.deepEqual(invocations.at(-1), { label, command: 'window_get_caption_state', args: { request: {} } },
+        'Caption queries use the injected current window, with no caller-supplied label')
+}
+const captionError = new Error('caption window was destroyed')
+captionResponses.set('window-1', captionError)
+await assert.rejects(windows[1].invoke('window.getCaptionState', {}), error => error === captionError,
+    'Native query errors must not turn into an unprepared null state')
 for (const event of scopedEvents) {
     const received = [[], []]
     const unsubscribe = await Promise.all(windows.map((value, i) => value.listen(event, data => received[i].push(data))))
@@ -80,6 +101,15 @@ assert.match(lib, /window\.emit_to\(window\.label\(\), "app:launch", \(\)\)/)
 assert.doesNotMatch(lib, /app\.emit\("app:launch"/)
 assert.doesNotMatch(desktop, /fn main_window\(/)
 assert.match(desktop, /pub fn window_get_state\(\s*window: tauri::WebviewWindow/)
+const captionQuery = desktop.match(/pub async fn window_get_caption_state\([\s\S]*?\r?\n\}/)?.[0]
+assert.ok(captionQuery, 'A caption query must be available without enabling frame controls')
+assert.match(captionQuery, /window: tauri::WebviewWindow/)
+assert.match(captionQuery, /caption_state\(&window\)/)
+assert.doesNotMatch(captionQuery, /prepare_caption_controls|set_caption_frame/,
+    'Reading state must not prepare controls or change the frame')
+assert.match(lib, /\.invoke_handler\(tauri::generate_handler!\[[\s\S]*?\bwindow_get_caption_state,/)
+assert.match(bridge, /'window\.getCaptionState': \{\s*request: Record<string, never>\s*response: WindowsCaptionSnapshot \| null\s*\}/)
+assert.match(bridge, /'desktop:windowCaptionControls': WindowsCaptionSnapshot/)
 assert.match(desktop, /pub fn window_apply_state\(\s*window: tauri::WebviewWindow/)
 assert.match(lib, /pub\(crate\) fn register_desktop_window_events\(window: &tauri::WebviewWindow\)/)
 for (const event of windowEvents) {
