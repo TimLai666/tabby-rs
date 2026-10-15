@@ -26,7 +26,6 @@ $TotalTimeoutSeconds = 10
 $script:checks = [System.Collections.Generic.List[object]]::new()
 $script:errors = [System.Collections.Generic.List[string]]::new()
 $script:ok = $true
-$script:deadline = [DateTime]::UtcNow.AddSeconds($TotalTimeoutSeconds)
 
 function Add-Check {
     param(
@@ -182,6 +181,8 @@ try {
         $form.Show()
         [System.Windows.Forms.Application]::DoEvents()
         $handle = $form.Handle
+        # Start the native observation budget after cold assembly and window preparation.
+        $script:deadline = [DateTime]::UtcNow.AddSeconds($TotalTimeoutSeconds)
 
         $hwndOk = Wait-Until { [Win32Native]::IsWindow($handle) }
         Add-Check -Name 'hwnd-exists' -Ok $hwndOk `
