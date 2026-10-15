@@ -34,6 +34,23 @@ fn message_font() -> Result<LOGFONTW, String> {
     Ok(metrics.lfMessageFont)
 }
 
+// Keep failed queries explicit; an unknown setting is not a disabled setting.
+fn font_smoothing() -> Value {
+    fn query(action: u32) -> Result<u32, String> {
+        let mut value = 0u32;
+        if unsafe { SystemParametersInfoW(action, 0, (&mut value as *mut u32).cast(), 0) } == 0 {
+            return Err(last_error(&format!("SystemParametersInfoW({action:#x})")));
+        }
+        Ok(value)
+    }
+    json!({
+        "enabled": query(SPI_GETFONTSMOOTHING),
+        "type": query(SPI_GETFONTSMOOTHINGTYPE),
+        "orientation": query(SPI_GETFONTSMOOTHINGORIENTATION),
+        "effectiveReferenceRuntimeSettingsVerified": false,
+    })
+}
+
 fn probe_one(output: &Path, label: &str, reference_name: &str) -> Result<Value, String> {
     let original = super::paint::read_png(&output.join(reference_name))?;
     let [x, y, reference_width, reference_height] =
@@ -128,6 +145,9 @@ fn probe_one(output: &Path, label: &str, reference_name: &str) -> Result<Value, 
     let scale = em_px as f64 / units_per_em as f64;
     let mut advance_sum = 0.0f64;
     let mut glyphs = Vec::with_capacity(label.len());
+    let native_face = font.native_font().dwrite_font_face;
+    let mut previous_glyph = None;
+    let mut kerning_pairs = Vec::new();
     for character in label.chars() {
         let glyph = font
             .glyph_for_char(character)
@@ -141,6 +161,18 @@ fn probe_one(output: &Path, label: &str, reference_name: &str) -> Result<Value, 
                 "message font advance for {character:?} must be finite and non-negative, got {advance_x}"
             ));
         }
+        let glyph_u16 = u16::try_from(glyph)
+            .map_err(|error| format!("message font glyph ID is not 16-bit: {error}"))?;
+        if let Some(left) = previous_glyph {
+            let adjustment = native_face
+                .glyph_pair_kerning_adjustment(left, glyph_u16)
+                .map_err(|hresult| format!("GetKerningPairAdjustments: {:#010x}", hresult as u32));
+            kerning_pairs.push(json!({
+                "leftGlyphId": left, "rightGlyphId": glyph_u16,
+                "adjustmentDesignUnits": adjustment,
+            }));
+        }
+        previous_glyph = Some(glyph_u16);
         advance_sum += advance_x as f64;
         glyphs.push(json!({"char": character.to_string(), "glyphId": glyph,
             "advance": advance_x, "pixelAdvance": advance_x as f64 * scale}));
@@ -201,6 +233,14 @@ fn probe_one(output: &Path, label: &str, reference_name: &str) -> Result<Value, 
             "textWidth is the sum of unshaped natural glyph advances scaled to pixels; it is not a complete shaping proof",
         "label": label,
         "systemDpi": unsafe { GetDpiForSystem() },
+        "fontSmoothing": font_smoothing(),
+        "legacyKerning": {
+            "api": "IDWriteFontFace1::GetKerningPairAdjustments",
+            "hasKerningPairs": native_face.has_kerning_pairs(),
+            "zeroMayIndicateUnavailableFontFace1": true,
+            "pairs": kerning_pairs,
+            "shapingVerified": false,
+        },
         "reference": reference_name,
         "referenceTooltip": [x, y, reference_width, reference_height],
         "fontFamily": {

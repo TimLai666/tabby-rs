@@ -36,12 +36,43 @@ app.whenReady().then(async () => {
     window.show()
     window.focus()
     await window.webContents.executeJavaScript('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+    // Canvas widths distinguish contextual spacing from unshaped design advances.
+    // This is a separate renderer diagnostic, not TooltipAura glyph-layout proof.
+    const tooltipTextMetrics = await window.webContents.executeJavaScript(`(() => {
+        const context = document.createElement('canvas').getContext('2d')
+        if (!context || typeof context.fontKerning !== 'string') {
+            throw new Error('Canvas text metrics with fontKerning are unavailable')
+        }
+        const requestedFont = '12px "Segoe UI"'
+        context.font = requestedFont
+        const measurements = []
+        for (const label of ['Maximize', 'Restore']) {
+            for (const requestedKerning of ['normal', 'none']) {
+                context.fontKerning = requestedKerning
+                const metrics = context.measureText(label)
+                const { width, actualBoundingBoxLeft, actualBoundingBoxRight } = metrics
+                if (width <= 0 || ![width, actualBoundingBoxLeft, actualBoundingBoxRight].every(Number.isFinite)) {
+                    throw new Error('Canvas returned invalid tooltip text metrics')
+                }
+                measurements.push({
+                    label, requestedKerning, actualKerning: context.fontKerning,
+                    width, actualBoundingBoxLeft, actualBoundingBoxRight,
+                })
+            }
+        }
+        return {
+            kind: 'canvas-tooltip-text-metrics-diagnostic', diagnosticOnly: true,
+            nativeTooltipMetricsVerified: false, resolvedFontVerified: false,
+            requestedFont, font: context.font, measurements,
+        }
+    })()`)
     const handle = window.getNativeWindowHandle()
     const hwnd = handle.length === 8 ? handle.readBigUInt64LE().toString() : String(handle.readUInt32LE())
     fs.writeFileSync(ready, JSON.stringify({
         kind: 'tabby-pinned-electron-frame-reference', baseline: '14e2d60b9b6dee84a53c37f05eefeb803787de04',
         electron: process.versions.electron, chromium: process.versions.chrome, locale: app.getLocale(),
         processId: process.pid, hwnd, mode, bounds: window.getBounds(), contentBounds: window.getContentBounds(),
+        tooltipTextMetrics,
         controls: mode === 'native' ? 'system' : { color: '#00000000', symbolColor: '#e0e0e0', height: 32 },
     }, null, 2), { flag: 'wx' })
     const timer = setInterval(() => {
