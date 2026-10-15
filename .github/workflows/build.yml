@@ -113,6 +113,9 @@ jobs:
       - name: Test release platform matrix contract
         run: yarn test:release-platform-matrix
 
+      - name: Test caption fixture payload
+        run: node scripts/test-windows-caption-fixture.mjs
+
       - name: Lint
         run: yarn lint --format unix
 
@@ -488,9 +491,15 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $electron -PathType Leaf)) {
             throw 'Pinned Electron executable was not resolved'
           }
+          $captionScript = Join-Path $env:RUNNER_TEMP 'tabby-rs-caption-painter.js'
+          if (Test-Path -LiteralPath $captionScript) { throw 'Caption painter script must be fresh' }
           $exitCode = $null
           try {
-            cargo run --locked --manifest-path src-tauri/Cargo.toml --example windows_frame_native -- --output $output --data-dir $data --electron $electron
+            node scripts/build-windows-caption-fixture.mjs --output $captionScript
+            if ($LASTEXITCODE -ne 0) { throw 'Caption painter script build failed' }
+            cargo test --locked --manifest-path src-tauri/Cargo.toml --example windows_frame_native
+            if ($LASTEXITCODE -ne 0) { throw 'Native frame comparator tests failed' }
+            cargo run --locked --manifest-path src-tauri/Cargo.toml --example windows_frame_native -- --output $output --data-dir $data --electron $electron --caption-script $captionScript
             $exitCode = $LASTEXITCODE
             if ($exitCode -ne 0) { throw "Native Windows frame checks failed: $exitCode" }
           } finally {
@@ -510,6 +519,11 @@ jobs:
               } finally { $stream.Dispose() }
             }
             if (-not $removed) { throw "Owned browser data cleanup failed: $cleanupError" }
+            if (Test-Path -LiteralPath $captionScript) {
+              if (Test-Path $output) {
+                [System.IO.File]::Move($captionScript, (Join-Path $output 'caption-painter.js'))
+              } else { Remove-Item -LiteralPath $captionScript }
+            }
           }
 
       - name: Preserve Windows Wry frame evidence

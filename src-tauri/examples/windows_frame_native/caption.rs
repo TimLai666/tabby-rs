@@ -22,6 +22,32 @@ fn owned(handle: HWND, process: u32) -> Result<(), String> {
     Ok(())
 }
 
+fn hit_test(handle: HWND, x: i32, y: i32, deadline: Instant) -> Result<isize, String> {
+    if Instant::now() >= deadline || i16::try_from(x).is_err() || i16::try_from(y).is_err() {
+        return Err("caption hit scan exceeded its deadline or Win32 coordinates".into());
+    }
+    let packed = ((y as u16 as u32) << 16 | x as u16 as u32) as isize;
+    let mut hit = 0usize;
+    if unsafe {
+        SendMessageTimeoutW(
+            handle,
+            WM_NCHITTEST,
+            0,
+            packed,
+            SMTO_ABORTIFHUNG | SMTO_BLOCK,
+            100,
+            &mut hit,
+        )
+    } == 0
+    {
+        return Err(format!(
+            "reference WM_NCHITTEST failed: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(hit as isize)
+}
+
 fn geometry(handle: HWND, process: u32) -> Result<Value, String> {
     owned(handle, process)?;
     let mut bounds: RECT = unsafe { std::mem::zeroed() };
@@ -44,29 +70,7 @@ fn geometry(handle: HWND, process: u32) -> Result<Value, String> {
         let y = bounds.top + (f64::from(logical_y) * scale).round() as i32;
         let mut runs = Vec::<Value>::new();
         for x in bounds.right - width..bounds.right {
-            if Instant::now() >= deadline || i16::try_from(x).is_err() || i16::try_from(y).is_err()
-            {
-                return Err("caption hit scan exceeded its deadline or Win32 coordinates".into());
-            }
-            let packed = ((y as u16 as u32) << 16 | x as u16 as u32) as isize;
-            let mut hit = 0usize;
-            if unsafe {
-                SendMessageTimeoutW(
-                    handle,
-                    WM_NCHITTEST,
-                    0,
-                    packed,
-                    SMTO_ABORTIFHUNG | SMTO_BLOCK,
-                    100,
-                    &mut hit,
-                )
-            } == 0
-            {
-                return Err(format!(
-                    "reference WM_NCHITTEST failed: {}",
-                    std::io::Error::last_os_error()
-                ));
-            }
+            let hit = hit_test(handle, x, y, deadline)?;
             let relative = x - bounds.left;
             if let Some(last) = runs.last_mut().filter(|last| last["hit"] == hit as isize) {
                 last["end"] = json!(relative + 1);
@@ -76,9 +80,60 @@ fn geometry(handle: HWND, process: u32) -> Result<Value, String> {
         }
         rows.push(json!({"outerLogicalY":logical_y,"screenY":y,"runs":runs}));
     }
+    let middle = rows
+        .iter()
+        .find(|row| row["outerLogicalY"] == 15)
+        .and_then(|row| row["runs"].as_array())
+        .ok_or("caption middle row is missing")?;
+    let buttons = middle
+        .iter()
+        .filter(|run| matches!(run["hit"].as_i64(), Some(8 | 9 | 20)))
+        .collect::<Vec<_>>();
+    let left = buttons
+        .iter()
+        .filter_map(|run| run["start"].as_i64())
+        .min()
+        .ok_or("caption button interval is missing")?;
+    let right = buttons
+        .iter()
+        .filter_map(|run| run["end"].as_i64())
+        .max()
+        .ok_or("caption button interval is missing")?;
+    let minimize = buttons
+        .iter()
+        .find(|run| run["hit"] == HTMINBUTTON)
+        .ok_or("minimize interval is missing")?;
+    let center_x = bounds.left
+        + ((minimize["start"].as_i64().ok_or("minimize start missing")?
+            + minimize["end"].as_i64().ok_or("minimize end missing")?)
+            / 2) as i32;
+    let mut vertical = Vec::new();
+    let scan_height = (64.0 * scale).ceil() as i32;
+    for relative_y in 0..scan_height {
+        if hit_test(handle, center_x, bounds.top + relative_y, deadline)? == HTMINBUTTON as isize {
+            if vertical
+                .last()
+                .is_some_and(|previous| relative_y != previous + 1)
+            {
+                return Err("caption button has a discontinuous vertical interval".into());
+            }
+            vertical.push(relative_y);
+        }
+    }
+    let top = *vertical
+        .first()
+        .ok_or("caption button vertical interval is missing")?;
+    let bottom = *vertical
+        .last()
+        .ok_or("caption button vertical interval is missing")?
+        + 1;
+    if bottom == scan_height {
+        return Err("caption button extends beyond vertical scan".into());
+    }
     owned(handle, process)?;
     Ok(json!({"dpi":dpi,"maximized":unsafe{IsZoomed(handle)}!=0,
-        "outerBounds":[bounds.left,bounds.top,bounds.right,bounds.bottom],"rows":rows}))
+        "outerBounds":[bounds.left,bounds.top,bounds.right,bounds.bottom],"rows":rows,
+        "nativeButtonClip":{"x":left,"y":top,"width":right-left,"height":bottom-top}}))
 }
 
 struct Cursor(Option<POINT>);
@@ -141,7 +196,7 @@ fn hover_maximize(handle: HWND, process: u32, map: &Value, path: &Path) -> Resul
     if unsafe { SetCursorPos(x, y) } == 0 {
         return Err("SetCursorPos failed".into());
     }
-    thread::sleep(Duration::from_millis(500));
+    thread::sleep(Duration::from_millis(1000));
     owned(handle, process)?;
     let before = hover_readback(handle, POINT { x, y })?;
     let target = unsafe { WindowFromPoint(before) };

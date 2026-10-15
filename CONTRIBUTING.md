@@ -17,11 +17,14 @@ yarn test:tauri:types
 yarn test:tauri:bundle
 yarn test:release-documentation
 yarn test:parity-report
+yarn test:windows-caption-fixture
 cargo test --manifest-path src-tauri/Cargo.toml --lib
 cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
 ```
 
 The release gate needs real bundle, installer, benchmark, license, and platform evidence. Do not change a parity manifest from `pending` to `passed` to make a local build green.
+
+The controlled Windows frame driver requires a fresh painter script built with `node scripts/build-windows-caption-fixture.mjs --output <NEW-JS-FILE>`. Pass it with `--caption-script` to `cargo run --manifest-path src-tauri/Cargo.toml --example windows_frame_native --`; use `--help` for all required paths and cleanup ownership. The driver runs the production painter in an isolated WebView and preserves full normal/hover comparisons. Maximized caption comparisons use measured native hit regions when the capture coordinate spaces differ. These fixtures do not establish production desktop or Windows 11 Snap acceptance.
 
 ## Change boundaries
 

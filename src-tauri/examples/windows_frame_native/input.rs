@@ -249,6 +249,22 @@ fn wait_maximized(window: &WebviewWindow, expected: bool) -> Result<Value, Strin
     )
 }
 
+fn hover_maximize(fixture: &Fixture) -> Result<Value, String> {
+    let state = snapshot(&fixture.window)?;
+    let point = client_to_screen(fixture.hwnd as HWND, button_point(&state, "maximize")?)?;
+    move_to(fixture.hwnd as HWND, point)?;
+    // Match the pinned reference's settled hover observation, including tooltips.
+    thread::sleep(Duration::from_millis(1000));
+    poll(
+        || snapshot(&fixture.window),
+        |state| {
+            state["pointer"]["hovered"] == "maximize"
+                && state["pointer"]["pressed"].is_null()
+                && state["active"] == true
+        },
+    )
+}
+
 fn button_point(state: &Value, name: &str) -> Result<POINT, String> {
     let layout = &state["layout"];
     let clip = &layout["clip"];
@@ -600,6 +616,8 @@ fn run_checks(
     other: &WebviewWindow,
     data: &Path,
     output: &Path,
+    payload: &super::paint::Payload,
+    reference: &Value,
 ) -> Vec<Check> {
     let mut checks = Vec::new();
     let initial_owner = super::native::snapshot(owner);
@@ -707,6 +725,21 @@ fn run_checks(
             json!(&doubleclick),
         ));
         doubleclick?;
+        let installed = payload.install(&fixture.window);
+        checks.push(check(
+            "caption-painter-installed",
+            installed.is_ok(),
+            json!(installed),
+        ));
+        checks.extend(payload.probe(
+            &fixture.window,
+            &snapshot(&fixture.window)?,
+            reference,
+            output,
+            "normal",
+        ));
+        let hover = hover_maximize(&fixture)?;
+        checks.extend(payload.probe(&fixture.window, &hover, reference, output, "hover-max"));
         // A second controller must not share pointer, layout, or revision state.
         super::platform::prepare_caption_controls(other)
             .map_err(|error| format!("prepare secondary caption: {error:?}"))?;
@@ -720,11 +753,22 @@ fn run_checks(
                 "maximize did not advance state/revision: {maximized}"
             ));
         }
+        let hover = hover_maximize(&fixture)?;
+        checks.extend(payload.probe(&fixture.window, &hover, reference, output, "hover-restore"));
         let restore_result = click(&fixture, &mut left_button, "maximize")?;
         let restored = wait_maximized(&fixture.window, false)?;
         if restored["revision"].as_u64() <= maximized["revision"].as_u64() {
             return Err(format!("restore did not advance revision: {restored}"));
         }
+        let body = client_to_screen(fixture.hwnd as HWND, POINT { x: 40, y: 120 })?;
+        move_to(fixture.hwnd as HWND, body)?;
+        checks.extend(payload.probe(
+            &fixture.window,
+            &snapshot(&fixture.window)?,
+            reference,
+            output,
+            "restored",
+        ));
         checks.push(check("sendinput-maximize-restore-readback", true, json!({"maximize":max_result,"maximized":maximized,"restore":restore_result,"restored":restored})));
 
         let minimize_result = click(&fixture, &mut left_button, "minimize")?;
@@ -907,6 +951,8 @@ pub fn run(
     other: &tauri::WebviewWindow,
     data: &Path,
     output: &Path,
+    payload: &super::paint::Payload,
+    reference: &Value,
 ) -> Vec<Check> {
-    run_checks(owner, other, data, output)
+    run_checks(owner, other, data, output, payload, reference)
 }

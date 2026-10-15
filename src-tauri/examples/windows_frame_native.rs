@@ -13,6 +13,9 @@ mod input;
 #[path = "windows_frame_native/native.rs"]
 mod native;
 #[cfg(windows)]
+#[path = "windows_frame_native/paint.rs"]
+mod paint;
+#[cfg(windows)]
 #[path = "windows_frame_native/reference.rs"]
 mod reference;
 #[cfg(windows)]
@@ -62,7 +65,7 @@ pub fn check(name: &str, ok: bool, detail: serde_json::Value) -> Check {
 fn main() {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        println!("Windows/Wry native frame checks\nUsage: windows_frame_native --output <NEW-DIRECTORY> --data-dir <NEW-DIRECTORY> --electron <PINNED-ELECTRON.EXE>\nOutput and data paths must be fresh. The caller removes the owned browser data directory after process exit.\nWrites result.json and owned native PNGs, including Electron 38.8.6 reference windows. Returns 1 on failed checks, 2 for invalid arguments or a non-Windows host.\nThese are controlled native fixtures, not full Tabby or Windows 11 Snap acceptance.");
+        println!("Windows/Wry native frame checks\nUsage: windows_frame_native --output <NEW-DIRECTORY> --data-dir <NEW-DIRECTORY> --electron <PINNED-ELECTRON.EXE> --caption-script <BUILT-JS-FILE>\nBuild the script with node scripts/build-windows-caption-fixture.mjs --output <NEW-JS-FILE>.\nOutput and data paths must be fresh. The caller removes the owned browser data directory after process exit.\nWrites result.json and owned native PNGs, including Electron 38.8.6 reference windows. Returns 1 on failed checks, 2 for invalid arguments or a non-Windows host.\nThese are controlled native fixtures, not full Tabby or Windows 11 Snap acceptance.");
         return;
     }
     #[cfg(windows)]
@@ -78,18 +81,24 @@ fn main() {
 fn windows_main(args: Vec<String>) {
     use serde_json::json;
     use std::{fs, path::PathBuf, sync::mpsc::sync_channel, time::Duration};
-    let parse = || -> Result<(PathBuf, PathBuf, PathBuf), String> {
-        if args.len() != 6 {
-            return Err("expected --output, --data-dir and --electron; use --help".into());
+    let parse = || -> Result<(PathBuf, PathBuf, PathBuf, paint::Payload), String> {
+        if args.len() != 8 {
+            return Err(
+                "expected --output, --data-dir, --electron and --caption-script; use --help".into(),
+            );
         }
         let mut output = None;
         let mut data = None;
         let mut electron = None;
+        let mut caption_script = None;
         for pair in args.chunks_exact(2) {
             match pair[0].as_str() {
                 "--output" if output.is_none() => output = Some(PathBuf::from(&pair[1])),
                 "--data-dir" if data.is_none() => data = Some(PathBuf::from(&pair[1])),
                 "--electron" if electron.is_none() => electron = Some(PathBuf::from(&pair[1])),
+                "--caption-script" if caption_script.is_none() => {
+                    caption_script = Some(PathBuf::from(&pair[1]))
+                }
                 _ => return Err("unknown or duplicate option; use --help".into()),
             }
         }
@@ -105,11 +114,12 @@ fn windows_main(args: Vec<String>) {
         if output.exists() || data.exists() {
             return Err("output or data directory already exists".into());
         }
+        let payload = paint::Payload::load(&caption_script.ok_or("missing --caption-script")?)?;
         fs::create_dir(&output).map_err(|e| e.to_string())?;
         fs::create_dir(&data).map_err(|e| e.to_string())?;
-        Ok((output, data, electron))
+        Ok((output, data, electron, payload))
     };
-    let (output, data, electron) = match parse() {
+    let (output, data, electron, payload) = match parse() {
         Ok(paths) => paths,
         Err(error) => {
             eprintln!("{error}");
@@ -144,6 +154,11 @@ fn windows_main(args: Vec<String>) {
         format!("io.tabbyrs.tests.windows-frame.{}", std::process::id());
     context.config_mut().app.windows.clear();
     let reference_checks = reference::run(&electron, &data, &output);
+    let caption_reference = reference_checks
+        .iter()
+        .find(|check| check.name == "pinned-electron-thin")
+        .map(|check| check.detail["Ok"].clone())
+        .unwrap_or(serde_json::Value::Null);
     let (finished, completion) = sync_channel(1);
     let failed_output = output.clone();
     let setup_failed_output = output.clone();
@@ -168,7 +183,7 @@ fn windows_main(args: Vec<String>) {
             let mut results = reference_checks;
             results.push(check("wry-renderer-ready", ready.is_ok(), json!(ready)));
             if ready.is_ok() {
-                results.extend(input::run(&first, &other, &input_data, &output));
+                results.extend(input::run(&first, &other, &input_data, &output, &payload, &caption_reference));
                 results.extend(checks::run(&first, &other, &output));
             } else {
                 let captured = native::capture(&first, &output.join("wry-readiness-failure.png"))
