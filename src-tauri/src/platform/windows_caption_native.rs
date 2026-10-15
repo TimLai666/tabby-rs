@@ -1,7 +1,7 @@
 //! Per-window, non-painting native input for the Windows caption overlay.
 use super::{
-    layout, CaptionButton, CaptionLayout, CaptionMetrics, CaptionPointerEvent, CaptionPointerState,
-    WindowsCaptionSnapshot,
+    events, layout, CaptionButton, CaptionLayout, CaptionMetrics, CaptionPointerEvent,
+    CaptionPointerState, WindowsCaptionSnapshot,
 };
 use crate::error::AppError;
 use std::{
@@ -16,7 +16,6 @@ use std::{
     time::Duration,
 };
 use tauri::Emitter;
-use tokio::sync::watch;
 use windows::{core::IInspectable, Foundation::TypedEventHandler, UI::ViewManagement::UISettings};
 use windows_sys::Win32::{
     Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM},
@@ -75,7 +74,7 @@ struct Context {
     text_scale_cookie: Option<i64>,
     snapshot: WindowsCaptionSnapshot,
     pointer: CaptionPointerState,
-    updates: watch::Sender<WindowsCaptionSnapshot>,
+    updates: events::Sender,
     overlay_rect: Option<OverlayRect>,
     overlay_shown: bool,
 }
@@ -312,7 +311,7 @@ pub fn prepare_caption_controls(window: &tauri::WebviewWindow) -> Result<(), App
             };
 
         let initial = WindowsCaptionSnapshot::default();
-        let (updates, receiver) = watch::channel(initial.clone());
+        let (updates, receiver) = events::channel();
         let context = Context {
             child,
             generation,
@@ -507,24 +506,13 @@ fn append_cleanup_error(primary: AppError, cleanup: Option<AppError>) -> AppErro
 
 fn start_emitter(
     window: tauri::WebviewWindow,
-    mut receiver: watch::Receiver<WindowsCaptionSnapshot>,
+    receiver: events::Receiver,
     active: Arc<AtomicBool>,
 ) {
     let label = window.label().to_owned();
-    tauri::async_runtime::spawn(async move {
-        loop {
-            if !active.load(Ordering::Acquire) {
-                break;
-            }
-            let snapshot = receiver.borrow_and_update().clone();
-            if active.load(Ordering::Acquire) {
-                let _ = window.emit_to(&label, EVENT_NAME, snapshot);
-            }
-            if receiver.changed().await.is_err() {
-                break;
-            }
-        }
-    });
+    tauri::async_runtime::spawn(events::deliver(receiver, active, move |snapshot| {
+        let _ = window.emit_to(&label, EVENT_NAME, snapshot);
+    }));
 }
 
 fn refresh(parent: HWND) -> Result<(), AppError> {
@@ -708,7 +696,7 @@ fn refresh(parent: HWND) -> Result<(), AppError> {
         unsafe { ReleaseCapture() };
     }
     if let (Some(snapshot), Some(updates)) = (changed, updates) {
-        updates.send_replace(snapshot);
+        let _ = events::publish(&updates, snapshot);
     }
     Ok(())
 }
@@ -757,7 +745,7 @@ fn update_pointer(parent: HWND, event: CaptionPointerEvent) -> Option<CaptionBut
         }
     };
     if let Some((updates, snapshot)) = changed {
-        updates.send_replace(snapshot);
+        let _ = events::publish(&updates, snapshot);
     }
     activation
 }

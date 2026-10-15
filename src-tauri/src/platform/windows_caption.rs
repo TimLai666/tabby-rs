@@ -183,6 +183,10 @@ pub struct WindowsCaptionSnapshot {
     pub active: bool,
 }
 
+#[cfg(any(windows, test))]
+#[path = "windows_caption_events.rs"]
+mod events;
+
 #[cfg(windows)]
 #[path = "windows_caption_native.rs"]
 mod native;
