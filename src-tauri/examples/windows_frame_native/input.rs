@@ -15,13 +15,13 @@ use windows_sys::Win32::{
     Foundation::{HWND, POINT},
     UI::{
         Input::KeyboardAndMouse::{
-            GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_LEFTDOWN,
-            MOUSEEVENTF_LEFTUP, MOUSEINPUT, VK_LBUTTON,
+            GetAsyncKeyState, GetCapture, SendInput, INPUT, INPUT_0, INPUT_MOUSE,
+            MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEINPUT, VK_LBUTTON,
         },
         WindowsAndMessaging::{
-            GetAncestor, GetCursorPos, GetForegroundWindow, GetWindowThreadProcessId, IsWindow,
-            SetCursorPos, SetForegroundWindow, WindowFromPoint, GA_ROOT, HTCLOSE, HTMAXBUTTON,
-            HTMINBUTTON, WM_NCHITTEST,
+            GetAncestor, GetCursorPos, GetForegroundWindow, GetMenuState, GetSystemMenu,
+            GetWindowThreadProcessId, IsWindow, SetCursorPos, SetForegroundWindow, WindowFromPoint,
+            GA_ROOT, HTCLOSE, HTMAXBUTTON, HTMINBUTTON, MF_BYCOMMAND, SC_CLOSE, WM_NCHITTEST,
         },
     },
 };
@@ -140,22 +140,25 @@ fn fail(error: impl std::fmt::Display) -> String {
     error.to_string()
 }
 
-fn poll<T>(
+#[track_caller]
+fn poll<T: std::fmt::Debug>(
     mut read: impl FnMut() -> Result<T, String>,
     mut ready: impl FnMut(&T) -> bool,
 ) -> Result<T, String> {
+    let caller = std::panic::Location::caller();
     let deadline = Instant::now() + TIMEOUT;
     let mut last_error = None;
+    let mut last_value = None;
     loop {
         match read() {
             Ok(value) if ready(&value) => return Ok(value),
-            Ok(_) => {}
+            Ok(value) => last_value = Some(format!("{value:?}")),
             Err(error) => last_error = Some(error),
         }
         if Instant::now() >= deadline {
-            return Err(
-                last_error.unwrap_or_else(|| "timed out waiting for native readback".into())
-            );
+            return Err(format!(
+                "timed out waiting for native readback at {caller}; last value={last_value:?}; last error={last_error:?}"
+            ));
         }
         thread::sleep(Duration::from_millis(20));
     }
@@ -770,10 +773,28 @@ fn run_checks(
         Ok(())
     })();
     if let Err(error) = work {
+        let handle = fixture.hwnd;
+        let native_input = super::native::on_main(&fixture.window, move |_| {
+            let parent = handle as HWND;
+            let mut process = 0;
+            unsafe { GetWindowThreadProcessId(parent, &mut process) };
+            if unsafe { IsWindow(parent) } == 0 || process != std::process::id() {
+                return Err("input fixture was destroyed before failure readback".into());
+            }
+            let menu = unsafe { GetSystemMenu(parent, 0) };
+            let close_menu_state = unsafe { GetMenuState(menu, SC_CLOSE, MF_BYCOMMAND) };
+            Ok(json!({
+                "captureHwnd":unsafe { GetCapture() } as usize,
+                "leftButtonDown":unsafe { GetAsyncKeyState(VK_LBUTTON as i32) < 0 },
+                "closeMenuPresent":!menu.is_null(),
+                "closeMenuState":close_menu_state,
+                "closeMenuReadFailed":close_menu_state == u32::MAX,
+            }))
+        });
         checks.push(check(
             "caption-physical-input-sequence",
             false,
-            json!({"error":error,"sequenceStopped":true}),
+            json!({"error":error,"sequenceStopped":true,"nativeInputAtFailure":native_input}),
         ));
     }
     let input_cleanup = left_button.cleanup();
