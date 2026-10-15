@@ -99,19 +99,36 @@ fn watcher_detects_an_editor_replacing_the_file() {
     let transfers = TransferManager::default();
     let edit = downloaded(&manager, &transfers, b"original");
     let (send, receive) = mpsc::channel();
+    let (changed, change_seen) = mpsc::channel();
     manager
         .watch(&edit.id, move |event| {
+            let is_change = event.event == "change";
             let _ = send.send(event);
+            if is_change {
+                let _ = changed.send(());
+            }
         })
         .unwrap();
+    // Keep an earlier in-place notification queued when the replacement arrives.
+    fs::write(&edit.path, b"before replacement").unwrap();
+    change_seen.recv_timeout(Duration::from_secs(8)).unwrap();
     let replacement = Path::new(&edit.path).with_extension("replacement");
     fs::write(&replacement, [0, 255, 8]).unwrap();
     #[cfg(windows)]
     fs::remove_file(&edit.path).unwrap();
     fs::rename(&replacement, &edit.path).unwrap();
-    let event = receive.recv_timeout(Duration::from_secs(8)).unwrap();
-    assert_eq!(event.id, edit.id);
-    assert_eq!(event.event, "rename");
+    let deadline = Instant::now() + Duration::from_secs(8);
+    loop {
+        let event = receive
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .expect("replacement notification was not observed within eight seconds");
+        assert_eq!(event.id, edit.id);
+        match event.event.as_str() {
+            "rename" => break,
+            "change" => {}
+            _ => panic!("unexpected editor notification: {event:?}"),
+        }
+    }
     assert_eq!(fs::read(&edit.path).unwrap(), [0, 255, 8]);
     manager.stop(&edit.id).unwrap();
     assert_eq!(fs::read(&edit.path).unwrap(), [0, 255, 8]);
