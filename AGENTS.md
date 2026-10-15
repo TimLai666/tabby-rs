@@ -1,16 +1,23 @@
 # Follow-ups
 
-## Pending — macOS quit confirmation and portable WebView storage
+## Pending — application quit acceptance and portable WebView storage
 
-- Before accepting macOS application quit, compare an active SSH profile with
-  `warnOnClose: true` against fixed upstream `14e2d60`. A desktop check on
-  `3f139305` exits on Cmd+Q without a warning; upstream 1.0.235 shows
-  "Disconnect from 127.0.0.1?". Cancelling upstream's prompt preserves SSH
-  terminal input. Both apps clean up their tested SSH and PTY children on exit.
-  The Native check uses an unbundled executable. Trace the actual ExitRequested,
-  CloseRequested, scoped renderer event, and canClose state, then repeat with a
-  packaged app before choosing a fix. The two SSH canClose methods are equivalent;
-  passing their separate fixtures does not verify the macOS quit adapter.
+- Read `docs/architecture/identity-and-launch.md` before changing application quit.
+  Keep macOS AppKit termination routed through the normal Tauri exit request.
+  Preserve the existing Tao delegate object, layout, and inherited callbacks.
+  `test:telnet-tab-controls` includes a real Cocoa probe; its AppHandle boundary
+  records requests, while the existing callback fixture covers renderer decisions.
+  Packaged macOS arm64 checks verify Cmd+Q, application-menu Quit, and Dock Quit
+  with live SSH and `warnOnClose: true`. Cancellation preserves working input,
+  repeated Cmd+Q while a warning is pending leaves one warning, and a later Quit
+  can ask again. Two live SSH windows can approve one close and cancel the other;
+  the surviving connection remains usable. Final approval removes the app and
+  its tested SSH/session children. The prompt matches fixed upstream `14e2d60`
+  / 1.0.235's observed Cmd+Q warning and cancellation behavior.
+  These checks use an ad-hoc signed app, an isolated smoke-test data directory,
+  and an incognito WebView. They do not accept installers, production persistence,
+  zero-window quit, forced startup quit, restart, or other supported platforms.
+  Compare the remaining desktop cases with upstream before full acceptance.
 - Before accepting portable profile isolation, verify the WebView storage
   namespace as well as the portable config path. A fresh portable config can
   display an earlier recent profile through `localStorage.recentProfiles`
@@ -930,8 +937,9 @@
   tabs before the window. macOS desktop native-window closure with two Telnet tabs
   displays the actual translated warning. Cancelling keeps both tabs and the open
   connection usable; confirming closes the window and its remaining TCP connection.
-  Two-window local PTY checks also verify process cleanup. SSH/serial resources,
-  cancellation across multiple live windows, and other platforms need acceptance.
+  Two-window local PTY checks also verify process cleanup. Packaged macOS SSH
+  application-quit checks above cover cancellation across two live windows and
+  tested session cleanup. Serial resources and other platforms need acceptance.
   Normal application exit requests now prevent exit while windows remain and ask each
   window to close through this existing confirmation flow. Platform-level quit during
   startup uses `force: true` to preserve immediate exit after encrypted-configuration
@@ -940,10 +948,11 @@
   `test:telnet-tab-controls` compiles the exact native callback with framework boundary
   fakes and executes the actual shared AppService methods. It covers pending warnings,
   cancellation/retry, multiple tabs/windows, failed close requests, and marker timing.
-  Native Quit/Cmd+Q gestures, repeated Quit while a warning is pending, session cleanup,
-  and supported-platform desktop acceptance remain pending. Compare repeated requests
-  with upstream; shared closeWindow has no in-flight guard. These controlled callback
-  and method checks do not establish desktop acceptance.
+  The additional macOS probe runs the actual quit adapter against Cocoa termination,
+  checks original callbacks/ivars and delegate identity, and rejects unsupported
+  installation states. It explicitly skips Cocoa checks on other platforms.
+  Keep the packaged macOS checks above separate from these controlled fixtures;
+  the remaining platform and startup/restart desktop cases are still pending.
 - Window event producers must use `emit_to(label)` and the renderer must listen
   through `getCurrentWebviewWindow().listen`. Tauri's default Any listener still
   receives events sent to another label. Keep both halves for focus, movement,

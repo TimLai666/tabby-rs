@@ -3,6 +3,9 @@ use crate::{desktop::VibrancyOptions, error::AppError};
 mod frame;
 pub use frame::set_window_frame;
 
+#[cfg(target_os = "macos")]
+pub(crate) mod macos_quit;
+
 #[cfg(all(test, target_os = "macos"))]
 mod material_tests;
 

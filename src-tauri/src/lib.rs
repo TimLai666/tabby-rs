@@ -363,6 +363,8 @@ pub fn run() {
                 save_state(storage_paths.state_file(), &persisted_state)?;
             }
             app.manage(AppState::new(paths, initial_launch, persisted_state));
+            #[cfg(target_os = "macos")]
+            platform::macos_quit::install(app.handle())?;
             app.manage(Arc::new(SecretState::default()));
             app.manage(Arc::new(PtyManager::default()));
             app.manage(Arc::new(SshManager::new(known_hosts_path)));
