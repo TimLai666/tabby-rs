@@ -63,6 +63,10 @@ pub(crate) fn portable_instance_id(
     )))
 }
 
+#[cfg(test)]
+#[path = "portable_instance_tests.rs"]
+mod portable_instance_tests;
+
 impl AppPaths {
     pub fn detect(
         app: &tauri::AppHandle,
