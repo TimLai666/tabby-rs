@@ -212,8 +212,10 @@ fn capture_tooltip(
                 "owner":unsafe{GetWindow(hwnd,GW_OWNER)} as usize,
                 "screenBounds":[bounds.left,bounds.top,bounds.right,bounds.bottom]}));
         }
-        if root_owner != search.parent
-            || !(18..=800).contains(&width)
+        // Electron creates TooltipAura with a context but no HWND parent.
+        // Associate this sole popup through the owned reference process and cursor;
+        // keep its Win32 owner chain as evidence rather than requiring one.
+        if !(18..=800).contains(&width)
             || !(10..=96).contains(&height)
             || (i64::from(bounds.top) - i64::from(search.cursor.y)).abs() > 96
             || (i64::from(bounds.left) - i64::from(search.cursor.x)).abs() > 800
@@ -226,7 +228,8 @@ fn capture_tooltip(
         search.candidates.push((
             hwnd as usize,
             json!({"hwnd":hwnd as usize,"processId":process,
-            "owner":unsafe{GetWindow(hwnd,GW_OWNER)} as usize,"rootOwner":search.parent as usize,
+            "owner":unsafe{GetWindow(hwnd,GW_OWNER)} as usize,"rootOwner":root_owner as usize,
+            "referenceWindow":search.parent as usize,
             "class":String::from_utf16_lossy(&class[..length]),"dpi":unsafe{GetDpiForWindow(hwnd)},
             "screenBounds":[bounds.left,bounds.top,bounds.right,bounds.bottom]}),
         ));
