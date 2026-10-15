@@ -23,6 +23,9 @@ mod reference;
 mod renderer;
 
 #[cfg(windows)]
+#[path = "windows_frame_native/tooltip_dwrite.rs"]
+mod tooltip_dwrite;
+#[cfg(windows)]
 #[path = "windows_frame_native/tooltip_gdi.rs"]
 mod tooltip_gdi;
 #[cfg(any(windows, test))]
@@ -162,6 +165,7 @@ fn windows_main(args: Vec<String>) {
     context.config_mut().app.windows.clear();
     let mut reference_checks = reference::run(&electron, &data, &output);
     reference_checks.extend(tooltip_gdi::probe(&output));
+    reference_checks.extend(tooltip_dwrite::probe(&output));
     let caption_reference = reference_checks
         .iter()
         .find(|check| check.name == "pinned-electron-thin")
