@@ -34,7 +34,7 @@ pub struct LegacyCliArguments {
     pub commands: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub directory: Option<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub command: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub profile_name: Option<String>,
