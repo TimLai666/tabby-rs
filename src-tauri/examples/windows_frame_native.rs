@@ -9,6 +9,9 @@ mod native;
 #[cfg(windows)]
 #[path = "windows_frame_native/reference.rs"]
 mod reference;
+#[cfg(windows)]
+#[path = "windows_frame_native/renderer.rs"]
+mod renderer;
 
 #[cfg(windows)]
 mod desktop {
@@ -130,44 +133,29 @@ fn windows_main(args: Vec<String>) {
     let built = tauri::Builder::default().setup(move |app| {
         let setup_finished = finished.clone();
         let startup = (|| -> Result<(), Box<dyn std::error::Error>> {
-        let (ready, ready_rx) = sync_channel(1);
-        let script = r##"(() => {
-            const paint = () => {
-                if (window.__tabbyFrameProbePainted) return;
-                window.__tabbyFrameProbePainted = true;
-                document.documentElement.style.cssText = 'margin:0;width:100%;height:100%;background:#1377d1';
-                document.body.style.cssText = 'margin:0;width:100%;height:100%;background:#1377d1';
-                document.body.innerHTML = '<div style="position:absolute;right:46px;top:0;width:46px;height:32px;background:repeating-conic-gradient(#e1a42b 0 25%,#6c294c 0 50%) 0/8px 8px"></div>';
-                requestAnimationFrame(() => requestAnimationFrame(() => { location.href = 'https://tabby-rs-frame-probe.invalid/ready'; }));
-            };
-            if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', paint, {once:true});
-            else paint();
-        })();"##;
         let first = tauri::WebviewWindowBuilder::new(app, "frameMain", tauri::WebviewUrl::External("about:blank".parse()?))
             .title("Tabby RS controlled Wry frame probe")
             .inner_size(800.0, 580.0).position(80.0, 60.0)
             .decorations(false).transparent(true).visible(true).always_on_top(true)
-            .incognito(true).data_directory(data.clone()).initialization_script(script)
-            .on_page_load(move |window, payload| {
-                if payload.event() == tauri::webview::PageLoadEvent::Finished { let _ = window.eval(script); }
-            })
-            .on_navigation(move |url| {
-                if url.as_str() == "https://tabby-rs-frame-probe.invalid/ready" { let _ = ready.try_send(()); return false; }
-                url.as_str() == "about:blank"
-            }).build()?;
+            .incognito(true).data_directory(data.clone())
+            .on_navigation(|url| url.as_str() == "about:blank")
+            .build()?;
         let other = tauri::WebviewWindowBuilder::new(app, "frameSecondary", tauri::WebviewUrl::External("about:blank".parse()?))
             .title("Tabby RS isolated secondary frame probe")
             .inner_size(640.0, 480.0).visible(false).incognito(true).data_directory(data)
             .build()?;
         let app_handle = app.handle().clone();
         std::thread::spawn(move || {
-            let native_results = if ready_rx.recv_timeout(Duration::from_secs(20)).is_ok() {
-                checks::run(&first, &other, &output)
-            } else {
-                vec![check("wry-renderer-ready", false, json!("controlled DOM did not signal readiness"))]
-            };
+            let ready = renderer::wait(&first);
             let mut results = reference_checks;
-            results.extend(native_results);
+            results.push(check("wry-renderer-ready", ready.is_ok(), json!(ready)));
+            if ready.is_ok() {
+                results.extend(checks::run(&first, &other, &output));
+            } else {
+                let captured = native::capture(&first, &output.join("wry-readiness-failure.png"))
+                    .map(|image| json!({"width": image.width, "height": image.height, "bodyPixel":image.pixel(20,100)}));
+                results.push(check("wry-readiness-failure-capture", captured.is_ok(), json!(captured)));
+            }
             for window in [&first, &other] {
                 let closed = native::destroy(window);
                 results.push(check(&format!("destroy-{}", window.label()), closed.is_ok(), json!(closed)));
