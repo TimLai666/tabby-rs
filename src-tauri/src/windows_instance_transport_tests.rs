@@ -87,19 +87,16 @@ fn modern_owner_accepts_legacy_and_json_and_recovers_after_invalid_data() {
     for (data_id, bytes) in invalid {
         assert_eq!(send_copydata(hwnd, data_id, &bytes), Some(0));
     }
-    assert_ne!(
-        send_empty_copydata(hwnd, JSON_DATA_ID),
-        Some(1),
+    assert!(
+        matches!(send_empty_copydata(hwnd, JSON_DATA_ID), None | Some(0)),
         "an empty payload cannot be acknowledged as handled"
     );
-    assert_ne!(
-        send_null_copydata_struct(hwnd),
-        Some(1),
+    assert!(
+        matches!(send_null_copydata_struct(hwnd), None | Some(0)),
         "a null WM_COPYDATA lParam cannot be acknowledged as handled"
     );
-    assert_ne!(
-        send_null_copydata(hwnd, JSON_DATA_ID),
-        Some(1),
+    assert!(
+        matches!(send_null_copydata(hwnd, JSON_DATA_ID), None | Some(0)),
         "a null native payload pointer cannot be acknowledged as handled"
     );
 
