@@ -530,7 +530,24 @@ fn has_exact_argv(receipts: &[Receipt], payload: &str) -> bool {
 fn has_record(receipts: &[Receipt], argv: &[String], cwd: &str) -> bool {
     receipts
         .iter()
-        .any(|receipt| receipt.argv == argv && receipt.cwd == cwd)
+        .any(|receipt| receipt.argv == argv && working_directory_matches(&receipt.cwd, cwd))
+}
+
+fn working_directory_matches(actual: &str, expected: &str) -> bool {
+    #[cfg(windows)]
+    {
+        if !Path::new(actual).is_absolute() || !Path::new(expected).is_absolute() {
+            return false;
+        }
+        match (fs::canonicalize(actual), fs::canonicalize(expected)) {
+            (Ok(actual), Ok(expected)) => actual == expected,
+            _ => false,
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        actual == expected
+    }
 }
 
 fn wait_for_receipt(path: &Path, deadline: Instant, argv: &[String], cwd: &str, what: &str) {
