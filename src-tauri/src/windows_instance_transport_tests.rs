@@ -21,10 +21,10 @@ use windows_sys::Win32::{
         Threading::{CreateMutexW, ReleaseMutex},
     },
     UI::WindowsAndMessaging::{
-        CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, PeekMessageW,
-        PostMessageW, RegisterClassExW, SendMessageTimeoutW, TranslateMessage, UnregisterClassW,
-        CREATESTRUCTW, GWLP_USERDATA, MSG, PM_REMOVE, SMTO_ABORTIFHUNG, WM_COPYDATA, WM_CREATE,
-        WM_DESTROY, WM_NCCREATE, WNDCLASSEXW,
+        CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetWindowTextW,
+        PeekMessageW, PostMessageW, RegisterClassExW, SendMessageTimeoutW, TranslateMessage,
+        UnregisterClassW, CREATESTRUCTW, GWLP_USERDATA, MSG, PM_REMOVE, SMTO_ABORTIFHUNG,
+        WM_COPYDATA, WM_CREATE, WM_DESTROY, WM_NCCREATE, WNDCLASSEXW,
     },
 };
 
@@ -536,6 +536,19 @@ impl LegacyServer {
             assert!(!hwnd.is_null(), "create owned legacy hidden window");
             std::mem::forget(context);
             let _window = OwnedWindow(hwnd);
+            let mut stored_title = vec![0u16; window_name.len()];
+            let title_len =
+                GetWindowTextW(hwnd, stored_title.as_mut_ptr(), stored_title.len() as i32);
+            assert_eq!(title_len as usize, window_name.len() - 1);
+            assert_eq!(stored_title, window_name, "legacy window retains its title");
+            assert_eq!(
+                windows_sys::Win32::UI::WindowsAndMessaging::FindWindowW(
+                    class_name.as_ptr(),
+                    window_name.as_ptr(),
+                ),
+                hwnd,
+                "legacy owner is discoverable by the production class/title lookup"
+            );
             ready_tx.send(hwnd as isize).expect("publish legacy HWND");
             let mut message: MSG = std::mem::zeroed();
             while !thread_stop.load(Ordering::Acquire) {
