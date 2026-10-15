@@ -34,3 +34,7 @@ pub(super) async fn deliver(
         emit(snapshot);
     }
 }
+
+#[cfg(test)]
+#[path = "windows_caption_events_tests.rs"]
+mod tests;
