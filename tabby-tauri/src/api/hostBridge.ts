@@ -1,6 +1,8 @@
 import { InjectionToken } from '@angular/core'
 import { BootstrapData, MessageBoxOptions, MessageBoxResult, NodeToolchainStatus, PluginInfo, StoredVault, TransferDescriptor } from 'tabby-core'
 
+import type { WindowsCaptionSnapshot } from './windowsCaption'
+
 export type UpdateChannel = 'stable' | 'nightly'
 
 export interface UpdateInfo {
@@ -967,6 +969,10 @@ export interface HostRequestMap {
         request: Record<string, never>
         response: WindowStateSnapshot
     }
+    'window.getCaptionState': {
+        request: Record<string, never>
+        response: WindowsCaptionSnapshot | null
+    }
     'window.applyState': {
         request: WindowStatePatch
         response: null
@@ -1319,6 +1325,7 @@ export interface HostEventMap {
     'desktop:windowMoved': { x: number; y: number }
     'desktop:windowResized': { width: number; height: number }
     'desktop:windowCloseRequested': null
+    'desktop:windowCaptionControls': WindowsCaptionSnapshot
     'desktop:fileDrop': { paths: string[]; x: number; y: number }
     'desktop:fileDrag': { x: number; y: number }|null
     'desktop:themeChanged': 'system' | 'light' | 'dark'

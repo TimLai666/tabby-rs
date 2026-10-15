@@ -97,6 +97,30 @@ pub fn window_get_state(
     window_state(&window)
 }
 
+/// Reads the invoking window's prepared caption controls without creating them.
+#[tauri::command]
+pub async fn window_get_caption_state(
+    window: tauri::WebviewWindow,
+    _request: serde_json::Value,
+) -> Result<Option<serde_json::Value>, AppError> {
+    #[cfg(windows)]
+    {
+        tauri::async_runtime::spawn_blocking(move || {
+            crate::platform::caption_state(&window)?
+                .map(serde_json::to_value)
+                .transpose()
+                .map_err(io_error)
+        })
+        .await
+        .map_err(io_error)?
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = window;
+        Ok(None)
+    }
+}
+
 #[tauri::command]
 pub fn window_apply_state(
     window: tauri::WebviewWindow,
