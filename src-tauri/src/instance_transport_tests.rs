@@ -124,7 +124,8 @@ fn native_instance_transport_is_scoped_and_cleanup_preserves_other_instances() {
     wait_for_receipt(
         &a.receipt,
         deadline,
-        |receipts| has_record(receipts, &a2.expected_argv, &cwd_a2),
+        &a2.expected_argv,
+        &cwd_a2,
         "A2 handed to A",
     );
 
@@ -141,7 +142,8 @@ fn native_instance_transport_is_scoped_and_cleanup_preserves_other_instances() {
     wait_for_receipt(
         &b.receipt,
         deadline,
-        |receipts| has_record(receipts, &b2.expected_argv, &cwd_b2),
+        &b2.expected_argv,
+        &cwd_b2,
         "B2 handed to B",
     );
 
@@ -180,7 +182,8 @@ fn native_instance_transport_is_scoped_and_cleanup_preserves_other_instances() {
     wait_for_receipt(
         &c.receipt,
         deadline,
-        |receipts| has_record(receipts, &c2.expected_argv, &cwd_c2),
+        &c2.expected_argv,
+        &cwd_c2,
         "default same-identifier handoff",
     );
 
@@ -221,7 +224,8 @@ fn native_instance_transport_is_scoped_and_cleanup_preserves_other_instances() {
     wait_for_receipt(
         &b.receipt,
         deadline,
-        |receipts| has_record(receipts, &b3.expected_argv, &cwd_b3),
+        &b3.expected_argv,
+        &cwd_b3,
         "B3 handed to B after A stopped",
     );
     let mut c2_again = spawn_worker(
@@ -237,7 +241,8 @@ fn native_instance_transport_is_scoped_and_cleanup_preserves_other_instances() {
     wait_for_receipt(
         &c.receipt,
         deadline,
-        |receipts| has_record(receipts, &c2_again.expected_argv, &cwd_c2),
+        &c2_again.expected_argv,
+        &cwd_c2,
         "C2 handoff after A stopped",
     );
     stop_primary(&mut c, deadline);
@@ -306,7 +311,9 @@ fn build_plugin(override_id: Option<&str>, receipt: PathBuf) -> TauriPlugin<Mock
             .open(&receipt)
         {
             Ok(mut file) => {
-                let _ = writeln!(file, "{record}");
+                if let Err(error) = writeln!(file, "{record}") {
+                    eprintln!("instance worker could not write a receipt: {error}");
+                }
             }
             Err(error) => eprintln!("instance worker could not record a receipt: {error}"),
         }
@@ -526,21 +533,20 @@ fn has_record(receipts: &[Receipt], argv: &[String], cwd: &str) -> bool {
         .any(|receipt| receipt.argv == argv && receipt.cwd == cwd)
 }
 
-fn wait_for_receipt(
-    path: &Path,
-    deadline: Instant,
-    predicate: impl Fn(&[Receipt]) -> bool,
-    what: &str,
-) {
-    let mut receipts = Vec::new();
-    wait_until(
-        deadline,
-        || {
-            receipts = read_receipts(path);
-            predicate(&receipts)
-        },
-        what,
-    );
+fn wait_for_receipt(path: &Path, deadline: Instant, argv: &[String], cwd: &str, what: &str) {
+    loop {
+        let receipts = read_receipts(path);
+        if has_record(&receipts, argv, cwd) {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for {what}; expected argv={argv:?}, cwd={cwd:?}; received={receipts:#?}; receipt={}; raw={:?}",
+            path.display(),
+            fs::read_to_string(path).map(|raw| raw.chars().take(8192).collect::<String>())
+        );
+        thread::sleep(POLL);
+    }
 }
 
 fn wait_until(deadline: Instant, mut condition: impl FnMut() -> bool, what: &str) {
