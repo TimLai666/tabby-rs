@@ -2,6 +2,7 @@ import { Injectable } from '@angular/core'
 import { NgbModal } from '@ng-bootstrap/ng-bootstrap'
 import { AsyncSubject, lastValueFrom, Observable, Subject } from 'rxjs'
 import {
+    NotificationsService,
     StoredVault,
     UnlockVaultModalComponent,
     Vault,
@@ -48,6 +49,7 @@ export class TauriVaultService {
     constructor (
         private bridge: HostBridge,
         private ngbModal: NgbModal,
+        private notifications: NotificationsService,
     ) { }
 
     async setEnabled (enabled: boolean, passphrase?: string): Promise<void> {
@@ -100,6 +102,11 @@ export class TauriVaultService {
             stored: storage,
             passphrase: unlock.passphrase,
             rememberForSeconds: unlock.rememberForSeconds,
+        }).catch(error => {
+            if (error?.code === 'permissionDenied' && error.details === 'vault unlock failed') {
+                this.notifications.error('Incorrect passphrase')
+            }
+            throw error
         })
         this.markOpen(unlock.rememberForSeconds)
         return this.snapshot()

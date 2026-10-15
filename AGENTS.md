@@ -1,5 +1,24 @@
 # Follow-ups
 
+## Pending — macOS quit confirmation and portable WebView storage
+
+- Before accepting macOS application quit, compare an active SSH profile with
+  `warnOnClose: true` against fixed upstream `14e2d60`. A desktop check on
+  `3f139305` exits on Cmd+Q without a warning; upstream 1.0.235 shows
+  "Disconnect from 127.0.0.1?". Cancelling upstream's prompt preserves SSH
+  terminal input. Both apps clean up their tested SSH and PTY children on exit.
+  The Native check uses an unbundled executable. Trace the actual ExitRequested,
+  CloseRequested, scoped renderer event, and canClose state, then repeat with a
+  packaged app before choosing a fix. The two SSH canClose methods are equivalent;
+  passing their separate fixtures does not verify the macOS quit adapter.
+- Before accepting portable profile isolation, verify the WebView storage
+  namespace as well as the portable config path. A fresh portable config can
+  display an earlier recent profile through `localStorage.recentProfiles`
+  (`tabby-core/src/services/profiles.service.ts`). Incognito WebView overrides
+  isolate synthetic desktop tests, but do not establish production persistence
+  or profile-cache isolation. Keep user configuration and existing WebView data
+  intact while reproducing this issue.
+
 ## Pending — Windows runtime and packaging acceptance
 
 - CI run `36341774362` on `4aa71925` fails before Windows plugin lifecycle tests
@@ -750,6 +769,12 @@
   SSH authentication parity.
 
 ## Pending — SSH credential and username follow-through
+
+- Before accepting full Vault diagnostics parity, compare wrong-passphrase failures
+  with fixed upstream `14e2d60`. Native unlock now displays the shared in-app
+  "Incorrect passphrase" notification and permits a successful retry. Its SSH
+  terminal still reports "SSH session was closed", while upstream shows BAD_DECRYPT.
+  Do not infer full diagnostic, expiration, or persistence parity from the toast fix.
 
 - Jump chains now connect outermost first, without the former three-hop limit, and use
   effective profile settings including group defaults and built-in profiles. Renderer

@@ -12,7 +12,6 @@ import TabbyCoreModule, {
     HotkeyProvider,
     LogService,
     PlatformService,
-    NotificationsService,
     ProfileProvider,
     RuntimeCapabilitiesService,
     TabContextMenuItemProvider,
@@ -65,7 +64,6 @@ import { TauriHostBridge } from './services/tauriHostBridge.service'
 import { TauriUACService } from './services/uac.service'
 import { TauriUpdaterService } from './services/updater.service'
 import { TauriRuntimeCapabilitiesService } from './services/runtimeCapabilities.service'
-import { TauriNotificationsService } from './services/notifications.service'
 import { TauriVaultService } from './services/vault.service'
 import { TauriPathDropDecorator } from './pathDrop'
 import { TauriFileDropDirective } from './fileDrop.directive'
@@ -139,8 +137,6 @@ function initializeDesktop (service: TauriDesktopIntegrationService, platform: T
         { provide: HostBridge, useExisting: TauriHostBridge },
         TauriPlatformService,
         { provide: PlatformService, useExisting: TauriPlatformService },
-        TauriNotificationsService,
-        { provide: NotificationsService, useExisting: TauriNotificationsService },
         TauriHostAppService,
         { provide: HostAppService, useExisting: TauriHostAppService },
         TauriHostWindowService,
