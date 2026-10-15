@@ -20,6 +20,7 @@ pub fn wait(window: &tauri::WebviewWindow) -> Result<Value, String> {
             return {ready: window.__tabbyFrameProbeReady === true, painted: window.__tabbyFrameProbePainted === true,
                 readyState: document.readyState, hasBody: !!document.body, href: location.href,
                 bodyColor: document.body ? getComputedStyle(document.body).backgroundColor : null,
+                markerBounds: document.body?.firstElementChild?.getBoundingClientRect().toJSON() ?? null,
                 width: innerWidth, height: innerHeight, devicePixelRatio};
         } catch (error) { return {error: String(error), href: location.href, readyState: document.readyState}; }
     })();"##;

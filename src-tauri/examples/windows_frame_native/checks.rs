@@ -121,6 +121,10 @@ pub fn run(
         json!({"request": unmaximize_result.map_err(|error| error.to_string()), "observed": unmaximize_observed}),
     ));
 
+    // Native maximization acknowledgement can precede WebView rendering.
+    // Preserve the capture verdict and record both coordinate spaces to diagnose it.
+    let renderer_before_capture = super::renderer::wait(first);
+    let native_before_capture = super::native::snapshot(first);
     let capture_path = output.join("wry-after-frame.png");
     match super::native::capture(first, &capture_path) {
         Ok(raster) => {
@@ -139,7 +143,7 @@ pub fn run(
             checks.push(check(
                 "wry-after-frame-capture",
                 dimensions_ok && data_size_ok && non_blank,
-                json!({"path": capture_path, "width": raster.width, "height": raster.height, "rgbaBytes": raster.rgba.len(), "dimensionsReasonable": dimensions_ok, "pixelDataComplete": data_size_ok, "sampleNonBlank": non_blank}),
+                json!({"path": capture_path, "width": raster.width, "height": raster.height, "rgbaBytes": raster.rgba.len(), "dimensionsReasonable": dimensions_ok, "pixelDataComplete": data_size_ok, "sampleNonBlank": non_blank,"rendererBeforeCapture":renderer_before_capture,"nativeBeforeCapture":native_before_capture}),
             ));
         }
         Err(error) => checks.push(failed("wry-after-frame-capture", error)),
