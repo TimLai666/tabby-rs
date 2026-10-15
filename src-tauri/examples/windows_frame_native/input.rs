@@ -19,9 +19,10 @@ use windows_sys::Win32::{
             MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEINPUT, VK_LBUTTON,
         },
         WindowsAndMessaging::{
-            GetAncestor, GetCursorPos, GetForegroundWindow, GetMenuState, GetSystemMenu,
-            GetWindowThreadProcessId, IsWindow, SetCursorPos, SetForegroundWindow, WindowFromPoint,
-            GA_ROOT, HTCLOSE, HTMAXBUTTON, HTMINBUTTON, MF_BYCOMMAND, SC_CLOSE, WM_NCHITTEST,
+            GetAncestor, GetCursorPos, GetForegroundWindow, GetMenuState, GetParent, GetSystemMenu,
+            GetWindowThreadProcessId, IsWindow, PostMessageW, SetCursorPos, SetForegroundWindow,
+            WindowFromPoint, GA_ROOT, HTCLOSE, HTMAXBUTTON, HTMINBUTTON, MF_BYCOMMAND, SC_CLOSE,
+            WM_CANCELMODE, WM_NCHITTEST, WM_NCLBUTTONDBLCLK,
         },
     },
 };
@@ -471,6 +472,87 @@ fn client_to_screen(hwnd: HWND, mut point: POINT) -> Result<POINT, String> {
     Ok(point)
 }
 
+// Exercise this legal non-client second-down directly, without depending on
+// desktop double-click timing. Physical SendInput coverage remains separate.
+fn native_doubleclick_probe(fixture: &Fixture) -> Result<Value, String> {
+    let state = snapshot(&fixture.window)?;
+    let point = client_to_screen(fixture.hwnd as HWND, button_point(&state, "close")?)?;
+    move_to(fixture.hwnd as HWND, point)?;
+    let target = unsafe { WindowFromPoint(point) } as usize;
+    let parent = fixture.hwnd;
+    let close_count_before = fixture.close_count.load(Ordering::SeqCst);
+    let packed = ((point.y as u16 as u32) << 16 | point.x as u16 as u32) as isize;
+    let post = |message| {
+        super::native::on_main(&fixture.window, move |_| {
+            let child = target as HWND;
+            let mut process = 0;
+            unsafe { GetWindowThreadProcessId(child, &mut process) };
+            if unsafe { IsWindow(child) } == 0
+                || child == parent as HWND
+                || unsafe { GetParent(child) } != parent as HWND
+                || process != std::process::id()
+            {
+                return Err("double-click target is not the owned caption overlay".into());
+            }
+            if unsafe { PostMessageW(child, message, HTCLOSE as usize, packed) } == 0 {
+                return Err(format!(
+                    "PostMessageW(caption {message:#x}): {}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+            Ok(())
+        })
+    };
+    let observed = (|| {
+        post(WM_NCLBUTTONDBLCLK)?;
+        let pressed = poll(
+            || {
+                let state = snapshot(&fixture.window)?;
+                let capture = super::native::on_main(&fixture.window, |_| {
+                    Ok(unsafe { GetCapture() } as usize)
+                })?;
+                Ok((state, capture))
+            },
+            |(state, capture)| state["pointer"]["pressed"] == "close" && *capture == target,
+        )?;
+        Ok::<_, String>(
+            json!({"snapshot":pressed.0,"captureHwnd":pressed.1,"expectedOverlayHwnd":target}),
+        )
+    })();
+    // Always cancel the synthetic press, including when its assertion fails.
+    let cancel = post(WM_CANCELMODE);
+    // Snapshot refresh reconciles hover with the real cursor position.
+    let move_away = client_to_screen(fixture.hwnd as HWND, POINT { x: 40, y: 120 })
+        .and_then(|body| move_to(fixture.hwnd as HWND, body));
+    let reset = poll(
+        || {
+            let state = snapshot(&fixture.window)?;
+            let capture =
+                super::native::on_main(&fixture.window, |_| Ok(unsafe { GetCapture() } as usize))?;
+            Ok((state, capture))
+        },
+        |(state, capture)| {
+            state["pointer"]["pressed"].is_null()
+                && state["pointer"]["hovered"].is_null()
+                && *capture != target
+        },
+    );
+    cancel?;
+    move_away?;
+    let reset = reset?;
+    let quiet_deadline = Instant::now() + Duration::from_millis(250);
+    while Instant::now() < quiet_deadline {
+        if fixture.close_count.load(Ordering::SeqCst) != close_count_before {
+            return Err("caption double-click or cancellation generated CloseRequested".into());
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    Ok(
+        json!({"message":"WM_NCLBUTTONDBLCLK","syntheticMessage":true,"pressed":observed?,
+        "resetSnapshot":reset.0,"captureAfterCancel":reset.1,"closeRequestedCountUnchanged":true}),
+    )
+}
+
 fn verify_watchdog_cleanup(
     window: &WebviewWindow,
     cursor: POINT,
@@ -618,6 +700,13 @@ fn run_checks(
             |value| value["visible"] == true,
         )?;
         checks.push(check("caption-preparation-and-visible-layout", true, json!({"visibleSnapshot":visible,"width":before.width,"height":before.height,"rgbaBytes":before.rgba.len(),"captureUnchangedAfterPreparation":pixels_unchanged})));
+        let doubleclick = native_doubleclick_probe(&fixture);
+        checks.push(check(
+            "caption-native-doubleclick-press-and-cancel",
+            doubleclick.is_ok(),
+            json!(&doubleclick),
+        ));
+        doubleclick?;
         // A second controller must not share pointer, layout, or revision state.
         super::platform::prepare_caption_controls(other)
             .map_err(|error| format!("prepare secondary caption: {error:?}"))?;
