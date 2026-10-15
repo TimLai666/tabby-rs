@@ -7,6 +7,9 @@ mod caption;
 #[path = "windows_frame_native/checks.rs"]
 mod checks;
 #[cfg(windows)]
+#[path = "windows_frame_native/input.rs"]
+mod input;
+#[cfg(windows)]
 #[path = "windows_frame_native/native.rs"]
 mod native;
 #[cfg(windows)]
@@ -143,6 +146,7 @@ fn windows_main(args: Vec<String>) {
             .incognito(true).data_directory(data.clone())
             .on_navigation(|url| url.as_str() == "about:blank")
             .build()?;
+        let input_data = data.join("caption-input");
         let other = tauri::WebviewWindowBuilder::new(app, "frameSecondary", tauri::WebviewUrl::External("about:blank".parse()?))
             .title("Tabby RS isolated secondary frame probe")
             .inner_size(640.0, 480.0).visible(false).incognito(true).data_directory(data)
@@ -153,6 +157,7 @@ fn windows_main(args: Vec<String>) {
             let mut results = reference_checks;
             results.push(check("wry-renderer-ready", ready.is_ok(), json!(ready)));
             if ready.is_ok() {
+                results.extend(input::run(&first, &other, &input_data, &output));
                 results.extend(checks::run(&first, &other, &output));
             } else {
                 let captured = native::capture(&first, &output.join("wry-readiness-failure.png"))

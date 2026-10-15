@@ -3,6 +3,11 @@ use crate::{desktop::VibrancyOptions, error::AppError};
 mod frame;
 pub use frame::set_window_frame;
 
+#[cfg(any(windows, test))]
+mod windows_caption;
+#[cfg(windows)]
+pub use windows_caption::{caption_state, prepare_caption_controls, set_caption_frame};
+
 #[cfg(all(test, target_os = "macos"))]
 mod material_tests;
 
