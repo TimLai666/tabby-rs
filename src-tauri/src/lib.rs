@@ -341,10 +341,20 @@ pub fn run() {
     {
         builder = builder.plugin(tauri_plugin_global_shortcut::Builder::new().build());
         if !release_probe_mode() {
-            builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
-                let context = parse_launch_context(&argv, cwd, true);
-                present_and_dispatch(app, context);
-            }));
+            let mut instance_plugin =
+                tauri_plugin_single_instance::Builder::new().callback(|app, argv, cwd| {
+                    let context = parse_launch_context(&argv, cwd, true);
+                    present_and_dispatch(app, context);
+                });
+            if let Some(identifier) = identity::portable_instance_id(
+                &context.config().identifier,
+                portable_root.as_deref(),
+            )
+            .expect("failed to resolve the portable instance identity")
+            {
+                instance_plugin = instance_plugin.instance_id(identifier);
+            }
+            builder = builder.plugin(instance_plugin.build());
         }
     }
 
