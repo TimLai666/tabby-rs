@@ -304,6 +304,13 @@ mod restart_tests;
 #[cfg(test)]
 mod instance_transport_tests;
 
+#[cfg(test)]
+#[path = "../vendor/tauri-plugin-single-instance/src/windows_message.rs"]
+mod windows_instance_message;
+
+#[cfg(test)]
+mod windows_instance_message_tests;
+
 fn restart_environment(env: tauri::Env) -> tauri::Env {
     let mut env = env;
     env.args_os.truncate(1);
