@@ -17,7 +17,7 @@ Tabby RS must never write into the original Tabby application directory, credent
 
 ## Runtime paths
 
-Installed mode uses the Tauri application data directory for `io.tabbyrs.app`.
+Installed mode stores host state in `<system-data-directory>/tabby-rs`.
 
 Portable mode is selected before any config, plugin, log, or credential-backed service is initialized. It is enabled when either of these entries exists beside the executable:
 
@@ -103,6 +103,21 @@ Deep links reject:
 Deep links intentionally cannot execute arbitrary commands.
 
 ## Single-instance routing
+
+Portable processes select their communication identity from the configured
+application identifier and the canonical `data` directory. Different portable
+directories run independently. Launching the same physical directory again,
+including through a directory symlink, forwards the request to its existing
+process. Moving a directory after all its processes exit selects a new
+communication identity while retaining its stored data. An inaccessible or
+non-directory data path stops startup instead of using a shared identity.
+
+Installed mode keeps the existing application identifier for single-instance
+communication. The portable override changes only the native socket, Windows
+mutex/window names, or Linux D-Bus name. The bundle identifier, credentials,
+URL scheme, updater, and profile paths retain their existing values. The local
+plugin patch and its source provenance are documented in
+`src-tauri/vendor/tauri-plugin-single-instance/TABBY-RS-PATCHES.md`.
 
 The native host presents existing windows and queues a second invocation for the last-created surviving window, matching the fixed upstream behavior. If no window remains, it creates one first. Incoming requests enter a FIFO channel registered before plugins initialize. A single background receiver starts after application state is ready, preserving requests received during setup and their arrival order. Target selection and queue insertion run together on the main event thread, alongside window destruction; creating a replacement window runs on the receiver thread.
 

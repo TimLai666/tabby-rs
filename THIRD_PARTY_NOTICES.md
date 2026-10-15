@@ -526,7 +526,7 @@ Each package remains under its own license. The package manifest path is include
 | cargo | tauri-plugin-global-shortcut | 2.3.2 | Apache-2.0 OR MIT | ../../.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-global-shortcut-2.3.2/Cargo.toml |
 | cargo | tauri-plugin-notification | 2.3.3 | Apache-2.0 OR MIT | ../../.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-notification-2.3.3/Cargo.toml |
 | cargo | tauri-plugin-opener | 2.5.4 | Apache-2.0 OR MIT | ../../.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-opener-2.5.4/Cargo.toml |
-| cargo | tauri-plugin-single-instance | 2.4.3 | Apache-2.0 OR MIT | ../../.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-single-instance-2.4.3/Cargo.toml |
+| cargo | tauri-plugin-single-instance | 2.4.3 | Apache-2.0 OR MIT | src-tauri/vendor/tauri-plugin-single-instance/Cargo.toml |
 | cargo | tauri-plugin-updater | 2.10.1 | Apache-2.0 OR MIT | ../../.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-updater-2.10.1/Cargo.toml |
 | cargo | tauri-runtime | 2.11.3 | Apache-2.0 OR MIT | ../../.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-runtime-2.11.3/Cargo.toml |
 | cargo | tauri-runtime-wry | 2.11.4 | Apache-2.0 OR MIT | ../../.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-runtime-wry-2.11.4/Cargo.toml |

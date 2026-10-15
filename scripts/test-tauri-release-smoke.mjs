@@ -40,7 +40,7 @@ assert.match(smokeSource, /path\.basename\(file\) === 'tabby-rs'/)
 assert.match(tauriSource, /TABBY_RS_INSTALLER_SMOKE_READY_FILE/)
 assert.match(
     tauriSource,
-    /if\s+!release_probe_mode\(\)\s*\{[\s\S]*?tauri_plugin_single_instance::init/,
+    /if\s+!release_probe_mode\(\)\s*\{[\s\S]*?tauri_plugin_single_instance::Builder::new/,
     'installer smoke must isolate the Tauri single-instance plugin',
 )
 assert.match(smokeSource, /--force-not-root/)

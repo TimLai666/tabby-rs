@@ -38,6 +38,35 @@ pub(crate) fn portable_root_for_executable(executable: &Path) -> Result<Option<P
     )
 }
 
+pub(crate) fn portable_instance_id(
+    identifier: &str,
+    portable_root: Option<&Path>,
+) -> Result<Option<String>, AppError> {
+    use sha2::{Digest, Sha256};
+
+    let Some(root) = portable_root else {
+        return Ok(None);
+    };
+    let data = fs::canonicalize(root.join("data"))?;
+    if !fs::metadata(&data)?.is_dir() {
+        return Err(AppError::InvalidArgument(
+            "portable data path must be a directory".into(),
+        ));
+    }
+    let mut digest = Sha256::new();
+    digest.update(identifier.as_bytes());
+    digest.update(b"\0");
+    digest.update(data.as_os_str().as_encoded_bytes());
+    Ok(Some(format!(
+        "io.tabbyrs.p.h{}",
+        hex::encode(digest.finalize())
+    )))
+}
+
+#[cfg(test)]
+#[path = "portable_instance_tests.rs"]
+mod portable_instance_tests;
+
 impl AppPaths {
     pub fn detect(
         app: &tauri::AppHandle,

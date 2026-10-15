@@ -25,7 +25,7 @@ assert.match(tauriEntry, /TABBY_RS_BENCHMARK_READY_FILE/)
 assert.match(tauriEntry, /TABBY_RS_INSTALLER_SMOKE_READY_FILE/)
 assert.match(
     tauriEntry,
-    /if\s+!release_probe_mode\(\)\s*\{[\s\S]*?tauri_plugin_single_instance::init/,
+    /if\s+!release_probe_mode\(\)\s*\{[\s\S]*?tauri_plugin_single_instance::Builder::new/,
     'release probe modes must isolate the Tauri single-instance plugin',
 )
 
