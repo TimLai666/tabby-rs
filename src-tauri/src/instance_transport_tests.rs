@@ -32,6 +32,10 @@ use tauri::{
 
 use tauri_plugin_single_instance as single_instance;
 
+#[cfg(windows)]
+#[path = "windows_instance_transport_tests.rs"]
+mod windows_message_tests;
+
 const WORKER_MARKER: &str = "TABBY_RS_INSTANCE_TRANSPORT_WORKER";
 const WORKER_IDENTIFIER: &str = "TABBY_RS_INSTANCE_TRANSPORT_IDENTIFIER";
 const WORKER_OVERRIDE: &str = "TABBY_RS_INSTANCE_TRANSPORT_OVERRIDE";
@@ -76,9 +80,9 @@ fn native_instance_transport_is_scoped_and_cleanup_preserves_other_instances() {
     let cwd_b3 = owned_cwd(base.path(), "b3");
     let cwd_c2 = owned_cwd(base.path(), "c2");
 
-    let payload_a2 = format!("A2\tpayload; with spaces, 中文 and Ünïcödé {token}");
-    let payload_b2 = format!("B2 payload; with spaces, 資料 and semicolons {token}");
-    let payload_b3 = format!("B3 payload; after A stopped {token}");
+    let payload_a2 = format!("A2|\tpayload; with spaces, 中文 and Ünïcödé {token}");
+    let payload_b2 = format!("|B2 payload||with spaces, 資料 and semicolons| {token}");
+    let payload_b3 = format!("B3 payload; after A stopped | {token}");
     let payload_c2 = format!("CONTROL payload;\twith spaces {token}");
 
     let mut a = spawn_worker(
@@ -472,7 +476,7 @@ fn stop_primary(worker: &mut Worker, deadline: Instant) {
 }
 
 fn skip(payload: &str) -> Vec<String> {
-    vec!["--skip".to_owned(), payload.to_owned()]
+    vec!["--skip".to_owned(), payload.to_owned(), String::new()]
 }
 
 fn unique_token() -> String {
