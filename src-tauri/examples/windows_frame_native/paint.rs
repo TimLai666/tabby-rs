@@ -235,11 +235,11 @@ fn evaluate(window: &tauri::WebviewWindow, script: &str) -> Result<Value, String
 }
 
 #[derive(Clone, Copy, serde::Serialize)]
-struct Rect {
-    x: u32,
-    y: u32,
-    width: u32,
-    height: u32,
+pub(super) struct Rect {
+    pub(super) x: u32,
+    pub(super) y: u32,
+    pub(super) width: u32,
+    pub(super) height: u32,
 }
 impl Rect {
     fn read(value: &Value) -> Result<Self, String> {
@@ -278,7 +278,7 @@ impl Rect {
     }
 }
 
-fn read_png(path: &Path) -> Result<Raster, String> {
+pub(super) fn read_png(path: &Path) -> Result<Raster, String> {
     let file = BufReader::new(File::open(path).map_err(fail)?);
     let decoder = png::Decoder::new_with_limits(
         file,
@@ -311,7 +311,7 @@ fn read_png(path: &Path) -> Result<Raster, String> {
     })
 }
 
-fn compare(a: &Raster, ar: Rect, b: &Raster, br: Rect) -> Result<Value, String> {
+pub(super) fn compare(a: &Raster, ar: Rect, b: &Raster, br: Rect) -> Result<Value, String> {
     if !ar.valid(a) || !br.valid(b) || ar.width != br.width || ar.height != br.height {
         return Err(format!(
             "caption crop dimensions differ or exceed their captures: {}",

@@ -23,6 +23,13 @@ mod reference;
 mod renderer;
 
 #[cfg(windows)]
+#[path = "windows_frame_native/tooltip_gdi.rs"]
+mod tooltip_gdi;
+#[cfg(any(windows, test))]
+#[path = "windows_frame_native/tooltip_pixels.rs"]
+mod tooltip_pixels;
+
+#[cfg(windows)]
 mod desktop {
     #[derive(Clone)]
     pub struct VibrancyOptions {
@@ -153,7 +160,8 @@ fn windows_main(args: Vec<String>) {
     context.config_mut().identifier =
         format!("io.tabbyrs.tests.windows-frame.{}", std::process::id());
     context.config_mut().app.windows.clear();
-    let reference_checks = reference::run(&electron, &data, &output);
+    let mut reference_checks = reference::run(&electron, &data, &output);
+    reference_checks.extend(tooltip_gdi::probe(&output));
     let caption_reference = reference_checks
         .iter()
         .find(|check| check.name == "pinned-electron-thin")

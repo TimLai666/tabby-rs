@@ -175,6 +175,93 @@ impl Drop for Cursor {
     }
 }
 
+fn capture_tooltip(
+    parent: HWND,
+    process: u32,
+    cursor: POINT,
+    path: &Path,
+) -> Result<Value, String> {
+    struct Search {
+        parent: HWND,
+        process: u32,
+        cursor: POINT,
+        candidates: Vec<(usize, Value)>,
+        observed: Vec<Value>,
+    }
+    unsafe extern "system" fn visit(hwnd: HWND, data: isize) -> i32 {
+        let search = unsafe { &mut *(data as *mut Search) };
+        let mut process = 0;
+        unsafe { GetWindowThreadProcessId(hwnd, &mut process) };
+        if process != search.process
+            || hwnd == search.parent
+            || unsafe { IsWindowVisible(hwnd) } == 0
+        {
+            return 1;
+        }
+        let mut bounds: RECT = unsafe { std::mem::zeroed() };
+        if unsafe { GetWindowRect(hwnd, &mut bounds) } == 0 {
+            return 1;
+        }
+        let width = i64::from(bounds.right) - i64::from(bounds.left);
+        let height = i64::from(bounds.bottom) - i64::from(bounds.top);
+        let root_owner = unsafe { GetAncestor(hwnd, GA_ROOTOWNER) };
+        if search.observed.len() < 32 {
+            search
+                .observed
+                .push(json!({"hwnd":hwnd as usize,"rootOwner":root_owner as usize,
+                "owner":unsafe{GetWindow(hwnd,GW_OWNER)} as usize,
+                "screenBounds":[bounds.left,bounds.top,bounds.right,bounds.bottom]}));
+        }
+        if root_owner != search.parent
+            || !(18..=800).contains(&width)
+            || !(10..=96).contains(&height)
+            || (i64::from(bounds.top) - i64::from(search.cursor.y)).abs() > 96
+            || (i64::from(bounds.left) - i64::from(search.cursor.x)).abs() > 800
+        {
+            return 1;
+        }
+        let mut class = [0u16; 128];
+        let length =
+            unsafe { GetClassNameW(hwnd, class.as_mut_ptr(), class.len() as i32) }.max(0) as usize;
+        search.candidates.push((
+            hwnd as usize,
+            json!({"hwnd":hwnd as usize,"processId":process,
+            "owner":unsafe{GetWindow(hwnd,GW_OWNER)} as usize,"rootOwner":search.parent as usize,
+            "class":String::from_utf16_lossy(&class[..length]),"dpi":unsafe{GetDpiForWindow(hwnd)},
+            "screenBounds":[bounds.left,bounds.top,bounds.right,bounds.bottom]}),
+        ));
+        1
+    }
+    let mut search = Search {
+        parent,
+        process,
+        cursor,
+        candidates: Vec::new(),
+        observed: Vec::new(),
+    };
+    if unsafe { EnumWindows(Some(visit), (&mut search as *mut Search) as isize) } == 0 {
+        return Err(format!(
+            "EnumWindows(owned tooltip): {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    if search.candidates.len() != 1 {
+        return Err(format!(
+            "expected one visible owned tooltip candidate: {}",
+            json!({"candidates":search.candidates,"observedOwnedVisibleWindows":search.observed})
+        ));
+    }
+    let (hwnd, window) = search
+        .candidates
+        .pop()
+        .expect("one owned tooltip candidate");
+    let image = native::capture_owned(hwnd, process, path, true)?;
+    Ok(
+        json!({"window":window,"capture":path,"width":image.width,"height":image.height,
+        "completePopupCapture":true,"productionTooltipVerified":false}),
+    )
+}
+
 fn hover_maximize(handle: HWND, process: u32, map: &Value, path: &Path) -> Result<Value, String> {
     owned(handle, process)?;
     let row = map["rows"]
@@ -208,11 +295,18 @@ fn hover_maximize(handle: HWND, process: u32, map: &Value, path: &Path) -> Resul
         return Err("native hover is occluded by a window outside the owned reference".into());
     }
     let image = native::capture_owned(handle as usize, process, path, true)?;
+    let tooltip_path = path.with_file_name(format!(
+        "{}-tooltip.png",
+        path.file_stem()
+            .and_then(|name| name.to_str())
+            .ok_or("hover capture has no file stem")?
+    ));
+    let tooltip = capture_tooltip(handle, process, before, &tooltip_path);
     let after = hover_readback(handle, POINT { x, y })?;
     Ok(
         json!({"screenPoint":[x,y],"actualTargetHwnd":target as usize,"actualTargetPid":target_process,
         "cursorBeforeCapture":[before.x,before.y],"cursorAfterCapture":[after.x,after.y],"foregroundOwned":true,
-        "width":image.width,"height":image.height,"capture":path}),
+        "width":image.width,"height":image.height,"capture":path,"tooltip":tooltip}),
     )
 }
 

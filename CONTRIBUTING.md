@@ -26,6 +26,8 @@ The release gate needs real bundle, installer, benchmark, license, and platform 
 
 The controlled Windows frame driver requires a fresh painter script built with `node scripts/build-windows-caption-fixture.mjs --output <NEW-JS-FILE>`. Pass it with `--caption-script` to `cargo run --manifest-path src-tauri/Cargo.toml --example windows_frame_native --`; use `--help` for all required paths and cleanup ownership. The driver runs the production painter in an isolated WebView and preserves full normal/hover comparisons. Maximized caption comparisons use measured native hit regions when the capture coordinate spaces differ. These fixtures do not establish production desktop or Windows 11 Snap acceptance.
 
+The same driver compares offscreen GDI message-font text with the pinned English, dark TooltipAura captures. Its `gdi-tooltip-*-pixels` diagnostics record the mapped font, dimensions, independent reference bounds, and exact RGBA comparison, and write `gdi-tooltip-*.png`. These diagnostic candidates do not implement tooltip windows, timing, localization, or accessibility.
+
 For Chromium caption comparisons, use `node scripts/test-windows-caption-paint.mjs --gpu --browser-path <CHROMIUM> --reference-directory <NATIVE-EVIDENCE>`. The report records the actual graphics backend, and `--gpu` requires GPU compositing and rasterization. Run both default and GPU modes: software and GPU blending can produce different pixel values. Keep native WebView and production desktop acceptance separate from these browser checks.
 
 ## Change boundaries
