@@ -44,6 +44,7 @@ const WORKER_STOP: &str = "TABBY_RS_INSTANCE_TRANSPORT_STOP";
 const WORKER_READY: &str = "TABBY_RS_INSTANCE_TRANSPORT_READY";
 const WORKER_ENTERING: &str = "TABBY_RS_INSTANCE_TRANSPORT_ENTERING";
 const WORKER_CONFIG: &str = "TABBY_RS_INSTANCE_TRANSPORT_CONFIG";
+const WORKER_REJECT_WINDOW: &str = "TABBY_RS_INSTANCE_TRANSPORT_REJECT_WINDOW";
 const WORKER_TEST: &str = "instance_transport_tests::native_instance_worker";
 
 const POLL: Duration = Duration::from_millis(20);
@@ -284,6 +285,9 @@ fn run_instance_worker() {
     let ready = PathBuf::from(env::var(WORKER_READY).expect("worker ready path"));
 
     let plugin = build_plugin(override_id.as_deref(), receipt);
+    #[cfg(windows)]
+    let _rejecting_class = env::var_os(WORKER_REJECT_WINDOW)
+        .map(|_| windows_message_tests::startup_tests::reject_owner_window_creation(&identifier));
     let mut context = mock_context(noop_assets());
     context.config_mut().identifier = identifier;
 
@@ -392,6 +396,7 @@ fn spawn_worker(
         .env(WORKER_READY, &ready)
         .env_remove(WORKER_ENTERING)
         .env_remove(WORKER_CONFIG)
+        .env_remove(WORKER_REJECT_WINDOW)
         .stdin(Stdio::null())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());

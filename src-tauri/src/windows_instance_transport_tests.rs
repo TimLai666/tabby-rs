@@ -1,7 +1,7 @@
 // The framework boundary stays mocked; Win32 transport and child processes stay real.
 
 #[path = "windows_instance_startup_tests.rs"]
-mod startup_tests;
+pub(super) mod startup_tests;
 
 use super::*;
 use crate::windows_instance_message::{
@@ -305,6 +305,7 @@ fn worker_command(
         .env(WORKER_READY, ready)
         .env_remove(WORKER_ENTERING)
         .env_remove(WORKER_CONFIG)
+        .env_remove(WORKER_REJECT_WINDOW)
         .env_remove(WORKER_OVERRIDE)
         .stdin(Stdio::null());
     command
