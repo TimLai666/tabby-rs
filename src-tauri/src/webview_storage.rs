@@ -56,3 +56,7 @@ pub(crate) fn install_macos(directory: &Path) -> Result<(), AppError> {
         )))
     }
 }
+
+#[cfg(test)]
+#[path = "webview_storage_tests.rs"]
+mod tests;

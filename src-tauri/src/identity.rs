@@ -357,6 +357,50 @@ mod tests {
     };
 
     #[test]
+    fn portable_marker_selects_the_executable_directory() {
+        let root = tempfile::tempdir().unwrap();
+        let executable = root.path().join("tabby-rs");
+        std::fs::write(root.path().join(super::PORTABLE_MARKER), []).unwrap();
+        assert_eq!(
+            super::portable_root_for_executable(&executable).unwrap(),
+            Some(root.path().to_path_buf()),
+        );
+    }
+
+    #[test]
+    fn legacy_portable_data_directory_selects_the_same_root() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join("data")).unwrap();
+        assert_eq!(
+            super::portable_root_for_executable(&root.path().join("tabby-rs")).unwrap(),
+            Some(root.path().to_path_buf()),
+        );
+    }
+
+    #[test]
+    fn installed_layout_and_non_marker_entries_stay_installed() {
+        let root = tempfile::tempdir().unwrap();
+        let executable = root.path().join("tabby-rs");
+        assert!(super::portable_root_for_executable(&executable)
+            .unwrap()
+            .is_none());
+        std::fs::create_dir(root.path().join(super::PORTABLE_MARKER)).unwrap();
+        std::fs::write(root.path().join("data"), b"existing file").unwrap();
+        assert!(super::portable_root_for_executable(&executable)
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            std::fs::read(root.path().join("data")).unwrap(),
+            b"existing file"
+        );
+    }
+
+    #[test]
+    fn portable_resolution_rejects_an_executable_without_a_parent() {
+        assert!(super::portable_root_for_executable(std::path::Path::new("/")).is_err());
+    }
+
+    #[test]
     fn identity_is_separate_from_upstream_tabby() {
         assert_eq!(APP_IDENTIFIER, "io.tabbyrs.app");
         assert_eq!(CLI_NAME, "tabby-rs");

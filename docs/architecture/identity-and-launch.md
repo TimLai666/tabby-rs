@@ -25,6 +25,35 @@ Portable mode is selected before any config, plugin, log, or credential-backed s
 - `data/`, retained as a compatibility marker for the original portable convention
 
 In portable mode all file-backed state is rooted at `<executable-directory>/data`.
+The executable and portable marker are resolved once before Tauri creates any
+WebView. The same startup snapshot selects host paths and the
+`data/webview` directory for every configured or subsequently created window.
+Installed mode retains its existing WebView configuration.
+
+On macOS, the pinned Wry runtime ignores `data_directory` when selecting a
+persistent WKWebsiteDataStore. The native adapter creates one directory-backed
+store before window construction and supplies it through `defaultDataStore`.
+It uses the directory configuration initializer when available and the older
+path setters otherwise. The store initializer is
+`-_initWithConfiguration:`, which the
+[WebKit private header](https://github.com/WebKit/WebKit/blob/main/Source/WebKit/UIProcess/API/Cocoa/WKWebsiteDataStorePrivate.h)
+declares from macOS 10.13. Runtime method checks and bounded native errors
+prevent an unsupported installation from opening a shared default store.
+An existing override is preserved. Explicit incognito window settings remain
+unchanged.
+
+Existing shared WebView history is retained in its original location. It is
+not imported automatically, because it cannot be attributed to one portable
+directory. A portable directory starts its own recent-profile and recovery
+history. Move its `data` directory together with the executable.
+
+`yarn test:portable-storage` compiles the production macOS adapter into owned
+Cocoa helpers and exercises actual WebKit: invalid paths and threads, existing
+overrides, repeated installation, two WebViews sharing a store, persistence
+across processes, independent directories, and relocation of the app with its
+data. Automatic API selection and the forced older-setter path run on the
+host system. These focused checks do not establish older macOS runtime,
+installer, concurrent-copy routing, or full desktop acceptance.
 
 ## Structured CLI input
 

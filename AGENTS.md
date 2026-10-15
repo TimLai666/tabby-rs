@@ -18,13 +18,24 @@
   and an incognito WebView. They do not accept installers, production persistence,
   zero-window quit, forced startup quit, restart, or other supported platforms.
   Compare the remaining desktop cases with upstream before full acceptance.
-- Before accepting portable profile isolation, verify the WebView storage
-  namespace as well as the portable config path. A fresh portable config can
-  display an earlier recent profile through `localStorage.recentProfiles`
-  (`tabby-core/src/services/profiles.service.ts`). Incognito WebView overrides
-  isolate synthetic desktop tests, but do not establish production persistence
-  or profile-cache isolation. Keep user configuration and existing WebView data
-  intact while reproducing this issue.
+- Portable host paths and every WebView use the same startup marker snapshot.
+  Keep `data/webview` selected before primary construction and for subsequent
+  windows. On macOS, retain the directory-backed persistent store adapter;
+  the pinned Wry runtime does not select it from `data_directory` alone.
+  A native installation error must stop startup before any shared store opens.
+  Keep installed configuration, explicit incognito settings, and existing
+  shared WebView data intact.
+- Include `yarn test:portable-storage` when changing portable browser storage.
+  Its real Cocoa helpers verify persistence, two WebViews, independent roots,
+  app/data relocation, both configuration paths, and native error guards.
+  The older-setter path on a newer host does not accept older macOS.
+  Original desktop comparison, actual new-window IPC, supported-platform
+  persistence, and installer acceptance remain pending.
+- Before portable concurrent-copy acceptance, compare single-instance routing
+  with upstream for two different portable roots. The current plugin uses the
+  application identifier for its lock. Storage isolation checks with sequential
+  processes do not establish independent routing. Keep that change separate
+  from the WebView storage adapter.
 
 ## Pending — Windows runtime and packaging acceptance
 
