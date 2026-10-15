@@ -29,10 +29,13 @@ mod desktop {
 }
 #[cfg(windows)]
 mod error {
-    #[derive(Debug)]
+    #[derive(Debug, thiserror::Error)]
     pub enum AppError {
+        #[error("invalid argument: {0}")]
         InvalidArgument(String),
+        #[error("I/O error: {0}")]
         Io(String),
+        #[error("unsupported on this platform: {0}")]
         Unsupported(String),
     }
 }
