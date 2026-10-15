@@ -418,9 +418,13 @@
   full startup ordering and already-accepted listener cleanup after control drop
   remain pending. Reproduce stopping during a hostname bind before changing startup
   to run in the background.
-- Verify allocated Remote success replies of zero or above `u16::MAX` with a real
-  SSH peer before accepting reply validation. `handle_control` currently casts the
-  allocated `u32` to `u16`; this existing protocol edge case is not covered.
+- Reject allocated Remote reply values outside 1 through 65535 before route
+  commit or conversion to `u16`. Preserve the SSH session, existing routes, and
+  original error value; close pending early channels without connecting to the
+  target or cancelling a truncated port. Retain the actual SSH protocol checks in
+  src-tauri/src/ssh/remote_allocation_tests.rs. Read the approved Remote
+  allocated-port exception in docs/release-acceptance.md before changing this
+  behavior. Supported-desktop acceptance remains pending.
 - Verify rejected Remote cancel requests and retry through the full native manager.
   stop_forwarding removes its runtime before awaiting cancel_tcpip_forward, while
   the control handler removes the route only on success. Passing successful-stop

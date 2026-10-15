@@ -2491,6 +2491,12 @@ async fn handle_control<H: client::Handler>(
                     } else {
                         u32::from(bind_port)
                     };
+                    if !(1..=u32::from(u16::MAX)).contains(&actual_port) {
+                        let _ = sender.send(Err(SshError::Forwarding(format!(
+                            "Invalid allocated Remote port: {actual_port}"
+                        ))));
+                        return true;
+                    }
                     if registration.commit(actual_port) {
                         let _ = sender.send(Ok(actual_port as u16));
                     } else {

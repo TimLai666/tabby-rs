@@ -181,6 +181,50 @@ requirements. A lost connection or reply after a mutation leaves the remote
 result uncertain. Keep the SFTP and platform manifest entries pending until
 their complete scopes have been verified.
 
+## Approved Remote allocated-port safety exception
+
+Tabby RS rejects a successful port-zero Remote forwarding reply when the
+allocated value is zero or exceeds 65535. The forwarding error retains the
+original value. Rejection keeps the SSH session and existing routes usable,
+removes only this request's pending registration, and closes its early incoming
+channels before connecting to a local target. It sends no cancellation for the
+invalid value, which could otherwise be truncated to another forwarding port.
+Configured nonzero ports and valid allocated ports retain their existing behavior.
+
+The fixed `14e2d60` Remote forwarding method in tabby-ssh/src/session/ssh.ts
+awaits the binding request without this allocated-value check. The former native
+handler cast the server's `u32` result to `u16`, so 65537 could be returned as 1.
+The user approved explicit rejection as a narrow exception to complete parity.
+The timestamp records this approval when entered in the release contract:
+
+```json
+{
+  "id": "ssh.remote-allocated-port-range",
+  "baseline": "14e2d60b9b6dee84a53c37f05eefeb803787de04",
+  "approval": {
+    "decision": "accepted-difference",
+    "approver": "user",
+    "approvedAt": "2026-10-15T11:48:57Z"
+  }
+}
+```
+
+`handle_control` in src-tauri/src/ssh/mod.rs checks the range before route commit
+and conversion. The actual SSH protocol fixtures in
+src-tauri/src/ssh/remote_allocation_tests.rs cover zero, 65536, 65537, `u32::MAX`,
+valid 1 and 65535, retained binary shell and forwarding traffic, the same owner's
+existing route, early-channel closure, and the absence of cancellation requests.
+The boundary cases verify route values and forwarded channels; they do not
+require an operating-system listener on port 1 or 65535. Run them with:
+
+```text
+cargo test --locked --manifest-path src-tauri/Cargo.toml --lib ssh::remote_forwarding_tests::allocation_validation
+```
+
+Apply this exception only to invalid allocated Remote reply values. Keep the SSH
+and platform manifest entries pending until their complete scopes and supported
+desktop behavior have been verified.
+
 ## Windows x64
 
 Run on a real Windows host matching the currently supported Tauri/CI
