@@ -15,6 +15,8 @@ use tauri::{plugin::TauriPlugin, AppHandle, Manager, Runtime};
 #[cfg(target_os = "windows")]
 #[path = "platform_impl/windows.rs"]
 mod platform_impl;
+#[cfg(target_os = "windows")]
+mod windows_message;
 #[cfg(target_os = "linux")]
 #[path = "platform_impl/linux.rs"]
 mod platform_impl;

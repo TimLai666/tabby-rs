@@ -119,6 +119,17 @@ URL scheme, updater, and profile paths retain their existing values. The local
 plugin patch and its source provenance are documented in
 `src-tauri/vendor/tauri-plugin-single-instance/TABBY-RS-PATCHES.md`.
 
+Windows second invocations query the existing process for structured-message
+support before sending a JSON `[cwd, args]` frame. Each argument is preserved,
+including literal pipes and empty strings. The same endpoint also accepts the
+original NUL-terminated format within its declared byte length. With an older
+running process, requests use that format when every value is representable.
+A literal pipe causes startup to fail with restart guidance before delivery.
+Rejected messages cause a nonzero startup result. The sender exits successfully
+only after the receiver confirms that it handled the request. The protocol
+keeps the existing mutex and window identity, so it does not create another
+process to write the same configuration.
+
 The native host presents existing windows and queues a second invocation for the last-created surviving window, matching the fixed upstream behavior. If no window remains, it creates one first. Incoming requests enter a FIFO channel registered before plugins initialize. A single background receiver starts after application state is ready, preserving requests received during setup and their arrival order. Target selection and queue insertion run together on the main event thread, alongside window destruction; creating a replacement window runs on the receiver thread.
 
 `app:launch` is a window-scoped notification with a null payload. The renderer installs its listener before draining `app.initialLaunch`; each call consumes one request for the invoking window, or returns null when its queue is empty. Reads are serialized, so repeated notifications cannot duplicate a request. The command name is retained for compatibility, but it also consumes subsequent requests.

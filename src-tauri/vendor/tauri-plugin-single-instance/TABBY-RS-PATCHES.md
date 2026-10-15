@@ -12,15 +12,32 @@ This directory contains the published tauri-plugin-single-instance 2.4.3 crate.
 macOS uses it for its socket; Windows uses it for its mutex and hidden-window
 names; Linux uses it when no explicit `dbus_id` is supplied. With no override,
 the configured application identifier retains its original role. Callback,
-deep-link dispatch, semver handling, and native argument framing are unchanged.
+deep-link dispatch, and semver handling retain their existing behavior.
 macOS cleanup retains the selected socket instead of deriving another socket
 from the bundle identifier.
+
+Windows uses a private `WM_APP + 1542` capability query. A receiver supporting
+the structured protocol returns exactly `0x54420001`; the sender then sends a
+JSON `[cwd, args]` frame with `WM_COPYDATA.dwData = 1543`. This preserves pipes,
+Unicode, quotes, and empty arguments. The receiver also accepts the original
+NUL-terminated `dwData = 1542` format, reading only the declared `cbData` bytes.
+Malformed or unknown frames are rejected without invoking the callback.
+
+An older receiver gets the original format when it can represent every value.
+Requests containing a pipe fail with restart guidance before delivery. Only a
+handled-message reply of `1` permits the secondary process to exit successfully.
+The query uses a separate message because the original receiver acknowledges
+unknown `WM_COPYDATA` formats without processing them. macOS and Linux retain
+their existing argument framing.
 
 The application derives the portable override from its configured identifier
 and canonical data directory. See `docs/architecture/identity-and-launch.md`.
 Before upgrading or removing the patch, run the resolver regressions in
 `src-tauri/src/portable_instance_tests.rs`, the real native transport regressions
-in `src-tauri/src/instance_transport_tests.rs`, and concurrent full-app launches
+in `src-tauri/src/instance_transport_tests.rs`, the codec checks in
+`src-tauri/src/windows_instance_message_tests.rs`, the Windows native
+compatibility checks in `src-tauri/src/windows_instance_transport_tests.rs`,
+and concurrent full-app launches
 from different portable directories. Verify same-directory handoff, independent
 directories, installed-mode handoff, and cleanup that preserves other instances
 on each supported desktop platform.

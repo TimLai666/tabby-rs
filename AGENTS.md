@@ -62,12 +62,22 @@
   https://github.com/TimLai666/tabby-rs/actions/runs/36341774362
   Windows Rust test evidence:
   https://github.com/TimLai666/tabby-rs/actions/runs/36343754549/job/108688735753
-- Verify literal pipe characters in Windows second-instance arguments before
-  accepting CLI parity. The vendored single-instance 2.4.3 transport joins and
-  splits arguments with `|` in
-  `src-tauri/vendor/tauri-plugin-single-instance/src/platform_impl/windows.rs`; its namespace
-  override retains that existing framing. Handle the framing change separately
-  from portable directory isolation and compare it with the original desktop.
+- Keep Windows second-instance arguments intact through the vendored
+  single-instance transport. Preserve the structured-message capability query,
+  bounded JSON/legacy decoding, and acknowledgement before successful exit.
+  Include `src-tauri/src/windows_instance_message_tests.rs` and
+  `src-tauri/src/windows_instance_transport_tests.rs` when changing that protocol.
+  The native fixture uses real Win32 windows, named mutexes, and child processes;
+  Tauri MockRuntime replaces only the framework boundary. Verify new/new,
+  old/new, representable new/old, legacy rejection, recovery, and rejected-message
+  exit results. Compare literal-pipe paste/run requests with the original
+  Windows desktop before accepting CLI parity.
+- Investigate the Windows startup interval between named-mutex creation and
+  hidden-window readiness. The existing `ERROR_ALREADY_EXISTS` path returns
+  successfully when `FindWindowW` finds no owner window. Reproduce this with a
+  delayed primary window and a simultaneous second launch before deciding
+  whether both processes can initialize configuration writers. Source inspection
+  alone does not establish that runtime outcome.
 
 ## Pending - Windows ordinary terminal-close desktop acceptance
 

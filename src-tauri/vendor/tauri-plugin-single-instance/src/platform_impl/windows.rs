@@ -5,8 +5,11 @@
 #[cfg(feature = "semver")]
 use crate::semver_compat::semver_compat_string;
 
+use crate::windows_message::{
+    decode_payload, encode_payload, WireFormat, JSON_DATA_ID, JSON_PROTOCOL_REPLY, LEGACY_DATA_ID,
+    QUERY_MESSAGE,
+};
 use crate::SingleInstanceCallback;
-use std::ffi::CStr;
 use tauri::{
     plugin::{self, TauriPlugin},
     AppHandle, Manager, RunEvent, Runtime,
@@ -25,8 +28,6 @@ use windows_sys::Win32::{
         WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT, WS_OVERLAPPED, WS_POPUP, WS_VISIBLE,
     },
 };
-
-const WMCOPYDATA_SINGLE_INSTANCE_DATA: usize = 1542;
 
 struct MutexHandle(isize);
 
@@ -74,24 +75,57 @@ pub fn init<R: Runtime>(
 
             if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
                 unsafe {
+                    CloseHandle(hmutex);
                     let hwnd = FindWindowW(class_name.as_ptr(), window_name.as_ptr());
 
                     if !hwnd.is_null() {
                         let cwd = std::env::current_dir().unwrap_or_default();
                         let cwd = cwd.to_str().unwrap_or_default();
 
-                        let args = std::env::args().collect::<Vec<String>>().join("|");
-
-                        let data = format!("{cwd}|{args}\0",);
-
-                        let bytes = data.as_bytes();
+                        let args = std::env::args().collect::<Vec<String>>();
+                        let format =
+                            if SendMessageW(hwnd, QUERY_MESSAGE, 0, 0) == JSON_PROTOCOL_REPLY {
+                                WireFormat::Json
+                            } else {
+                                WireFormat::Legacy
+                            };
+                        let bytes = match encode_payload(cwd, &args, format) {
+                            Ok(bytes) => bytes,
+                            Err(error) => {
+                                return Err(std::io::Error::new(
+                                    std::io::ErrorKind::InvalidData,
+                                    error,
+                                )
+                                .into());
+                            }
+                        };
+                        let cb_data = match u32::try_from(bytes.len()) {
+                            Ok(cb_data) => cb_data,
+                            Err(_) => {
+                                return Err(std::io::Error::new(
+                                    std::io::ErrorKind::InvalidData,
+                                    "Windows instance payload is too large",
+                                )
+                                .into());
+                            }
+                        };
                         let cds = COPYDATASTRUCT {
-                            dwData: WMCOPYDATA_SINGLE_INSTANCE_DATA,
-                            cbData: bytes.len() as _,
+                            dwData: match format {
+                                WireFormat::Json => JSON_DATA_ID,
+                                WireFormat::Legacy => LEGACY_DATA_ID,
+                            },
+                            cbData: cb_data,
                             lpData: bytes.as_ptr() as _,
                         };
 
-                        SendMessageW(hwnd, WM_COPYDATA, 0, &cds as *const _ as _);
+                        let result = SendMessageW(hwnd, WM_COPYDATA, 0, &cds as *const _ as _);
+                        if result != 1 {
+                            return Err(std::io::Error::new(
+                                std::io::ErrorKind::Other,
+                                "the running instance rejected the launch request",
+                            )
+                            .into());
+                        }
 
                         app.cleanup_before_exit();
                         std::process::exit(0);
@@ -138,6 +172,8 @@ unsafe extern "system" fn single_instance_window_proc<R: Runtime>(
     lparam: LPARAM,
 ) -> LRESULT {
     match msg {
+        QUERY_MESSAGE => JSON_PROTOCOL_REPLY,
+
         WM_CREATE => {
             let create_struct = &*(lparam as *const CREATESTRUCTW);
             let userdata = create_struct.lpCreateParams as *const UserData<R>;
@@ -146,17 +182,25 @@ unsafe extern "system" fn single_instance_window_proc<R: Runtime>(
         }
 
         WM_COPYDATA => {
-            let cds_ptr = lparam as *const COPYDATASTRUCT;
-            if (*cds_ptr).dwData == WMCOPYDATA_SINGLE_INSTANCE_DATA {
-                let userdata = UserData::<R>::from_hwnd(hwnd);
-
-                let data = CStr::from_ptr((*cds_ptr).lpData as _).to_string_lossy();
-                let mut s = data.split('|');
-                let cwd = s.next().unwrap();
-                let args = s.map(|s| s.to_string()).collect();
-
-                userdata.run_callback(args, cwd.to_string());
+            if lparam == 0 {
+                return 0;
             }
+            let cds_ptr = lparam as *const COPYDATASTRUCT;
+            let cds = &*cds_ptr;
+            let format = match cds.dwData {
+                LEGACY_DATA_ID => WireFormat::Legacy,
+                JSON_DATA_ID => WireFormat::Json,
+                _ => return 0,
+            };
+            if cds.lpData.is_null() || cds.cbData == 0 || cds.cbData as usize > isize::MAX as usize
+            {
+                return 0;
+            }
+            let bytes = std::slice::from_raw_parts(cds.lpData as *const u8, cds.cbData as usize);
+            let Some((args, cwd)) = decode_payload(bytes, format) else {
+                return 0;
+            };
+            UserData::<R>::from_hwnd(hwnd).run_callback(args, cwd);
             1
         }
 
