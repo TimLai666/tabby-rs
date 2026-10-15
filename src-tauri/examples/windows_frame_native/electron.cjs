@@ -1,4 +1,4 @@
-// Native overlay reference: fixed 14e2d60 app/lib/window.ts, Electron 38.8.6.
+// Native overlay reference: fixed 14e2d60 app/lib/window.ts and app/lib/app.ts, Electron 38.8.6.
 // Controlled content and isolated storage; this is not original-app acceptance.
 const fs = require('node:fs')
 const path = require('node:path')
@@ -11,6 +11,7 @@ if (process.platform !== 'win32' || process.versions.electron !== '38.8.6' || ![
 }
 fs.mkdirSync(data)
 app.setPath('userData', data)
+app.commandLine.appendSwitch('lang', 'EN')
 nativeTheme.themeSource = 'dark'
 app.whenReady().then(async () => {
     const { BrowserWindow } = appRequire('glasstron')
@@ -39,7 +40,7 @@ app.whenReady().then(async () => {
     const hwnd = handle.length === 8 ? handle.readBigUInt64LE().toString() : String(handle.readUInt32LE())
     fs.writeFileSync(ready, JSON.stringify({
         kind: 'tabby-pinned-electron-frame-reference', baseline: '14e2d60b9b6dee84a53c37f05eefeb803787de04',
-        electron: process.versions.electron, chromium: process.versions.chrome,
+        electron: process.versions.electron, chromium: process.versions.chrome, locale: app.getLocale(),
         processId: process.pid, hwnd, mode, bounds: window.getBounds(), contentBounds: window.getContentBounds(),
         controls: mode === 'native' ? 'system' : { color: '#00000000', symbolColor: '#e0e0e0', height: 32 },
     }, null, 2), { flag: 'wx' })
