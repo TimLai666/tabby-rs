@@ -8,12 +8,17 @@ on:
     branches:
       - master
   workflow_dispatch:
+    inputs:
+      windows_desktop_probe:
+        description: Check native desktop availability on the Windows runner
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.windows_desktop_probe && 'desktop-probe' || 'regular' }}
   cancel-in-progress: true
 
 env:
@@ -23,7 +28,28 @@ env:
   FORCE_COLOR: '1'
 
 jobs:
+  windows-desktop-probe:
+    name: Windows native desktop probe
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.windows_desktop_probe }}
+    runs-on: windows-2022
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Check native desktop rendering
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/ci/probe-windows-desktop.ps1 -OutputDirectory "$env:RUNNER_TEMP/tabby-rs-windows-desktop-probe"
+      - name: Preserve native desktop evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-desktop-probe-${{ github.sha }}
+          path: ${{ runner.temp }}/tabby-rs-windows-desktop-probe
+          if-no-files-found: error
+          retention-days: 7
+
   quality:
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.windows_desktop_probe) }}
     name: quality (linux)
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -334,6 +360,7 @@ jobs:
         run: cargo build --manifest-path src-tauri/Cargo.toml
 
   build:
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.windows_desktop_probe) }}
     name: build (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
