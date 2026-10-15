@@ -48,7 +48,115 @@ try {
     const missingParent = run(['--output', path.join(directory, 'absent', 'painter.js')])
     assert.equal(missingParent.status, 1, missingParent.stderr)
     assert.ok(!fs.existsSync(path.join(directory, 'absent')), 'A typo must not create output parent directories')
-    console.log('Caption fixture: CLI errors, safe output, production source identity, and isolated installation passed')
+
+    const referencePath = path.join(root, 'src-tauri/examples/windows_frame_native/electron.cjs')
+    const referenceSource = fs.readFileSync(referencePath, 'utf8')
+
+    const bootReference = locale => {
+        const events = []
+        const switches = []
+        const writes = []
+        const readinessSwitches = { value: null }
+        const app = {
+            commandLine: {
+                appendSwitch: (key, value) => {
+                    events.push(`appendSwitch:${key}=${value}`)
+                    switches.push(`${key}=${value}`)
+                },
+            },
+            setPath: (name, value) => events.push(`setPath:${name}=${value}`),
+            getLocale: () => locale,
+            quit: () => events.push('quit'),
+            exit: code => events.push(`exit:${code}`),
+            on: name => events.push(`on:${name}`),
+            whenReady: () => {
+                events.push('whenReady:begin')
+                readinessSwitches.value = [...switches]
+                return {
+                    then: callback => {
+                        const settled = Promise.resolve().then(() => callback())
+                        sandbox.__completion = settled
+                        return settled
+                    },
+                }
+            },
+        }
+        class BrowserWindow {
+            constructor (options) {
+                this.options = options
+                this.webContents = { executeJavaScript: () => Promise.resolve() }
+                this.handle = Buffer.alloc(8)
+            }
+            setMenu () {}
+            setTitleBarOverlay () {}
+            loadURL () { return Promise.resolve() }
+            setAlwaysOnTop () {}
+            show () {}
+            focus () {}
+            getNativeWindowHandle () { return this.handle }
+            getBounds () { return { x: 80, y: 60, width: 800, height: 580 } }
+            getContentBounds () { return { x: 80, y: 60, width: 800, height: 580 } }
+            destroy () {}
+        }
+        const simulatedFs = {
+            mkdirSync: () => {},
+            writeFileSync: (target, data, options) => writes.push({ target, data, options }),
+            existsSync: () => false,
+        }
+        const sandbox = {
+            __dirname: path.dirname(referencePath),
+            process: {
+                platform: 'win32',
+                pid: 4444,
+                argv: ['electron', referencePath, 'data-dir', 'ready.json', 'close-flag', 'thin'],
+                versions: { electron: '38.8.6', chrome: '140.0.0.0' },
+            },
+            console: { log: () => {}, error: () => {} },
+            setInterval: () => { events.push('setInterval'); return { unref: () => {} } },
+            clearInterval: () => {},
+            setTimeout: () => ({ unref: () => {} }),
+            require: id => {
+                if (id === 'node:fs') return simulatedFs
+                if (id === 'node:path') return path
+                if (id === 'node:module') {
+                    return {
+                        createRequire: () => specifier => {
+                            if (specifier === 'glasstron') return { BrowserWindow }
+                            throw new Error(`Unexpected reference require: ${specifier}`)
+                        },
+                    }
+                }
+                if (id === 'electron') return { app, nativeTheme: {} }
+                throw new Error(`Unexpected reference require: ${id}`)
+            },
+        }
+        vm.runInContext(referenceSource, vm.createContext(sandbox), { filename: 'windows_frame_native/electron.cjs', timeout: 5000 })
+        return { events, switches, writes, readinessSwitches, completion: sandbox.__completion }
+    }
+
+    for (const locale of ['en-US', 'ja-JP']) {
+        const observed = bootReference(locale)
+        assert.ok(observed.completion, `electron.cjs must reach app.whenReady() for locale ${locale}`)
+        await observed.completion
+        assert.ok(
+            observed.readinessSwitches.value.includes('lang=EN'),
+            `app.commandLine.appendSwitch('lang','EN') must already be set when app.whenReady() runs (${locale}): ${JSON.stringify(observed.readinessSwitches.value)}`,
+        )
+        assert.ok(
+            observed.events.indexOf('appendSwitch:lang=EN') < observed.events.indexOf('whenReady:begin'),
+            `appendSwitch('lang','EN') must run before app.whenReady() (${locale})`,
+        )
+        assert.equal(observed.writes.length, 1, `readiness manifest must be written exactly once (${locale})`)
+        const manifest = JSON.parse(observed.writes[0].data)
+        assert.equal(manifest.mode, 'thin')
+        assert.equal(
+            manifest.locale,
+            locale,
+            `readiness manifest locale must be app.getLocale() (${locale}), not a hardcoded English value`,
+        )
+    }
+
+    console.log('Caption fixture: CLI errors, safe output, source identity, isolated installation, and reference boot lang/locale passed')
 } finally {
     fs.rmSync(directory, { recursive: true, force: true })
 }
