@@ -15,7 +15,7 @@ const sourceFailures = []
 function expectSource (callback, message) {
     try { callback() } catch { sourceFailures.push(message) }
 }
-expectSource(() => assert.ok(/\.build\(\s*tauri::generate_context!\(\)\s*\)\s*\.expect\([^)]*\)\s*\.run\(\s*on_application_event\s*\)/s.test(current)), 'Tauri builder must register the callback')
+expectSource(() => assert.ok(/\.build\([^;]*?\)\s*\.expect\([^)]*\)\s*\.run\(\s*on_application_event\s*\)/s.test(current)), 'Tauri builder must register the callback')
 expectSource(() => assert.ok(/pub\s+fn\s+app_quit\s*\([\s\S]*?\)\s*->\s*Result<\(\),\s*AppError>\s*\{[\s\S]*?app\.exit\(0\);[\s\S]*?\}/.test(appCommands)), 'app_quit must retain app.exit(0)')
 expectSource(() => assert.ok(!/crash::clear/.test(appCommands.match(/pub\s+fn\s+app_quit\s*\([\s\S]*?\)\s*->\s*Result<\(\),\s*AppError>\s*\{([\s\S]*?)\n\}/)?.[1] ?? '')), 'app_quit must not clear the marker during a quit request')
 const oldHostApp = execFileSync('git', ['show', '14e2d60b9b6dee84a53c37f05eefeb803787de04:tabby-electron/src/services/hostApp.service.ts'], { cwd: root, encoding: 'utf8' })

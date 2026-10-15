@@ -28,19 +28,22 @@ pub struct AppPaths {
     portable_root: Option<PathBuf>,
 }
 
+pub(crate) fn portable_root_for_executable(executable: &Path) -> Result<Option<PathBuf>, AppError> {
+    let directory = executable.parent().ok_or_else(|| {
+        AppError::InvalidArgument("the executable path has no parent directory".into())
+    })?;
+    Ok(
+        (directory.join(PORTABLE_MARKER).is_file() || directory.join("data").is_dir())
+            .then(|| directory.to_path_buf()),
+    )
+}
+
 impl AppPaths {
-    pub fn detect(app: &tauri::AppHandle) -> Result<Self, AppError> {
-        let executable = env::current_exe()?;
-        let executable_dir = executable.parent().ok_or_else(|| {
-            AppError::InvalidArgument("the executable path has no parent directory".into())
-        })?;
-        let marker = executable_dir.join(PORTABLE_MARKER);
-        let legacy_data_dir = executable_dir.join("data");
-        let portable_root = if marker.is_file() || legacy_data_dir.is_dir() {
-            Some(executable_dir.to_path_buf())
-        } else {
-            None
-        };
+    pub fn detect(
+        app: &tauri::AppHandle,
+        executable: PathBuf,
+        portable_root: Option<PathBuf>,
+    ) -> Result<Self, AppError> {
         let data_dir = if let Some(root) = portable_root.as_ref() {
             root.join("data")
         } else if let Some(root) = benchmark_data_dir() {
@@ -352,6 +355,50 @@ mod tests {
     use super::{
         data_dir_override, APP_IDENTIFIER, CLI_NAME, CREDENTIAL_SERVICE, DATA_DIR_NAME, URL_SCHEME,
     };
+
+    #[test]
+    fn portable_marker_selects_the_executable_directory() {
+        let root = tempfile::tempdir().unwrap();
+        let executable = root.path().join("tabby-rs");
+        std::fs::write(root.path().join(super::PORTABLE_MARKER), []).unwrap();
+        assert_eq!(
+            super::portable_root_for_executable(&executable).unwrap(),
+            Some(root.path().to_path_buf()),
+        );
+    }
+
+    #[test]
+    fn legacy_portable_data_directory_selects_the_same_root() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join("data")).unwrap();
+        assert_eq!(
+            super::portable_root_for_executable(&root.path().join("tabby-rs")).unwrap(),
+            Some(root.path().to_path_buf()),
+        );
+    }
+
+    #[test]
+    fn installed_layout_and_non_marker_entries_stay_installed() {
+        let root = tempfile::tempdir().unwrap();
+        let executable = root.path().join("tabby-rs");
+        assert!(super::portable_root_for_executable(&executable)
+            .unwrap()
+            .is_none());
+        std::fs::create_dir(root.path().join(super::PORTABLE_MARKER)).unwrap();
+        std::fs::write(root.path().join("data"), b"existing file").unwrap();
+        assert!(super::portable_root_for_executable(&executable)
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            std::fs::read(root.path().join("data")).unwrap(),
+            b"existing file"
+        );
+    }
+
+    #[test]
+    fn portable_resolution_rejects_an_executable_without_a_parent() {
+        assert!(super::portable_root_for_executable(std::path::Path::new("/")).is_err());
+    }
 
     #[test]
     fn identity_is_separate_from_upstream_tabby() {

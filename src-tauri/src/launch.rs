@@ -34,7 +34,7 @@ pub struct LegacyCliArguments {
     pub commands: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub directory: Option<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub command: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub profile_name: Option<String>,
@@ -521,6 +521,47 @@ mod tests {
         let context = parse_launch_context(&argv, "/work".into(), false);
         assert_eq!(context.parse_error, None);
         context.request
+    }
+
+    #[test]
+    fn new_window_request_round_trips_omitted_empty_command() {
+        let cases: &[&[&str]] = &[
+            &["tabby-rs", "--new-window"],
+            &["tabby-rs", "--new-window", "profile", "Portable fixture"],
+            &["tabby-rs", "--new-window", "--cwd", "/owned fixture"],
+        ];
+        for arguments in cases {
+            let argv = arguments
+                .iter()
+                .map(|arg| (*arg).to_owned())
+                .collect::<Vec<_>>();
+            let context = parse_launch_context(&argv, "/owned fixture".into(), true);
+            assert!(context.parse_error.is_none());
+            let wire = serde_json::json!({ "launch": context });
+            assert!(wire["launch"]["request"]["argv"].get("command").is_none());
+            let request: crate::commands::desktop::NewWindowRequest = serde_json::from_value(wire)
+                .expect("serialized launch must be accepted by window_new");
+            assert_eq!(request.launch, Some(context));
+        }
+    }
+
+    #[test]
+    fn new_window_request_round_trips_nonempty_command_arguments() {
+        let argv = [
+            "tabby-rs",
+            "--new-window",
+            "run",
+            "/bin/printf",
+            "literal ; text",
+        ]
+        .map(str::to_owned);
+        let context = parse_launch_context(&argv, "/owned fixture".into(), true);
+        assert!(context.parse_error.is_none());
+        assert!(!context.request.argv.command.is_empty());
+        let wire = serde_json::json!({ "launch": context });
+        let request: crate::commands::desktop::NewWindowRequest =
+            serde_json::from_value(wire).unwrap();
+        assert_eq!(request.launch, Some(context));
     }
 
     #[test]

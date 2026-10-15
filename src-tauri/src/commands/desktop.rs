@@ -77,6 +77,13 @@ pub(crate) fn create_window(
             .min_inner_size(640.0, 480.0)
             .transparent(true)
             .visible(false);
+    let builder = if let Some(directory) = crate::webview_storage::data_directory(
+        state.paths().portable_root().map(|root| root.as_path()),
+    ) {
+        builder.data_directory(directory)
+    } else {
+        builder
+    };
     #[cfg(target_os = "macos")]
     let builder = builder
         .title_bar_style(tauri::TitleBarStyle::Overlay)

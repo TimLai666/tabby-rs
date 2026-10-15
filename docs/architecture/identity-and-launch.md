@@ -25,6 +25,35 @@ Portable mode is selected before any config, plugin, log, or credential-backed s
 - `data/`, retained as a compatibility marker for the original portable convention
 
 In portable mode all file-backed state is rooted at `<executable-directory>/data`.
+The executable and portable marker are resolved once before Tauri creates any
+WebView. The same startup snapshot selects host paths and the
+`data/webview` directory for every configured or subsequently created window.
+Installed mode retains its existing WebView configuration.
+
+On macOS, the pinned Wry runtime ignores `data_directory` when selecting a
+persistent WKWebsiteDataStore. The native adapter creates one directory-backed
+store before window construction and supplies it through `defaultDataStore`.
+It uses the directory configuration initializer when available and the older
+path setters otherwise. The store initializer is
+`-_initWithConfiguration:`, which the
+[WebKit private header](https://github.com/WebKit/WebKit/blob/main/Source/WebKit/UIProcess/API/Cocoa/WKWebsiteDataStorePrivate.h)
+declares from macOS 10.13. Runtime method checks and bounded native errors
+prevent an unsupported installation from opening a shared default store.
+An existing override is preserved. Explicit incognito window settings remain
+unchanged.
+
+Existing shared WebView history is retained in its original location. It is
+not imported automatically, because it cannot be attributed to one portable
+directory. A portable directory starts its own recent-profile and recovery
+history. Move its `data` directory together with the executable.
+
+`yarn test:portable-storage` compiles the production macOS adapter into owned
+Cocoa helpers and exercises actual WebKit: invalid paths and threads, existing
+overrides, repeated installation, two WebViews sharing a store, persistence
+across processes, independent directories, and relocation of the app with its
+data. Automatic API selection and the forced older-setter path run on the
+host system. These focused checks do not establish older macOS runtime,
+installer, concurrent-copy routing, or full desktop acceptance.
 
 ## Structured CLI input
 
@@ -99,6 +128,11 @@ The alias status and conflict path are exposed in the **Settings → Tabby RS** 
 The Rust host owns the desktop window lifecycle. `--new-window` is transported through the launch contract, while the Tauri `window.new` command creates an additional renderer window with the same application entry point. Window state commands and desktop events are scoped to the invoking window, so moving or closing one window cannot mutate another window.
 
 After focus, movement, or resizing, the renderer reads the full native window state. Only the latest requested state read can replace its cached snapshot. Bounds come from that snapshot's outer window dimensions; resize event payloads describe the client area. `scripts/test-tauri-host-window-state.mjs` exercises the actual renderer service with simulated IPC, including delayed replies, failures, and independent windows. These checks do not establish native desktop acceptance.
+
+The renderer returns a launch context to the native host when it requests a new
+window. An omitted legacy command array decodes as an empty array, matching the
+serialized form for profile, working-directory, and plain new-window requests.
+Nonempty command arguments retain their separate array items.
 
 When a launch request creates a window, its new-window flags and second-instance marker are consumed before that window reads the request. The initial main window also consumes those flags. The remaining arguments, working directory, and parse errors are preserved. A manual new window receives no copy of the original process arguments. Failed window creation and window destruction remove that window's pending requests. Window creation runs outside synchronous commands and native event handlers to avoid the documented WebView2 deadlock.
 
