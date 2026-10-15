@@ -136,6 +136,53 @@ try {
         return { style, dimensions, hoverPixelParity: true }
     })
 
+    await run('fractional-dpr-physical-parity', async () => {
+        const scaled = scale => {
+            const rect = value => Object.fromEntries(Object.entries(value).map(([key, number]) => [key, number * scale]))
+            return makeSnapshot({ scale, layout: { clip: rect(base.layout.clip), buttons: base.layout.buttons.map(button => ({ ...button, bounds: rect(button.bounds) })) } })
+        }
+        const cases = [
+            ['normal', base, options],
+            ['hover', withPointer(base, 'maximize', null), options],
+            ['pressed', withPointer(base, 'close', 'close'), options],
+            ['fade', withPointer(base, 'close', null), { ...options, symbolColor: [0, 0, 0, 128], hoverProgress: { close: 0.5 } }],
+            ['restore', makeMaximizedSnapshot(), { ...options, windows11: true }],
+            ...[0.4, Math.fround(1.15), Math.fround(1.65)].map(scale => [`scale-${scale}`, scaled(scale), options]),
+        ]
+        const baseline = new Map()
+        const observed = []
+        for (const dpr of [1, 1.25, 2, 2.5]) {
+            const dprContext = await browser.newContext({ viewport: { width: 1600 / dpr, height: 1200 / dpr }, deviceScaleFactor: dpr })
+            contexts.push(dprContext)
+            const dprPage = await dprContext.newPage()
+            listenToPage(dprPage)
+            await dprPage.goto('about:blank')
+            await installPainter(dprPage, paintSource)
+            assert(await dprPage.evaluate(() => window.devicePixelRatio) === dpr, `actual DPR differs from ${dpr}`)
+            for (const [name, snapshot, paintOptions] of cases) {
+                await setupFixture(dprPage, 1600 / dpr, 1200 / dpr, dpr)
+                // Isolate the painter from CSS gradient resampling in the marker.
+                await dprPage.locator('#fixture-marker').evaluate(marker => marker.remove())
+                await dprPage.evaluate(() => { document.body.style.overflow = '' })
+                await paint(dprPage, 'caption-a', snapshot, { ...paintOptions, devicePixelRatio: dpr })
+                const scroll = await dprPage.evaluate(() => {
+                    const root = document.documentElement
+                    return { width: root.scrollWidth, height: root.scrollHeight, clientWidth: root.clientWidth, clientHeight: root.clientHeight }
+                })
+                assert(scroll.width === scroll.clientWidth && scroll.height === scroll.clientHeight, `caption added document overflow: ${JSON.stringify(scroll)}`)
+                const image = await dprPage.screenshot()
+                await savePng(outputDirectory, `physical-dpr${dpr}-${name}.png`, image)
+                const dimensions = await imageDimensions(dprPage, image)
+                assert(dimensions.width === 1600 && dimensions.height === 1200, `unexpected physical dimensions: ${JSON.stringify(dimensions)}`)
+                if (dpr === 1) baseline.set(name, image)
+                else assert(await comparePng(dprPage, baseline.get(name), image), `${name} physical pixels differ at actual DPR ${dpr}`)
+                observed.push({ name, actualDpr: dpr, dimensions })
+            }
+            await dprContext.close()
+        }
+        return { comparisons: 24, observed }
+    })
+
     await run('minimize-hover-pixel', async () => {
         await setupFixture(page, 800, 580, 1)
         const snapshot = withPointer(base, 'minimize', null)
