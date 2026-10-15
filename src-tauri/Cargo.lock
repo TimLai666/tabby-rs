@@ -5389,6 +5389,7 @@ dependencies = [
  "objc2-app-kit",
  "objc2-foundation",
  "pbkdf2",
+ "png 0.18.1",
  "portable-pty",
  "rand 0.8.7",
  "regex",

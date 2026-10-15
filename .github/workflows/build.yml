@@ -473,6 +473,54 @@ jobs:
           RUSTFLAGS: '-C link-arg=/MANIFESTINPUT:${{ github.workspace }}/src-tauri/windows-app-manifest.xml -C link-arg=/MANIFEST:EMBED'
         run: cargo test --manifest-path src-tauri/Cargo.toml --lib
 
+      - name: Test native Windows Wry frames
+        if: matrix.name == 'windows'
+        shell: pwsh
+        env:
+          RUSTFLAGS: '-C link-arg=/MANIFESTINPUT:${{ github.workspace }}/src-tauri/windows-app-manifest.xml -C link-arg=/MANIFEST:EMBED'
+        run: |
+          $output = Join-Path $env:RUNNER_TEMP 'tabby-rs-wry-frame-evidence'
+          $data = Join-Path $env:RUNNER_TEMP 'tabby-rs-wry-frame-data'
+          if ((Test-Path $output) -or (Test-Path $data)) {
+            throw 'Native frame evidence and browser data paths must be fresh'
+          }
+          $electron = node -e "console.log(require(require.resolve('electron', { paths: [process.cwd() + '/app'] })))"
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $electron -PathType Leaf)) {
+            throw 'Pinned Electron executable was not resolved'
+          }
+          $exitCode = $null
+          try {
+            cargo run --locked --manifest-path src-tauri/Cargo.toml --example windows_frame_native -- --output $output --data-dir $data --electron $electron
+            $exitCode = $LASTEXITCODE
+            if ($exitCode -ne 0) { throw "Native Windows frame checks failed: $exitCode" }
+          } finally {
+            $cleanupError = $null
+            for ($attempt = 0; $attempt -lt 10 -and (Test-Path $data); $attempt++) {
+              try { Remove-Item -LiteralPath $data -Recurse -Force -ErrorAction Stop }
+              catch { $cleanupError = $_.Exception.Message; Start-Sleep -Milliseconds 500 }
+            }
+            $removed = -not (Test-Path $data)
+            if (Test-Path $output) {
+              $record = @{ ownedDataRemoved = $removed; driverExitCode = $exitCode; lastCleanupError = $cleanupError } | ConvertTo-Json
+              $cleanupFile = Join-Path $output 'profile-cleanup.json'
+              $stream = [System.IO.File]::Open($cleanupFile, [System.IO.FileMode]::CreateNew)
+              try {
+                $bytes = [System.Text.Encoding]::UTF8.GetBytes($record)
+                $stream.Write($bytes, 0, $bytes.Length)
+              } finally { $stream.Dispose() }
+            }
+            if (-not $removed) { throw "Owned browser data cleanup failed: $cleanupError" }
+          }
+
+      - name: Preserve Windows Wry frame evidence
+        if: always() && matrix.name == 'windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-wry-frames-${{ github.sha }}
+          path: ${{ runner.temp }}/tabby-rs-wry-frame-evidence
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Test SSH authentication fixture
         if: matrix.name != 'windows'
         run: yarn test:ssh-auth-integration
