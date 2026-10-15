@@ -28,19 +28,22 @@ pub struct AppPaths {
     portable_root: Option<PathBuf>,
 }
 
+pub(crate) fn portable_root_for_executable(executable: &Path) -> Result<Option<PathBuf>, AppError> {
+    let directory = executable.parent().ok_or_else(|| {
+        AppError::InvalidArgument("the executable path has no parent directory".into())
+    })?;
+    Ok(
+        (directory.join(PORTABLE_MARKER).is_file() || directory.join("data").is_dir())
+            .then(|| directory.to_path_buf()),
+    )
+}
+
 impl AppPaths {
-    pub fn detect(app: &tauri::AppHandle) -> Result<Self, AppError> {
-        let executable = env::current_exe()?;
-        let executable_dir = executable.parent().ok_or_else(|| {
-            AppError::InvalidArgument("the executable path has no parent directory".into())
-        })?;
-        let marker = executable_dir.join(PORTABLE_MARKER);
-        let legacy_data_dir = executable_dir.join("data");
-        let portable_root = if marker.is_file() || legacy_data_dir.is_dir() {
-            Some(executable_dir.to_path_buf())
-        } else {
-            None
-        };
+    pub fn detect(
+        app: &tauri::AppHandle,
+        executable: PathBuf,
+        portable_root: Option<PathBuf>,
+    ) -> Result<Self, AppError> {
         let data_dir = if let Some(root) = portable_root.as_ref() {
             root.join("data")
         } else if let Some(root) = benchmark_data_dir() {

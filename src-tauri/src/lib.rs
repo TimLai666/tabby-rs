@@ -20,6 +20,7 @@ mod sudo;
 mod telnet;
 mod transfer;
 pub mod update;
+mod webview_storage;
 mod windows_integration;
 mod winscp;
 
@@ -310,6 +311,21 @@ pub fn run() {
     if crate::update::rollback::maybe_run_update_rollback_helper() {
         return;
     }
+    let executable = std::env::current_exe().expect("failed to locate the executable");
+    let portable_root = identity::portable_root_for_executable(&executable)
+        .expect("failed to detect portable storage");
+    let mut context = tauri::generate_context!();
+    let storage_directory =
+        webview_storage::prepare(context.config_mut(), portable_root.as_deref())
+            .expect("failed to prepare portable WebView storage");
+    #[cfg(target_os = "macos")]
+    if let Some(directory) = storage_directory.as_deref() {
+        webview_storage::install_macos(directory)
+            .expect("failed to install portable WebView storage");
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = storage_directory;
+
     let initial_launch = initial_launch_context();
     let (launch_sender, launch_receiver) = std::sync::mpsc::channel::<LaunchContext>();
     let mut builder = tauri::Builder::default()
@@ -347,7 +363,11 @@ pub fn run() {
                 initial_launch = parse_launch_context(&argv, initial_launch.cwd.clone(), false);
             }
 
-            let paths = identity::AppPaths::detect(app.handle())?;
+            let paths = identity::AppPaths::detect(
+                app.handle(),
+                executable.clone(),
+                portable_root.clone(),
+            )?;
             let logs_dir = paths.logs_dir().clone();
             let known_hosts_path = paths.data_dir().join("known_hosts");
             let storage_paths = StoragePaths::from_app_paths(&paths);
@@ -574,7 +594,7 @@ pub fn run() {
             winscp_convert_key,
             winscp_launch,
         ])
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("failed to build Tabby RS")
         .run(on_application_event);
 }

@@ -59,5 +59,16 @@ fn main() {
     materialize_icon(&manifest_dir, "icon.png").expect("failed to materialize Tauri PNG icon");
     materialize_icon(&manifest_dir, "icon.ico").expect("failed to materialize Tauri ICO icon");
 
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+        println!("cargo:rerun-if-changed=src/platform/macos_webview_storage.m");
+        cc::Build::new()
+            .file("src/platform/macos_webview_storage.m")
+            .flag("-fobjc-arc")
+            .flag("-fmodules")
+            .compile("tabby_rs_webview_storage");
+        println!("cargo:rustc-link-lib=framework=Foundation");
+        println!("cargo:rustc-link-lib=framework=WebKit");
+    }
+
     tauri_build::build();
 }
