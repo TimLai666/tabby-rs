@@ -92,6 +92,8 @@ struct ServerState {
     rejected_requests: Mutex<Option<mpsc::UnboundedSender<(String, u32)>>>,
     close_events: Mutex<Option<mpsc::UnboundedSender<ChannelId>>>,
     closed_channels: Mutex<Vec<ChannelId>>,
+    allocation_reply: Mutex<Option<u32>>,
+    cancel_requests: Mutex<Vec<(String, u32)>>,
     auto_eager: AtomicBool,
     reject_next: AtomicBool,
     auto_results: Mutex<Vec<(ChannelId, bool)>>,
@@ -197,6 +199,12 @@ impl server::Handler for WireServer {
             }
             return Ok(false);
         }
+        if *port == 0 {
+            if let Some(reply) = self.state.allocation_reply.lock().unwrap().take() {
+                *port = reply;
+                return Ok(true);
+            }
+        }
         let requested_port = u16::try_from(*port).map_err(|_| russh::Error::Inconsistent)?;
         let listener = match TcpListener::bind((address, requested_port)).await {
             Ok(listener) => listener,
@@ -295,6 +303,11 @@ impl server::Handler for WireServer {
         port: u32,
         _: &mut server::Session,
     ) -> Result<bool, Self::Error> {
+        self.state
+            .cancel_requests
+            .lock()
+            .unwrap()
+            .push((address.to_owned(), port));
         let entry = self
             .state
             .listeners
@@ -1835,3 +1848,6 @@ async fn shared_routes_deliver_diagnostic_only_to_incoming_owner() {
     .await
     .unwrap();
 }
+
+#[path = "remote_allocation_tests.rs"]
+mod allocation_validation;
