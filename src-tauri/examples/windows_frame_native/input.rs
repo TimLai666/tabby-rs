@@ -35,16 +35,80 @@ struct Fixture {
     close_count: Arc<AtomicUsize>,
 }
 
-#[derive(Default)]
-struct LeftButtonGuard {
+struct InputCleanup {
+    cursor: Option<(i32, i32)>,
     pressed: bool,
+    stopping: bool,
 }
 
+static INPUT_CLEANUP: std::sync::Mutex<InputCleanup> = std::sync::Mutex::new(InputCleanup {
+    cursor: None,
+    pressed: false,
+    stopping: false,
+});
+
+// The watchdog exits without unwinding. Share only this fixture's physical input
+// ownership with it, and serialize SendInput plus its ownership acknowledgement.
+pub fn watchdog_cleanup() -> Value {
+    cleanup_input(true)
+}
+
+fn emergency_cleanup() -> Value {
+    cleanup_input(false)
+}
+
+fn cleanup_input(stopping: bool) -> Value {
+    let mut state = INPUT_CLEANUP
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+    state.stopping |= stopping;
+    let Some((x, y)) = state.cursor else {
+        return json!({"ok":true,"active":false});
+    };
+    let owned_press = state.pressed;
+    let sent = if owned_press {
+        send_mouse_button(false)
+    } else {
+        0
+    };
+    let released = poll(
+        || Ok(unsafe { GetAsyncKeyState(VK_LBUTTON as i32) >= 0 }),
+        |released| *released,
+    )
+    .is_ok();
+    if released {
+        state.pressed = false;
+    }
+    let moved = unsafe { SetCursorPos(x, y) != 0 };
+    let mut actual = POINT { x: 0, y: 0 };
+    let restored =
+        moved && unsafe { GetCursorPos(&mut actual) != 0 } && actual.x == x && actual.y == y;
+    let ok = (!owned_press || sent == 1) && released && restored;
+    if ok {
+        state.cursor = None;
+    }
+    json!({"ok":ok,"active":true,"ownedPress":owned_press,"sendInputCount":sent,
+        "buttonReadbackUp":released,"cursorRestored":restored,
+        "expectedCursor":[x,y],"actualCursor":[actual.x,actual.y]})
+}
+
+struct LeftButtonGuard;
+
 impl LeftButtonGuard {
+    fn new(cursor: POINT) -> Result<Self, String> {
+        let mut state = INPUT_CLEANUP
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        if state.stopping || state.cursor.is_some() {
+            return Err("physical input is stopping or another fixture is active".into());
+        }
+        state.cursor = Some((cursor.x, cursor.y));
+        state.pressed = false;
+        Ok(Self)
+    }
+
     fn press(&mut self, hwnd: HWND, point: POINT, expected_hit: &[isize]) -> Result<Value, String> {
-        let report = send_left(hwnd, point, true, expected_hit)?;
-        self.pressed = true;
-        Ok(report)
+        send_left(hwnd, point, true, expected_hit)
     }
 
     fn release(
@@ -53,36 +117,22 @@ impl LeftButtonGuard {
         point: POINT,
         expected_hit: &[isize],
     ) -> Result<Value, String> {
-        let report = send_left(hwnd, point, false, expected_hit)?;
-        self.pressed = false;
-        Ok(report)
+        send_left(hwnd, point, false, expected_hit)
     }
 
     fn cleanup(&mut self) -> Result<Value, String> {
-        let owned_press = self.pressed;
-        let sent = if owned_press {
-            send_mouse_button(false)
+        let report = emergency_cleanup();
+        if report["ok"] == true {
+            Ok(report)
         } else {
-            0
-        };
-        if owned_press && sent != 1 {
-            return Err(format!("cleanup SendInput release returned {sent}/1"));
+            Err(report.to_string())
         }
-        poll(
-            || Ok(unsafe { GetAsyncKeyState(VK_LBUTTON as i32) >= 0 }),
-            |released| *released,
-        )?;
-        self.pressed = false;
-        Ok(json!({"released":owned_press,"sendInputCount":sent,"buttonReadbackUp":true}))
     }
 }
 
 impl Drop for LeftButtonGuard {
     fn drop(&mut self) {
-        if self.pressed {
-            let _ = send_mouse_button(false);
-            self.pressed = false;
-        }
+        let _ = emergency_cleanup();
     }
 }
 
@@ -141,10 +191,11 @@ fn create_fixture(owner: &WebviewWindow, data: &Path) -> Result<Fixture, String>
     .map_err(fail)?;
     window.on_window_event(move |event| {
         if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-            event_count.fetch_add(1, Ordering::SeqCst);
             if !event_allow.load(Ordering::SeqCst) {
                 api.prevent_close();
             }
+            // Publish only after this event's close decision has completed.
+            event_count.fetch_add(1, Ordering::SeqCst);
         }
     });
     let hwnd = match window.hwnd() {
@@ -257,10 +308,7 @@ fn foreground_and_hit(hwnd: HWND, point: POINT, expected_hit: &[isize]) -> Resul
     let mut pid = 0;
     unsafe { GetWindowThreadProcessId(root, &mut pid) };
     let packed = ((actual_cursor.y as u16 as u32) << 16 | actual_cursor.x as u16 as u32) as isize;
-    let hit = unsafe {
-        windows_sys::Win32::UI::WindowsAndMessaging::SendMessageW(target, WM_NCHITTEST, 0, packed)
-    };
-    let report = json!({
+    let mut report = json!({
         "foreground": foreground as usize,
         "pointTarget": target as usize,
         "cursorRead": cursor_read,
@@ -268,8 +316,7 @@ fn foreground_and_hit(hwnd: HWND, point: POINT, expected_hit: &[isize]) -> Resul
         "expectedCursor": [point.x, point.y],
         "pointRoot": root as usize,
         "pointRootPid": pid,
-        "expectedHwnd": hwnd as usize,
-        "hitTest": hit
+        "expectedHwnd": hwnd as usize
     });
     if foreground != hwnd
         || !cursor_read
@@ -283,6 +330,25 @@ fn foreground_and_hit(hwnd: HWND, point: POINT, expected_hit: &[isize]) -> Resul
             "foreground or point ownership check failed: {report}"
         ));
     }
+    let mut hit = 0usize;
+    let replied = unsafe {
+        windows_sys::Win32::UI::WindowsAndMessaging::SendMessageTimeoutW(
+            target,
+            WM_NCHITTEST,
+            0,
+            packed,
+            windows_sys::Win32::UI::WindowsAndMessaging::SMTO_ABORTIFHUNG
+                | windows_sys::Win32::UI::WindowsAndMessaging::SMTO_BLOCK,
+            1000,
+            &mut hit,
+        )
+    };
+    if replied == 0 {
+        return Err(format!(
+            "owned hit-test did not reply within 1000 ms: {report}"
+        ));
+    }
+    report["hitTest"] = json!(hit);
     if !expected_hit.contains(&(hit as isize)) {
         return Err(format!("unexpected WM_NCHITTEST value: {report}"));
     }
@@ -296,12 +362,21 @@ fn send_left(
     expected_hit: &[isize],
 ) -> Result<Value, String> {
     let ownership = foreground_and_hit(hwnd, point, expected_hit)?;
+    let mut state = INPUT_CLEANUP
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+    if state.stopping || state.cursor.is_none() || state.pressed == down {
+        return Err(
+            "physical input fixture is inactive or has no matching button ownership".into(),
+        );
+    }
     let sent = send_mouse_button(down);
     if sent != 1 {
         return Err(format!(
             "SendInput returned {sent}/1; ownership: {ownership}"
         ));
     }
+    state.pressed = down;
     Ok(json!({"sendInputCount": sent, "ownership": ownership}))
 }
 
@@ -326,6 +401,12 @@ fn send_mouse_button(down: bool) -> u32 {
 }
 
 fn move_to(hwnd: HWND, point: POINT) -> Result<(), String> {
+    let state = INPUT_CLEANUP
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+    if state.stopping || state.cursor.is_none() {
+        return Err("physical input fixture has ended".into());
+    }
     if unsafe { SetCursorPos(point.x, point.y) } == 0 {
         return Err(format!(
             "SetCursorPos failed: {}",
@@ -387,6 +468,48 @@ fn client_to_screen(hwnd: HWND, mut point: POINT) -> Result<POINT, String> {
     Ok(point)
 }
 
+fn verify_watchdog_cleanup(
+    window: &WebviewWindow,
+    cursor: POINT,
+    stopping: bool,
+) -> Result<Value, String> {
+    let mut guard = LeftButtonGuard::new(cursor)?;
+    let hwnd = window.hwnd().map_err(fail)?.0;
+    let body = client_to_screen(hwnd, POINT { x: 40, y: 120 })?;
+    move_to(hwnd, body)?;
+    let down = guard.press(hwnd, body, &[1])?;
+    poll(
+        || Ok(unsafe { GetAsyncKeyState(VK_LBUTTON as i32) < 0 }),
+        |pressed| *pressed,
+    )?;
+    // Use the same physical cleanup on another non-GUI thread. The final check
+    // also exercises permanent shutdown while an owned press is still down.
+    let task = if stopping {
+        watchdog_cleanup
+    } else {
+        emergency_cleanup
+    };
+    let cleanup = thread::spawn(task)
+        .join()
+        .map_err(|_| "watchdog input cleanup thread panicked".to_owned())?;
+    if cleanup["ok"] != true
+        || cleanup["ownedPress"] != true
+        || cleanup["buttonReadbackUp"] != true
+        || cleanup["cursorRestored"] != true
+    {
+        return Err(format!(
+            "watchdog did not restore owned physical input: {cleanup}"
+        ));
+    }
+    let restart_rejected = stopping && LeftButtonGuard::new(cursor).is_err();
+    if stopping && !restart_rejected {
+        return Err("watchdog allowed a new input owner".into());
+    }
+    Ok(
+        json!({"down":down,"watchdogCleanup":cleanup,"permanentStop":stopping,"newGuardRejected":restart_rejected}),
+    )
+}
+
 fn run_checks(
     owner: &WebviewWindow,
     other: &WebviewWindow,
@@ -425,8 +548,40 @@ fn run_checks(
             return checks;
         }
     };
+    if let Err(error) = super::renderer::wait(&fixture.window) {
+        let cleanup = restore_fixture(&fixture);
+        checks.push(check(
+            "caption-input-renderer-ready",
+            false,
+            json!({"error":error,"windowCleanup":cleanup}),
+        ));
+        return checks;
+    }
+    match verify_watchdog_cleanup(&fixture.window, saved_cursor, false) {
+        Ok(detail) => checks.push(check("physical-input-watchdog-cleanup", true, detail)),
+        Err(error) => {
+            let cleanup = restore_fixture(&fixture);
+            checks.push(check(
+                "physical-input-watchdog-cleanup",
+                false,
+                json!({"error":error,"windowCleanup":cleanup}),
+            ));
+            return checks;
+        }
+    }
     let mut armed = false;
-    let mut left_button = LeftButtonGuard::default();
+    let mut left_button = match LeftButtonGuard::new(saved_cursor) {
+        Ok(guard) => guard,
+        Err(error) => {
+            let cleanup = restore_fixture(&fixture);
+            checks.push(check(
+                "caption-input-ownership",
+                false,
+                json!({"error":error,"windowCleanup":cleanup}),
+            ));
+            return checks;
+        }
+    };
     let work = (|| -> Result<(), String> {
         super::renderer::wait(&fixture.window)?;
         let before =
@@ -460,6 +615,10 @@ fn run_checks(
             |value| value["visible"] == true,
         )?;
         checks.push(check("caption-preparation-and-visible-layout", true, json!({"visibleSnapshot":visible,"width":before.width,"height":before.height,"rgbaBytes":before.rgba.len(),"captureUnchangedAfterPreparation":pixels_unchanged})));
+        // A second controller must not share pointer, layout, or revision state.
+        super::platform::prepare_caption_controls(other)
+            .map_err(|error| format!("prepare secondary caption: {error:?}"))?;
+        let other_caption_before = snapshot(other)?;
         let max_result = click(&fixture, &mut left_button, "maximize")?;
         let maximized = wait_maximized(&fixture.window, true)?;
         if maximized["maximized"] != true
@@ -551,6 +710,12 @@ fn run_checks(
             |count| *count == 2,
         )?;
         checks.push(check("sendinput-second-close-allowed", destroyed && two_close == 2, json!({"down":down,"pressed":pressed,"up":up,"destroyed":destroyed,"closeRequestedCount":two_close})));
+        let other_caption_after = snapshot(other)?;
+        checks.push(check(
+            "independent-caption-controller-state",
+            other_caption_before == other_caption_after,
+            json!({"before":other_caption_before,"after":other_caption_after}),
+        ));
         armed = true;
         Ok(())
     })();
@@ -561,23 +726,16 @@ fn run_checks(
             json!({"error":error,"sequenceStopped":true}),
         ));
     }
-    let button_cleanup = left_button.cleanup();
-    let cursor_restore = if cursor_saved {
-        unsafe { SetCursorPos(saved_cursor.x, saved_cursor.y) != 0 }
-    } else {
-        false
-    };
-    let cursor_readback = if cursor_restore {
-        let mut now = POINT { x: 0, y: 0 };
-        (unsafe { GetCursorPos(&mut now) } != 0)
-            && now.x == saved_cursor.x
-            && now.y == saved_cursor.y
-    } else {
-        false
-    };
-    let destroyed = restore_fixture(&fixture).is_ok();
-    let released = button_cleanup.is_ok();
-    checks.push(check("fixture-cleanup-and-cursor-restore", destroyed && cursor_restore && cursor_readback && released, json!({"destroyed":destroyed,"leftButtonCleanup":button_cleanup,"cursorSaved":cursor_saved,"cursorRestored":cursor_restore,"cursorReadbackMatches":cursor_readback,"sequenceReachedFinalClose":armed})));
+    let input_cleanup = left_button.cleanup();
+    let destroyed = restore_fixture(&fixture);
+    checks.push(check("fixture-cleanup-and-cursor-restore", destroyed.is_ok() && input_cleanup.is_ok(),
+        json!({"windowCleanup":destroyed,"inputCleanup":input_cleanup,"sequenceReachedFinalClose":armed})));
+    let shutdown = verify_watchdog_cleanup(owner, saved_cursor, true);
+    checks.push(check(
+        "physical-input-watchdog-shutdown",
+        shutdown.is_ok(),
+        json!(shutdown),
+    ));
     let final_owner = super::native::snapshot(owner);
     let final_other = super::native::snapshot(other);
     checks.push(check("other-window-and-owner-isolation", matches!((&initial_owner,&final_owner), (Ok(before),Ok(after)) if before == after) && matches!((&initial_other,&final_other), (Ok(before),Ok(after)) if before == after), json!({"initialOwner":initial_owner,"finalOwner":final_owner,"initialOther":initial_other,"finalOther":final_other})));

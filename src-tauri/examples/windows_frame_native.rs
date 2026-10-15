@@ -116,6 +116,14 @@ fn windows_main(args: Vec<String>) {
     let watchdog_output = output.clone();
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_secs(180));
+        let input_cleanup = input::watchdog_cleanup();
+        if let Ok(file) = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(watchdog_output.join("watchdog-input-cleanup.json"))
+        {
+            let _ = serde_json::to_writer_pretty(file, &input_cleanup);
+        }
         if let Ok(file) = fs::OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -123,7 +131,7 @@ fn windows_main(args: Vec<String>) {
         {
             let _ = serde_json::to_writer_pretty(
                 file,
-                &json!({"kind":"tabby-rs-wry-frame-probe", "ok":false,"errors":["native driver watchdog timed out"]}),
+                &json!({"kind":"tabby-rs-wry-frame-probe", "ok":false,"inputCleanup":input_cleanup,"errors":["native driver watchdog timed out"]}),
             );
         }
         std::process::exit(1);
