@@ -406,6 +406,46 @@ pub fn overlay_experiment(window: &tauri::WebviewWindow, output: &Path) -> Resul
             Err(error) => Err(error),
         };
         let image = capture(window, &output.join(format!("wry-{mode}.png")));
+        let dynamic = if mode == "no-paint" {
+            (|| -> Result<Value, String> {
+                let initial = super::renderer::wait(window)?;
+                let previous = initial["markerBackground"]
+                    .as_str()
+                    .ok_or_else(|| "marker readback omitted its background".to_owned())?;
+                let paint = super::renderer::repaint_marker(window, "#29b36f");
+                let painted = if paint.is_ok() {
+                    capture(window, &output.join("wry-no-paint-updated.png"))
+                } else {
+                    Err("marker repaint was not acknowledged".to_owned())
+                };
+                // Dispatch may change the marker even when its acknowledgement fails.
+                // Always restore the independently saved background before removing the child.
+                let restored = super::renderer::repaint_marker(window, previous);
+                let restore_image = capture(window, &output.join("wry-no-paint-restored.png"));
+                let point = (
+                    (overlay.x + overlay.width / 2) as u32,
+                    (overlay.height / 2) as u32,
+                );
+                let actual_pixel = painted
+                    .as_ref()
+                    .ok()
+                    .and_then(|raster| raster.pixel(point.0, point.1));
+                let pixels_restored = restored.is_ok()
+                    && restore_image.as_ref().is_ok_and(|raster| {
+                        raster.width == baseline.width
+                            && raster.height == baseline.height
+                            && raster.rgba == baseline.rgba
+                    });
+                Ok(
+                    json!({"ok":actual_pixel == Some([41,179,111]) && pixels_restored,
+                    "point":[point.0,point.1],"expectedPixel":[41,179,111],"actualPixel":actual_pixel,
+                    "pixelsRestored":pixels_restored,"paint":paint,"restore":restored,
+                    "captureError":painted.err(),"restoreCaptureError":restore_image.err()}),
+                )
+            })()
+        } else {
+            Ok(json!({"notRequiredForMode":mode}))
+        };
         let cleanup = on_main(window, {
             let child = overlay.hwnd;
             let instance = overlay.instance;
@@ -444,12 +484,15 @@ pub fn overlay_experiment(window: &tauri::WebviewWindow, output: &Path) -> Resul
             }
         }
         let pixels_unchanged = valid_pixels && mismatches == 0;
+        let dynamic_ok =
+            mode != "no-paint" || dynamic.as_ref().is_ok_and(|value| value["ok"] == true);
         let supported = pixels_unchanged
+            && dynamic_ok
             && readback.as_ref().is_ok_and(|value| {
                 value["actualMouseTarget"] == true && value["nativeHitTest"] == HTMAXBUTTON
             })
             && cleanup.is_ok();
-        results.push(json!({"mode":mode,"supported":supported,"pixelsUnchanged":pixels_unchanged,"mismatchedPixels":mismatches,"nativeReadback":readback,"captureError":image.err(),"cleanup":cleanup,"rectangle":{"x":overlay.x,"y":0,"width":overlay.width,"height":overlay.height}}));
+        results.push(json!({"mode":mode,"supported":supported,"pixelsUnchanged":pixels_unchanged,"mismatchedPixels":mismatches,"dynamicPaint":dynamic,"nativeReadback":readback,"captureError":image.err(),"cleanup":cleanup,"rectangle":{"x":overlay.x,"y":0,"width":overlay.width,"height":overlay.height}}));
     }
     Ok(
         json!({"baselineWidth":baseline.width,"baselineHeight":baseline.height,"baselineBodyPixel":baseline.pixel(20,100),"modes":results}),

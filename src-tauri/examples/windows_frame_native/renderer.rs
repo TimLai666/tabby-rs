@@ -21,6 +21,7 @@ pub fn wait(window: &tauri::WebviewWindow) -> Result<Value, String> {
                 readyState: document.readyState, hasBody: !!document.body, href: location.href,
                 bodyColor: document.body ? getComputedStyle(document.body).backgroundColor : null,
                 markerBounds: document.body?.firstElementChild?.getBoundingClientRect().toJSON() ?? null,
+                markerBackground: document.body?.firstElementChild?.style.background ?? null,
                 width: innerWidth, height: innerHeight, devicePixelRatio};
         } catch (error) { return {error: String(error), href: location.href, readyState: document.readyState}; }
     })();"##;
@@ -51,4 +52,39 @@ pub fn wait(window: &tauri::WebviewWindow) -> Result<Value, String> {
         }
         thread::sleep(Duration::from_millis(50));
     }
+}
+
+// Change only this driver's marker and wait for a fresh pair of renderer frames.
+pub fn repaint_marker(window: &tauri::WebviewWindow, background: &str) -> Result<Value, String> {
+    let background = serde_json::to_string(background).map_err(|error| error.to_string())?;
+    let script = format!(
+        r#"(() => {{
+            const marker = document.body?.firstElementChild;
+            if (!marker || !window.__tabbyFrameProbePainted) return {{error:'owned marker is missing'}};
+            const previousBackground = marker.style.background;
+            marker.style.background = {background};
+            window.__tabbyFrameProbeReady = false;
+            requestAnimationFrame(() => requestAnimationFrame(() => {{ window.__tabbyFrameProbeReady = true; }}));
+            return {{previousBackground}};
+        }})()"#
+    );
+    let (tx, rx) = sync_channel(1);
+    window
+        .eval_with_callback(&script, move |result| {
+            let _ = tx.try_send(result);
+        })
+        .map_err(|error| format!("marker repaint dispatch: {error}"))?;
+    let raw = rx
+        .recv_timeout(Duration::from_secs(2))
+        .map_err(|error| format!("marker repaint callback: {error}"))?;
+    if raw.len() > 16384 {
+        return Err("marker repaint readback is excessive".into());
+    }
+    let mut change: Value =
+        serde_json::from_str(&raw).map_err(|error| format!("marker repaint JSON: {error}"))?;
+    if !change["error"].is_null() {
+        return Err(format!("marker repaint failed: {change}"));
+    }
+    change["paintedState"] = wait(window)?;
+    Ok(change)
 }

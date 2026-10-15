@@ -678,6 +678,56 @@ fn run_checks(
         let no_close = fixture.close_count.load(Ordering::SeqCst);
         checks.push(check("sendinput-close-drag-cancels", no_close == 0, json!({"down":down,"pressed":pressed,"up":up,"afterDrag":cancelled,"closeRequestedCount":no_close,"quietPeriodMs":250,"nativeBarrier":true})));
 
+        let close_state = snapshot(&fixture.window)?;
+        let close = client_to_screen(fixture.hwnd as HWND, button_point(&close_state, "close")?)?;
+        move_to(fixture.hwnd as HWND, close)?;
+        let down = left_button.press(fixture.hwnd as HWND, close, &[HTCLOSE as isize])?;
+        poll(
+            || snapshot(&fixture.window),
+            |value| value["pointer"]["pressed"] == "close",
+        )?;
+        fixture.window.set_closable(false).map_err(fail)?;
+        let disabled = poll(
+            || snapshot(&fixture.window),
+            |value| {
+                value["layout"]["buttons"]
+                    .as_array()
+                    .is_some_and(|buttons| {
+                        buttons
+                            .iter()
+                            .any(|button| button["button"] == "close" && button["enabled"] == false)
+                    })
+            },
+        )?;
+        let up = left_button.release(fixture.hwnd as HWND, close, &[HTCLOSE as isize])?;
+        let released = poll(
+            || snapshot(&fixture.window),
+            |value| value["pointer"]["pressed"].is_null(),
+        )?;
+        super::native::on_main(&fixture.window, |_| Ok(()))?;
+        let quiet_deadline = Instant::now() + Duration::from_millis(250);
+        while Instant::now() < quiet_deadline {
+            if fixture.close_count.load(Ordering::SeqCst) != 0 {
+                return Err("Close disabled during press generated CloseRequested".into());
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        fixture.window.set_closable(true).map_err(fail)?;
+        poll(
+            || snapshot(&fixture.window),
+            |value| {
+                value["layout"]["buttons"]
+                    .as_array()
+                    .is_some_and(|buttons| {
+                        buttons
+                            .iter()
+                            .any(|button| button["button"] == "close" && button["enabled"] == true)
+                    })
+            },
+        )?;
+        checks.push(check("sendinput-close-disabled-during-press", true,
+            json!({"down":down,"disabled":disabled,"up":up,"released":released,"closeRequestedCount":0,"quietPeriodMs":250})));
+
         let first_close = click(&fixture, &mut left_button, "close")?;
         let one_close = poll(
             || Ok(fixture.close_count.load(Ordering::SeqCst)),
