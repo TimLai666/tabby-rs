@@ -29,8 +29,8 @@
   Its real Cocoa helpers verify persistence, two WebViews, independent roots,
   app/data relocation, both configuration paths, and native error guards.
   The older-setter path on a newer host does not accept older macOS.
-  Original desktop comparison, actual new-window IPC, supported-platform
-  persistence, and installer acceptance remain pending.
+  Original desktop comparison, supported-platform persistence, and installer
+  acceptance remain pending.
 - Before portable concurrent-copy acceptance, compare single-instance routing
   with upstream for two different portable roots. The current plugin uses the
   application identifier for its lock. Storage isolation checks with sequential
