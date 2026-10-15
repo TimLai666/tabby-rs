@@ -36,9 +36,9 @@ use windows_sys::Win32::{
             ShowWindow, WindowFromPoint, GWLP_HINSTANCE, GWL_STYLE, HTCLOSE, HTMAXBUTTON,
             HTMINBUTTON, HTTRANSPARENT, HWND_TOP, MF_BYCOMMAND, MF_DISABLED, MF_GRAYED, SC_CLOSE,
             SC_MAXIMIZE, SC_MINIMIZE, SC_RESTORE, SM_CXPADDEDBORDER, SM_CXSIZEFRAME, SM_CYCAPTION,
-            SWP_NOACTIVATE, SWP_SHOWWINDOW, SW_HIDE, SW_SHOWNOACTIVATE, WM_ACTIVATE, WM_APP,
-            WM_CANCELMODE, WM_CAPTURECHANGED, WM_DPICHANGED, WM_ERASEBKGND, WM_LBUTTONDOWN,
-            WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCDESTROY, WM_NCHITTEST, WM_NCLBUTTONDOWN,
+            SWP_NOACTIVATE, SWP_SHOWWINDOW, SW_HIDE, WM_ACTIVATE, WM_APP, WM_CANCELMODE,
+            WM_CAPTURECHANGED, WM_DPICHANGED, WM_ERASEBKGND, WM_LBUTTONDOWN, WM_LBUTTONUP,
+            WM_MOUSEMOVE, WM_NCDESTROY, WM_NCHITTEST, WM_NCLBUTTONDBLCLK, WM_NCLBUTTONDOWN,
             WM_NCLBUTTONUP, WM_NCMOUSELEAVE, WM_NCMOUSEMOVE, WM_PAINT, WM_SETTINGCHANGE,
             WM_SHOWWINDOW, WM_SIZE, WM_STYLECHANGED, WM_SYSCOMMAND, WM_WINDOWPOSCHANGED,
             WS_CAPTION, WS_CHILD, WS_MAXIMIZEBOX, WS_MINIMIZEBOX,
@@ -914,7 +914,9 @@ unsafe extern "system" fn overlay_wnd_proc(
             }
             0
         }
-        WM_NCLBUTTONDOWN => {
+        // Windows delivers the second down as a non-client double-click even
+        // without CS_DBLCLKS. It still starts an ordinary caption press.
+        WM_NCLBUTTONDOWN | WM_NCLBUTTONDBLCLK => {
             let parent = unsafe { GetParent(child) };
             if !parent.is_null() {
                 if let Some(point) = screen_point_in_parent(parent, point_from_lparam(lparam)) {
