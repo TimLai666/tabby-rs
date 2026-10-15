@@ -16,15 +16,18 @@ Render and inspect the Windows caption painter in Chromium.
 
 Options:
   --browser-path <path>          Executable Chromium path (default: playwright-core chromium.executablePath())
+  --gpu                          Require GPU compositing and rasterization (Metal on macOS)
   --reference-directory <dir>    Optional original PNGs and result.json for pinned comparisons
   --output-directory <dir>       New directory for result.json and screenshots (must not exist)
   --help                         Show this help and exit
 
 Without --output-directory, a new directory is created under os.tmpdir().
+The report records the actual graphics backend. --gpu fails if it is unavailable.
 Exit codes: 0 all executed checks pass; 1 a check/runtime fails; 2 invalid arguments.
 Examples:
   node scripts/test-windows-caption-paint.mjs
   node scripts/test-windows-caption-paint.mjs --browser-path /path/to/chromium
+  node scripts/test-windows-caption-paint.mjs --gpu --browser-path /path/to/chromium
   node scripts/test-windows-caption-paint.mjs --reference-directory /path/to/reference --output-directory /tmp/caption-results
 `
 
@@ -44,6 +47,8 @@ let outputDirectory = args.outputDirectory
 let outputDirectoryCreated = false
 let originalRasterComparison = { executed: false, reason: args.referenceDirectory ? 'reference checks pending' : 'no --reference-directory supplied' }
 let runtimeFailure = null
+let rendererBackend = null
+let rendererBackendAfter = null
 
 try {
     if (outputDirectory) {
@@ -55,7 +60,13 @@ try {
     }
     const { paintSource, transpileDiagnostics } = await loadPainter()
     const executablePath = args.browserPath ?? chromium.executablePath()
-    browser = await chromium.launch({ executablePath, headless: true, args: ['--no-sandbox'] })
+    const launchArgs = ['--no-sandbox']
+    if (args.gpu) {
+        launchArgs.push('--enable-gpu', '--enable-gpu-rasterization', '--ignore-gpu-blocklist')
+        if (process.platform === 'darwin') launchArgs.push('--use-angle=metal')
+    }
+    browser = await chromium.launch({ executablePath, headless: true, args: launchArgs })
+    rendererBackend = await inspectRendererBackend(browser, args.gpu)
     context = await browser.newContext({ viewport: { width: 800, height: 580 }, deviceScaleFactor: 1 })
     contexts.push(context)
     page = await context.newPage()
@@ -77,6 +88,11 @@ try {
             results.push({ name, passed: false, error: error instanceof Error ? error.message : String(error) })
         }
     }
+
+    await run('renderer-backend', async () => {
+        assertRendererBackend(rendererBackend, args.gpu)
+        return rendererBackend
+    })
 
     await run('normal-render', async () => {
         await setupFixture(page, 800, 580, 1)
@@ -534,6 +550,11 @@ try {
         assert(consoleErrors.length === 0, `browser console errors: ${consoleErrors.join(' | ')}`)
         return { errors: consoleErrors }
     })
+    rendererBackendAfter = await inspectRendererBackend(browser, args.gpu)
+    await run('renderer-backend-after-render', async () => {
+        assertRendererBackend(rendererBackendAfter, args.gpu)
+        return rendererBackendAfter
+    })
 } catch (error) {
     runtimeFailure = error instanceof Error ? error.message : String(error)
     results.push({ name: 'harness-runtime', passed: false, error: runtimeFailure })
@@ -545,6 +566,8 @@ try {
         results: results.map(item => ({ ...item, nativeDesktopVerified: false, win11NativeVerified: false })),
         consoleErrors,
         originalRasterComparison,
+        rendererBackend,
+        rendererBackendAfter,
         nativeDesktopVerified: false,
         win11NativeVerified: false,
         runtimeFailure,
@@ -557,10 +580,11 @@ try {
 if (results.length === 0 || results.some(item => !item.passed)) process.exitCode = 1
 
 function parseArgs (argv) {
-    const parsed = { help: false, browserPath: null, referenceDirectory: null, outputDirectory: null }
+    const parsed = { help: false, gpu: false, browserPath: null, referenceDirectory: null, outputDirectory: null }
     for (let index = 0; index < argv.length; index++) {
         const arg = argv[index]
         if (arg === '--help') parsed.help = true
+        else if (arg === '--gpu') parsed.gpu = true
         else if (arg === '--browser-path' || arg === '--reference-directory' || arg === '--output-directory') {
             const value = argv[++index]
             if (!value || value.startsWith('--')) throw usageError(`${arg} requires a value`)
@@ -574,6 +598,34 @@ function parseArgs (argv) {
 function usageError (message) {
     process.stderr.write(`${message}\n\n${usage}`)
     process.exit(2)
+}
+
+function assertRendererBackend (backend, requestedGpu) {
+    assert(!backend.error, `graphics backend readback failed: ${backend.error}`)
+    for (const feature of ['gpu_compositing', 'rasterization']) {
+        const status = backend.featureStatus?.[feature]
+        assert(typeof status === 'string', `${feature} readback is missing: ${JSON.stringify(backend)}`)
+        if (requestedGpu) assert(/^enabled(?:_on|_force)?$/.test(status), `${feature} is unavailable: ${JSON.stringify(backend)}`)
+    }
+}
+
+async function inspectRendererBackend (browser, requestedGpu) {
+    let session = null
+    try {
+        session = await browser.newBrowserCDPSession()
+        const { gpu } = await session.send('SystemInfo.getInfo')
+        return {
+            requestedGpu,
+            browserVersion: await browser.version(),
+            featureStatus: gpu.featureStatus,
+            renderer: gpu.auxAttributes?.glRenderer ?? null,
+            skiaBackend: gpu.auxAttributes?.skiaBackendType ?? null,
+        }
+    } catch (error) {
+        return { requestedGpu, error: error instanceof Error ? error.message : String(error) }
+    } finally {
+        await session?.detach().catch(() => {})
+    }
 }
 
 async function loadPainter () {
