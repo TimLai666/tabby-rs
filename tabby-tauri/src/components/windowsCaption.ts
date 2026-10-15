@@ -207,11 +207,11 @@ function renderSvg (snapshot: WindowsCaptionSnapshot, options: WindowsCaptionPai
     }
 
     const dpr = options.devicePixelRatio
-    // Keep the SVG origin at the document origin. Clip in physical units so a
-    // fractional CSS clip edge cannot snap before device-pixel scaling.
-    const extentX = Math.max(1, clip.x + clip.width)
-    const extentY = Math.max(1, clip.y + clip.height)
-    return `<svg xmlns="${svgNamespace}" aria-hidden="true" width="${n(extentX / dpr)}" height="${n(extentY / dpr)}" viewBox="0 0 ${n(extentX)} ${n(extentY)}" preserveAspectRatio="none" style="position:absolute;left:${n(-clip.x / dpr)}px;top:${n(-clip.y / dpr)}px;display:block;overflow:visible;fill:none">${clipPath}<g clip-path="url(#${physicalClipId})">${pieces.join('')}</g></svg>`
+    // Keep an integer SVG viewport and scale it independently of CSS layout
+    // rounding. Clip in physical units and retain the document origin.
+    const extentX = Math.max(1, Math.ceil(clip.x + clip.width))
+    const extentY = Math.max(1, Math.ceil(clip.y + clip.height))
+    return `<svg xmlns="${svgNamespace}" aria-hidden="true" width="${n(extentX)}" height="${n(extentY)}" viewBox="0 0 ${n(extentX)} ${n(extentY)}" preserveAspectRatio="none" style="position:absolute;left:${n(-clip.x / dpr)}px;top:${n(-clip.y / dpr)}px;display:block;overflow:visible;fill:none;transform-origin:0 0;transform:scale(${n(1 / dpr)})">${clipPath}<g clip-path="url(#${physicalClipId})">${pieces.join('')}</g></svg>`
 }
 
 /** Private visuals in a direct child of the non-scrolling body root. The native child owns mouse input. */
