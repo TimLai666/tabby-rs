@@ -31,11 +31,17 @@
   The older-setter path on a newer host does not accept older macOS.
   Original desktop comparison, supported-platform persistence, and installer
   acceptance remain pending.
-- Before portable concurrent-copy acceptance, compare single-instance routing
-  with upstream for two different portable roots. The current plugin uses the
-  application identifier for its lock. Storage isolation checks with sequential
-  processes do not establish independent routing. Keep that change separate
-  from the WebView storage adapter.
+- Keep portable single-instance communication scoped to the configured application
+  identifier and canonical data directory. Preserve installed-mode identity.
+  Include `src-tauri/src/portable_instance_tests.rs` and
+  `src-tauri/src/instance_transport_tests.rs` when changing this contract.
+  The transport fixture uses real native IPC with Tauri MockRuntime; verify
+  concurrent full-app copies against upstream before accepting desktop parity.
+- Check strict macOS signatures after a portable launch when its data directory
+  is inside a signed app bundle. Owned ad-hoc signed QA copies report newly added
+  unsealed `Contents/MacOS/data` files after launch; the installed-mode control
+  retains a valid signature. Preserve this packaging distinction when assessing
+  portable support. It does not establish a failure in a released installer.
 
 ## Pending — Windows runtime and packaging acceptance
 
@@ -56,6 +62,12 @@
   https://github.com/TimLai666/tabby-rs/actions/runs/36341774362
   Windows Rust test evidence:
   https://github.com/TimLai666/tabby-rs/actions/runs/36343754549/job/108688735753
+- Verify literal pipe characters in Windows second-instance arguments before
+  accepting CLI parity. The vendored single-instance 2.4.3 transport joins and
+  splits arguments with `|` in
+  `src-tauri/vendor/tauri-plugin-single-instance/src/platform_impl/windows.rs`; its namespace
+  override retains that existing framing. Handle the framing change separately
+  from portable directory isolation and compare it with the original desktop.
 
 ## Pending - Windows ordinary terminal-close desktop acceptance
 
