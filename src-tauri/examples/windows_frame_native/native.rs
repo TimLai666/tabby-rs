@@ -46,8 +46,16 @@ pub fn snapshot(window: &tauri::WebviewWindow) -> Result<Value, String> {
         if unsafe { GetWindowRect(hwnd, &mut rect) } == 0 {
             return Err(std::io::Error::last_os_error().to_string());
         }
+        let mut client: RECT = unsafe { std::mem::zeroed() };
+        let mut origin = POINT { x: 0, y: 0 };
+        if unsafe { GetClientRect(hwnd, &mut client) } == 0
+            || unsafe { ClientToScreen(hwnd, &mut origin) } == 0
+        {
+            return Err(std::io::Error::last_os_error().to_string());
+        }
+        let decorated = window.is_decorated().map_err(|error| error.to_string())?;
         Ok(
-            json!({"label":window.label(),"style":unsafe{GetWindowLongPtrW(hwnd,GWL_STYLE)} as u32,"bounds":[rect.left,rect.top,rect.right,rect.bottom],"visible":unsafe{IsWindowVisible(hwnd)}!=0,"maximized":unsafe{IsZoomed(hwnd)}!=0,"dpi":unsafe{GetDpiForWindow(hwnd)}}),
+            json!({"label":window.label(),"style":unsafe{GetWindowLongPtrW(hwnd,GWL_STYLE)} as u32,"bounds":[rect.left,rect.top,rect.right,rect.bottom],"clientScreenBounds":[origin.x,origin.y,origin.x+client.right,origin.y+client.bottom],"decorated":decorated,"visible":unsafe{IsWindowVisible(hwnd)}!=0,"maximized":unsafe{IsZoomed(hwnd)}!=0,"dpi":unsafe{GetDpiForWindow(hwnd)}}),
         )
     })
 }
@@ -237,6 +245,31 @@ unsafe extern "system" fn no_paint(
     }
 }
 
+fn overlay_hit(child: HWND) -> Result<Value, String> {
+    let mut point = POINT { x: 10, y: 10 };
+    let mut rect: RECT = unsafe { std::mem::zeroed() };
+    if unsafe { ClientToScreen(child, &mut point) } == 0
+        || unsafe { GetWindowRect(child, &mut rect) } == 0
+    {
+        return Err(std::io::Error::last_os_error().to_string());
+    }
+    let target = unsafe { WindowFromPoint(point) };
+    let mut class = [0u16; 256];
+    let length = unsafe { GetClassNameW(target, class.as_mut_ptr(), class.len() as i32) };
+    let mut process = 0;
+    unsafe { GetWindowThreadProcessId(target, &mut process) };
+    let packed = ((point.y as u16 as u32) << 16 | point.x as u16 as u32) as isize;
+    let native_hit = unsafe { SendMessageW(child, WM_NCHITTEST, 0, packed) };
+    Ok(
+        json!({"actualMouseTarget":target == child,"nativeHitTest":native_hit,
+        "overlayHwnd":child as usize,"parentHwnd":unsafe{GetParent(child)} as usize,
+        "actualTargetHwnd":target as usize,"actualTargetClass":String::from_utf16_lossy(&class[..length.max(0) as usize]),"actualTargetPid":process,
+        "siblingAboveHwnd":unsafe{GetWindow(child,GW_HWNDPREV)} as usize,
+        "visible":unsafe{IsWindowVisible(child)}!=0,"enabled":unsafe{GetWindowLongPtrW(child,GWL_STYLE)} as u32 & WS_DISABLED == 0,
+        "screenPoint":[point.x,point.y],"screenBounds":[rect.left,rect.top,rect.right,rect.bottom]}),
+    )
+}
+
 struct Overlay {
     hwnd: usize,
     instance: usize,
@@ -332,20 +365,46 @@ pub fn overlay_experiment(window: &tauri::WebviewWindow, output: &Path) -> Resul
             }
         };
         std::thread::sleep(Duration::from_millis(100));
-        let readback = on_main(window, {
+        let raised = on_main(window, {
             let child = overlay.hwnd;
             move |_| {
                 let child = child as HWND;
-                let mut point = POINT { x: 10, y: 10 };
-                if unsafe { ClientToScreen(child, &mut point) } == 0 {
-                    return Err("child ClientToScreen failed".into());
+                let before = overlay_hit(child)?;
+                // New child windows start behind existing siblings. Test the same owned
+                // overlay in front of the WebView before deciding whether it works.
+                if unsafe {
+                    SetWindowPos(
+                        child,
+                        HWND_TOP,
+                        0,
+                        0,
+                        0,
+                        0,
+                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                    )
+                } == 0
+                {
+                    return Err(format!(
+                        "overlay SetWindowPos: {}",
+                        std::io::Error::last_os_error()
+                    ));
                 }
-                let hit = unsafe { WindowFromPoint(point) } == child;
-                let packed = ((point.y as u16 as u32) << 16 | point.x as u16 as u32) as isize;
-                let native_hit = unsafe { SendMessageW(child, WM_NCHITTEST, 0, packed) };
-                Ok(json!({"actualMouseTarget":hit,"nativeHitTest":native_hit}))
+                Ok(before)
             }
         });
+        std::thread::sleep(Duration::from_millis(100));
+        let readback = match raised {
+            Ok(before) => on_main(window, {
+                let child = overlay.hwnd;
+                move |_| {
+                    let mut after = overlay_hit(child as HWND)?;
+                    after["beforeRaise"] = before;
+                    after["raiseSucceeded"] = true.into();
+                    Ok(after)
+                }
+            }),
+            Err(error) => Err(error),
+        };
         let image = capture(window, &output.join(format!("wry-{mode}.png")));
         let cleanup = on_main(window, {
             let child = overlay.hwnd;

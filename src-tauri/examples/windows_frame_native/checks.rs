@@ -42,28 +42,35 @@ pub fn run(
         let first_snapshot = super::native::snapshot(first);
         let other_snapshot = super::native::snapshot(other);
         let should_have_caption = frame == "native";
-        let style_ok = first_snapshot.as_ref().is_ok_and(|snapshot| {
-            let style = snapshot["style"].as_u64().unwrap_or_default() as u32;
-            (style & WS_CAPTION != 0) == should_have_caption
-        });
+        // Tao retains WS_CAPTION on top-level undecorated windows and hides the
+        // title area through WM_NCCALCSIZE. Query its decoration state instead.
+        let decorations_ok = first_snapshot
+            .as_ref()
+            .is_ok_and(|snapshot| snapshot["decorated"].as_bool() == Some(should_have_caption));
+        let caption_style_present = first_snapshot
+            .as_ref()
+            .ok()
+            .and_then(|snapshot| snapshot["style"].as_u64())
+            .map(|style| style as u32 & WS_CAPTION != 0);
         let other_unchanged =
             matches!((&initial_other, &other_snapshot), (Ok(before), Ok(after)) if before == after);
         let call_ok = matches!(&result, Ok(()));
-        let ok = call_ok && style_ok && other_unchanged;
+        let ok = call_ok && decorations_ok && other_unchanged;
         let detail = json!({
             "frame": frame,
             "setWindowFrame": result_detail["setWindowFrame"],
             "firstSnapshot": first_snapshot,
             "otherSnapshot": other_snapshot,
             "initialOtherSnapshot": initial_other,
-            "expectedCaption": should_have_caption,
+            "expectedDecorations": should_have_caption,
             "captionStyleBit": format!("0x{WS_CAPTION:08x}"),
-            "captionStyleMatched": style_ok,
+            "captionStylePresent": caption_style_present,
+            "decorationsMatched": decorations_ok,
             "otherUnchanged": other_unchanged,
             "initialFirstSnapshot": initial_first
         });
         checks.push(check(
-            &format!("frame-{frame}-caption-and-isolation"),
+            &format!("frame-{frame}-decorations-and-isolation"),
             ok,
             detail,
         ));
