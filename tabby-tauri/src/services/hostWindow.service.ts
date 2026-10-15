@@ -5,6 +5,7 @@ import { HostBridge, HostRequestMap, WindowStatePatch, WindowStateSnapshot } fro
 
 @Injectable()
 export class TauriHostWindowService extends HostWindowService {
+    private stateReadRevision = 0
     private state: WindowStateSnapshot = {
         visible: true,
         alwaysOnTop: false,
@@ -103,6 +104,7 @@ export class TauriHostWindowService extends HostWindowService {
         await Promise.all([
             this.bridge.listen('desktop:windowFocused', focused => {
                 this.state.focused = focused
+                void this.refreshState()
                 if (focused) {
                     this.windowFocused.next()
                 }
@@ -110,11 +112,11 @@ export class TauriHostWindowService extends HostWindowService {
             this.bridge.listen('desktop:windowMoved', position => {
                 this.state.bounds.x = position.x
                 this.state.bounds.y = position.y
+                void this.refreshState()
                 this.windowMoved.next()
             }),
-            this.bridge.listen('desktop:windowResized', size => {
-                this.state.bounds.width = size.width
-                this.state.bounds.height = size.height
+            this.bridge.listen('desktop:windowResized', () => {
+                void this.refreshState()
             }),
             this.bridge.listen('desktop:windowCloseRequested', () => this.windowCloseRequest.next()),
         ])
@@ -123,8 +125,12 @@ export class TauriHostWindowService extends HostWindowService {
     }
 
     private async refreshState (): Promise<void> {
+        const revision = ++this.stateReadRevision
         try {
-            this.state = await this.bridge.invoke('window.getState', {})
+            const state = await this.bridge.invoke('window.getState', {})
+            if (revision === this.stateReadRevision) {
+                this.state = state
+            }
         } catch (error) {
             console.warn('Could not refresh Tauri window state', error)
         }
