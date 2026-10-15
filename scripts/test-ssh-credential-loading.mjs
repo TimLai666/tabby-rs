@@ -104,6 +104,7 @@ const vaultExports = loadTypeScript(new URL('../tabby-tauri/src/services/vault.s
     '@angular/core': { Injectable: injectable }, '@ng-bootstrap/ng-bootstrap': { NgbModal: class {} }, rxjs: require('rxjs'),
     'tabby-core': { UnlockVaultModalComponent: class {} }, '../api/hostBridge': {},
 })
+const vaultNotifications = { error: () => assert.fail('Unexpected Vault passphrase notification') }
 const storageExports = loadTypeScript(new URL('../tabby-tauri/src/services/passwordStorage.service.ts', import.meta.url), {
     '@angular/core': { Injectable: injectable }, 'tabby-core': {},
     '../../../tabby-ssh/src/services/passwordStorage.service': sharedPassword,
@@ -119,7 +120,7 @@ await check('real storage and Vault service unlock then read the resolved accoun
         if (command === 'vault.status') return { unlocked: true }
         throw new Error(`unexpected Vault command ${command}`)
     } }
-    const vault = new vaultExports.TauriVaultService(vaultBridge, { open: () => ({ result: Promise.resolve({ passphrase: 'synthetic-unlock', rememberFor: 1 }) }) })
+    const vault = new vaultExports.TauriVaultService(vaultBridge, { open: () => ({ result: Promise.resolve({ passphrase: 'synthetic-unlock', rememberFor: 1 }) }) }, vaultNotifications)
     vault.setStore({ version: 1, keySalt: 'salt', iv: 'iv', contents: 'ciphertext' })
     const keychainBridge = { invoke: async () => null }
     const storage = new storageExports.TauriPasswordStorageService(vault, keychainBridge)
@@ -133,7 +134,7 @@ await check('real Vault unlock cancellation rejects the password read', async ()
     const vault = new vaultExports.TauriVaultService({ invoke: async command => {
         if (command === 'vault.unlock') throw new Error('must not unlock after cancellation')
         throw new Error(`unexpected Vault command ${command}`)
-    } }, { open: () => ({ result: Promise.resolve(null) }) })
+    } }, { open: () => ({ result: Promise.resolve(null) }) }, vaultNotifications)
     vault.setStore({ version: 1, keySalt: 'salt', iv: 'iv', contents: 'ciphertext' })
     const storage = new storageExports.TauriPasswordStorageService(vault, { invoke: async () => null })
     await assert.rejects(storage.loadPassword({ options: { host: 'h', port: 22, user: 'u' } }), /cancelled/)
@@ -227,7 +228,7 @@ await check('full stored-password event unlocks the real Vault service and repli
         if (command === 'vault.snapshot') return { config: {}, secrets: [] }
         if (command === 'vault.getSecret') return 'full-flow-secret'
         throw new Error(`unexpected Vault command ${command}`)
-    } }, { open: () => ({ result: Promise.resolve({ passphrase: 'synthetic-unlock', rememberFor: 1 }) }) })
+    } }, { open: () => ({ result: Promise.resolve({ passphrase: 'synthetic-unlock', rememberFor: 1 }) }) }, vaultNotifications)
     vault.setStore({ version: 1, keySalt: 'salt', iv: 'iv', contents: 'ciphertext' })
     const storage = new storageExports.TauriPasswordStorageService(vault, { invoke: async () => null })
     const f = await storedPromptFixture(Promise.resolve({ id: 'connected', username: 'alice' }), storage)
@@ -278,7 +279,7 @@ await check('real Keychain read errors retain the upstream missing-password cont
 })
 await check('stored-password event aborts on real Vault unlock cancellation without reading or deleting credentials', async () => {
     const trace = []
-    const vault = new vaultExports.TauriVaultService({ async invoke (command) { trace.push(command); throw new Error('native Vault must not be called after unlock cancellation') } }, { open: () => ({ result: Promise.resolve(null) }) })
+    const vault = new vaultExports.TauriVaultService({ async invoke (command) { trace.push(command); throw new Error('native Vault must not be called after unlock cancellation') } }, { open: () => ({ result: Promise.resolve(null) }) }, vaultNotifications)
     vault.setStore({ version: 1, keySalt: 'salt', iv: 'iv', contents: 'ciphertext' })
     const storage = new storageExports.TauriPasswordStorageService(vault, { async invoke () { throw new Error('Keychain must not be called when Vault is enabled') } })
     const f = await storedPromptFixture(Promise.resolve({ id: 'connected', username: 'alice' }), storage)
