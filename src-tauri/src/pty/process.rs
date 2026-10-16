@@ -253,3 +253,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "shell_identity_tests.rs"]
+mod shell_identity_tests;
