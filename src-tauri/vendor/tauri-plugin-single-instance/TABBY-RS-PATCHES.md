@@ -30,6 +30,13 @@ The query uses a separate message because the original receiver acknowledges
 unknown `WM_COPYDATA` formats without processing them. macOS and Linux retain
 their existing argument framing.
 
+Windows setup retains the existing mutex handle until it can discover the
+receiver or acquire ownership. An owner that has not created its window keeps
+other launches pending; releasing or abandoning the mutex lets one waiter
+become the primary. Native creation and wait errors stop setup instead of
+initializing another writer. Receiver teardown precedes mutex release, and
+failed receiver construction retains callback ownership until it is freed.
+
 The application derives the portable override from its configured identifier
 and canonical data directory. See `docs/architecture/identity-and-launch.md`.
 Before upgrading or removing the patch, run the resolver regressions in
@@ -37,6 +44,7 @@ Before upgrading or removing the patch, run the resolver regressions in
 in `src-tauri/src/instance_transport_tests.rs`, the codec checks in
 `src-tauri/src/windows_instance_message_tests.rs`, the Windows native
 compatibility checks in `src-tauri/src/windows_instance_transport_tests.rs`,
+the startup ownership checks in `src-tauri/src/windows_instance_startup_tests.rs`,
 and concurrent full-app launches
 from different portable directories. Verify same-directory handoff, independent
 directories, installed-mode handoff, and cleanup that preserves other instances

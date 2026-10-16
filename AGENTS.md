@@ -72,12 +72,15 @@
   old/new, representable new/old, legacy rejection, recovery, and rejected-message
   exit results. Compare literal-pipe paste/run requests with the original
   Windows desktop before accepting CLI parity.
-- Investigate the Windows startup interval between named-mutex creation and
-  hidden-window readiness. The existing `ERROR_ALREADY_EXISTS` path returns
-  successfully when `FindWindowW` finds no owner window. Reproduce this with a
-  delayed primary window and a simultaneous second launch before deciding
-  whether both processes can initialize configuration writers. Source inspection
-  alone does not establish that runtime outcome.
+- Keep Windows plugin setup pending while an existing process owns the named
+  mutex but has not published its hidden window. Only acquired mutex ownership
+  permits initialization; release or abandonment can transfer it to one waiter.
+  Preserve window-before-mutex teardown and native startup error handling.
+  Include `src-tauri/src/windows_instance_startup_tests.rs` when changing this
+  contract. Its real Win32 workers and configuration API cover delayed handoff,
+  competing takeover, and native creation errors with Tauri MockRuntime.
+  Full-application concurrent launches and Windows desktop acceptance remain
+  separate requirements.
 
 ## Pending - Windows ordinary terminal-close desktop acceptance
 

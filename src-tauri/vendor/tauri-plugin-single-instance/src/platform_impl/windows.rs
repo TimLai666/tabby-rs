@@ -10,16 +10,20 @@ use crate::windows_message::{
     QUERY_MESSAGE,
 };
 use crate::SingleInstanceCallback;
+use std::sync::Mutex;
 use tauri::{
     plugin::{self, TauriPlugin},
     AppHandle, Manager, RunEvent, Runtime,
 };
 use windows_sys::Win32::{
-    Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, HWND, LPARAM, LRESULT, WPARAM},
+    Foundation::{
+        CloseHandle, GetLastError, SetLastError, ERROR_ALREADY_EXISTS, ERROR_CLASS_ALREADY_EXISTS,
+        HWND, LPARAM, LRESULT, WAIT_ABANDONED, WAIT_OBJECT_0, WAIT_TIMEOUT, WPARAM,
+    },
     System::{
         DataExchange::COPYDATASTRUCT,
         LibraryLoader::GetModuleHandleW,
-        Threading::{CreateMutexW, ReleaseMutex},
+        Threading::{CreateMutexW, ReleaseMutex, WaitForSingleObject},
     },
     UI::WindowsAndMessaging::{
         self as w32wm, CreateWindowExW, DefWindowProcW, DestroyWindow, FindWindowW,
@@ -29,9 +33,34 @@ use windows_sys::Win32::{
     },
 };
 
-struct MutexHandle(isize);
+// How long a secondary waits on the shared mutex before looking for the owner
+// window again. A live owner that has not published its window keeps the launch
+// pending; ownership is never assumed from a timeout.
+const OWNER_POLL_MILLISECONDS: u32 = 20;
 
-struct TargetWindowHandle(isize);
+struct MutexGuard {
+    handle: isize,
+    acquired: bool,
+}
+
+impl Drop for MutexGuard {
+    fn drop(&mut self) {
+        if self.handle == 0 {
+            return;
+        }
+        if self.acquired {
+            unsafe { ReleaseMutex(self.handle as _) };
+        }
+        unsafe { CloseHandle(self.handle as _) };
+    }
+}
+
+// The receiver window and its mutex ownership live together so teardown cannot
+// split them or release a handle that has already been reused.
+struct OwnedInstance {
+    window: isize,
+    _mutex: MutexGuard,
+}
 
 struct UserData<R: Runtime> {
     app: AppHandle<R>,
@@ -43,13 +72,55 @@ impl<R: Runtime> UserData<R> {
         GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut Self
     }
 
-    unsafe fn from_hwnd<'a>(hwnd: HWND) -> &'a mut Self {
-        &mut *Self::from_hwnd_raw(hwnd)
+    unsafe fn from_hwnd<'a>(hwnd: HWND) -> Option<&'a mut Self> {
+        Self::from_hwnd_raw(hwnd).as_mut()
     }
 
     fn run_callback(&mut self, args: Vec<String>, cwd: String) {
         (self.callback)(&self.app, args, cwd)
     }
+}
+
+fn owner_window(class_name: &[u16], window_name: &[u16]) -> Option<HWND> {
+    let hwnd = unsafe { FindWindowW(class_name.as_ptr(), window_name.as_ptr()) };
+    (!hwnd.is_null()).then_some(hwnd)
+}
+
+fn forward_to_owner(hwnd: HWND) -> std::io::Result<()> {
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let cwd = cwd.to_str().unwrap_or_default();
+
+    let args = std::env::args().collect::<Vec<String>>();
+    let format = if unsafe { SendMessageW(hwnd, QUERY_MESSAGE, 0, 0) } == JSON_PROTOCOL_REPLY {
+        WireFormat::Json
+    } else {
+        WireFormat::Legacy
+    };
+    let bytes = encode_payload(cwd, &args, format)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    let cb_data = u32::try_from(bytes.len()).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Windows instance payload is too large",
+        )
+    })?;
+    let cds = COPYDATASTRUCT {
+        dwData: match format {
+            WireFormat::Json => JSON_DATA_ID,
+            WireFormat::Legacy => LEGACY_DATA_ID,
+        },
+        cbData: cb_data,
+        lpData: bytes.as_ptr() as _,
+    };
+
+    let result = unsafe { SendMessageW(hwnd, WM_COPYDATA, 0, &cds as *const _ as _) };
+    if result != 1 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "the running instance rejected the launch request",
+        ));
+    }
+    Ok(())
 }
 
 pub fn init<R: Runtime>(
@@ -70,78 +141,58 @@ pub fn init<R: Runtime>(
             let window_name = encode_wide(format!("{id}-siw"));
             let mutex_name = encode_wide(format!("{id}-sim"));
 
+            unsafe { SetLastError(0) };
             let hmutex =
                 unsafe { CreateMutexW(std::ptr::null(), true.into(), mutex_name.as_ptr()) };
+            if hmutex.is_null() {
+                return Err(std::io::Error::last_os_error().into());
+            }
 
-            if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
-                unsafe {
-                    CloseHandle(hmutex);
-                    let hwnd = FindWindowW(class_name.as_ptr(), window_name.as_ptr());
+            // A handle to an existing mutex does not grant ownership. Retain the
+            // handle and either hand off to the owner or wait for ownership.
+            let already_exists = unsafe { GetLastError() } == ERROR_ALREADY_EXISTS;
+            let mut mutex = MutexGuard {
+                handle: hmutex as _,
+                acquired: !already_exists,
+            };
 
-                    if !hwnd.is_null() {
-                        let cwd = std::env::current_dir().unwrap_or_default();
-                        let cwd = cwd.to_str().unwrap_or_default();
-
-                        let args = std::env::args().collect::<Vec<String>>();
-                        let format =
-                            if SendMessageW(hwnd, QUERY_MESSAGE, 0, 0) == JSON_PROTOCOL_REPLY {
-                                WireFormat::Json
-                            } else {
-                                WireFormat::Legacy
-                            };
-                        let bytes = match encode_payload(cwd, &args, format) {
-                            Ok(bytes) => bytes,
-                            Err(error) => {
-                                return Err(std::io::Error::new(
-                                    std::io::ErrorKind::InvalidData,
-                                    error,
-                                )
-                                .into());
-                            }
-                        };
-                        let cb_data = match u32::try_from(bytes.len()) {
-                            Ok(cb_data) => cb_data,
-                            Err(_) => {
-                                return Err(std::io::Error::new(
-                                    std::io::ErrorKind::InvalidData,
-                                    "Windows instance payload is too large",
-                                )
-                                .into());
-                            }
-                        };
-                        let cds = COPYDATASTRUCT {
-                            dwData: match format {
-                                WireFormat::Json => JSON_DATA_ID,
-                                WireFormat::Legacy => LEGACY_DATA_ID,
-                            },
-                            cbData: cb_data,
-                            lpData: bytes.as_ptr() as _,
-                        };
-
-                        let result = SendMessageW(hwnd, WM_COPYDATA, 0, &cds as *const _ as _);
-                        if result != 1 {
-                            return Err(std::io::Error::new(
-                                std::io::ErrorKind::Other,
-                                "the running instance rejected the launch request",
-                            )
-                            .into());
-                        }
-
+            if already_exists {
+                loop {
+                    if let Some(hwnd) = owner_window(&class_name, &window_name) {
+                        forward_to_owner(hwnd)?;
                         app.cleanup_before_exit();
                         std::process::exit(0);
                     }
-                }
-            } else {
-                app.manage(MutexHandle(hmutex as _));
 
-                let userdata = UserData {
-                    app: app.clone(),
-                    callback,
-                };
-                let userdata = Box::into_raw(Box::new(userdata));
-                let hwnd = create_event_target_window::<R>(&class_name, &window_name, userdata);
-                app.manage(TargetWindowHandle(hwnd as _));
+                    match unsafe { WaitForSingleObject(mutex.handle as _, OWNER_POLL_MILLISECONDS) }
+                    {
+                        WAIT_TIMEOUT => {}
+                        WAIT_OBJECT_0 | WAIT_ABANDONED => {
+                            mutex.acquired = true;
+                            if let Some(hwnd) = owner_window(&class_name, &window_name) {
+                                forward_to_owner(hwnd)?;
+                                app.cleanup_before_exit();
+                                std::process::exit(0);
+                            }
+                            break;
+                        }
+                        _ => return Err(std::io::Error::last_os_error().into()),
+                    }
+                }
             }
+
+            let userdata = UserData {
+                app: app.clone(),
+                callback,
+            };
+            let hwnd = match create_event_target_window::<R>(&class_name, &window_name, userdata) {
+                Ok(hwnd) => hwnd,
+                Err(error) => return Err(error.into()),
+            };
+            app.manage(Mutex::new(Some(OwnedInstance {
+                window: hwnd as _,
+                _mutex: mutex,
+            })));
 
             Ok(())
         })
@@ -154,15 +205,30 @@ pub fn init<R: Runtime>(
 }
 
 pub fn destroy<R: Runtime, M: Manager<R>>(manager: &M) {
-    if let Some(hmutex) = manager.try_state::<MutexHandle>() {
-        unsafe {
-            ReleaseMutex(hmutex.0 as _);
-            CloseHandle(hmutex.0 as _);
-        }
+    let Some(state) = manager.try_state::<Mutex<Option<OwnedInstance>>>() else {
+        return;
+    };
+    let mut instance = match state.lock() {
+        Ok(instance) => instance,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let window = match instance.as_ref() {
+        Some(owned) => owned.window,
+        None => return,
+    };
+
+    // The receiver must be destroyed before its mutex ownership is released.
+    // DestroyWindow can only succeed on the owning thread, so a wrong-thread
+    // failure keeps the instance for that thread to clean up later.
+    if unsafe { DestroyWindow(window as _) } == 0 {
+        let error = unsafe { GetLastError() };
+        tracing::error!(
+            "single-instance: could not destroy the receiver window (OS error {error}); \
+             retaining the receiver and its mutex ownership"
+        );
+        return;
     }
-    if let Some(hwnd) = manager.try_state::<TargetWindowHandle>() {
-        unsafe { DestroyWindow(hwnd.0 as _) };
-    }
+    drop(instance.take());
 }
 
 unsafe extern "system" fn single_instance_window_proc<R: Runtime>(
@@ -176,8 +242,22 @@ unsafe extern "system" fn single_instance_window_proc<R: Runtime>(
 
         WM_CREATE => {
             let create_struct = &*(lparam as *const CREATESTRUCTW);
-            let userdata = create_struct.lpCreateParams as *const UserData<R>;
-            SetWindowLongPtrW(hwnd, GWLP_USERDATA, userdata as _);
+            let slot = create_struct.lpCreateParams as *mut Option<Box<UserData<R>>>;
+            if slot.is_null() {
+                return -1;
+            }
+            let Some(userdata) = (*slot).take() else {
+                return -1;
+            };
+            let userdata = Box::into_raw(userdata);
+
+            SetLastError(0);
+            let previous = SetWindowLongPtrW(hwnd, GWLP_USERDATA, userdata as isize);
+            if previous == 0 && GetLastError() != 0 {
+                // Installation failed, so the caller still owns this allocation.
+                *slot = Some(Box::from_raw(userdata));
+                return -1;
+            }
             0
         }
 
@@ -200,13 +280,19 @@ unsafe extern "system" fn single_instance_window_proc<R: Runtime>(
             let Some((args, cwd)) = decode_payload(bytes, format) else {
                 return 0;
             };
-            UserData::<R>::from_hwnd(hwnd).run_callback(args, cwd);
+            let Some(userdata) = UserData::<R>::from_hwnd(hwnd) else {
+                return 0;
+            };
+            userdata.run_callback(args, cwd);
             1
         }
 
         WM_DESTROY => {
             let userdata = UserData::<R>::from_hwnd_raw(hwnd);
-            drop(Box::from_raw(userdata));
+            if !userdata.is_null() {
+                SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+                drop(Box::from_raw(userdata));
+            }
             0
         }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
@@ -216,8 +302,8 @@ unsafe extern "system" fn single_instance_window_proc<R: Runtime>(
 fn create_event_target_window<R: Runtime>(
     class_name: &[u16],
     window_name: &[u16],
-    userdata: *const UserData<R>,
-) -> HWND {
+    userdata: UserData<R>,
+) -> std::io::Result<HWND> {
     unsafe {
         let class = WNDCLASSEXW {
             cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
@@ -234,8 +320,17 @@ fn create_event_target_window<R: Runtime>(
             hIconSm: std::ptr::null_mut(),
         };
 
-        RegisterClassExW(&class);
+        SetLastError(0);
+        if RegisterClassExW(&class) == 0 {
+            let error = GetLastError();
+            if error != ERROR_CLASS_ALREADY_EXISTS {
+                return Err(std::io::Error::from_raw_os_error(error as i32));
+            }
+        }
 
+        // The allocation is owned here until WM_CREATE transfers it exactly once
+        // with Box::into_raw. Any failure before that transfer drops it here.
+        let mut slot: Option<Box<UserData<R>>> = Some(Box::new(userdata));
         let hwnd = CreateWindowExW(
             WS_EX_NOACTIVATE
             | WS_EX_TRANSPARENT
@@ -258,8 +353,11 @@ fn create_event_target_window<R: Runtime>(
             std::ptr::null_mut(),
             std::ptr::null_mut(),
             GetModuleHandleW(std::ptr::null()),
-            userdata as _,
+            &mut slot as *mut Option<Box<UserData<R>>> as _,
         );
+        if hwnd.is_null() {
+            return Err(std::io::Error::last_os_error());
+        }
         SetWindowLongPtrW(
             hwnd,
             GWL_STYLE,
@@ -268,7 +366,7 @@ fn create_event_target_window<R: Runtime>(
             // the LAYERED style.
             (WS_VISIBLE | WS_POPUP) as isize,
         );
-        hwnd
+        Ok(hwnd)
     }
 }
 

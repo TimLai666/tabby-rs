@@ -42,6 +42,9 @@ const WORKER_OVERRIDE: &str = "TABBY_RS_INSTANCE_TRANSPORT_OVERRIDE";
 const WORKER_RECEIPT: &str = "TABBY_RS_INSTANCE_TRANSPORT_RECEIPT";
 const WORKER_STOP: &str = "TABBY_RS_INSTANCE_TRANSPORT_STOP";
 const WORKER_READY: &str = "TABBY_RS_INSTANCE_TRANSPORT_READY";
+const WORKER_ENTERING: &str = "TABBY_RS_INSTANCE_TRANSPORT_ENTERING";
+const WORKER_CONFIG: &str = "TABBY_RS_INSTANCE_TRANSPORT_CONFIG";
+const WORKER_REJECT_WINDOW: &str = "TABBY_RS_INSTANCE_TRANSPORT_REJECT_WINDOW";
 const WORKER_TEST: &str = "instance_transport_tests::native_instance_worker";
 
 const POLL: Duration = Duration::from_millis(20);
@@ -282,16 +285,33 @@ fn run_instance_worker() {
     let ready = PathBuf::from(env::var(WORKER_READY).expect("worker ready path"));
 
     let plugin = build_plugin(override_id.as_deref(), receipt);
+    #[cfg(windows)]
+    let _rejecting_class = env::var_os(WORKER_REJECT_WINDOW)
+        .map(|_| windows_message_tests::startup_tests::reject_owner_window_creation(&identifier));
     let mut context = mock_context(noop_assets());
     context.config_mut().identifier = identifier;
 
+    if let Some(path) = env::var_os(WORKER_ENTERING) {
+        fs::write(path, b"entering plugin setup").expect("worker entering marker");
+    }
     let app = mock_builder()
         .plugin(plugin)
         .build(context)
         .expect("worker builds the mock app around the real single-instance plugin");
 
-    // Reaching this point means the plugin claimed this process as the primary.
-    // A secondary exits inside the plugin setup before the build returns.
+    // The plugin returned success. A normal secondary handoff exits inside the
+    // plugin setup before the build returns.
+    if let Some(path) = env::var_os(WORKER_CONFIG) {
+        crate::storage::config_file::write_config(
+            Path::new(&path),
+            &crate::storage::config_file::ConfigWriteRequest {
+                yaml: format!("instance_worker: {}\n", std::process::id()),
+                expected_revision: None,
+                require_missing: true,
+            },
+        )
+        .expect("owned worker writes through the actual configuration API");
+    }
     fs::write(&ready, b"ready").expect("worker publishes its readiness marker");
 
     let deadline = Instant::now() + WORKER_LIFETIME;
@@ -374,6 +394,9 @@ fn spawn_worker(
         .env(WORKER_RECEIPT, &receipt)
         .env(WORKER_STOP, &stop)
         .env(WORKER_READY, &ready)
+        .env_remove(WORKER_ENTERING)
+        .env_remove(WORKER_CONFIG)
+        .env_remove(WORKER_REJECT_WINDOW)
         .stdin(Stdio::null())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
