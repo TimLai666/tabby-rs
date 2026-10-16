@@ -10,7 +10,7 @@ const WINDOW_CAPTURE_SCRIPT = path.join(SCRIPT_DIR, 'capture-windows-app-window.
 
 const KIND = 'actual-windows-app-startup-capture'
 const TOTAL_TIMEOUT_MS = 5 * 60 * 1000
-const TERMINAL_TIMEOUT_MS = 8 * 60 * 1000
+const TERMINAL_TIMEOUT_MS = 14 * 60 * 1000
 const APP_TIMEOUT_MS = 90 * 1000
 const MAX_DOM_HTML = 200000
 const MAX_VISIBLE_TEXT = 20000
@@ -813,6 +813,7 @@ async function main () {
                 verifyCdpOwnership(context, info, app.port)
                 info.frameInteraction = await exerciseWindowsFrame({
                     page: run.page, role: app.role, ownerPid: info.pid,
+                    snapshotProcessTree: () => snapshotProcessTree(powerShell, info.pid, context.deadline),
                     ownerCreationUtc: info.rootIdentity.creationTimeUTC,
                     ownerHwnd: Number.parseInt(String(info.nativeWindow.data.hwnd), 16),
                     outputDirectory: directory, deadline: context.deadline, powerShell,

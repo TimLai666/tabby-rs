@@ -70,7 +70,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'GUI flow cleanup-stop checks failed' }
           node scripts/ci/test-windows-frame-caption-color.mjs
           if ($LASTEXITCODE -ne 0) { throw 'Caption color orchestration checks failed' }
-          foreach ($script in @('exercise-windows-window-input.ps1', 'capture-windows-app-window.ps1', 'press-windows-app-dialog.ps1', 'modal-observer-fixture.ps1','probe-windows-caption-color.ps1')) {
+          foreach ($script in @('exercise-windows-window-input.ps1', 'capture-windows-app-window.ps1', 'press-windows-app-dialog.ps1', 'modal-observer-fixture.ps1','probe-windows-caption-color.ps1','invoke-windows-caption.ps1')) {
             $tokens = $null; $errors = $null
             $path = Join-Path $env:GITHUB_WORKSPACE "scripts/ci/$script"
             [System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors) | Out-Null
@@ -87,6 +87,18 @@ jobs:
           }, $true)
           if (-not $nativeCode) { throw 'Input helper C# source was not found' }
           Add-Type -TypeDefinition $nativeCode.Value -Language CSharp -ErrorAction Stop
+          node --check scripts/ci/run-windows-caption-desktop.mjs
+          if ($LASTEXITCODE) { throw 'Caption desktop adapter syntax failed' }
+          node scripts/ci/test-caption-lifecycle.mjs
+          if ($LASTEXITCODE) { throw 'Caption lifecycle orchestration checks failed' }
+          $captionAst = [System.Management.Automation.Language.Parser]::ParseFile(
+            (Join-Path $env:GITHUB_WORKSPACE 'scripts/ci/invoke-windows-caption.ps1'), [ref]$tokens, [ref]$errors)
+          if ($errors.Count) { throw ($errors | Out-String) }
+          $captionCode = $captionAst.Find({ param($node)
+            $node -is [System.Management.Automation.Language.StringConstantExpressionAst] -and $node.Value.StartsWith('using System;')
+          }, $true)
+          if (-not $captionCode) { throw 'Caption native C# source was not found' }
+          Add-Type -TypeDefinition $captionCode.Value -Language CSharp -ErrorAction Stop
       - name: Check native desktop rendering
         shell: pwsh
         run: pwsh -NoProfile -File scripts/ci/probe-windows-desktop.ps1 -OutputDirectory "$env:RUNNER_TEMP/tabby-rs-windows-desktop-compare/preflight"
@@ -195,7 +207,7 @@ jobs:
           $reference = $executables[0].FullName
           $data = Join-Path (Split-Path $reference -Parent) 'data'
           if (-not (Test-Path -LiteralPath $data)) { New-Item -ItemType Directory -Path $data | Out-Null }
-          @{ tag = 'v1.0.235'; baselineCommit = '14e2d60b9b6dee84a53c37f05eefeb803787de04'; url = $url; sha256 = $hash; size = (Get-Item -LiteralPath $archive).Length; diagnosticRevision = $env:GITHUB_SHA; nativeProductBase = 'a6ffb7c23b699802b78a76b8223c05e99ab0130a'; nativeProductRevision = 'e49861ac28acaf48fd766c5fd066ce57c5b4bb07' } | ConvertTo-Json -Depth 4 | Set-Content "$env:RUNNER_TEMP/tabby-rs-windows-desktop-compare/reference-build-metadata.json"
+          @{ tag = 'v1.0.235'; baselineCommit = '14e2d60b9b6dee84a53c37f05eefeb803787de04'; url = $url; sha256 = $hash; size = (Get-Item -LiteralPath $archive).Length; diagnosticRevision = $env:GITHUB_SHA; nativeProductBase = 'a6ffb7c23b699802b78a76b8223c05e99ab0130a'; nativeProductRevision = '7dfbc135d4f6b509849a9a256956af90c64a76f2' } | ConvertTo-Json -Depth 4 | Set-Content "$env:RUNNER_TEMP/tabby-rs-windows-desktop-compare/reference-build-metadata.json"
           "TABBY_DESKTOP_REFERENCE_EXE=$reference" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Preserve compiled diagnostic host for bounded tool reruns
         uses: actions/upload-artifact@v4
@@ -262,7 +274,7 @@ jobs:
           }
 
       - name: Capture both actual applications
-        timeout-minutes: 10
+        timeout-minutes: 16
         shell: pwsh
         run: node scripts/ci/capture-windows-apps.mjs --reference-exe "$env:TABBY_DESKTOP_REFERENCE_EXE" --rs-exe "$env:TABBY_DESKTOP_RS_EXE" --output "$env:RUNNER_TEMP/tabby-rs-windows-desktop-compare/capture" --source-revision "$env:GITHUB_SHA" --flow frame
       - name: Preserve full app desktop evidence

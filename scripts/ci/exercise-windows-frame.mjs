@@ -214,6 +214,14 @@ export async function exerciseWindowsFrame (options) {
         if (!activation || Math.abs(activation.innerWidth * activation.dpr - geometry.client.width) > 3 || Math.abs(activation.innerHeight * activation.dpr - geometry.client.height) > 3) throw new Error('no unambiguous owned terminal activation point')
         native('Activate', ['-PointX', String(Math.round(geometry.client.screenX + activation.x * activation.dpr)), '-PointY', String(Math.round(geometry.client.screenY + activation.y * activation.dpr))])
 
+        phase = 'caption lifecycle'
+        const { runWindowsCaptionDesktop } = await import('./run-windows-caption-desktop.mjs')
+        result.captionLifecycle = await runWindowsCaptionDesktop({ ...options,
+            outputDirectory: path.join(outputDirectory, 'caption-lifecycle') })
+        if (!result.captionLifecycle.ok) {
+            result.inputCleanupFailed = result.captionLifecycle.inputCleanupFailed
+            throw new Error(result.captionLifecycle.error)
+        }
         phase = 'caption color'
         captionColor()
 

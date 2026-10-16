@@ -88,8 +88,6 @@ export interface WindowCaptionState {
 // Use of this source code is governed by a BSD-style license that can be
 // found in Chromium's LICENSE file.
 
-type Rgb = [number, number, number]
-
 const roundPixel = (value: number): number => Math.floor(value + 0.5)
 
 function nextDown (value: number): number {
@@ -126,7 +124,7 @@ function tweenInt (progress: number, limit: number): number {
     return Math.floor(progress * nextDown(limit + 1))
 }
 
-function parseColor (context: CanvasRenderingContext2D, color: string): Rgb {
+function parseColor (context: CanvasRenderingContext2D, color: string): [number, number, number] {
     context.fillStyle = '#000000'
     context.fillStyle = color
     context.fillRect(0, 0, 1, 1)
@@ -134,16 +132,18 @@ function parseColor (context: CanvasRenderingContext2D, color: string): Rgb {
     return [pixel[0], pixel[1], pixel[2]]
 }
 
-function colorString (color: Rgb, alpha: number): string {
+function colorString (color: [number, number, number], alpha: number): string {
     return `rgba(${color[0]}, ${color[1]}, ${color[2]}, ${alpha / 255})`
 }
 
-function interpolatedCloseColor (from: Rgb, progress: number): Rgb {
-    return from.map(channel => roundPixel(channel + (255 - channel) * progress)) as Rgb
+function interpolatedCloseColor (from: [number, number, number], progress: number): [number, number, number] {
+    return from.map(channel => roundPixel(channel + (255 - channel) * progress)) as [number, number, number]
 }
 
-function setPixel (data: ImageData, x: number, y: number, color: Rgb): void {
-    if (x < 0 || y < 0 || x >= data.width || y >= data.height) return
+function setPixel (data: ImageData, x: number, y: number, color: [number, number, number]): void {
+    if (x < 0 || y < 0 || x >= data.width || y >= data.height) {
+        return
+    }
     const index = (y * data.width + x) * 4
     data.data[index] = color[0]
     data.data[index + 1] = color[1]
@@ -167,10 +167,43 @@ function roundRectPath (
     return path
 }
 
+function drawWin10Restore (
+    pixels: ImageData,
+    glyph: [number, number, number],
+    symbolX: number,
+    symbolY: number,
+    symbolSize: number,
+    stroke: number,
+    scale: number,
+): void {
+    const separation = Math.floor(2 * scale)
+    const front = { x: symbolX, y: symbolY + separation, size: symbolSize - separation }
+    const back = { x: front.x + separation, y: front.y - separation, size: front.size }
+    for (let y = 0; y < front.size; y++) {
+        for (let x = 0; x < front.size; x++) {
+            if (x < stroke || x >= front.size - stroke || y < stroke || y >= front.size - stroke) {
+                setPixel(pixels, front.x + x, front.y + y, glyph)
+            }
+        }
+    }
+    for (let y = 0; y < back.size; y++) {
+        for (let x = 0; x < back.size; x++) {
+            if (x < stroke || x >= back.size - stroke || y < stroke || y >= back.size - stroke) {
+                const px = back.x + x
+                const py = back.y + y
+                const clippedByFront = px >= front.x && px < front.x + front.size && py >= front.y && py < front.y + front.size
+                if (!clippedByFront) {
+                    setPixel(pixels, px, py, glyph)
+                }
+            }
+        }
+    }
+}
+
 function drawWin11Maximize (
     context: CanvasRenderingContext2D,
     pixels: ImageData,
-    glyph: Rgb,
+    glyph: [number, number, number],
     x: number,
     y: number,
     size: number,
@@ -190,7 +223,7 @@ function drawWin11Maximize (
 function drawWin11Restore (
     context: CanvasRenderingContext2D,
     pixels: ImageData,
-    glyph: Rgb,
+    glyph: [number, number, number],
     x: number,
     y: number,
     size: number,
@@ -251,7 +284,9 @@ export function renderWindowsCaption (
     windowsBuild: number | undefined,
 ): void {
     const context = canvas.getContext('2d', { willReadFrequently: true })
-    if (!context) return
+    if (!context) {
+        return
+    }
 
     if (!state || state.buttons.length === 0) {
         context.clearRect(0, 0, canvas.width, canvas.height)
@@ -286,8 +321,12 @@ export function renderWindowsCaption (
     canvas.style.width = `${width / scale}px`
     canvas.style.height = `${height / scale}px`
     canvas.style.pointerEvents = 'none'
-    if (canvas.width !== width) canvas.width = width
-    if (canvas.height !== height) canvas.height = height
+    if (canvas.width !== width) {
+        canvas.width = width
+    }
+    if (canvas.height !== height) {
+        canvas.height = height
+    }
     context.clearRect(0, 0, width, height)
 
     // Read the configured CSS color through the browser's own color parser.
@@ -304,12 +343,12 @@ export function renderWindowsCaption (
         const progress = button.pressed
             ? 1
             : button.hoverProgress === undefined
-                ? (button.hovered ? 1 : 0)
+                ? button.hovered ? 1 : 0
                 : Math.max(0, Math.min(1, button.hoverProgress))
         const close = button.kind === 'close'
         const hoverLimit = close ? 255 : 26
         const alpha = button.pressed
-            ? (close ? 152 : 51)
+            ? close ? 152 : 51
             : tweenInt(progress, hoverLimit)
         const boundsX = button.x - left
         const boundsY = button.y - top
@@ -320,10 +359,12 @@ export function renderWindowsCaption (
             : 0
 
         if (alpha > 0) {
-            const background: Rgb = close ? [0xE8, 0x11, 0x23] : state.hoverColor === '#ffffff' ? [255, 255, 255] : [0, 0, 0]
+            const background: [number, number, number] = close ? [0xE8, 0x11, 0x23] : state.hoverColor === '#ffffff' ? [255, 255, 255] : [0, 0, 0]
             for (let y = boundsY; y < boundsY + button.height; y++) {
                 for (let x = boundsX + spacing; x < boundsX + button.width; x++) {
-                    if (x < 0 || y < 0 || x >= width || y >= height) continue
+                    if (x < 0 || y < 0 || x >= width || y >= height) {
+                        continue
+                    }
                     const index = (y * width + x) * 4
                     pixels.data[index] = background[0]
                     pixels.data[index + 1] = background[1]
@@ -355,7 +396,9 @@ export function renderWindowsCaption (
             const centerY = symbolY + Math.floor(symbolSize / 2)
             const y = Math.floor(centerY - (stroke - 1) / 2)
             for (let dy = 0; dy < stroke; dy++) {
-                for (let x = 0; x < symbolSize; x++) setPixel(pixels, symbolX + x, y + dy, glyph)
+                for (let x = 0; x < symbolSize; x++) {
+                    setPixel(pixels, symbolX + x, y + dy, glyph)
+                }
             }
         } else if (button.kind === 'maximize' && !isMaximized) {
             for (let y = 0; y < symbolSize; y++) {
@@ -366,26 +409,7 @@ export function renderWindowsCaption (
                 }
             }
         } else if (button.kind === 'maximize') {
-            const separation = Math.floor(2 * scale)
-            const front = { x: symbolX, y: symbolY + separation, size: symbolSize - separation }
-            const back = { x: front.x + separation, y: front.y - separation, size: front.size }
-            for (let y = 0; y < front.size; y++) {
-                for (let x = 0; x < front.size; x++) {
-                    if (x < stroke || x >= front.size - stroke || y < stroke || y >= front.size - stroke) {
-                        setPixel(pixels, front.x + x, front.y + y, glyph)
-                    }
-                }
-            }
-            for (let y = 0; y < back.size; y++) {
-                for (let x = 0; x < back.size; x++) {
-                    if (x < stroke || x >= back.size - stroke || y < stroke || y >= back.size - stroke) {
-                        const px = back.x + x
-                        const py = back.y + y
-                        const clippedByFront = px >= front.x && px < front.x + front.size && py >= front.y && py < front.y + front.size
-                        if (!clippedByFront) setPixel(pixels, px, py, glyph)
-                    }
-                }
-            }
+            drawWin10Restore(pixels, glyph, symbolX, symbolY, symbolSize, stroke, scale)
         } else if (close) {
             // The original path is clipped to the symbol rectangle and uses
             // the original non-antialiased flags despite an unused AA copy.

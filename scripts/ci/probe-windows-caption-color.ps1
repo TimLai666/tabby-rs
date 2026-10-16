@@ -151,9 +151,28 @@ public static class CaptionColorNative {
         if ($hitWindow -eq [IntPtr]::Zero) { throw 'WindowFromPoint did not return a live HWND' }
         [uint32]$hitProcessId = 0
         [void][CaptionColorNative]::GetWindowThreadProcessId($hitWindow, [ref]$hitProcessId)
-        if ($hitProcessId -ne $AppProcessId -or [CaptionColorNative]::GetAncestor($hitWindow, 2) -ne [IntPtr]$WindowHandle) {
-            throw 'WindowFromPoint HWND is not the exact owned root or its descendant'
+        $hitRoot = [CaptionColorNative]::GetAncestor($hitWindow, 2)
+        $chain = [Collections.Generic.List[object]]::new()
+        $evidence.pointOwnership = @{ hwnd=('0x{0:X}' -f $hitWindow.ToInt64()); processId=$hitProcessId; rootHwnd=('0x{0:X}' -f $hitRoot.ToInt64()); processChain=$chain }
+        if ($hitRoot -ne [IntPtr]$WindowHandle) { throw 'WindowFromPoint HWND is outside the exact owned root' }
+        # WebView2 native children run in a separate browser process. Require
+        # both the exact HWND hierarchy and a live creation-ordered process chain.
+        $nextId = [int]$hitProcessId
+        $seen = @{}
+        $childCreation = [DateTime]::MaxValue
+        while ($nextId -ne $AppProcessId) {
+            if ($nextId -le 0 -or $seen.ContainsKey($nextId) -or $chain.Count -ge 16) { throw 'Point process ancestry is invalid' }
+            $seen[$nextId] = $true
+            $entry = Get-CimInstance Win32_Process -Filter "ProcessId = $nextId" -ErrorAction Stop
+            if (-not $entry -or $entry.CreationDate -gt $childCreation -or $entry.CreationDate.ToUniversalTime() -lt ([DateTime]$CreationUtc).ToUniversalTime()) { throw 'Point process is missing, reused, or older than the owned root' }
+            $chain.Add(@{ pid=[int]$entry.ProcessId; parentPid=[int]$entry.ParentProcessId; creationUtc=$entry.CreationDate.ToUniversalTime().ToString('o') })
+            $childCreation = $entry.CreationDate
+            $nextId = [int]$entry.ParentProcessId
         }
+        Assert-RootIdentity
+        [uint32]$freshHitProcessId = 0
+        [void][CaptionColorNative]::GetWindowThreadProcessId($hitWindow, [ref]$freshHitProcessId)
+        if ($freshHitProcessId -ne $hitProcessId -or [CaptionColorNative]::GetAncestor($hitWindow, 2) -ne [IntPtr]$WindowHandle) { throw 'Point HWND identity changed during ancestry validation' }
         return $hitWindow
     }
 
