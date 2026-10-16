@@ -798,6 +798,31 @@ async function main () {
             if (info.error) result.errors.push(`${app.role}: ${info.error}`)
             if (info.cdp.error) result.errors.push(`${app.role} CDP: ${info.cdp.error}`)
             if (info.nativeWindow.error) result.errors.push(`${app.role} native window: ${info.nativeWindow.error}`)
+            if (flow === 'frame') {
+                const { exerciseWindowsFrame } = await import('./exercise-windows-frame.mjs')
+                const run = context.running.get(app.role)
+                const info = result[app.role]
+                if (!run?.page || !info.rootIdentity || !info.nativeWindow?.ok || info.cdp.error || info.error) {
+                    info.frameInteraction = { ok: false, error: 'actual startup did not establish an owned HWND, usable page and process identity' }
+                    continue
+                }
+                const directory = path.join(output, app.role, 'frame-interaction')
+                mkdirSync(directory)
+                checkpoint(context, app.role + '-frame-interaction')
+                verifyCdpOwnership(context, info, app.port)
+                info.frameInteraction = await exerciseWindowsFrame({
+                    page: run.page, role: app.role, ownerPid: info.pid,
+                    ownerCreationUtc: info.rootIdentity.creationTimeUTC,
+                    ownerHwnd: Number.parseInt(String(info.nativeWindow.data.hwnd), 16),
+                    outputDirectory: directory, deadline: context.deadline, powerShell,
+                })
+                if (!info.frameInteraction.ok) result.errors.push(app.role + ' frame interaction: ' + info.frameInteraction.error)
+                checkpoint(context, app.role + '-frame-interaction-complete')
+                if (info.frameInteraction.inputCleanupFailed) {
+                    result.errors.push('Stopped all GUI actions because own input cleanup is unverified')
+                    break
+                }
+            }
         }
         if (flow === 'terminal') {
             const { exerciseWindowsTerminal } = await import('./exercise-windows-terminal.mjs')
@@ -827,31 +852,6 @@ async function main () {
             result.unverified.push('terminal interaction acceptance requires reviewing the actual per-app results and screenshots')
         }
         if (flow === 'frame') {
-            const { exerciseWindowsFrame } = await import('./exercise-windows-frame.mjs')
-            for (const app of apps) {
-                const run = context.running.get(app.role)
-                const info = result[app.role]
-                if (!run?.page || !info.rootIdentity || !info.nativeWindow?.ok || info.cdp.error || info.error) {
-                    info.frameInteraction = { ok: false, error: 'actual startup did not establish an owned HWND, usable page and process identity' }
-                    continue
-                }
-                const directory = path.join(output, app.role, 'frame-interaction')
-                mkdirSync(directory)
-                checkpoint(context, app.role + '-frame-interaction')
-                verifyCdpOwnership(context, info, app.port)
-                info.frameInteraction = await exerciseWindowsFrame({
-                    page: run.page, role: app.role, ownerPid: info.pid,
-                    ownerCreationUtc: info.rootIdentity.creationTimeUTC,
-                    ownerHwnd: Number.parseInt(String(info.nativeWindow.data.hwnd), 16),
-                    outputDirectory: directory, deadline: context.deadline, powerShell,
-                })
-                if (!info.frameInteraction.ok) result.errors.push(app.role + ' frame interaction: ' + info.frameInteraction.error)
-                checkpoint(context, app.role + '-frame-interaction-complete')
-                if (info.frameInteraction.inputCleanupFailed) {
-                    result.errors.push('Stopped all GUI actions because own input cleanup is unverified')
-                    break
-                }
-            }
             result.unverified.push('Full/Native frame restart, secondary windows, cross-DPI and geometry persistence were not exercised')
         }
         result.bothAliveBeforeTeardown = apps.every(app => {
