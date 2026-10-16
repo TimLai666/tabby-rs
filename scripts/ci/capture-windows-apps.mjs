@@ -42,7 +42,7 @@ function usage () {
         '  node scripts/ci/capture-windows-apps.mjs --reference-exe ABS --rs-exe ABS \\',
         '       --output FRESH_ABS_DIR --source-revision SHA [--reference-port 9222] [--rs-port 9223]',
         '',
-        'Optional --flow startup, terminal (keyboard and CLI paste), or frame (native drag/resize and PTY).',
+        'Optional --flow startup, terminal (keyboard and CLI paste), or frame (configured caption color, native drag/resize and PTY).',
         'CDP ports must be distinct integers from 1 through 65535; defaults are 9222 and 9223.',
         'Both executable paths must name actual application copies with empty adjacent data directories.',
         'The reference receives PORTABLE_EXECUTABLE_FILE to disable its automatic updater.',
@@ -211,13 +211,14 @@ function sha256File (file) {
     })
 }
 
-function ensurePortableRoot (exePath) {
+function ensurePortableRoot (exePath, captionColor = false) {
     const dataRoot = path.join(path.dirname(exePath), 'data')
     if (!existsSync(dataRoot)) mkdirSync(dataRoot)
     if (readdirSync(dataRoot).length) throw new Error(`refuses to launch with pre-existing portable data: ${dataRoot}`)
     if (!statSync(dataRoot).isDirectory()) {
         throw new Error(`portable data path is not a directory: ${dataRoot}`)
     }
+    if (captionColor) writeFileSync(path.join(dataRoot, 'config.yaml'), "version: 1\nappearance:\n  frame: thin\nterminal:\n  colorScheme:\n    foreground: '#b050d0'\n", { flag: 'wx' })
     return dataRoot
 }
 
@@ -449,7 +450,7 @@ async function captureApp (context, app) {
 
     try {
         info.executableSha256 = await sha256File(app.exe)
-        info.portableDataRoot = ensurePortableRoot(app.exe)
+        info.portableDataRoot = ensurePortableRoot(app.exe, context.captionColor)
         if (cdpListeners(context, app.port).length) throw new Error('requested CDP port is already occupied; application was not launched')
     } catch (error) {
         info.error = `preparation failed: ${message(error)}`
@@ -772,7 +773,7 @@ async function main () {
 
     const powerShell = resolvePowerShell()
     const cleanupDeadline = Date.parse(result.startedAt) + (flow !== 'startup' ? TERMINAL_TIMEOUT_MS : TOTAL_TIMEOUT_MS)
-    const context = { output, result, deadline: cleanupDeadline - 45000, cleanupDeadline, powerShell, chromium, running: new Map() }
+    const context = { output, result, deadline: cleanupDeadline - 45000, cleanupDeadline, powerShell, chromium, captionColor: flow === 'frame', running: new Map() }
     checkpoint(context, 'starting')
     const watchdog = setTimeout(() => {
         result.ok = false

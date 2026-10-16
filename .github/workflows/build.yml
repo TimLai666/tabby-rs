@@ -89,12 +89,6 @@ jobs:
           $app=Join-Path $ref 'app'; Expand-Archive $zip -DestinationPath $app; $rf=@(Get-ChildItem $app -Filter Tabby.exe -File -Recurse)
           if($rf.Count -ne 1){throw 'Expected one original exe'}; $re=$rf[0].FullName; $rd=Join-Path $rf[0].Directory.FullName 'data'
           if(Test-Path -LiteralPath $rd){throw 'Original adjacent data exists'}; New-Item -ItemType Directory -Path $rd|Out-Null
-          $captionConfig = "version: 1`nappearance:`n  frame: thin`nterminal:`n  colorScheme:`n    foreground: '#b050d0'`n"
-          foreach ($portableRoot in @($data,$rd)) {
-            $configPath=Join-Path $portableRoot 'config.yaml'
-            $configStream=[IO.File]::Open($configPath,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
-            try { $bytes=[Text.UTF8Encoding]::new($false).GetBytes($captionConfig); $configStream.Write($bytes,0,$bytes.Length) } finally { $configStream.Dispose() }
-          }
           [ordered]@{tag='v1.0.235';baselineCommit='14e2d60b9b6dee84a53c37f05eefeb803787de04';url=$url;sha256=$hash;size=(Get-Item $zip).Length;diagnosticRevision=$env:GITHUB_SHA;nativeProductBase='9d8182060450802d5cbd28fee36a0a36325951d9'}|ConvertTo-Json|Set-Content (Join-Path $ref 'reference-metadata.json') -Encoding utf8
           "TABBY_DESKTOP_RS_EXE=$exe"|Out-File $env:GITHUB_ENV -Append -Encoding utf8
           "TABBY_DESKTOP_REFERENCE_EXE=$re"|Out-File $env:GITHUB_ENV -Append -Encoding utf8

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, mkdtempSync, rmSync } from 'node:fs'
+import os from 'node:os'
 import vm from 'node:vm'
 import path from 'node:path'
 
@@ -83,3 +84,35 @@ check('insufficient deadline refuses helper', { shortDeadline:true }, /insuffici
 }
 console.log(`Caption color orchestration: ${passed} passed, ${failed} failed`)
 if (failed) process.exitCode = 1
+
+// Use the real filesystem to retain the original fresh-portable-data guard.
+const captureSource = readFileSync(new URL('./capture-windows-apps.mjs', import.meta.url), 'utf8')
+const portableStart = captureSource.indexOf('function ensurePortableRoot (')
+const portableEnd = captureSource.indexOf('function delay (', portableStart)
+assert.ok(portableStart >= 0 && portableEnd > portableStart)
+const preparePortable = vm.runInNewContext(`${captureSource.slice(portableStart, portableEnd)}; ensurePortableRoot`, {
+    path, writeFileSync, existsSync, mkdirSync, readdirSync, statSync,
+})
+const directory = mkdtempSync(path.join(os.tmpdir(), 'caption-fresh-data-'))
+try {
+    const emptyApp = path.join(directory, 'empty')
+    mkdirSync(emptyApp)
+    const root = preparePortable(path.join(emptyApp, 'app.exe'), true)
+    const config = path.join(root, 'config.yaml')
+    const seeded = readFileSync(config, 'utf8')
+    assert.equal(seeded, "version: 1\nappearance:\n  frame: thin\nterminal:\n  colorScheme:\n    foreground: '#b050d0'\n")
+    assert.throws(() => preparePortable(path.join(emptyApp, 'app.exe'), true), /pre-existing portable data/)
+    assert.equal(readFileSync(config, 'utf8'), seeded)
+    const otherApp = path.join(directory, 'other')
+    mkdirSync(otherApp)
+    mkdirSync(path.join(otherApp, 'data'))
+    writeFileSync(path.join(otherApp, 'data', 'unrelated'), 'preserve')
+    assert.throws(() => preparePortable(path.join(otherApp, 'app.exe'), true), /pre-existing portable data/)
+    assert.equal(readFileSync(path.join(otherApp, 'data', 'unrelated'), 'utf8'), 'preserve')
+    assert.equal(existsSync(path.join(otherApp, 'data', 'config.yaml')), false)
+    const plainApp = path.join(directory, 'plain')
+    mkdirSync(plainApp)
+    const plainRoot = preparePortable(path.join(plainApp, 'app.exe'), false)
+    assert.equal(readdirSync(plainRoot).length, 0)
+    console.log('Caption configuration: fresh root seeded; existing config/unrelated data preserved; startup flow stays empty')
+} finally { rmSync(directory, { recursive:true, force:true }) }
