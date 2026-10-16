@@ -13,6 +13,7 @@ mod error {
     #[derive(Debug)]
     pub enum AppError {
         InvalidArgument(String),
+        NotFound(String),
         Io(String),
         Unsupported(String),
     }
@@ -20,7 +21,10 @@ mod error {
     impl std::fmt::Display for AppError {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             match self {
-                Self::InvalidArgument(s) | Self::Io(s) | Self::Unsupported(s) => f.write_str(s),
+                Self::InvalidArgument(s)
+                | Self::NotFound(s)
+                | Self::Io(s)
+                | Self::Unsupported(s) => f.write_str(s),
             }
         }
     }
@@ -655,6 +659,10 @@ fn run_checks(
                 x: rect.left + (rect.right - rect.left) / 2,
                 y: rect.top + (rect.bottom - rect.top) / 2,
             };
+            eprintln!(
+                "window_frame_windows_native caption metadata: label={label:?} index={index} point=({}, {}) rect={:?}",
+                point.x, point.y, (rect.left, rect.top, rect.right, rect.bottom)
+            );
             let target = unsafe { WindowFromPoint(point) };
             if target != handle {
                 return Err(format!(
@@ -1030,6 +1038,26 @@ fn run_checks(
                 failures.push(format!("frame settling: {error}"));
             }
             if let Some(state) = capture!("main after frame", first) {
+                CHECKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                match client_screen_rect(first, "ordinary WebView content") {
+                    Ok((left, top, right, bottom)) if right > left && bottom > top => {
+                        let point = POINT {
+                            x: left + (right - left) / 2,
+                            y: top + (bottom - top) / 2,
+                        };
+                        let target = unsafe { WindowFromPoint(point) };
+                        if target.is_null()
+                            || target == main_hwnd
+                            || unsafe { GetAncestor(target, GA_ROOT) } != main_hwnd
+                        {
+                            failures.push(format!("{frame} ordinary content no longer targets the owned WebView: {target:?}"));
+                        }
+                    }
+                    Ok(rect) => {
+                        failures.push(format!("{frame} ordinary content has no area: {rect:?}"))
+                    }
+                    Err(error) => failures.push(error),
+                }
                 check!(
                     "caption and system controls remain available",
                     state.style & FRAME_BITS == FRAME_BITS,

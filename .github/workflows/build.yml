@@ -57,6 +57,8 @@ jobs:
             sourceRevision = $env:GITHUB_SHA
             productionBase = '9d8182060450802d5cbd28fee36a0a36325951d9'
             fixtureSha256 = (Get-FileHash -LiteralPath 'src-tauri/examples/window_frame_windows_native.rs' -Algorithm SHA256).Hash.ToLowerInvariant()
+            frameBackendSha256 = (Get-FileHash -LiteralPath 'src-tauri/src/platform/frame_windows.rs' -Algorithm SHA256).Hash.ToLowerInvariant()
+            regionBackendSha256 = (Get-FileHash -LiteralPath 'src-tauri/src/platform/frame_windows_region.rs' -Algorithm SHA256).Hash.ToLowerInvariant()
             executableSha256 = (Get-FileHash -LiteralPath $executable -Algorithm SHA256).Hash.ToLowerInvariant()
             exitCode = $testExit
             fullAppAccepted = $false

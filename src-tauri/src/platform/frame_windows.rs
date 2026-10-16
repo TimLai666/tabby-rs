@@ -2,6 +2,9 @@ use crate::error::AppError;
 
 use std::sync::mpsc::sync_channel;
 
+#[path = "frame_windows_region.rs"]
+mod region;
+
 use windows_sys::Win32::Foundation::{HWND, RECT};
 use windows_sys::Win32::Graphics::Dwm::{DwmDefWindowProc, DwmExtendFrameIntoClientArea};
 use windows_sys::Win32::UI::Controls::MARGINS;
@@ -14,7 +17,8 @@ use windows_sys::Win32::UI::Shell::{
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     GetWindowLongPtrW, GetWindowRect, IsWindow, IsZoomed, SetWindowPos, GWL_EXSTYLE, GWL_STYLE,
     SM_CYCAPTION, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
-    WM_NCCALCSIZE, WM_NCDESTROY, WS_CAPTION,
+    WM_ACTIVATE, WM_DPICHANGED, WM_DWMCOMPOSITIONCHANGED, WM_NCCALCSIZE, WM_NCDESTROY,
+    WM_SHOWWINDOW, WM_STYLECHANGED, WM_WINDOWPOSCHANGED, WS_CAPTION,
 };
 
 const FRAME_SUBCLASS_ID: usize = 0x5441_4242;
@@ -73,7 +77,7 @@ unsafe fn set_window_frame_hwnd(hwnd: HWND, native: bool) -> Result<(), AppError
     let was_active = had_subclass && old_ref_data == FRAME_SUBCLASS_ACTIVE;
 
     if native && !had_subclass {
-        return Ok(());
+        return region::remove(hwnd);
     }
 
     let margins = if native {
@@ -84,21 +88,12 @@ unsafe fn set_window_frame_hwnd(hwnd: HWND, native: bool) -> Result<(), AppError
             cyBottomHeight: 0,
         }
     } else {
-        let dpi = unsafe { GetDpiForWindow(hwnd) };
-        if dpi == 0 {
-            return Err(io_error("could not determine the window DPI"));
-        }
-        let caption_height = unsafe { GetSystemMetricsForDpi(SM_CYCAPTION, dpi) };
-        if caption_height <= 0 {
-            return Err(io_error("could not determine the caption height"));
-        }
-        MARGINS {
-            cxLeftWidth: 0,
-            cxRightWidth: 0,
-            cyTopHeight: caption_height,
-            cyBottomHeight: 0,
-        }
+        custom_margins(hwnd).map_err(io_error)?
     };
+
+    if !native {
+        region::install(hwnd)?;
+    }
 
     if !native
         && unsafe {
@@ -110,11 +105,19 @@ unsafe fn set_window_frame_hwnd(hwnd: HWND, native: bool) -> Result<(), AppError
             )
         } == 0
     {
-        return Err(io_error("could not install the window frame subclass"));
+        let rollback = if had_subclass {
+            Ok(())
+        } else {
+            region::remove(hwnd).map_err(|error| error.to_string())
+        };
+        return Err(with_rollback(
+            "could not install the window frame subclass",
+            rollback,
+        ));
     }
 
     if !native && !extend_frame(hwnd, &margins) {
-        let rollback = restore_subclass(hwnd, had_subclass, was_active);
+        let rollback = restore_original_frame(hwnd, had_subclass, was_active);
         return Err(with_rollback(
             "DWM could not extend the frame into the caption area",
             rollback,
@@ -123,11 +126,20 @@ unsafe fn set_window_frame_hwnd(hwnd: HWND, native: bool) -> Result<(), AppError
 
     if native {
         if !extend_frame(hwnd, &margins) {
-            return Err(io_error("DWM could not restore the native frame margins"));
+            return Err(with_rollback(
+                "DWM could not restore the native frame margins",
+                restore_custom_frame(hwnd),
+            ));
+        }
+        if let Err(error) = region::remove(hwnd) {
+            return Err(with_rollback(
+                &format!("could not restore the native WebView region: {error}"),
+                restore_custom_frame(hwnd),
+            ));
         }
         if unsafe { RemoveWindowSubclass(hwnd, Some(frame_subclass_proc), FRAME_SUBCLASS_ID) } == 0
         {
-            let rollback = extend_custom_frame(hwnd);
+            let rollback = restore_custom_frame(hwnd);
             return Err(with_rollback(
                 "could not remove the window frame subclass",
                 rollback,
@@ -145,6 +157,15 @@ unsafe fn set_window_frame_hwnd(hwnd: HWND, native: bool) -> Result<(), AppError
             "could not recalculate the window frame",
             rollback,
         ));
+    }
+
+    if !native {
+        if let Err(error) = region::refresh(hwnd) {
+            return Err(with_rollback(
+                &format!("could not expose the native caption controls: {error}"),
+                restore_original_frame(hwnd, had_subclass, was_active),
+            ));
+        }
     }
 
     let mut outer_after = RECT {
@@ -200,10 +221,6 @@ unsafe extern "system" fn frame_subclass_proc(
         return unsafe { DefSubclassProc(hwnd, message, wparam, lparam) };
     }
 
-    if message != WM_NCCALCSIZE && dwm_handled {
-        return dwm_result;
-    }
-
     if ref_data == FRAME_SUBCLASS_ACTIVE && message == WM_NCCALCSIZE {
         let style = unsafe { GetWindowLongPtrW(hwnd, GWL_STYLE) } as u32;
         if style & WS_CAPTION != 0 && lparam != 0 {
@@ -238,7 +255,47 @@ unsafe extern "system" fn frame_subclass_proc(
         }
     }
 
-    unsafe { DefSubclassProc(hwnd, message, wparam, lparam) }
+    let result = if message != WM_NCCALCSIZE && dwm_handled {
+        dwm_result
+    } else {
+        unsafe { DefSubclassProc(hwnd, message, wparam, lparam) }
+    };
+    if ref_data == FRAME_SUBCLASS_ACTIVE
+        && matches!(
+            message,
+            WM_ACTIVATE
+                | WM_DPICHANGED
+                | WM_DWMCOMPOSITIONCHANGED
+                | WM_SHOWWINDOW
+                | WM_STYLECHANGED
+                | WM_WINDOWPOSCHANGED
+        )
+    {
+        if matches!(
+            message,
+            WM_ACTIVATE
+                | WM_DPICHANGED
+                | WM_DWMCOMPOSITIONCHANGED
+                | WM_SHOWWINDOW
+                | WM_STYLECHANGED
+        ) {
+            if let Err(error) = extend_custom_frame(hwnd) {
+                log_refresh_error(&error);
+            }
+        }
+        if let Err(error) = region::refresh(hwnd) {
+            log_refresh_error(&error.to_string());
+        }
+    }
+    result
+}
+
+fn log_refresh_error(error: &str) {
+    use std::io::Write;
+    let _ = writeln!(
+        std::io::stderr().lock(),
+        "Windows frame refresh failed: {error}"
+    );
 }
 
 fn maximized_frame_inset(hwnd: HWND, style: u32, ex_style: u32) -> Option<i32> {
@@ -278,21 +335,7 @@ fn extend_frame(hwnd: HWND, margins: &MARGINS) -> bool {
 }
 
 fn extend_custom_frame(hwnd: HWND) -> Result<(), String> {
-    let dpi = unsafe { GetDpiForWindow(hwnd) };
-    let caption_height = if dpi == 0 {
-        0
-    } else {
-        unsafe { GetSystemMetricsForDpi(SM_CYCAPTION, dpi) }
-    };
-    if caption_height <= 0 {
-        return Err("could not restore the caption DWM margin".into());
-    }
-    let margins = MARGINS {
-        cxLeftWidth: 0,
-        cxRightWidth: 0,
-        cyTopHeight: caption_height,
-        cyBottomHeight: 0,
-    };
+    let margins = custom_margins(hwnd)?;
     if extend_frame(hwnd, &margins) {
         Ok(())
     } else {
@@ -348,6 +391,14 @@ fn restore_original_frame(hwnd: HWND, had_subclass: bool, was_active: bool) -> R
     if unsafe { frame_changed(hwnd) } == 0 {
         errors.push("could not recalculate the previous window frame".into());
     }
+    let region_result = if was_active {
+        region::install(hwnd).and_then(|()| region::refresh(hwnd))
+    } else {
+        region::remove(hwnd)
+    };
+    if let Err(error) = region_result {
+        errors.push(error.to_string());
+    }
     if errors.is_empty() {
         Ok(())
     } else {
@@ -356,6 +407,7 @@ fn restore_original_frame(hwnd: HWND, had_subclass: bool, was_active: bool) -> R
 }
 
 fn restore_custom_frame(hwnd: HWND) -> Result<(), String> {
+    let region_result = region::install(hwnd);
     let subclass_ok = unsafe {
         SetWindowSubclass(
             hwnd,
@@ -366,6 +418,9 @@ fn restore_custom_frame(hwnd: HWND) -> Result<(), String> {
     };
     let margins_result = extend_custom_frame(hwnd);
     let mut errors: Vec<String> = Vec::new();
+    if let Err(error) = region_result {
+        errors.push(error.to_string());
+    }
     if !subclass_ok {
         errors.push("could not restore the active window frame subclass".into());
     }
@@ -375,6 +430,9 @@ fn restore_custom_frame(hwnd: HWND) -> Result<(), String> {
     if unsafe { frame_changed(hwnd) } == 0 {
         errors.push("could not recalculate the restored window frame".into());
     }
+    if let Err(error) = region::refresh(hwnd) {
+        errors.push(error.to_string());
+    }
     if errors.is_empty() {
         Ok(())
     } else {
@@ -383,6 +441,14 @@ fn restore_custom_frame(hwnd: HWND) -> Result<(), String> {
 }
 
 fn custom_margins(hwnd: HWND) -> Result<MARGINS, String> {
+    if unsafe { GetWindowLongPtrW(hwnd, GWL_STYLE) } as u32 & WS_CAPTION == 0 {
+        return Ok(MARGINS {
+            cxLeftWidth: 0,
+            cxRightWidth: 0,
+            cyTopHeight: 0,
+            cyBottomHeight: 0,
+        });
+    }
     let dpi = unsafe { GetDpiForWindow(hwnd) };
     if dpi == 0 {
         return Err("could not determine the window DPI while rolling back".into());
