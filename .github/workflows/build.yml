@@ -36,6 +36,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Fetch upstream tags and verify build version
+        shell: pwsh
+        run: |
+          git fetch --force --tags https://github.com/Eugeny/tabby.git '+refs/tags/*:refs/tags/*'
+          if ($LASTEXITCODE -ne 0) { throw 'Upstream build tags could not be fetched' }
+          git describe --tags
+          if ($LASTEXITCODE -ne 0) { throw 'Build version cannot be described before dependency installation' }
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -75,6 +84,8 @@ jobs:
       - name: Install Yarn
         run: npm install --global yarn@${{ env.YARN_VERSION }}
       - name: Install dependencies
+        env:
+          TABBY_RS_SKIP_ELECTRON_NATIVE_REBUILD: '1'
         run: yarn install --frozen-lockfile --network-timeout ${{ env.YARN_NETWORK_TIMEOUT }}
       - name: Build shared packages
         run: yarn build
