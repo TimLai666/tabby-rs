@@ -430,6 +430,20 @@ jobs:
       - name: Type-check Tauri packages
         run: yarn test:tauri:types
 
+      - name: Test caption lifecycle
+        run: node scripts/test-windows-caption-service.mjs
+
+      - name: Test Windows caption pixels in Chromium
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: |
+          $browsers = @("${env:ProgramFiles}/Google/Chrome/Application/chrome.exe", "${env:ProgramFiles(x86)}/Microsoft/Edge/Application/msedge.exe")
+          $browser = $browsers | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+          if (-not $browser) { throw 'No installed Chromium for caption pixel checks' }
+          $env:TABBY_CAPTION_TEST_BROWSER = $browser
+          node scripts/test-windows-caption-renderer.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Caption pixel checks failed' }
+
       - name: Build Tauri renderer
         run: yarn build:tauri:frontend
 
@@ -475,6 +489,13 @@ jobs:
         env:
           RUSTFLAGS: '-C link-arg=/MANIFESTINPUT:${{ github.workspace }}/src-tauri/windows-app-manifest.xml -C link-arg=/MANIFEST:EMBED'
         run: cargo test --manifest-path src-tauri/Cargo.toml --lib
+
+      - name: Test native Windows caption adapter
+        if: matrix.name == 'windows'
+        timeout-minutes: 6
+        env:
+          RUSTFLAGS: '-C link-arg=/MANIFESTINPUT:${{ github.workspace }}/src-tauri/windows-app-manifest.xml -C link-arg=/MANIFEST:EMBED'
+        run: cargo run --locked --manifest-path src-tauri/Cargo.toml --example windows_caption_native
 
       - name: Test SSH authentication fixture
         if: matrix.name != 'windows'
