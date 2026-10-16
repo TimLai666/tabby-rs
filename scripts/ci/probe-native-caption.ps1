@@ -51,6 +51,8 @@ public static class NativeCaptionProbe {
     const uint WM_NCCALCSIZE = 0x0083;
     const uint WM_ACTIVATE = 0x0006;
     const int SM_CYCAPTION = 4;
+    const int SM_CYSIZEFRAME = 33;
+    const int SM_CXPADDEDBORDER = 92;
     const uint WM_GETTITLEBARINFOEX = 0x033F;
     const uint PM_REMOVE = 0x0001;
     const uint SMTO_BLOCK = 0x0001;
@@ -78,7 +80,7 @@ public static class NativeCaptionProbe {
     }
     delegate IntPtr WndProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam);
     [StructLayout(LayoutKind.Sequential)] struct RECT { public int left, top, right, bottom; }
-    [StructLayout(LayoutKind.Sequential)] struct WINDOWPOS { public IntPtr hwnd, after; public int x, y, width, height; public uint flags; }
+    [StructLayout(LayoutKind.Sequential)] struct MINMAXINFO { public POINT reserved, maxSize, maxPosition, minTrack, maxTrack; }
     [StructLayout(LayoutKind.Sequential)] struct MONITORINFO { public uint size; public RECT monitor, work; public uint flags; }
 
     [StructLayout(LayoutKind.Sequential)] struct MARGINS { public int left, right, top, bottom; }
@@ -170,20 +172,14 @@ public static class NativeCaptionProbe {
             return result;
         }
         IntPtr answer=dwmHandled ? dwmResult : DefWindowProc(h,msg,wp,lp);
-        if(msg == 0x0046 && lp != IntPtr.Zero && IsZoomed(h)!=0) {
-            WINDOWPOS pos=Marshal.PtrToStructure<WINDOWPOS>(lp);
-            if((pos.flags & 3)==0) {
-                RECT proposed=new RECT{left=pos.x,top=pos.y,right=pos.x+pos.width,bottom=pos.y+pos.height};
-                IntPtr monitor=MonitorFromRect(ref proposed,2);
-                MONITORINFO info=new MONITORINFO{size=(uint)Marshal.SizeOf<MONITORINFO>()};
-                if(monitor!=IntPtr.Zero && GetMonitorInfo(monitor,ref info)!=0) {
-                    long delta=(long)info.work.top-pos.y;
-                    if(delta>0 && delta<pos.height) {
-                        Console.Error.WriteLine("pure-custom-frame MAXPOSITION oldY={0} newY={1} oldHeight={2} delta={3}",pos.y,info.work.top,pos.height,delta);
-                        pos.y=info.work.top;pos.height-=(int)delta;
-                        Marshal.StructureToPtr(pos,lp,false);
-                    }
-                }
+        if(msg == 0x0024 && lp != IntPtr.Zero) {
+            MINMAXINFO info=Marshal.PtrToStructure<MINMAXINFO>(lp);
+            uint dpi=GetDpiForWindow(h);
+            int border=dpi==0 ? 0 : GetSystemMetricsForDpi(SM_CYSIZEFRAME,dpi)+GetSystemMetricsForDpi(SM_CXPADDEDBORDER,dpi);
+            if(border>0 && info.maxSize.y>border) {
+                Console.Error.WriteLine("pure-custom-frame MAXINFO oldY={0} border={1} oldHeight={2}",info.maxPosition.y,border,info.maxSize.y);
+                info.maxPosition.y+=border;info.maxSize.y-=border;
+                Marshal.StructureToPtr(info,lp,false);
             }
         }
         if(msg == WM_ACTIVATE) {
@@ -353,7 +349,7 @@ public static class NativeCaptionProbe {
             MARGINS customMargins=new MARGINS{top=GetSystemMetricsForDpi(SM_CYCAPTION,GetDpiForWindow(hwnd))};
             if(customMargins.top<=0 || DwmExtendFrameIntoClientArea(hwnd,ref customMargins)<0) throw new Exception("Pure custom DWM extension failed");
             if(SetWindowPos(hwnd,IntPtr.Zero,0,0,0,0,0x37)==0) throw new Exception("Pure custom frame-change failed");
-            metadata["scope"]="Diagnostic maximized outer top aligned with work area and zero top inset; no Wry child or product backend";
+            metadata["scope"]="Diagnostic default MINMAXINFO top-border correction and zero top inset; no Wry child or product backend";
             ShowWindow(hwnd,5);
 
             uiThread=GetWindowThreadProcessId(hwnd,out ownerPid);
