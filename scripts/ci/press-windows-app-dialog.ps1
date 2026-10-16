@@ -40,12 +40,10 @@ $script:uiaDeadline = $null
 function Get-DialogMatch {
     param([string]$ExpectedStart)
     $dialogMatches = @()
-    $root = [System.Windows.Automation.AutomationElement]::RootElement
-    $ownerCondition = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ProcessIdProperty, $AppProcessId)
-    $classCondition = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ClassNameProperty, '#32770')
-    $condition = [System.Windows.Automation.AndCondition]::new($ownerCondition, $classCondition)
-    $windows = $root.FindAll([System.Windows.Automation.TreeScope]::Children, $condition)
-    foreach ($window in $windows) {
+    foreach ($handle in [OwnedDialogPresence]::GetWindowsForProcess($AppProcessId)) {
+        $window = [System.Windows.Automation.AutomationElement]::FromHandle($handle)
+        if ($window.Current.ProcessId -ne $AppProcessId) { throw 'Native window ownership changed during discovery' }
+        if ($window.Current.ClassName -cne '#32770') { continue }
         if ([DateTime]::UtcNow -gt $script:uiaDeadline) { throw 'UIA discovery exceeded 15 seconds' }
         if ($window.Current.IsOffscreen -or -not $window.Current.IsEnabled) { continue }
         $windowPattern = $null
@@ -95,10 +93,33 @@ try {
     $outputStream = [IO.File]::Open($outputPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
     Add-Type -AssemblyName UIAutomationClient
     Add-Type -AssemblyName UIAutomationTypes
+    $providers = [Reflection.Assembly]::Load('UIAutomationClientSideProviders')
+    Add-Type -ReferencedAssemblies @([System.Windows.Automation.AutomationElement].Assembly.Location, [System.Windows.Automation.ControlType].Assembly.Location, $providers.Location) -TypeDefinition @'
+public static class InstalledUiaProviders {
+    public static void Register() {
+        System.Windows.Automation.ClientSettings.RegisterClientSideProviders(UIAutomationClientsideProviders.UIAutomationClientSideProviders.ClientSideProviderDescriptionTable);
+    }
+}
+'@
+    [InstalledUiaProviders]::Register()
     Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
 public static class OwnedDialogPresence {
+    private delegate bool EnumWindowsProc(IntPtr window, IntPtr parameter);
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool EnumWindows(EnumWindowsProc callback, IntPtr parameter);
+    public static IntPtr[] GetWindowsForProcess(int expectedProcessId) {
+        var windows = new System.Collections.Generic.List<IntPtr>();
+        bool success = EnumWindows((window, parameter) => {
+            uint processId;
+            if (GetWindowThreadProcessId(window, out processId) != 0 && processId == expectedProcessId) windows.Add(window);
+            return true;
+        }, IntPtr.Zero);
+        if (!success) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+        return windows.ToArray();
+    }
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool IsWindow(IntPtr window);

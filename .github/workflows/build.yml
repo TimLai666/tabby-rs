@@ -54,9 +54,11 @@ jobs:
         run: |
           node --check scripts/ci/capture-windows-apps.mjs
           if ($LASTEXITCODE -ne 0) { throw 'Capture controller syntax failed' }
+          node --check scripts/ci/exercise-windows-terminal.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Terminal interaction syntax failed' }
           node scripts/ci/capture-windows-apps.mjs --help
           if ($LASTEXITCODE -ne 0) { throw 'Capture controller help failed' }
-          foreach ($script in @('capture-windows-app-window.ps1', 'press-windows-app-dialog.ps1')) {
+          foreach ($script in @('capture-windows-app-window.ps1', 'press-windows-app-dialog.ps1', 'modal-observer-fixture.ps1')) {
             $tokens = $null; $errors = $null
             $path = Join-Path $env:GITHUB_WORKSPACE "scripts/ci/$script"
             [System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors) | Out-Null
@@ -72,6 +74,16 @@ jobs:
           $runtime = @(Get-ChildItem "${env:ProgramFiles(x86)}/Microsoft/EdgeWebView/Application/*/msedgewebview2.exe" -ErrorAction SilentlyContinue)
           if ($runtime.Count -eq 0) { throw 'WebView2 runtime is missing; no full app rendering can be accepted' }
           $runtime | Select-Object FullName, @{Name='Version';Expression={$_.VersionInfo.FileVersion}} | ConvertTo-Json -Depth 4 | Set-Content "$env:RUNNER_TEMP/tabby-rs-windows-desktop-compare/webview2-runtime.json"
+      - name: Verify desktop tool process cleanup and modal observation
+        timeout-minutes: 3
+        shell: pwsh
+        run: |
+          $toolRoot = Join-Path $env:RUNNER_TEMP 'tabby-rs-windows-desktop-compare/tool-checks'
+          New-Item -ItemType Directory -Path $toolRoot | Out-Null
+          node scripts/ci/capture-lifecycle-fixture.mjs "$env:GITHUB_WORKSPACE/scripts/ci/capture-windows-apps.mjs" "$toolRoot/process-cleanup"
+          if ($LASTEXITCODE -ne 0) { throw 'Actual process cleanup regression failed' }
+          pwsh -NoProfile -File scripts/ci/modal-observer-fixture.ps1 -HelperPath "$env:GITHUB_WORKSPACE/scripts/ci/press-windows-app-dialog.ps1" -OutputDirectory "$toolRoot/modal-observer"
+          if ($LASTEXITCODE -ne 0) { throw 'Actual native dialog observer regression failed' }
       - name: Restore Tauri icons
         run: node scripts/restore-tauri-icons.mjs
       - name: Build hardened UAC helper
@@ -135,8 +147,9 @@ jobs:
           @{ tag = 'v1.0.235'; baselineCommit = '14e2d60b9b6dee84a53c37f05eefeb803787de04'; url = $url; sha256 = $hash; size = (Get-Item -LiteralPath $archive).Length; diagnosticRevision = $env:GITHUB_SHA; nativeProductBase = '9d8182060450802d5cbd28fee36a0a36325951d9' } | ConvertTo-Json -Depth 4 | Set-Content "$env:RUNNER_TEMP/tabby-rs-windows-desktop-compare/reference-build-metadata.json"
           "TABBY_DESKTOP_REFERENCE_EXE=$reference" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Capture both actual applications
+        timeout-minutes: 10
         shell: pwsh
-        run: node scripts/ci/capture-windows-apps.mjs --reference-exe "$env:TABBY_DESKTOP_REFERENCE_EXE" --rs-exe "$env:TABBY_DESKTOP_RS_EXE" --output "$env:RUNNER_TEMP/tabby-rs-windows-desktop-compare/capture" --source-revision "$env:GITHUB_SHA"
+        run: node scripts/ci/capture-windows-apps.mjs --reference-exe "$env:TABBY_DESKTOP_REFERENCE_EXE" --rs-exe "$env:TABBY_DESKTOP_RS_EXE" --output "$env:RUNNER_TEMP/tabby-rs-windows-desktop-compare/capture" --source-revision "$env:GITHUB_SHA" --flow terminal
       - name: Preserve full app desktop evidence
         if: always()
         uses: actions/upload-artifact@v4

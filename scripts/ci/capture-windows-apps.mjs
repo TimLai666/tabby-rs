@@ -10,6 +10,7 @@ const WINDOW_CAPTURE_SCRIPT = path.join(SCRIPT_DIR, 'capture-windows-app-window.
 
 const KIND = 'actual-windows-app-startup-capture'
 const TOTAL_TIMEOUT_MS = 5 * 60 * 1000
+const TERMINAL_TIMEOUT_MS = 8 * 60 * 1000
 const APP_TIMEOUT_MS = 90 * 1000
 const MAX_DOM_HTML = 200000
 const MAX_VISIBLE_TEXT = 20000
@@ -21,6 +22,7 @@ const FLAGS = {
     '--source-revision': 'sourceRevision',
     '--reference-port': 'referencePort',
     '--rs-port': 'rsPort',
+    '--flow': 'flow',
 }
 
 const REQUIRED_FLAGS = [
@@ -40,7 +42,8 @@ function usage () {
         '  node scripts/ci/capture-windows-apps.mjs --reference-exe ABS --rs-exe ABS \\',
         '       --output FRESH_ABS_DIR --source-revision SHA [--reference-port 9222] [--rs-port 9223]',
         '',
-        'Runs on Windows only. Produces startup-capture diagnostics under --output.',
+        'Optional --flow startup (default) or terminal (real keyboard and second-instance paste).',
+        'Runs on Windows only. Produces actual application diagnostics under --output.',
         'This capture is diagnostic evidence of desktop startup; it does not establish parity.',
     ].join('\n')
 }
@@ -185,7 +188,9 @@ function validateOptions (values) {
         errors.push(`this capture controller requires Windows (win32); current platform is ${process.platform}`)
     }
 
-    return { errors, referencePort, rsPort }
+    const flow = values.flow ?? 'startup'
+    if (!['startup', 'terminal'].includes(flow)) errors.push('--flow: must be startup or terminal')
+    return { errors, referencePort, rsPort, flow }
 }
 
 function sha256File (file) {
@@ -222,10 +227,11 @@ function withTimeout (promise, milliseconds, label) {
 
 function resolvePowerShell () {
     for (const candidate of ['pwsh', 'powershell']) {
-        const probe = spawnSync(candidate, ['-NoProfile', '-Command', '$PSVersionTable.PSVersion.Major'], { encoding: 'utf8', windowsHide: true, timeout: 15000 })
-        if (!probe.error && probe.status === 0) return candidate
+        const probe = spawnSync(candidate, ['-NoProfile', '-Command', '(Get-Process -Id $PID).Path'], { encoding: 'utf8', windowsHide: true, timeout: 15000 })
+        const executable = probe.stdout?.trim()
+        if (!probe.error && probe.status === 0 && executable && path.isAbsolute(executable) && existsSync(executable)) return executable
     }
-    return 'powershell'
+    throw new Error('No usable Windows PowerShell executable was found')
 }
 
 function runPowerShell (powerShell, script, timeoutMs) {
@@ -319,7 +325,7 @@ async function connectOverCdp (chromium, endpoint, deadline, deathReport) {
     throw new Error(`CDP connect timed out: ${lastError ? message(lastError) : 'no detail'}`)
 }
 
-function runNativeWindowCapture (context, pid, appDir) {
+function runNativeWindowCapture (context, pid, appDir, windowHandle = 0) {
     const result = { ok: false, jsonPath: null, screenshotPath: null, data: null, error: null, invocation: null }
     const jsonPath = path.join(appDir, 'native-window.json')
     const pngPath = path.join(appDir, 'native-window.png')
@@ -329,8 +335,8 @@ function runNativeWindowCapture (context, pid, appDir) {
     }
     const invocation = spawnSync(context.powerShell, [
         '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', WINDOW_CAPTURE_SCRIPT,
-        '-AppProcessId', String(pid), '-OutputDirectory', appDir,
-    ], { encoding: 'utf8', windowsHide: true, timeout: Math.max(5000, Math.min(90000, context.deadline - Date.now())), maxBuffer: 16 * 1024 * 1024 })
+        '-AppProcessId', String(pid), '-OutputDirectory', appDir, '-WindowHandle', String(windowHandle),
+    ], { encoding: 'utf8', windowsHide: true, timeout: Math.max(1, Math.min(context.nativeCaptureTimeoutMs ?? 90000, context.deadline - Date.now())), maxBuffer: 16 * 1024 * 1024 })
     result.invocation = { status: invocation.status, error: invocation.error ? message(invocation.error) : null }
     if (existsSync(jsonPath)) {
         result.jsonPath = path.relative(context.output, jsonPath)
@@ -410,6 +416,8 @@ async function captureApp (context, app) {
         return info
     }
 
+    context.result[app.role] = info
+    checkpoint(context, `${app.role}-preparing`)
     const appDeadline = Math.min(Date.now() + APP_TIMEOUT_MS, context.deadline)
 
     let child
@@ -441,6 +449,7 @@ async function captureApp (context, app) {
     const root = initialTree.processes.find(entry => entry.pid === info.pid && entry.parentPid === process.pid && entry.executableBasename.toLowerCase() === path.basename(app.exe).toLowerCase())
     if (!root) { info.error = 'could not establish owned root process identity'; return info }
     info.rootIdentity = root
+    checkpoint(context, `${app.role}-started`)
 
     let browser = null
     try {
@@ -449,6 +458,7 @@ async function captureApp (context, app) {
             if (exitReport) return `exit code ${exitReport.code} signal ${exitReport.signal}`
             return null
         })
+        context.running.get(app.role).browser = browser
         info.cdp.ok = true
         try {
             info.cdp.engineVersion = browser.version()
@@ -473,6 +483,7 @@ async function captureApp (context, app) {
         }
         if (!page || Date.now() >= appDeadline) throw new Error('meaningful application UI did not render within the startup deadline')
 
+        context.running.get(app.role).page = page
         page.setDefaultTimeout(Math.max(1000, appDeadline - Date.now()))
 
         const dom = await withTimeout(page.evaluate(() => ({
@@ -511,10 +522,9 @@ async function captureApp (context, app) {
         info.clientScreenshot = path.relative(context.output, clientPng)
     } catch (error) {
         info.cdp.error = message(error)
-    } finally {
-        if (browser) await withTimeout(browser.close(), Math.max(1, Math.min(5000, context.deadline - Date.now())), 'CDP disconnect').catch(error => { info.cdp.disconnectError = message(error) })
     }
 
+    checkpoint(context, `${app.role}-native-window`)
     if (info.pid) info.nativeWindow = runNativeWindowCapture(context, info.pid, appDir)
 
     info.aliveAfterCapture = exitReport === null && spawnError === null
@@ -544,7 +554,7 @@ $stopped = @(); $survivors = @(); $reused = @(); $errors = @()
 foreach ($entry in $entries) {
     $current = Get-CimInstance Win32_Process -Filter "ProcessId = $($entry.pid)"
     if (-not $current) { continue }
-    if ($current.CreationDate.ToUniversalTime().ToString('o') -ne $entry.creationTimeUTC) { $reused += $entry.pid; continue }
+    if ($current.CreationDate.ToUniversalTime().Ticks -ne ([DateTime]$entry.creationTimeUTC).ToUniversalTime().Ticks) { $reused += $entry.pid; continue }
     try {
         $owned = Get-Process -Id $entry.pid -ErrorAction Stop
         if ([Math]::Abs(($owned.StartTime.ToUniversalTime() - $current.CreationDate.ToUniversalTime()).TotalMilliseconds) -gt 1) { throw 'process identity changed before termination' }
@@ -553,7 +563,7 @@ foreach ($entry in $entries) {
 }
 foreach ($entry in $entries) {
     $current = Get-CimInstance Win32_Process -Filter "ProcessId = $($entry.pid)"
-    if ($current -and $current.CreationDate.ToUniversalTime().ToString('o') -eq $entry.creationTimeUTC) { $survivors += $entry.pid }
+    if ($current -and $current.CreationDate.ToUniversalTime().Ticks -eq ([DateTime]$entry.creationTimeUTC).ToUniversalTime().Ticks) { $survivors += $entry.pid }
 }
 @{ stopped = @($stopped); survivors = @($survivors); reused = @($reused); errors = @($errors) } | ConvertTo-Json -Compress -Depth 4`
     const output = runPowerShell(context.powerShell, script, Math.max(1000, Math.min(30000, context.cleanupDeadline - Date.now())))
@@ -600,6 +610,10 @@ function computeOutcome (result) {
     }
     result.captured = Boolean(reference.clientScreenshot || (reference.nativeWindow && reference.nativeWindow.screenshotPath))
         && Boolean(native.clientScreenshot || (native.nativeWindow && native.nativeWindow.screenshotPath))
+    if (result.flow === 'terminal') {
+        result.checks.referenceTerminalInteraction = reference.terminalInteraction?.ok === true
+        result.checks.nativeTerminalInteraction = native.terminalInteraction?.ok === true
+    }
     result.ok = Object.values(result.checks).every(Boolean)
     return result
 }
@@ -622,6 +636,19 @@ function printSummary (result) {
     for (const error of result.errors) process.stdout.write(`error: ${error}\n`)
 }
 
+function checkpoint (context, stage) {
+    context.result.stage = stage
+    writeResult(context.output, context.result)
+}
+
+function releaseControllerHandles (context) {
+    for (const { child } of context.running.values()) {
+        child.stdout?.destroy()
+        child.stderr?.destroy()
+        child.unref()
+    }
+}
+
 async function main () {
     const argv = process.argv.slice(2)
     if (argv.length === 0 || argv.includes('--help') || argv.includes('-h')) {
@@ -630,7 +657,7 @@ async function main () {
     }
 
     const { values, errors: parseErrors } = parseCliArgs(argv)
-    const { errors: validationErrors, referencePort, rsPort } = validateOptions(values)
+    const { errors: validationErrors, referencePort, rsPort, flow } = validateOptions(values)
     const errors = [...parseErrors, ...validationErrors]
     if (errors.length) {
         for (const error of errors) process.stderr.write(`error: ${error}\n`)
@@ -641,6 +668,7 @@ async function main () {
     const output = values.output
     const result = {
         kind: KIND,
+        flow,
         stage: 'startup-capture',
         sourceRevision: values.sourceRevision,
         platform: process.platform,
@@ -692,8 +720,19 @@ async function main () {
     }
 
     const powerShell = resolvePowerShell()
-    const cleanupDeadline = Date.parse(result.startedAt) + TOTAL_TIMEOUT_MS
-    const context = { output, deadline: cleanupDeadline - 45000, cleanupDeadline, powerShell, chromium, running: new Map() }
+    const cleanupDeadline = Date.parse(result.startedAt) + (flow === 'terminal' ? TERMINAL_TIMEOUT_MS : TOTAL_TIMEOUT_MS)
+    const context = { output, result, deadline: cleanupDeadline - 45000, cleanupDeadline, powerShell, chromium, running: new Map() }
+    checkpoint(context, 'starting')
+    const watchdog = setTimeout(() => {
+        result.ok = false
+        result.errors.push('controller hard deadline exceeded; app cleanup is unverified')
+        result.cleanup.hardDeadlineExceeded = true
+        result.finishedAt = new Date().toISOString()
+        try { checkpoint(context, 'deadline-exceeded') } catch (error) { process.stderr.write(`checkpoint failed: ${message(error)}\n`) }
+        releaseControllerHandles(context)
+        process.exit(1)
+    }, Math.max(1, cleanupDeadline - Date.now()))
+    watchdog.unref()
 
     const cleanEnvironment = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(?:TABBY_CONFIG_DIRECTORY|TABBY_RS_(?:BENCHMARK|INSTALLER_SMOKE)_.*|WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS|WEBVIEW2_USER_DATA_FOLDER)$/.test(key)))
     const referenceArgs = [`--remote-debugging-port=${referencePort}`]
@@ -709,6 +748,33 @@ async function main () {
             if (info.cdp.error) result.errors.push(`${app.role} CDP: ${info.cdp.error}`)
             if (info.nativeWindow.error) result.errors.push(`${app.role} native window: ${info.nativeWindow.error}`)
         }
+        if (flow === 'terminal') {
+            const { exerciseWindowsTerminal } = await import('./exercise-windows-terminal.mjs')
+            for (const app of apps) {
+                const run = context.running.get(app.role)
+                const info = result[app.role]
+                if (!run?.page || !info.rootIdentity || info.cdp.error || info.error) {
+                    info.terminalInteraction = { ok: false, error: 'actual startup did not establish a usable page and process identity' }
+                    continue
+                }
+                const directory = path.join(output, app.role, 'interaction')
+                mkdirSync(directory)
+                checkpoint(context, `${app.role}-terminal-interaction`)
+                info.terminalInteraction = await exerciseWindowsTerminal({
+                    page: run.page, role: app.role, executable: app.exe, environment: app.env,
+                    ownerPid: info.pid, ownerCreationUtc: info.rootIdentity.creationTimeUTC,
+                    outputDirectory: directory, deadline: context.deadline, powerShell,
+                    captureNativeWindow: ({ pid, windowHandle, directory: captureDirectory }) => {
+                        const capture = runNativeWindowCapture({ ...context, nativeCaptureTimeoutMs: 30000 }, pid, captureDirectory, windowHandle)
+                        return { ...capture, screenshotPath: capture.data?.screenshot?.path ?? capture.screenshotPath }
+                    },
+                })
+                if (!info.terminalInteraction.ok) result.errors.push(`${app.role} terminal interaction: ${info.terminalInteraction.error}`)
+                checkpoint(context, `${app.role}-terminal-interaction-complete`)
+            }
+            result.unverified = result.unverified.filter(item => !item.startsWith('local terminal input') && !item.startsWith('second-invocation paste'))
+            result.unverified.push('terminal interaction acceptance requires reviewing the actual per-app results and screenshots')
+        }
         result.bothAliveBeforeTeardown = apps.every(app => {
             const run = context.running.get(app.role)
             if (!run?.info.rootIdentity) return false
@@ -721,9 +787,13 @@ async function main () {
         for (const run of context.running.values()) {
             const info = run.info
             result[info.role] ??= info
+            checkpoint(context, `${info.role}-teardown`)
+            if (run.browser) await withTimeout(run.browser.close(), Math.max(1, Math.min(5000, context.cleanupDeadline - Date.now())), 'CDP disconnect').catch(error => { info.cdp.disconnectError = message(error) })
             info.cleanup = await teardownApp(context, info).catch(error => ({ survivors: [], error: message(error) }))
             if (info.cleanup.error) result.errors.push(`${info.role} cleanup: ${info.cleanup.error}`)
+            checkpoint(context, `${info.role}-teardown-complete`)
         }
+        releaseControllerHandles(context)
     }
 
     result.cleanup.forcedTeardown = apps.every(app => result[app.role] && result[app.role].cleanup && result[app.role].cleanup.forcedTeardown)
@@ -734,7 +804,8 @@ async function main () {
     result.finishedAt = new Date().toISOString()
     result.durationMs = Date.parse(result.finishedAt) - Date.parse(result.startedAt)
 
-    writeResult(output, result)
+    checkpoint(context, 'complete')
+    clearTimeout(watchdog)
     printSummary(result)
     return result.ok ? 0 : 1
 }
@@ -746,11 +817,11 @@ try {
     process.stderr.write(`error: ${message(error)}\n`)
     exitCode = 1
 } finally {
-    for (const stream of logStreams) {
-        try {
-            stream.end()
-        } catch { }
-    }
-    await delay(100)
+    await withTimeout(Promise.all(logStreams.map(stream => new Promise(resolve => {
+        if (stream.writableFinished || stream.destroyed) { resolve(); return }
+        stream.once('finish', resolve)
+        stream.once('error', resolve)
+        stream.end()
+    }))), 2000, 'log flush').catch(() => {})
 }
-process.exitCode = exitCode
+process.exit(exitCode)
