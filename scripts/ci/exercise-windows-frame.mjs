@@ -200,7 +200,9 @@ export async function exerciseWindowsFrame (options) {
         await pty('restored')
         phase = 'settings visibility'
         await page.keyboard.press('Control+,', { timeout: timeout(5000) })
-        await page.getByRole('tab', { name: 'Window', exact: true }).click({ timeout: timeout(10000) })
+        const navigation = page.locator('settings-tab .nav-pills a')
+        result.settingsNavigation = await navigation.allTextContents()
+        await navigation.filter({ hasText: /^\s*Window\s*$/ }).click({ timeout: timeout(10000) })
         const settings = page.locator('window-settings-tab')
         for (const frame of ['Native', 'Thin', 'Full']) await settings.locator(`label[for="frame${frame}"]`).waitFor({ state: 'visible', timeout: timeout(10000) })
         result.settings = { allFrameChoicesVisible: true, thinChecked: await settings.locator('#frameThin').isChecked() }

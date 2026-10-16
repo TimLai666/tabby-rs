@@ -92,6 +92,9 @@ public static class ExistingWindowInput {
     [DllImport("user32.dll")] static extern int GetClientRect(IntPtr h,out RECT r);
     [DllImport("user32.dll")] static extern int ClientToScreen(IntPtr h,ref POINT p);
     [DllImport("user32.dll")] static extern uint GetDpiForWindow(IntPtr h);
+    [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern int GetClassNameW(IntPtr h,StringBuilder text,int capacity);
+    [DllImport("user32.dll")] static extern int GetSystemMetricsForDpi(int index,uint dpi);
+    [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr h,uint attribute,out RECT bounds,uint size);
     [DllImport("user32.dll",SetLastError=true)] static extern short GetAsyncKeyState(int key);
     [DllImport("user32.dll",SetLastError=true)] static extern int GetCursorPos(out POINT p);
     [DllImport("user32.dll",SetLastError=true)] static extern IntPtr SendMessageTimeoutW(IntPtr h,uint msg,UIntPtr wp,IntPtr lp,uint flags,uint timeout,out UIntPtr result);
@@ -109,7 +112,8 @@ public static class ExistingWindowInput {
     static Dictionary<string,object> ReadSnapshot() {
         Validate(); RECT outer,client; Check(GetWindowRect(hwnd,out outer)!=0,"GetWindowRect failed"); Check(GetClientRect(hwnd,out client)!=0,"GetClientRect failed");
         POINT origin=new POINT{x=client.left,y=client.top}; Check(ClientToScreen(hwnd,ref origin)!=0,"ClientToScreen failed");
-        return new Dictionary<string,object>{{"outer",Bounds(outer)},{"client",new Dictionary<string,object>{{"screenX",origin.x},{"screenY",origin.y},{"width",client.right-client.left},{"height",client.bottom-client.top},{"dpi",GetDpiForWindow(hwnd)}}},{"minimized",IsIconic(hwnd)!=0},{"maximized",IsZoomed(hwnd)!=0}};
+        RECT caption; int captionHr=DwmGetWindowAttribute(hwnd,5,out caption,(uint)Marshal.SizeOf(typeof(RECT)));
+        return new Dictionary<string,object>{{"outer",Bounds(outer)},{"client",new Dictionary<string,object>{{"screenX",origin.x},{"screenY",origin.y},{"width",client.right-client.left},{"height",client.bottom-client.top},{"dpi",GetDpiForWindow(hwnd)}}},{"captionButtons",new Dictionary<string,object>{{"hresult",captionHr},{"windowRelativeBounds",Bounds(caption)},{"captionMetric",GetSystemMetricsForDpi(4,GetDpiForWindow(hwnd))}}},{"minimized",IsIconic(hwnd)!=0},{"maximized",IsZoomed(hwnd)!=0}};
     }
     static void Validate() {
         Check(IsWindow(hwnd)!=0,"original HWND no longer exists"); uint actualPid; GetWindowThreadProcessId(hwnd,out actualPid);
@@ -171,7 +175,13 @@ public static class ExistingWindowInput {
         POINT actual=ReadCursor(); Check(actual.x==requested.x&&actual.y==requested.y,"cursor was clipped before input");
         Validate(); Check(GetForegroundWindow()==hwnd,"foreground target changed before input");
         IntPtr under=WindowFromPoint(actual); Check(under!=IntPtr.Zero,"input point no longer resolves to a window");
-        Check(exactRoot ? under==hwnd : GetAncestor(under,GA_ROOT)==hwnd,"input point moved over a foreign window"); return actual;
+        IntPtr underRoot=GetAncestor(under,GA_ROOT);
+        if (!(exactRoot ? under==hwnd : underRoot==hwnd)) {
+            uint underPid; GetWindowThreadProcessId(underRoot,out underPid);
+            var className=new StringBuilder(256); GetClassNameW(underRoot,className,className.Capacity);
+            throw new InvalidOperationException("input point moved over a foreign window; x="+actual.x+"; y="+actual.y+"; target="+hwnd+"; under="+under+"; root="+underRoot+"; rootPid="+underPid+"; rootClass="+className);
+        }
+        return actual;
     }
     static void MoveGradually(int x0,int y0,int x1,int y1) {
         const int steps=12;
