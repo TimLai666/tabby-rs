@@ -10,7 +10,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url))
 const literal = value => `'${String(value).replaceAll("'", "''")}'`
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
 
-export async function runWindowsCaptionDesktop (options) {
+export function createOwnedCaptionDriver (options) {
     const { page, ownerPid, ownerCreationUtc, ownerHwnd, powerShell, outputDirectory, deadline, captureNativeWindow, snapshotProcessTree } = options
     const primary = { pid: ownerPid, creationUtc: ownerCreationUtc, hwnd: ownerHwnd }
     const pages = new Map([[ownerHwnd, page]])
@@ -130,6 +130,37 @@ export async function runWindowsCaptionDesktop (options) {
         await target.screenshot({ path: stem + '.png', timeout: timeout(10000) })
         return record
     }
+    const createSecondary = async () => {
+        await activate(primary)
+        const before = helper(primary, 'EnumerateWindows').ownedWindows
+        if (!Array.isArray(before)) throw new Error('owned window inventory missing')
+        const context = page.context(), previousPages = context.pages()
+        const created = context.waitForEvent('page', { timeout: timeout(15000) })
+        void created.catch(() => {})
+        await page.keyboard.press('Control+Shift+N', { timeout: timeout(5000) })
+        const target = await created
+        await target.waitForLoadState('domcontentloaded', { timeout: timeout(15000) })
+        const after = helper(primary, 'EnumerateWindows').ownedWindows
+        const newWindows = after.filter(w => !before.some(old => old.hwnd === w.hwnd))
+        const newPages = context.pages().filter(p => !previousPages.includes(p))
+        if (newWindows.length !== 1 || newPages.length !== 1 || newPages[0] !== target) throw new Error('secondary HWND/page mapping is ambiguous')
+        const identity = { pid: ownerPid, creationUtc: ownerCreationUtc, hwnd: Number(newWindows[0].hwnd) }
+        if (!Number.isSafeInteger(identity.hwnd) || identity.hwnd <= 0 || identity.hwnd === ownerHwnd) throw new Error('invalid secondary HWND')
+        const url = target.url()
+        if (options.role === 'reference' ? !/^file:/i.test(url) : !/^(?:https?:\/\/tauri\.localhost(?:[/:]|$)|tauri:\/\/localhost(?:[/:]|$))/i.test(url)) throw new Error('unexpected secondary application URL')
+        pages.set(identity.hwnd, target)
+        await target.keyboard.press('Control+Shift+T', { timeout: timeout(5000) })
+        await target.locator('.xterm-helper-textarea:visible').waitFor({ timeout: timeout(15000) })
+        evidence.secondary = { identity, before, after, url }
+        return identity
+    }
+    return { primary, pages, sessions, busy, warnings, evidence, helper, activate, commandProbe, tree, waitGone, createSecondary,
+        timeout, getInputCleanupFailed: () => inputCleanupFailed }
+}
+
+export async function runWindowsCaptionDesktop (options) {
+    const { page, ownerPid, ownerCreationUtc, ownerHwnd, powerShell, outputDirectory, deadline, captureNativeWindow, snapshotProcessTree } = options
+    const { primary, pages, sessions, busy, warnings, evidence, helper, activate, commandProbe, tree, waitGone, createSecondary, timeout, getInputCleanupFailed } = createOwnedCaptionDriver(options)
     let report
     try {
         if (typeof snapshotProcessTree !== 'function' || typeof captureNativeWindow !== 'function') throw new Error('owned process/capture callbacks required')
@@ -161,30 +192,7 @@ export async function runWindowsCaptionDesktop (options) {
                 return data
             },
             verifyTerminal: ({ identity, focus, name }) => commandProbe(identity, name, focus),
-            createSecondary: async () => {
-                await activate(primary)
-                const before = helper(primary, 'EnumerateWindows').ownedWindows
-                if (!Array.isArray(before)) throw new Error('owned window inventory missing')
-                const context = page.context(), previousPages = context.pages()
-                const created = context.waitForEvent('page', { timeout: timeout(15000) })
-                void created.catch(() => {})
-                await page.keyboard.press('Control+Shift+N', { timeout: timeout(5000) })
-                const target = await created
-                await target.waitForLoadState('domcontentloaded', { timeout: timeout(15000) })
-                const after = helper(primary, 'EnumerateWindows').ownedWindows
-                const newWindows = after.filter(w => !before.some(old => old.hwnd === w.hwnd))
-                const newPages = context.pages().filter(p => !previousPages.includes(p))
-                if (newWindows.length !== 1 || newPages.length !== 1 || newPages[0] !== target) throw new Error('secondary HWND/page mapping is ambiguous')
-                const identity = { pid: ownerPid, creationUtc: ownerCreationUtc, hwnd: Number(newWindows[0].hwnd) }
-                if (!Number.isSafeInteger(identity.hwnd) || identity.hwnd <= 0 || identity.hwnd === ownerHwnd) throw new Error('invalid secondary HWND')
-                const url = target.url()
-                if (options.role === 'reference' ? !/^file:/i.test(url) : !/^(?:https?:\/\/tauri\.localhost(?:[/:]|$)|tauri:\/\/localhost(?:[/:]|$))/i.test(url)) throw new Error('unexpected secondary application URL')
-                pages.set(identity.hwnd, target)
-                await target.keyboard.press('Control+Shift+T', { timeout: timeout(5000) })
-                await target.locator('.xterm-helper-textarea:visible').waitFor({ timeout: timeout(15000) })
-                evidence.secondary = { identity, before, after, url }
-                return identity
-            },
+            createSecondary,
             capture: async ({ identity, name }) => {
                 if (identity.hwnd !== ownerHwnd) throw new Error('capture callback is scoped to primary HWND')
                 const directory = path.join(outputDirectory, name)
@@ -193,9 +201,9 @@ export async function runWindowsCaptionDesktop (options) {
             },
         })
     } catch (error) {
-        report = { ok: false, primary, error: String(error), inputCleanupFailed }
+        report = { ok: false, primary, error: String(error), inputCleanupFailed: getInputCleanupFailed() }
     }
-    report.inputCleanupFailed ||= inputCleanupFailed
+    report.inputCleanupFailed ||= getInputCleanupFailed()
     report.desktopEvidence = evidence
     if (existsSync(outputDirectory)) writeFileSync(path.join(outputDirectory, 'caption-desktop-result.json'), JSON.stringify(report, null, 2) + '\n', { flag: 'wx' })
     return report
