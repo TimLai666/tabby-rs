@@ -145,6 +145,7 @@
     "test:context-menu-browser": "node scripts/ci/test-context-menu-browser.mjs",
     "test:terminal-color": "node scripts/test-terminal-color-contract.mjs",
     "test:paste-policy": "node scripts/ci/test-paste-policy.mjs",
+    "test:terminal-cli-paste": "node scripts/test-terminal-cli-paste.mjs",
     "test:uri-policy": "node scripts/ci/test-uri-policy.mjs",
     "test:progress-detector": "node scripts/ci/test-progress-detector.mjs",
     "test:transfer-policy": "node scripts/ci/test-transfer-policy.mjs",
