@@ -1,6 +1,6 @@
 import shellQuote from 'shell-quote'
 import { Injectable } from '@angular/core'
-import { CLIHandler, CLIEvent, AppService, HostWindowService, TranslateService, PlatformService } from 'tabby-core'
+import { CLIHandler, CLIEvent, AppService, HostWindowService, TranslateService, PlatformService, SplitTabComponent } from 'tabby-core'
 import { BaseTerminalTabComponent } from './api/baseTerminalTab.component'
 
 @Injectable()
@@ -47,8 +47,12 @@ export class TerminalCLIHandler extends CLIHandler {
     }
 
     private handlePaste (text: string) {
-        if (this.app.activeTab instanceof BaseTerminalTabComponent && this.app.activeTab.session) {
-            this.app.activeTab.sendInput(text)
+        let tab = this.app.activeTab
+        if (tab instanceof SplitTabComponent) {
+            tab = tab.getFocusedTab()
+        }
+        if (tab instanceof BaseTerminalTabComponent && tab.session) {
+            tab.sendInput(text)
             this.hostWindow.bringToFront()
         }
     }
