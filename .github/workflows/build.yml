@@ -4,11 +4,11 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: windows-caption-forward-probe-${{ github.ref }}
+  group: windows-caption-button-probe-${{ github.ref }}
   cancel-in-progress: false
 jobs:
   probe:
-    name: Actual Wry child input forwarding and pixels
+    name: Actual Wry native button accessibility and pixels
     runs-on: windows-2022
     timeout-minutes: 20
     steps:
@@ -25,7 +25,7 @@ jobs:
         run: node scripts/restore-tauri-icons.mjs
       - name: Check actual desktop
         shell: pwsh
-        run: pwsh -NoProfile -File scripts/ci/probe-windows-desktop.ps1 -OutputDirectory "$env:RUNNER_TEMP/caption-forward-probe/preflight"
+        run: pwsh -NoProfile -File scripts/ci/probe-windows-desktop.ps1 -OutputDirectory "$env:RUNNER_TEMP/caption-button-probe/preflight"
       - name: Install native build tools
         shell: pwsh
         run: pwsh -NoProfile -File scripts/ci/install-nasm.ps1
@@ -34,7 +34,7 @@ jobs:
           RUSTFLAGS: '-C link-arg=/MANIFESTINPUT:${{ github.workspace }}/src-tauri/windows-app-manifest.xml -C link-arg=/MANIFEST:EMBED'
         shell: pwsh
         run: |
-          $root=Join-Path $env:RUNNER_TEMP 'caption-forward-probe'
+          $root=Join-Path $env:RUNNER_TEMP 'caption-button-probe'
           $assets=Join-Path $root 'assets'
           New-Item -ItemType Directory -Path $assets -ErrorAction Stop | Out-Null
           '<!doctype html><html><head><meta charset="utf-8"><title>Owned HTML caption probe</title><style>body{margin:0;background:#112233}#probe{position:fixed;left:200px;top:16px;width:46px;height:32px;background:#0088cc}</style></head><body><div id="probe"></div></body></html>' | Set-Content -LiteralPath (Join-Path $assets 'index.html') -Encoding utf8
@@ -42,15 +42,15 @@ jobs:
           if([IO.Path]::IsPathRooted($relativeAssets)){throw 'Fixture assets must have a relative directory path'}
           $env:TAURI_CONFIG=@{build=@{frontendDist=$relativeAssets}}|ConvertTo-Json -Compress -Depth 6
           $env:TAURI_CONFIG|Set-Content "$root/fixture-config.json"
-          cargo run --locked --manifest-path src-tauri/Cargo.toml --example window_caption_forward_probe -- --help *> "$root/build-and-help.log"
+          cargo run --locked --manifest-path src-tauri/Cargo.toml --example window_caption_button_probe -- --help *> "$root/build-and-help.log"
           if($LASTEXITCODE){Get-Content "$root/build-and-help.log" -Tail 80;throw 'Probe compilation/help failed; no behavioral result'}
-          $exe=Join-Path $env:GITHUB_WORKSPACE 'src-tauri/target/debug/examples/window_caption_forward_probe.exe'
+          $exe=Join-Path $env:GITHUB_WORKSPACE 'src-tauri/target/debug/examples/window_caption_button_probe.exe'
           Get-FileHash $exe -Algorithm SHA256 | ConvertTo-Json | Set-Content "$root/executable-hash.json"
       - name: Run actual owned hover and pixel checks
         shell: pwsh
         run: |
-          $root=Join-Path $env:RUNNER_TEMP 'caption-forward-probe'
-          $exe=Join-Path $env:GITHUB_WORKSPACE 'src-tauri/target/debug/examples/window_caption_forward_probe.exe'
+          $root=Join-Path $env:RUNNER_TEMP 'caption-button-probe'
+          $exe=Join-Path $env:GITHUB_WORKSPACE 'src-tauri/target/debug/examples/window_caption_button_probe.exe'
           $process=[Diagnostics.Process]::new()
           $process.StartInfo=[Diagnostics.ProcessStartInfo]::new($exe)
           $process.StartInfo.UseShellExecute=$false
@@ -58,18 +58,19 @@ jobs:
           $process.StartInfo.RedirectStandardError=$true
           $process.StartInfo.Environment['CAPTION_PROBE_EVIDENCE']=$root
           $process.StartInfo.Environment['CAPTION_PROBE_CAPTURE_HELPER']=Join-Path $env:GITHUB_WORKSPACE 'scripts/ci/capture-windows-app-window.ps1'
+          $process.StartInfo.Environment['CAPTION_PROBE_UIA_HELPER']=Join-Path $env:GITHUB_WORKSPACE 'scripts/ci/probe-caption-button-accessibility.ps1'
           if(!$process.Start()){throw 'Own probe did not start'}
           $stdout=$process.StandardOutput.ReadToEndAsync()
           $stderr=$process.StandardError.ReadToEndAsync()
           try {
-            if(!$process.WaitForExit(120000)){throw 'Own probe exceeded 120s; no acceptance'}
+            if(!$process.WaitForExit(180000)){throw 'Own probe exceeded 180s; no acceptance'}
             $stdoutText=$stdout.GetAwaiter().GetResult()
             $stdoutText|Set-Content "$root/stdout.log"
             $stderr.GetAwaiter().GetResult()|Set-Content "$root/stderr.log"
-            @{sourceRevision=$env:GITHUB_SHA;exitCode=$process.ExitCode;fullFrameAccepted=$false;scope='Only actual tagged child mouse input, forwarded root hover and unchanged/repainted HTML pixels. No mouse-down or Snap acceptance.'}|ConvertTo-Json|Set-Content "$root/result.json"
+            @{sourceRevision=$env:GITHUB_SHA;exitCode=$process.ExitCode;fullFrameAccepted=$false;scope='Only exact owned UIA Button Invoke/BN_CLICKED, real tagged hover, self-painted symbol color and transparent HTML repaint. No real mouse-down or Snap acceptance.'}|ConvertTo-Json|Set-Content "$root/result.json"
             Get-Content "$root/stderr.log"
             if($process.ExitCode){throw 'Actual hover/pixel probe failed'}
-            if($stdoutText -notmatch 'caption_forward_probe completed: verified=true fullFrameAccepted=false'){throw 'Probe did not return through verified cleanup completion'}
+            if($stdoutText -notmatch 'caption_button_probe completed: verified=true fullFrameAccepted=false'){throw 'Probe did not return through verified cleanup completion'}
           } finally {
             if(!$process.HasExited){$process.Kill($true);$process.WaitForExit(10000)|Out-Null}
             if(!$process.HasExited){throw 'Own probe termination could not be confirmed'}
@@ -79,7 +80,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: caption-forward-probe-${{ github.sha }}
-          path: ${{ runner.temp }}/caption-forward-probe
+          name: caption-button-probe-${{ github.sha }}
+          path: ${{ runner.temp }}/caption-button-probe
           retention-days: 7
           if-no-files-found: error
