@@ -807,6 +807,10 @@ async function main () {
                     info.frameInteraction = { ok: false, error: 'actual startup did not establish an owned HWND, usable page and process identity' }
                     continue
                 }
+                if (app.role === 'native') {
+                    const { installPtyWriteSerializingProbe } = await import('./qa-serialize-pty-writes.mjs')
+                    info.ptyOrderingDiagnostic = await installPtyWriteSerializingProbe(run.page)
+                }
                 const directory = path.join(output, app.role, 'frame-interaction')
                 mkdirSync(directory)
                 checkpoint(context, app.role + '-frame-interaction')
@@ -822,6 +826,10 @@ async function main () {
                         Number.parseInt(String(info.nativeWindow.data.hwnd), 16)),
                 })
                 if (!info.frameInteraction.ok) result.errors.push(app.role + ' frame interaction: ' + info.frameInteraction.error)
+                if (app.role === 'native') {
+                    const { collectPtyWriteSerializingProbe } = await import('./qa-serialize-pty-writes.mjs')
+                    info.ptyOrderingDiagnostic.stats = await collectPtyWriteSerializingProbe(run.page)
+                }
                 checkpoint(context, app.role + '-frame-interaction-complete')
                 if (info.frameInteraction.inputCleanupFailed) {
                     result.errors.push('Stopped all GUI actions because own input cleanup is unverified')
