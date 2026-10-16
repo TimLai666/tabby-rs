@@ -336,7 +336,7 @@ public static class ExistingWindowInput {
 
 
 function Find-AccessibleCaptionPoint {
-    param([int]$Index)
+    param([int]$Index, [Collections.IDictionary]$Evidence)
     Add-Type -AssemblyName UIAutomationClient
     Add-Type -AssemblyName UIAutomationTypes
     $providers = [Reflection.Assembly]::Load('UIAutomationClientSideProviders')
@@ -351,19 +351,25 @@ public static class CaptionAutomationProviders {
     $deadline = [DateTime]::UtcNow.AddSeconds(8)
     $root = [System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]$WindowHandle)
     if ($root.Current.ProcessId -ne $AppProcessId) { throw 'Accessible root ownership changed' }
+    $Evidence['root'] = @{processId=$root.Current.ProcessId;name=[string]$root.Current.Name;className=[string]$root.Current.ClassName}
+    $Evidence['buttons'] = [Collections.Generic.List[object]]::new()
     $condition = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)
     $buttons = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $condition)
+    $Evidence['buttonCount'] = $buttons.Count
     if ($buttons.Count -gt 200) { throw 'Caption discovery has more than 200 accessible buttons' }
     $matches = @()
     foreach ($button in $buttons) {
         if ([DateTime]::UtcNow -gt $deadline) { throw 'Accessible caption discovery exceeded 8 seconds' }
         $current = $button.Current
-        if ($current.ProcessId -ne $AppProcessId -or $current.IsOffscreen -or -not $current.IsEnabled) { continue }
         $rect = $current.BoundingRectangle
+        $observation = @{name=[string]$current.Name;processId=$current.ProcessId;offscreen=$current.IsOffscreen;enabled=$current.IsEnabled;bounds=@{x=$rect.X;y=$rect.Y;width=$rect.Width;height=$rect.Height};nativeMatch=$null}
+        $Evidence['buttons'].Add($observation)
+        if ($current.ProcessId -ne $AppProcessId -or $current.IsOffscreen -or -not $current.IsEnabled) { continue }
         if ($rect.IsEmpty -or $rect.Width -le 0 -or $rect.Height -le 0) { continue }
         $x = [int][Math]::Floor($rect.X + $rect.Width/2)
         $y = [int][Math]::Floor($rect.Y + $rect.Height/2)
-        if ([ExistingWindowInput]::MatchesCaptionPoint($Index,$x,$y)) { $matches += ,$button }
+        $observation.nativeMatch = [ExistingWindowInput]::MatchesCaptionPoint($Index,$x,$y)
+        if ($observation.nativeMatch) { $matches += ,$button }
     }
     if ($matches.Count -ne 1) { throw "Expected exactly one accessible owned native caption control; found $($matches.Count)" }
     if ([DateTime]::UtcNow -gt $deadline) { throw 'Accessible caption discovery exceeded 8 seconds' }
@@ -418,7 +424,9 @@ try {
             if (Test-Path -LiteralPath $journalPath) { throw 'Caption discovery cannot proceed with an existing mouse journal' }
             $index = if($Action -eq 'Minimize'){2}elseif($Action -eq 'Close'){5}else{3}
             $result['captionFallbackInitial'] = $native
-            $point = Find-AccessibleCaptionPoint -Index $index
+            $inspection = @{}
+            $result['captionAccessibilityInspection'] = $inspection
+            $point = Find-AccessibleCaptionPoint -Index $index -Evidence $inspection
             $result['captionAccessibility'] = $point
             $native = [ExistingWindowInput]::RunWithCaptionPoint($AppProcessId,$CreationUtc,$WindowHandle,$Action,$PointX,$PointY,$DeltaX,$DeltaY,$journalPath,$point.x,$point.y)
         }
