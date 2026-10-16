@@ -1,6 +1,6 @@
 import { InjectionToken } from '@angular/core'
-import type { WindowCaptionState } from '../services/windowsCaption'
 import { BootstrapData, MessageBoxOptions, MessageBoxResult, NodeToolchainStatus, PluginInfo, StoredVault, TransferDescriptor } from 'tabby-core'
+import type { WindowCaptionState } from '../services/windowsCaption'
 
 export type UpdateChannel = 'stable' | 'nightly'
 

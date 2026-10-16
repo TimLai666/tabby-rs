@@ -195,7 +195,7 @@ jobs:
           $reference = $executables[0].FullName
           $data = Join-Path (Split-Path $reference -Parent) 'data'
           if (-not (Test-Path -LiteralPath $data)) { New-Item -ItemType Directory -Path $data | Out-Null }
-          @{ tag = 'v1.0.235'; baselineCommit = '14e2d60b9b6dee84a53c37f05eefeb803787de04'; url = $url; sha256 = $hash; size = (Get-Item -LiteralPath $archive).Length; diagnosticRevision = $env:GITHUB_SHA; nativeProductBase = 'a6ffb7c23b699802b78a76b8223c05e99ab0130a'; nativeProductRevision = '9209f83d7548f90aaec2534fe21291fe2fdf5281' } | ConvertTo-Json -Depth 4 | Set-Content "$env:RUNNER_TEMP/tabby-rs-windows-desktop-compare/reference-build-metadata.json"
+          @{ tag = 'v1.0.235'; baselineCommit = '14e2d60b9b6dee84a53c37f05eefeb803787de04'; url = $url; sha256 = $hash; size = (Get-Item -LiteralPath $archive).Length; diagnosticRevision = $env:GITHUB_SHA; nativeProductBase = 'a6ffb7c23b699802b78a76b8223c05e99ab0130a'; nativeProductRevision = 'e49861ac28acaf48fd766c5fd066ce57c5b4bb07' } | ConvertTo-Json -Depth 4 | Set-Content "$env:RUNNER_TEMP/tabby-rs-windows-desktop-compare/reference-build-metadata.json"
           "TABBY_DESKTOP_REFERENCE_EXE=$reference" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Preserve compiled diagnostic host for bounded tool reruns
         uses: actions/upload-artifact@v4
@@ -210,13 +210,32 @@ jobs:
       - name: Test actual native Windows caption adapter
         timeout-minutes: 6
         shell: pwsh
+        env:
+          RUSTFLAGS: '-C link-arg=/MANIFESTINPUT:${{ github.workspace }}/src-tauri/windows-app-manifest.xml -C link-arg=/MANIFEST:EMBED'
         run: |
+          $scratch = Join-Path $env:RUNNER_TEMP 'caption-native-check'
+          New-Item -ItemType Directory -Path $scratch | Out-Null
+          $example = (Join-Path $env:GITHUB_WORKSPACE 'src-tauri/examples/windows_caption_native.rs').Replace('\', '/')
+          $manifest = @"
+          [package]
+          name = "caption-native-check"
+          version = "0.1.0"
+          edition = "2021"
+          [dependencies]
+          serde = { version = "=1.0.229", features = ["derive"] }
+          windows-sys = { version = "=0.59.0", features = ["Win32_Foundation","Win32_System_Registry","Win32_System_Threading","Win32_UI_WindowsAndMessaging","Win32_UI_Controls","Win32_Graphics_Gdi","Win32_System_LibraryLoader","Win32_UI_Shell","Win32_UI_HiDpi","Win32_UI_Accessibility","Win32_UI_Input_KeyboardAndMouse"] }
+          [[bin]]
+          name = "windows_caption_native"
+          path = "$example"
+          "@
+          $manifestPath = Join-Path $scratch 'Cargo.toml'
+          [IO.File]::WriteAllText($manifestPath, $manifest, [Text.UTF8Encoding]::new($false))
           $log = Join-Path $env:RUNNER_TEMP 'tabby-rs-windows-desktop-compare/native-caption-regression.log'
-          cargo run --locked --manifest-path src-tauri/Cargo.toml --example windows_caption_native *> $log
-          if ($LASTEXITCODE -ne 0) { Get-Content $log; throw 'Actual Windows caption adapter checks failed' }
-          $report = Get-Content $log -Raw
-          if ($report -notmatch 'windows_caption_native: 16 checks passed') { throw 'Native caption checks did not complete all expected groups' }
+          cargo run --manifest-path $manifestPath --bin windows_caption_native *> $log
+          $code = $LASTEXITCODE
           Get-Content $log
+          if ($code -ne 0) { throw "Actual Windows caption adapter checks failed with exit $code" }
+          if ((Get-Content $log -Raw) -notmatch 'windows_caption_native: 17 checks passed') { throw 'Native caption checks did not complete all expected groups' }
       - name: Reject preoccupied CDP ports before launching applications
         shell: pwsh
         run: |

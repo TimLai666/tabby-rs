@@ -1,8 +1,24 @@
 //! Bounded actual Win32 checks for the production caption adapter.
 //! This is not full Tauri/WebView/desktop parity acceptance.
+//! Windows requires the Common Controls v6 linker manifest; see CONTRIBUTING.md.
 #[cfg(target_os = "windows")]
-#[path = "../src/platform/frame_windows_buttons.rs"]
-mod caption;
+mod caption {
+    include!("../src/platform/frame_windows_buttons.rs");
+
+    // Simulate an OS theme changing after the last cached snapshot, without
+    // changing the user's registry or adding a production test API.
+    pub(super) fn stale_theme_cache(root: windows_sys::Win32::Foundation::HWND) {
+        let state = OWNED
+            .with(|map| map.borrow().get(&(root as isize)).cloned())
+            .unwrap();
+        let actual = state.hover_color.borrow().clone();
+        state.hover_color.replace(if actual == "#ffffff" {
+            "#000000".into()
+        } else {
+            "#ffffff".into()
+        });
+    }
+}
 #[path = "../src/window_caption.rs"]
 mod desktop;
 
@@ -548,7 +564,34 @@ fn run_checks() -> Result<usize, String> {
             return Err("root destruction leaked captured observer reference".into());
         }
         checks += 1;
-        caption::install(root, Box::new(|_| {}))?;
+
+        let theme_events = Arc::new(AtomicUsize::new(0));
+        let theme_counter = theme_events.clone();
+        caption::install(
+            root,
+            Box::new(move |_| {
+                theme_counter.fetch_add(1, Ordering::SeqCst);
+            }),
+        )?;
+        let actual_theme = caption::snapshot(root)?.unwrap().hover_color;
+        for message in [WM_THEMECHANGED, WM_SETTINGCHANGE, WM_SYSCOLORCHANGE] {
+            caption::stale_theme_cache(root);
+            theme_events.store(0, Ordering::SeqCst);
+            SendMessageW(root, message, 0, 0);
+            if theme_events.load(Ordering::SeqCst) != 1
+                || caption::snapshot(root)?.unwrap().hover_color != actual_theme
+            {
+                return Err(format!("theme message {message:#x} did not publish the changed hover color exactly once"));
+            }
+            theme_events.store(0, Ordering::SeqCst);
+            SendMessageW(root, message, 0, 0);
+            if theme_events.load(Ordering::SeqCst) != 0 {
+                return Err(format!(
+                    "unchanged theme message {message:#x} published a duplicate state"
+                ));
+            }
+        }
+        checks += 1;
         caption::remove(root)?;
         DestroyWindow(root);
         let _ = GetCurrentThreadId();
