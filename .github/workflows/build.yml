@@ -31,6 +31,8 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -File scripts/ci/install-nasm.ps1
       - name: Build and run actual Wry frame checks
+        env:
+          RUSTFLAGS: '-C link-arg=/MANIFESTINPUT:${{ github.workspace }}/src-tauri/windows-app-manifest.xml -C link-arg=/MANIFEST:EMBED'
         shell: pwsh
         run: |
           $root = Join-Path $env:RUNNER_TEMP 'window-frame-fixture'
