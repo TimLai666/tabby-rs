@@ -159,9 +159,16 @@ impl PtyManager {
 
     pub fn true_pid(&self, id: &str) -> Result<u32, AppError> {
         let session = self.live_session(id)?;
-        self.processes
-            .true_pid(session.pid(), session.started_at())
-            .ok_or_else(|| AppError::NotFound("PTY process identity no longer matches".into()))
+        let mut cached = session
+            .shell_identity
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let identity = self
+            .processes
+            .true_pid(session.pid(), session.started_at(), *cached)
+            .ok_or_else(|| AppError::NotFound("PTY process identity no longer matches".into()))?;
+        *cached = Some(identity);
+        Ok(identity.pid)
     }
 
     pub fn children(&self, id: &str) -> Result<Vec<ChildProcess>, AppError> {
