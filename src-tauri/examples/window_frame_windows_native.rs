@@ -48,7 +48,7 @@ fn main() {
 
     if std::env::args().any(|argument| argument == "--help" || argument == "-h") {
         println!(
-            "window_frame_windows_native: checks native caption styles, outer bounds, independent-window isolation, minimize/maximize/restore, and frame calls after destroy. Creates two transparent Wry windows and a temporary isolated WebView data directory, then destroys only those windows and removes that directory. It does not verify actual_pixels, CSS dragging, PTY behavior, full-app behavior, restart behavior, or geometry persistence."
+            "window_frame_windows_native: checks native caption styles, outer bounds, independent-window isolation, minimize/maximize/restore, and frame calls after destroy. Requests two transparent Wry windows with 640x480 inner size at (32,32) and (64,64), plus an isolated temporary WebView data directory, then destroys only those windows and removes that directory. It does not verify composited desktop pixels, CSS dragging, PTY behavior, full-app behavior, restart behavior, or geometry persistence."
         );
         return;
     }
@@ -93,6 +93,8 @@ fn main() {
             first_config.visible = false;
             first_config.transparent = true;
             let first = tauri::WebviewWindowBuilder::from_config(app, &first_config)?
+                .inner_size(640.0, 480.0)
+                .position(32.0, 32.0)
                 .incognito(true)
                 .data_directory(isolated_data.path().to_path_buf())
                 .build()?;
@@ -102,6 +104,8 @@ fn main() {
             second_config.url = blank;
             second_config.title = "Native frame Windows secondary".into();
             let second = tauri::WebviewWindowBuilder::from_config(app, &second_config)?
+                .inner_size(640.0, 480.0)
+                .position(64.0, 64.0)
                 .incognito(true)
                 .data_directory(isolated_data.path().to_path_buf())
                 .build()?;
@@ -154,11 +158,11 @@ fn run_checks(first: &tauri::WebviewWindow, second: &tauri::WebviewWindow) -> Ve
     use windows_sys::Win32::Foundation::{POINT, RECT};
     use windows_sys::Win32::Graphics::Gdi::ClientToScreen;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        GetClientRect, GetWindowLongPtrW, GetWindowRect, IsIconic, IsWindow, IsZoomed,
-        SendMessageTimeoutW, SetWindowPos, GWL_STYLE, HTCLOSE, HTMAXBUTTON, HTMINBUTTON,
-        SMTO_ABORTIFHUNG, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, TITLEBARINFOEX,
-        WM_GETTITLEBARINFOEX, WM_NCHITTEST, WS_CAPTION, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SYSMENU,
-        WS_THICKFRAME,
+        GetClientRect, GetForegroundWindow, GetWindowLongPtrW, GetWindowRect, IsIconic, IsWindow,
+        IsZoomed, SendMessageTimeoutW, SetWindowPos, WindowFromPoint, GWL_STYLE, HTCLOSE,
+        HTMAXBUTTON, HTMINBUTTON, SMTO_ABORTIFHUNG, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+        SWP_NOZORDER, TITLEBARINFOEX, WM_GETTITLEBARINFOEX, WM_NCHITTEST, WS_CAPTION,
+        WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
     };
 
     const TIMEOUT: Duration = Duration::from_secs(10);
@@ -275,6 +279,12 @@ fn run_checks(first: &tauri::WebviewWindow, second: &tauri::WebviewWindow) -> Ve
         }
         let x = rect.left + (rect.right - rect.left) / 2;
         let y = rect.top + (rect.bottom - rect.top) / 2;
+        // A direct WM_NCHITTEST reply alone cannot prove a child WebView does
+        // not intercept actual mouse input in the native button rectangle.
+        let target = unsafe { WindowFromPoint(POINT { x, y }) };
+        if target != handle {
+            return Err(format!("{label} center ({x},{y}) is covered by HWND {target:?}, expected foreground native HWND {handle:?}"));
+        }
         let packed_point = (((y as u16 as u32) << 16) | x as u16 as u32) as isize;
         message_result = 0;
         let sent = unsafe {
@@ -312,6 +322,20 @@ fn run_checks(first: &tauri::WebviewWindow, second: &tauri::WebviewWindow) -> Ve
                 return;
             }
         };
+        if let Err(error) = window.set_focus() {
+            failures.push(format!("{label} cannot focus owned test window: {error}"));
+            return;
+        }
+        let deadline = Instant::now() + TIMEOUT;
+        while unsafe { GetForegroundWindow() } != handle {
+            if Instant::now() >= deadline {
+                failures.push(format!(
+                    "{label} owned test window did not become foreground before hit-testing"
+                ));
+                return;
+            }
+            std::thread::sleep(POLL_INTERVAL);
+        }
         for (index, expected, name) in [
             (2, HTMINBUTTON, "minimize"),
             (3, HTMAXBUTTON, "maximize"),
