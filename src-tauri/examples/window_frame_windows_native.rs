@@ -33,11 +33,11 @@ mod platform;
 fn main() {
     if std::env::args().any(|argument| argument == "--help" || argument == "-h") {
         println!(
-            "window-frame-owned-child-probe: Windows-only owned-child mouse diagnostic. It creates two transparent Wry windows and isolated temporary WebView data; clicks fresh caption-button centers only when WindowFromPoint targets an owned window or its child, then checks native window state. This diagnostic is not full-app or parity acceptance."
+            "window-frame-caption-clip-probe: Windows-only owned-child mouse diagnostic. It creates two transparent Wry windows and isolated temporary WebView data; clicks fresh caption-button centers only when WindowFromPoint targets an owned window or its child, then checks native window state. This diagnostic is not full-app or parity acceptance."
         );
     } else {
         eprintln!(
-            "window-frame-owned-child-probe: Windows checks require Windows; no native checks ran"
+            "window-frame-caption-clip-probe: Windows checks require Windows; no native checks ran"
         );
     }
 }
@@ -48,7 +48,7 @@ fn main() {
 
     if std::env::args().any(|argument| argument == "--help" || argument == "-h") {
         println!(
-            "window-frame-owned-child-probe: owned-child mouse diagnostic that checks native styles, bounds, independent-window isolation, and real minimize/maximize/restore/close input. It moves the cursor and clicks fresh caption-button centers only when the target belongs to an owned window's HWND tree. The diagnostic is not full-app or parity acceptance and does not verify composited desktop pixels, CSS dragging, PTY behavior, restart behavior, or geometry persistence."
+            "window-frame-caption-clip-probe: diagnostic that clips the exact owned WRY_WEBVIEW container around actual DWM caption-button bounds immediately before each mouse action. Requires the resulting target to be the exact owning Tauri HWND. Creates two isolated Wry windows, changes their state, then closes/destroys them. No production refresh lifecycle, full-app, pixel, CSS drag, PTY, restart, persistence, or parity acceptance."
         );
         return;
     }
@@ -405,6 +405,97 @@ fn run_checks(
         Ok(())
     }
 
+    // Diagnostic only: update the exact owned container region immediately
+    // before each caption input. This does not implement production refresh.
+    fn clip_owned_container_before_input(
+        window: &tauri::WebviewWindow,
+        owned_root: windows_sys::Win32::Foundation::HWND,
+    ) -> Result<(), String> {
+        let (sender, receiver) = sync_channel(1);
+        let saved_root = owned_root as usize;
+        window.with_webview(move |webview| {
+            use windows_sys::Win32::Graphics::Dwm::{
+                DwmGetWindowAttribute, DWMWA_CAPTION_BUTTON_BOUNDS,
+            };
+            use windows_sys::Win32::Graphics::Gdi::{
+                CombineRgn, CreateRectRgn, DeleteObject, SetWindowRgn, RGN_DIFF,
+            };
+            use windows_sys::Win32::UI::WindowsAndMessaging::{
+                GetClassNameW, GetParent, GetWindowRect, IsWindow,
+            };
+            let result = (|| {
+                let root = saved_root as windows_sys::Win32::Foundation::HWND;
+                let child = unsafe { webview.controller().ParentWindow() }
+                    .map_err(|error| format!("controller parent: {error}"))?.0;
+                if child.is_null() || unsafe { IsWindow(root) } == 0
+                    || unsafe { IsWindow(child) } == 0
+                    || unsafe { GetParent(child) } != root {
+                    return Err("controller parent is not the exact owned child".to_string());
+                }
+                let mut name = [0u16; 64];
+                let length = unsafe { GetClassNameW(child, name.as_mut_ptr(), name.len() as i32) };
+                if length <= 0 || String::from_utf16_lossy(&name[..length as usize]) != "WRY_WEBVIEW" {
+                    return Err("controller parent is not WRY_WEBVIEW".to_string());
+                }
+                let mut root_rect: RECT = unsafe { std::mem::zeroed() };
+                let mut child_rect: RECT = unsafe { std::mem::zeroed() };
+                let mut buttons: RECT = unsafe { std::mem::zeroed() };
+                if unsafe { GetWindowRect(root, &mut root_rect) } == 0
+                    || unsafe { GetWindowRect(child, &mut child_rect) } == 0 {
+                    return Err("owned window bounds lookup failed".to_string());
+                }
+                let hr = unsafe {
+                    DwmGetWindowAttribute(
+                        root, DWMWA_CAPTION_BUTTON_BOUNDS as u32,
+                        (&mut buttons as *mut RECT).cast(),
+                        std::mem::size_of::<RECT>() as u32,
+                    )
+                };
+                if hr < 0 || buttons.right <= buttons.left || buttons.bottom <= buttons.top {
+                    return Err(format!("visible DWM caption bounds unavailable: {hr:#x}"));
+                }
+                let width = child_rect.right - child_rect.left;
+                let height = child_rect.bottom - child_rect.top;
+                if width <= 0 || height <= 0 {
+                    return Err("owned container has no area".to_string());
+                }
+                let cut = RECT {
+                    left: root_rect.left + buttons.left - child_rect.left,
+                    top: root_rect.top + buttons.top - child_rect.top,
+                    right: root_rect.left + buttons.right - child_rect.left,
+                    bottom: root_rect.top + buttons.bottom - child_rect.top,
+                };
+                eprintln!(
+                    "caption-clip-probe ownedRoot={root:?} child={child:?} size={width}x{height} cut={:?}",
+                    (cut.left, cut.top, cut.right, cut.bottom)
+                );
+                let full = unsafe { CreateRectRgn(0, 0, width, height) };
+                if full.is_null() { return Err("CreateRectRgn full failed".to_string()); }
+                let hole = unsafe { CreateRectRgn(cut.left, cut.top, cut.right, cut.bottom) };
+                if hole.is_null() {
+                    unsafe { DeleteObject(full); }
+                    return Err("CreateRectRgn hole failed".to_string());
+                }
+                let combined = unsafe { CombineRgn(full, full, hole, RGN_DIFF) };
+                unsafe { DeleteObject(hole); }
+                if combined == 0 {
+                    unsafe { DeleteObject(full); }
+                    return Err("CombineRgn failed".to_string());
+                }
+                if unsafe { SetWindowRgn(child, full, 1) } == 0 {
+                    unsafe { DeleteObject(full); }
+                    return Err("SetWindowRgn failed".to_string());
+                }
+                // The OS now owns full, including its eventual destruction.
+                Ok(())
+            })();
+            let _ = sender.send(result);
+        }).map_err(|error| format!("owned container scheduling: {error}"))?;
+        receiver
+            .recv_timeout(TIMEOUT)
+            .map_err(|error| format!("owned container clip wait: {error}"))?
+    }
+
     fn point_targets_owned_tree(
         point: POINT,
         owned_root: windows_sys::Win32::Foundation::HWND,
@@ -428,11 +519,11 @@ fn run_checks(
             String::new()
         };
         eprintln!(
-            "window-frame-owned-child-probe diagnostic: label={label:?} stage={stage:?} targetHWND={target:?} targetClass={class_name:?} targetPID={target_pid} ownedRootHWND={owned_root:?} ownedRootPID={root_pid} targetRootAncestorHWND={target_root:?}"
+            "window-frame-caption-clip-probe diagnostic: label={label:?} stage={stage:?} targetHWND={target:?} targetClass={class_name:?} targetPID={target_pid} ownedRootHWND={owned_root:?} ownedRootPID={root_pid} targetRootAncestorHWND={target_root:?}"
         );
-        if target.is_null() || (target != owned_root && target_root != owned_root) {
+        if target != owned_root {
             return Err(format!(
-                "{label} {stage} target is outside owned HWND tree: target={target:?}, root ancestor={target_root:?}, expected root={owned_root:?}"
+                "{label} {stage} target is not the exact owned root after clipping: target={target:?}, root ancestor={target_root:?}, expected root={owned_root:?}"
             ));
         }
         Ok(())
@@ -489,6 +580,7 @@ fn run_checks(
                 x: rect.left + (rect.right - rect.left) / 2,
                 y: rect.top + (rect.bottom - rect.top) / 2,
             };
+            clip_owned_container_before_input(window, handle)?;
             point_targets_owned_tree(point, handle, label, "fresh metadata")?;
             if unsafe { GetForegroundWindow() } != handle {
                 return Err(format!(
@@ -511,7 +603,7 @@ fn run_checks(
                 )
             };
             eprintln!(
-                "window-frame-owned-child-probe diagnostic: {label} WM_NCHITTEST sent={} reply={}",
+                "window-frame-caption-clip-probe diagnostic: {label} WM_NCHITTEST sent={} reply={}",
                 hit_test_sent != 0,
                 message_result as u32
             );
@@ -849,14 +941,14 @@ fn run_checks(
             );
         } else {
             eprintln!(
-                "window-frame-owned-child-probe diagnostic: secondary close click failed: {close_result:?}; attempting owned-window cleanup"
+                "window-frame-caption-clip-probe diagnostic: secondary close click failed: {close_result:?}; attempting owned-window cleanup"
             );
         }
         let destroyed = if close_observed {
             true
         } else {
             eprintln!(
-                "window-frame-owned-child-probe diagnostic: secondary HWND still alive; using programmatic cleanup fallback"
+                "window-frame-caption-clip-probe diagnostic: secondary HWND still alive; using programmatic cleanup fallback"
             );
             match destroy_owned_window(second, second_hwnd, "secondary fallback") {
                 Ok(()) => (unsafe { IsWindow(handle) }) == 0,
@@ -891,6 +983,6 @@ fn run_checks(
             failures.push(format!("secondary fallback destruction failed: {error}"));
         }
     }
-    eprintln!("window-frame-owned-child-probe note: owned-child mouse diagnostic only; this is not full-app or parity acceptance; composited pixels, CSS drag, PTY, restart behavior, and geometry persistence were not verified");
+    eprintln!("window-frame-caption-clip-probe note: DIAGNOSTIC ONLY: clips owned Wry before each input; no production refresh lifecycle; this is not full-app or parity acceptance; composited pixels, CSS drag, PTY, restart behavior, and geometry persistence were not verified");
     failures
 }

@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   native-frame-fixture:
-    name: Owned Wry caption child input diagnostic
+    name: Owned Wry caption region input diagnostic
     runs-on: windows-2022
     timeout-minutes: 20
     steps:
@@ -61,10 +61,10 @@ jobs:
             exitCode = $testExit
             diagnosticOnly = $true
             fullAppAccepted = $false
-            scope = 'DIAGNOSTIC ONLY: Allow a caption recipient only within the exact owned HWND hierarchy, then observe real mouse-triggered state. The strict property fixture is unchanged in the source checkout. No full-app, visual, drag, restart, or parity acceptance.'
+            scope = 'DIAGNOSTIC ONLY: Clip the owned Wry container around actual DWM caption bounds immediately before each input, require the exact parent recipient, then observe real mouse-triggered state. Production refresh is not implemented. No full-app, visual, drag, restart, or parity acceptance.'
           } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath "$root/result.json" -Encoding utf8
           Get-Content -LiteralPath "$root/frame-checks.log"
-          if ($testExit -ne 0) { throw "Owned-child caption input diagnostic failed with exit $testExit" }
+          if ($testExit -ne 0) { throw "Owned-container region diagnostic failed with exit $testExit" }
       - name: Preserve native frame evidence
         if: always()
         uses: actions/upload-artifact@v4
