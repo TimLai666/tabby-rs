@@ -19,6 +19,7 @@ use super::{
     backend::PtyError,
     flow::FlowControl,
     model::{PtyErrorEvent, PtyExitEvent, PtyOutputEvent, MAX_CHUNK_BYTES, MAX_UNACKED_BYTES},
+    process::ProcessIdentity,
 };
 
 type CompletionHandler = Arc<dyn Fn(&str) + Send + Sync>;
@@ -27,6 +28,7 @@ pub struct PtySession {
     id: String,
     pid: u32,
     started_at: Option<u64>,
+    pub(super) shell_identity: Mutex<Option<ProcessIdentity>>,
     master: Mutex<Option<Box<dyn MasterPty + Send>>>,
     writer: Mutex<Option<Box<dyn Write + Send>>>,
     killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
@@ -62,6 +64,7 @@ impl PtySession {
             id,
             pid,
             started_at,
+            shell_identity: Mutex::new(None),
             master: Mutex::new(Some(master)),
             writer: Mutex::new(Some(writer)),
             killer: Mutex::new(killer),

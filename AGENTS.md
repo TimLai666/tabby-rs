@@ -1029,6 +1029,19 @@
   unknown termination errors retain the record for retry. Restore and shared
   proxy creation must preserve an existing PTY. Verify fresh failure, normal
   spawn, restored sessions, real child termination, and blocked-reader cleanup.
+  Keep Tauri PTY writes in call order within each proxy. Snapshot input bytes
+  before queueing, preserve each write failure, and allow later writes to proceed
+  after rejection. Queues for separate proxies must remain independent. Include
+  `yarn test:tauri-pty-write-order` when changing the renderer PTY adapter.
+  Pin the first resolved shell PID and start time to its native PTY session.
+  Later child-process and working-directory reads must use that same shell;
+  do not follow a newly started foreground job as though it were the shell.
+  Reject a missing, reused, or detached cached identity instead of rebinding it.
+  Keep first resolution serialized per session and retain the existing two-second
+  renderer startup gate before child-process or working-directory requests.
+  Include `yarn test:tauri-pty-shell-readiness` and native shell identity regressions
+  when changing this contract. Verify real close warnings, cancellation, continued
+  input, and session cleanup separately on the supported desktops.
   Windows fresh sessions must omit parent cursor inheritance. Read
   `src-tauri/vendor/portable-pty/TABBY-RS-PATCHES.md` before updating the crate
   or its Windows PTY creation flags. Preserve the other native flags and verify
@@ -1242,3 +1255,14 @@
   locations match exactly; none points to the changed `src/lib.rs` callback.
 - Resolve the existing diagnostics before introducing a strict Clippy CI gate.
   Passing Rust tests and builds do not establish a strict Clippy pass.
+
+## P2 — Terminal audio blocked by the native content policy
+
+- Windows source-built PTY input run `38974773909`, on product `19094916`,
+  records the WebView refusing `data:audio/ogg` because the configured
+  `default-src 'self'` also applies to media. The ASCII and Chinese input checks
+  pass; that run does not establish audible bell behavior.
+- Before accepting terminal sound parity, locate the existing audio producer
+  and prefer a bundled same-origin media asset. Preserve the current content
+  policy unless a separate policy change is authorized. Verify actual playback
+  and compare with the fixed original on supported desktops.

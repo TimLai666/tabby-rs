@@ -344,6 +344,12 @@ jobs:
       - name: Test Telnet and serial connection errors
         run: yarn test:connector-errors
 
+      - name: Test Tauri PTY input ordering
+        run: yarn test:tauri-pty-write-order
+
+      - name: Test Tauri PTY startup identity readiness
+        run: yarn test:tauri-pty-shell-readiness
+
       - name: Test serial write queue
         run: yarn test:serial-write-queue
 
@@ -509,6 +515,12 @@ jobs:
 
       - name: Test Telnet and serial connection errors
         run: yarn test:connector-errors
+
+      - name: Test Tauri PTY input ordering
+        run: yarn test:tauri-pty-write-order
+
+      - name: Test Tauri PTY startup identity readiness
+        run: yarn test:tauri-pty-shell-readiness
 
       - name: Test serial write queue
         run: yarn test:serial-write-queue

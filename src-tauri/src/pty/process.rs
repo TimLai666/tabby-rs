@@ -37,7 +37,12 @@ impl ProcessInspector {
         children
     }
 
-    pub fn true_pid(&self, root: u32, expected_start_time: Option<u64>) -> Option<u32> {
+    pub fn true_pid(
+        &self,
+        root: u32,
+        expected_start_time: Option<u64>,
+        cached: Option<ProcessIdentity>,
+    ) -> Option<ProcessIdentity> {
         let mut system = self
             .system
             .lock()
@@ -59,12 +64,12 @@ impl ProcessInspector {
             .map(|(pid, process)| (pid.as_u32(), process.start_time()))
             .collect::<HashMap<_, _>>();
 
-        follow_single_child_chain(
+        resolved_shell_identity(
             root,
             expected_start_time,
+            cached,
             &parent_by_child,
             &start_time_by_pid,
-            64,
         )
     }
 
@@ -97,6 +102,59 @@ fn children_from_system(system: &System, parent: u32) -> Vec<ChildProcess> {
             })
         })
         .collect()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProcessIdentity {
+    pub pid: u32,
+    pub start_time: u64,
+}
+
+fn resolved_shell_identity(
+    root: u32,
+    expected_start_time: Option<u64>,
+    cached: Option<ProcessIdentity>,
+    parent_by_child: &HashMap<u32, u32>,
+    start_time_by_pid: &HashMap<u32, u64>,
+) -> Option<ProcessIdentity> {
+    if root == 0 {
+        return None;
+    }
+    let root_start_time = *start_time_by_pid.get(&root)?;
+    if expected_start_time.is_some_and(|expected| expected != root_start_time) {
+        return None;
+    }
+    if let Some(identity) = cached {
+        if identity.pid == 0 || start_time_by_pid.get(&identity.pid) != Some(&identity.start_time) {
+            return None;
+        }
+        let mut current = identity.pid;
+        let mut visited = HashSet::from([current]);
+        for _ in 0..64 {
+            if current == root {
+                return Some(identity);
+            }
+            let parent = *parent_by_child.get(&current)?;
+            if !visited.insert(parent)
+                || start_time_by_pid.get(&current)? < start_time_by_pid.get(&parent)?
+            {
+                return None;
+            }
+            current = parent;
+        }
+        return (current == root).then_some(identity);
+    }
+    let pid = follow_single_child_chain(
+        root,
+        expected_start_time,
+        parent_by_child,
+        start_time_by_pid,
+        64,
+    )?;
+    Some(ProcessIdentity {
+        pid,
+        start_time: *start_time_by_pid.get(&pid)?,
+    })
 }
 
 pub fn follow_single_child_chain(
@@ -195,3 +253,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "shell_identity_tests.rs"]
+mod shell_identity_tests;

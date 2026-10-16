@@ -157,6 +157,8 @@
     "test:login-scripts-settings": "node scripts/test-login-scripts-settings-contract.mjs",
     "test:connector-login-scripts": "node scripts/test-connector-login-scripts.mjs && node scripts/test-connector-listener-lifecycle.mjs",
     "test:connector-errors": "node scripts/test-connector-errors.mjs",
+    "test:tauri-pty-write-order": "node scripts/test-tauri-pty-write-order.mjs",
+    "test:tauri-pty-shell-readiness": "node scripts/test-tauri-pty-shell-readiness.mjs",
     "test:serial-write-queue": "node scripts/test-serial-write-queue.mjs",
     "test:serial-tab-controls": "node scripts/test-serial-tab-controls.mjs",
     "test:telnet-tab-controls": "node scripts/test-telnet-tab-controls.mjs && node scripts/test-tauri-application-quit.mjs && node scripts/test-macos-native-quit.mjs",
