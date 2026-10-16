@@ -104,7 +104,9 @@ export function createOwnedCaptionDriver (options) {
         const stem = path.join(outputDirectory, `${sequence++}-${name}`), file = stem + '.txt', metadata = stem + '.json'
         if (existsSync(file) || existsSync(metadata)) throw new Error('terminal probe targets must be fresh')
         const script = `$ErrorActionPreference='Stop'; $self=Get-CimInstance Win32_Process -Filter "ProcessId = $PID"; $parent=Get-CimInstance Win32_Process -Filter "ProcessId = $($self.ParentProcessId)"; if(-not $self -or -not $parent){throw 'terminal process identity unavailable'}; $meta=@{child=@{pid=[int]$self.ProcessId;creationUtc=$self.CreationDate.ToUniversalTime().ToString('o')};shell=@{pid=[int]$parent.ProcessId;creationUtc=$parent.CreationDate.ToUniversalTime().ToString('o')}}|ConvertTo-Json -Compress; [IO.File]::WriteAllText(${literal(metadata)},$meta,[Text.UTF8Encoding]::new($false)); [IO.File]::WriteAllText(${literal(file)},${literal(marker)},[Text.UTF8Encoding]::new($false)); [Console]::WriteLine(${literal(marker)}); ${hold ? 'Start-Sleep -Seconds 120' : ''}`
-        const command = `powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand ${Buffer.from(script, 'utf16le').toString('base64')}`
+        const scriptFile = stem + '.ps1'
+        writeFileSync(scriptFile, script, { flag: 'wx' })
+        const command = `powershell.exe -NoLogo -NoProfile -NonInteractive -File "${scriptFile}"`
         helper(identity, 'TypeTerminal', ['-TextBase64', Buffer.from(command, 'utf16le').toString('base64')])
         const until = Date.now() + timeout(20000)
         while (Date.now() < until && (!existsSync(file) || !readFileSync(file).equals(Buffer.from(marker, 'utf8')))) await delay(100)
