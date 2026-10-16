@@ -94,6 +94,7 @@ public static class ExistingWindowInput {
     [DllImport("user32.dll",SetLastError=true)] static extern int SetWindowPos(IntPtr h,IntPtr after,int x,int y,int width,int height,uint flags);
     [DllImport("user32.dll")] static extern int GetSystemMetrics(int index);
     [DllImport("user32.dll")] static extern int GetWindowRect(IntPtr h,out RECT r);
+    [DllImport("user32.dll")] static extern IntPtr GetWindowLongPtrW(IntPtr h,int index);
     [DllImport("user32.dll")] static extern int GetClientRect(IntPtr h,out RECT r);
     [DllImport("user32.dll")] static extern int ClientToScreen(IntPtr h,ref POINT p);
     [DllImport("user32.dll")] static extern uint GetDpiForWindow(IntPtr h);
@@ -118,7 +119,8 @@ public static class ExistingWindowInput {
         Validate(); RECT outer,client; Check(GetWindowRect(hwnd,out outer)!=0,"GetWindowRect failed"); Check(GetClientRect(hwnd,out client)!=0,"GetClientRect failed");
         POINT origin=new POINT{x=client.left,y=client.top}; Check(ClientToScreen(hwnd,ref origin)!=0,"ClientToScreen failed");
         RECT caption; int captionHr=DwmGetWindowAttribute(hwnd,5,out caption,(uint)Marshal.SizeOf(typeof(RECT)));
-        return new Dictionary<string,object>{{"outer",Bounds(outer)},{"client",new Dictionary<string,object>{{"screenX",origin.x},{"screenY",origin.y},{"width",client.right-client.left},{"height",client.bottom-client.top},{"dpi",GetDpiForWindow(hwnd)}}},{"captionButtons",new Dictionary<string,object>{{"hresult",captionHr},{"windowRelativeBounds",Bounds(caption)},{"captionMetric",GetSystemMetricsForDpi(4,GetDpiForWindow(hwnd))}}},{"minimized",IsIconic(hwnd)!=0},{"maximized",IsZoomed(hwnd)!=0}};
+        RECT extended; int extendedHr=DwmGetWindowAttribute(hwnd,9,out extended,(uint)Marshal.SizeOf(typeof(RECT)));
+        return new Dictionary<string,object>{{"outer",Bounds(outer)},{"style",unchecked((uint)GetWindowLongPtrW(hwnd,-16).ToInt64())},{"extendedStyle",unchecked((uint)GetWindowLongPtrW(hwnd,-20).ToInt64())},{"extendedFrame",new Dictionary<string,object>{{"hresult",extendedHr},{"bounds",Bounds(extended)}}},{"client",new Dictionary<string,object>{{"screenX",origin.x},{"screenY",origin.y},{"width",client.right-client.left},{"height",client.bottom-client.top},{"dpi",GetDpiForWindow(hwnd)}}},{"captionButtons",new Dictionary<string,object>{{"hresult",captionHr},{"windowRelativeBounds",Bounds(caption)},{"captionMetric",GetSystemMetricsForDpi(4,GetDpiForWindow(hwnd))}}},{"minimized",IsIconic(hwnd)!=0},{"maximized",IsZoomed(hwnd)!=0}};
     }
     static void Validate() {
         Check(IsWindow(hwnd)!=0,"original HWND no longer exists"); uint actualPid; GetWindowThreadProcessId(hwnd,out actualPid);
@@ -161,12 +163,13 @@ public static class ExistingWindowInput {
     static void RemoveVerifiedJournal(int owner,long target,int helper,string path) {
         CheckJournal(owner,target,helper,path); File.Delete(path); Check(!File.Exists(path),"verified mouse journal could not be removed");
     }
-    static void PressAt(POINT expected,bool exactRoot,bool requireForeground=true) {
+    static void PressAt(POINT expected,bool exactRoot,bool requireForeground=true,bool sameProcessDescendant=false) {
         Check(!LeftButtonDown(),"physical left button is already held; refusing to begin input");
         WriteOwnJournal();
         CheckCursor(expected); Validate(); Check(!requireForeground||GetForegroundWindow()==hwnd,"foreground target changed before LEFTDOWN");
         POINT actual=ReadCursor(); IntPtr under=WindowFromPoint(actual); Check(under!=IntPtr.Zero,"cursor point no longer resolves to a window");
         Check(exactRoot ? under==hwnd : GetAncestor(under,GA_ROOT)==hwnd,"cursor ownership changed before LEFTDOWN");
+        if(sameProcessDescendant) { uint underPid; GetWindowThreadProcessId(under,out underPid); Check(underPid==(uint)pid,"caption recipient process changed before LEFTDOWN"); }
         Check(!LeftButtonDown(),"left button became held before LEFTDOWN; journal retained for recovery");
         Send(LEFTDOWN); buttonDown=true;
     }
@@ -229,7 +232,8 @@ public static class ExistingWindowInput {
         Validate(); RECT bounds; Check(GetWindowRect(hwnd,out bounds)!=0,"caption point bounds could not be read");
         if(x<bounds.left||x>=bounds.right||y<bounds.top||y>=bounds.bottom)return false;
         POINT point=new POINT{x=x,y=y};
-        if(WindowFromPoint(point)!=hwnd)return false;
+        IntPtr under=WindowFromPoint(point); uint underPid; GetWindowThreadProcessId(under,out underPid);
+        if(under==IntPtr.Zero||GetAncestor(under,GA_ROOT)!=hwnd||underPid!=(uint)pid)return false;
         int expected=index==2?8:index==3?9:index==5?20:0;
         Check(expected!=0,"caption index is unsupported");
         return HitTest(x,y)==expected;
@@ -305,7 +309,8 @@ public static class ExistingWindowInput {
                     int index=action=="Minimize"?2:action=="Close"?5:3; POINT c;
                     if(useCaptionPoint) { Check(CaptionPointMatches(index,captionX,captionY),"accessible caption point no longer matches the owned native control"); c=new POINT{x=captionX,y=captionY}; }
                     else c=CaptionCenter(index);
-                    c=PositionAndVerify(c,true); Check(CaptionPointMatches(index,c.x,c.y),"caption point lost its native hit-test before input"); PressAt(c,true); inputSent=true; ClickUp();
+                    bool exactCaptionRoot=!useCaptionPoint;
+                    c=PositionAndVerify(c,exactCaptionRoot); Check(CaptionPointMatches(index,c.x,c.y),"caption point lost its native hit-test before input"); PressAt(c,exactCaptionRoot,true,useCaptionPoint); inputSent=true; ClickUp();
                     bool expectedIcon=action=="Minimize"?true:false, expectedZoom=action=="Maximize"?true:action=="Restore"?false:wasZoom;
                     Check(WaitState(action,expectedIcon,expectedZoom),action+" state was not observed after real mouse input");
                 }
