@@ -717,12 +717,14 @@ unsafe fn root_proc_impl(
         msg,
         WM_SIZE | WM_DPICHANGED | WM_SETTINGCHANGE | WM_THEMECHANGED | WM_SYSCOLORCHANGE
     ) {
+        let before = snap(&s);
         if matches!(msg, WM_SETTINGCHANGE | WM_THEMECHANGED | WM_SYSCOLORCHANGE) {
             s.hover_color.replace(apps_hover());
         }
-        if let Err(error) = refresh(&s, true) {
+        if let Err(error) = refresh(&s, false) {
             eprintln!("Windows caption refresh failed: {error}");
         }
+        emit_if_changed(&s, before);
     }
     def(hwnd, msg, w, l, dispatch)
 }
