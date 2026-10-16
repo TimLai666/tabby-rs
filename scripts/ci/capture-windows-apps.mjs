@@ -1,0 +1,756 @@
+#!/usr/bin/env node
+import { createHash } from 'node:crypto'
+import { spawn, spawnSync } from 'node:child_process'
+import { createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url))
+const WINDOW_CAPTURE_SCRIPT = path.join(SCRIPT_DIR, 'capture-windows-app-window.ps1')
+
+const KIND = 'actual-windows-app-startup-capture'
+const TOTAL_TIMEOUT_MS = 5 * 60 * 1000
+const APP_TIMEOUT_MS = 90 * 1000
+const MAX_DOM_HTML = 200000
+const MAX_VISIBLE_TEXT = 20000
+
+const FLAGS = {
+    '--reference-exe': 'referenceExe',
+    '--rs-exe': 'rsExe',
+    '--output': 'output',
+    '--source-revision': 'sourceRevision',
+    '--reference-port': 'referencePort',
+    '--rs-port': 'rsPort',
+}
+
+const REQUIRED_FLAGS = [
+    ['referenceExe', '--reference-exe'],
+    ['rsExe', '--rs-exe'],
+    ['output', '--output'],
+    ['sourceRevision', '--source-revision'],
+]
+
+const logStreams = []
+
+function usage () {
+    return [
+        'Capture the actual Windows Tabby (reference) and Tabby RS (native) applications.',
+        '',
+        'Usage:',
+        '  node scripts/ci/capture-windows-apps.mjs --reference-exe ABS --rs-exe ABS \\',
+        '       --output FRESH_ABS_DIR --source-revision SHA [--reference-port 9222] [--rs-port 9223]',
+        '',
+        'Runs on Windows only. Produces startup-capture diagnostics under --output.',
+        'This capture is diagnostic evidence of desktop startup; it does not establish parity.',
+    ].join('\n')
+}
+
+function message (error) {
+    return error instanceof Error ? error.message : String(error)
+}
+
+function bounded (text, limit) {
+    const value = text === null || text === undefined ? '' : String(text)
+    if (value.length <= limit) return value
+    return `${value.slice(0, limit)}\n...[truncated ${value.length - limit} characters]`
+}
+
+function pushBounded (list, value, limit) {
+    if (list.length < limit) list.push(value)
+}
+
+function parseCliArgs (argv) {
+    const values = {}
+    const errors = []
+    for (let i = 0; i < argv.length; i++) {
+        const token = argv[i]
+        if (!token.startsWith('--')) {
+            errors.push(`unexpected argument: ${token}`)
+            continue
+        }
+        let name = token
+        let inlineValue = null
+        const equals = token.indexOf('=')
+        if (equals !== -1) {
+            name = token.slice(0, equals)
+            inlineValue = token.slice(equals + 1)
+        }
+        const key = FLAGS[name]
+        if (!key) {
+            errors.push(`unknown flag: ${name}`)
+            continue
+        }
+        if (Object.prototype.hasOwnProperty.call(values, key)) {
+            errors.push(`duplicate flag: ${name}`)
+            continue
+        }
+        let value = inlineValue
+        if (value === null) {
+            const next = argv[i + 1]
+            if (next === undefined || next.startsWith('--')) {
+                errors.push(`missing value for ${name}`)
+                continue
+            }
+            value = next
+            i++
+        }
+        if (value === '') {
+            errors.push(`missing value for ${name}`)
+            continue
+        }
+        values[key] = value
+    }
+    return { values, errors }
+}
+
+function isWindowsExePath (label, value, errors) {
+    if (!path.isAbsolute(value)) {
+        errors.push(`${label}: must be an absolute path`)
+        return false
+    }
+    if (path.extname(value).toLowerCase() !== '.exe') {
+        errors.push(`${label}: must be a Windows .exe executable`)
+        return false
+    }
+    let stat
+    try {
+        stat = statSync(value)
+    } catch {
+        errors.push(`${label}: executable not found: ${value}`)
+        return false
+    }
+    if (!stat.isFile()) {
+        errors.push(`${label}: is not a regular file: ${value}`)
+        return false
+    }
+    return true
+}
+
+function parsePort (label, raw, fallback, errors) {
+    if (raw === undefined) return fallback
+    if (!/^\d+$/.test(raw)) {
+        errors.push(`${label}: must be an integer`)
+        return fallback
+    }
+    const value = Number(raw)
+    if (value < 1 || value > 65535) {
+        errors.push(`${label}: must be between 1 and 65535`)
+        return fallback
+    }
+    return value
+}
+
+function validateOptions (values) {
+    const errors = []
+    for (const [key, flag] of REQUIRED_FLAGS) {
+        if (values[key] === undefined) errors.push(`missing required flag: ${flag}`)
+    }
+
+    let referenceExeValid = false
+    let rsExeValid = false
+    if (values.referenceExe !== undefined) referenceExeValid = isWindowsExePath('--reference-exe', values.referenceExe, errors)
+    if (values.rsExe !== undefined) rsExeValid = isWindowsExePath('--rs-exe', values.rsExe, errors)
+
+    if (referenceExeValid && rsExeValid) {
+        try {
+            const referenceResolved = path.resolve(values.referenceExe).toLowerCase()
+            const rsResolved = path.resolve(values.rsExe).toLowerCase()
+            if (referenceResolved === rsResolved) {
+                errors.push('--reference-exe and --rs-exe must be different executables')
+            }
+        } catch (error) {
+            errors.push(`could not compare executables: ${message(error)}`)
+        }
+    }
+
+    if (values.output !== undefined) {
+        if (!path.isAbsolute(values.output)) {
+            errors.push('--output: must be an absolute path')
+        } else if (existsSync(values.output)) {
+            errors.push(`--output: refuses to reuse existing output: ${values.output}`)
+        }
+    }
+
+    if (values.sourceRevision !== undefined && !/^[0-9a-fA-F]{7,64}$/.test(values.sourceRevision)) {
+        errors.push('--source-revision: must be a hexadecimal revision identifier')
+    }
+
+    const referencePort = parsePort('--reference-port', values.referencePort, 9222, errors)
+    const rsPort = parsePort('--rs-port', values.rsPort, 9223, errors)
+    if (referencePort === rsPort) {
+        errors.push('--reference-port and --rs-port must differ')
+    }
+
+    if (process.platform !== 'win32') {
+        errors.push(`this capture controller requires Windows (win32); current platform is ${process.platform}`)
+    }
+
+    return { errors, referencePort, rsPort }
+}
+
+function sha256File (file) {
+    return new Promise((resolve, reject) => {
+        const hash = createHash('sha256')
+        const stream = createReadStream(file)
+        stream.on('data', chunk => hash.update(chunk))
+        stream.on('error', reject)
+        stream.on('end', () => resolve(hash.digest('hex')))
+    })
+}
+
+function ensurePortableRoot (exePath) {
+    const dataRoot = path.join(path.dirname(exePath), 'data')
+    if (!existsSync(dataRoot)) mkdirSync(dataRoot)
+    if (readdirSync(dataRoot).length) throw new Error(`refuses to launch with pre-existing portable data: ${dataRoot}`)
+    if (!statSync(dataRoot).isDirectory()) {
+        throw new Error(`portable data path is not a directory: ${dataRoot}`)
+    }
+    return dataRoot
+}
+
+function delay (milliseconds) {
+    return new Promise(resolve => setTimeout(resolve, milliseconds))
+}
+
+function withTimeout (promise, milliseconds, label) {
+    let timer
+    const timeout = new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} timed out after ${milliseconds}ms`)), milliseconds)
+    })
+    return Promise.race([promise, timeout]).finally(() => clearTimeout(timer))
+}
+
+function resolvePowerShell () {
+    for (const candidate of ['pwsh', 'powershell']) {
+        const probe = spawnSync(candidate, ['-NoProfile', '-Command', '$PSVersionTable.PSVersion.Major'], { encoding: 'utf8', windowsHide: true, timeout: 15000 })
+        if (!probe.error && probe.status === 0) return candidate
+    }
+    return 'powershell'
+}
+
+function runPowerShell (powerShell, script, timeoutMs) {
+    const result = spawnSync(powerShell, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script], {
+        encoding: 'utf8',
+        windowsHide: true,
+        timeout: timeoutMs,
+        maxBuffer: 16 * 1024 * 1024,
+    })
+    return {
+        ok: !result.error && result.status === 0,
+        status: result.status,
+        stdout: (result.stdout || '').trim(),
+        stderr: (result.stderr || '').trim(),
+        error: result.error ? message(result.error) : null,
+    }
+}
+
+const SNAPSHOT_SCRIPT = `$ErrorActionPreference = 'Stop'
+$root = __ROOT__
+$procs = Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, CreationDate, Name
+$children = @{}
+foreach ($p in $procs) {
+  $parent = [int]$p.ParentProcessId
+  if (-not $children.ContainsKey($parent)) { $children[$parent] = New-Object System.Collections.Generic.List[int] }
+  $children[$parent].Add([int]$p.ProcessId)
+}
+$result = New-Object System.Collections.Generic.List[object]
+$stack = New-Object System.Collections.Generic.Stack[int]
+$stack.Push([int]$root)
+$seen = @{}
+while ($stack.Count -gt 0) {
+  $id = $stack.Pop()
+  if ($seen.ContainsKey($id)) { continue }
+  $seen[$id] = $true
+  $match = $procs | Where-Object { $_.ProcessId -eq $id } | Select-Object -First 1
+  if ($match) {
+    $result.Add([ordered]@{ pid = [int]$match.ProcessId; parentPid = [int]$match.ParentProcessId; creationTimeUTC = $match.CreationDate.ToUniversalTime().ToString('o'); executableBasename = [string]$match.Name })
+  }
+  if ($match -and $children.ContainsKey($id)) {
+    foreach ($child in $children[$id]) {
+      $candidate = $procs | Where-Object { $_.ProcessId -eq $child } | Select-Object -First 1
+      if ($candidate -and $candidate.CreationDate -ge $match.CreationDate) { $stack.Push([int]$child) }
+    }
+  }
+}
+ConvertTo-Json -Compress -Depth 6 -InputObject @{ processes = $result.ToArray() }`
+
+function snapshotProcessTree (powerShell, rootPid, deadline) {
+    const remaining = deadline - Date.now()
+    if (remaining <= 0) return { processes: [], error: 'process snapshot deadline exhausted' }
+    const output = runPowerShell(powerShell, SNAPSHOT_SCRIPT.replace('__ROOT__', String(rootPid)), Math.min(10000, remaining))
+    if (!output.ok) {
+        return { processes: [], error: output.error || output.stderr || `process snapshot exited ${output.status}` }
+    }
+    try {
+        const parsed = JSON.parse(output.stdout)
+        const processes = parsed && Array.isArray(parsed.processes) ? parsed.processes : []
+        return { processes, error: null }
+    } catch (error) {
+        return { processes: [], error: `could not parse process snapshot: ${message(error)}` }
+    }
+}
+
+function pickPage (browser) {
+    const pages = []
+    for (const context of browser.contexts()) pages.push(...context.pages())
+    const loaded = pages.filter(page => {
+        try {
+            return page.url() && page.url() !== 'about:blank'
+        } catch {
+            return false
+        }
+    })
+    return loaded[0] || pages[0] || null
+}
+
+async function connectOverCdp (chromium, endpoint, deadline, deathReport) {
+    let lastError = null
+    while (Date.now() < deadline) {
+        const dead = deathReport()
+        if (dead) throw new Error(`application ended before CDP connected: ${dead}`)
+        const remaining = Math.max(1000, Math.min(15000, deadline - Date.now()))
+        try {
+            return await chromium.connectOverCDP(endpoint, { timeout: remaining })
+        } catch (error) {
+            lastError = error
+        }
+        await delay(500)
+    }
+    throw new Error(`CDP connect timed out: ${lastError ? message(lastError) : 'no detail'}`)
+}
+
+function runNativeWindowCapture (context, pid, appDir) {
+    const result = { ok: false, jsonPath: null, screenshotPath: null, data: null, error: null, invocation: null }
+    const jsonPath = path.join(appDir, 'native-window.json')
+    const pngPath = path.join(appDir, 'native-window.png')
+    if (existsSync(jsonPath) || existsSync(pngPath)) {
+        result.error = 'native window output targets already exist'
+        return result
+    }
+    const invocation = spawnSync(context.powerShell, [
+        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', WINDOW_CAPTURE_SCRIPT,
+        '-AppProcessId', String(pid), '-OutputDirectory', appDir,
+    ], { encoding: 'utf8', windowsHide: true, timeout: Math.max(5000, Math.min(90000, context.deadline - Date.now())), maxBuffer: 16 * 1024 * 1024 })
+    result.invocation = { status: invocation.status, error: invocation.error ? message(invocation.error) : null }
+    if (existsSync(jsonPath)) {
+        result.jsonPath = path.relative(context.output, jsonPath)
+        try {
+            result.data = JSON.parse(readFileSync(jsonPath, 'utf8'))
+            result.ok = invocation.status === 0 && !invocation.error && Boolean(result.data && result.data.ok) && existsSync(pngPath) && statSync(pngPath).size > 0
+            if (!result.ok) result.error = (result.data && result.data.error) || 'native window capture reported failure'
+        } catch (error) {
+            result.error = `invalid native-window.json: ${message(error)}`
+        }
+    } else {
+        result.error = invocation.error ? message(invocation.error)
+            : (invocation.stderr || '').trim() || `capture-windows-app-window.ps1 exited ${invocation.status} without native-window.json`
+    }
+    if (existsSync(pngPath)) result.screenshotPath = path.relative(context.output, pngPath)
+    return result
+}
+
+function failureInfo (app, error) {
+    return {
+        role: app.role,
+        launched: false,
+        executablePath: app.exe,
+        executableSha256: null,
+        pid: null,
+        browserArguments: app.browserArguments,
+        portableDataRoot: null,
+        cdp: { ok: false, endpoint: `http://127.0.0.1:${app.port}`, engineVersion: null, error: null },
+        page: null,
+        dom: null,
+        console: [],
+        pageErrors: [],
+        tauriBridge: null,
+        blankPage: null,
+        clientScreenshot: null,
+        nativeWindow: { ok: false, jsonPath: null, screenshotPath: null, data: null, error: null, invocation: null },
+        aliveAfterCapture: null,
+        cleanup: null,
+        error,
+    }
+}
+
+async function captureApp (context, app) {
+    const appDir = path.join(context.output, app.role)
+    mkdirSync(appDir)
+    const stdoutStream = createWriteStream(path.join(appDir, 'stdout.log'))
+    const stderrStream = createWriteStream(path.join(appDir, 'stderr.log'))
+    logStreams.push(stdoutStream, stderrStream)
+
+    const info = {
+        role: app.role,
+        launched: false,
+        executablePath: app.exe,
+        executableSha256: null,
+        pid: null,
+        browserArguments: app.browserArguments,
+        portableDataRoot: null,
+        cdp: { ok: false, endpoint: `http://127.0.0.1:${app.port}`, engineVersion: null, error: null },
+        page: null,
+        dom: null,
+        console: [],
+        pageErrors: [],
+        tauriBridge: null,
+        blankPage: null,
+        clientScreenshot: null,
+        nativeWindow: { ok: false, jsonPath: null, screenshotPath: null, data: null, error: null, invocation: null },
+        aliveAfterCapture: null,
+        cleanup: null,
+        error: null,
+    }
+
+    try {
+        info.executableSha256 = await sha256File(app.exe)
+        info.portableDataRoot = ensurePortableRoot(app.exe)
+    } catch (error) {
+        info.error = `preparation failed: ${message(error)}`
+        return info
+    }
+
+    const appDeadline = Math.min(Date.now() + APP_TIMEOUT_MS, context.deadline)
+
+    let child
+    try {
+        child = spawn(app.exe, app.args, {
+            cwd: path.dirname(app.exe),
+            env: app.env,
+            shell: false,
+            windowsHide: false,
+            stdio: ['ignore', 'pipe', 'pipe'],
+        })
+    } catch (error) {
+        info.error = `launch failed: ${message(error)}`
+        return info
+    }
+
+    info.launched = true
+    info.pid = typeof child.pid === 'number' ? child.pid : null
+
+    let exitReport = null
+    let spawnError = null
+    child.on('exit', (code, signal) => { exitReport = { code, signal } })
+    child.on('error', error => { spawnError = message(error) })
+    child.stdout.on('data', chunk => stdoutStream.write(chunk))
+    child.stderr.on('data', chunk => stderrStream.write(chunk))
+    context.running.set(app.role, { child, info, state: () => ({ exitReport, spawnError }) })
+    const initialTree = snapshotProcessTree(context.powerShell, info.pid, context.deadline)
+    info.initialProcessTree = initialTree
+    const root = initialTree.processes.find(entry => entry.pid === info.pid && entry.parentPid === process.pid && entry.executableBasename.toLowerCase() === path.basename(app.exe).toLowerCase())
+    if (!root) { info.error = 'could not establish owned root process identity'; return info }
+    info.rootIdentity = root
+
+    let browser = null
+    try {
+        browser = await connectOverCdp(context.chromium, info.cdp.endpoint, appDeadline, () => {
+            if (spawnError) return `spawn error: ${spawnError}`
+            if (exitReport) return `exit code ${exitReport.code} signal ${exitReport.signal}`
+            return null
+        })
+        info.cdp.ok = true
+        try {
+            info.cdp.engineVersion = browser.version()
+        } catch (error) {
+            info.cdp.engineVersion = `unavailable: ${message(error)}`
+        }
+
+        const observedPages = new WeakSet()
+        const observePage = candidate => {
+            if (!candidate || observedPages.has(candidate)) return
+            observedPages.add(candidate)
+            candidate.on('console', entry => pushBounded(info.console, { type: entry.type(), text: bounded(entry.text(), 2000) }, 200))
+            candidate.on('pageerror', error => pushBounded(info.pageErrors, bounded(message(error), 4000), 100))
+        }
+        let page = null
+        while (Date.now() < appDeadline) {
+            page = pickPage(browser)
+            observePage(page)
+            if (page && await withTimeout(page.evaluate(() => document.readyState !== 'loading' && Boolean(document.body?.innerText.trim()) && Boolean(document.querySelector('welcome-page, start-page, .xterm'))), Math.max(1, Math.min(3000, appDeadline - Date.now())), 'meaningful UI readiness').catch(() => false)) break
+            if (spawnError || exitReport) throw new Error('application ended before meaningful UI rendered')
+            await delay(250)
+        }
+        if (!page || Date.now() >= appDeadline) throw new Error('meaningful application UI did not render within the startup deadline')
+
+        page.setDefaultTimeout(Math.max(1000, appDeadline - Date.now()))
+
+        const dom = await withTimeout(page.evaluate(() => ({
+            url: location.href,
+            title: document.title,
+            innerWidth: window.innerWidth,
+            innerHeight: window.innerHeight,
+            outerWidth: window.outerWidth,
+            outerHeight: window.outerHeight,
+            visibleText: document.body ? document.body.innerText : '',
+            html: document.documentElement ? document.documentElement.outerHTML : '',
+            tauriBridge: typeof globalThis.__TAURI_INTERNALS__ !== 'undefined',
+        })), Math.max(1000, appDeadline - Date.now()), 'DOM read')
+
+        info.page = {
+            url: dom.url,
+            title: dom.title,
+            innerWidth: dom.innerWidth,
+            innerHeight: dom.innerHeight,
+            outerWidth: dom.outerWidth,
+            outerHeight: dom.outerHeight,
+        }
+        const expectedUrl = app.role === 'reference' ? /^file:/i.test(dom.url) : /^(?:https?:\/\/tauri\.localhost(?:[/:]|$)|tauri:\/\/localhost(?:[/:]|$))/i.test(dom.url)
+        if (!expectedUrl) throw new Error(`unexpected actual application page URL: ${dom.url}`)
+        info.tauriBridge = Boolean(dom.tauriBridge)
+        info.blankPage = String(dom.visibleText || '').trim().length === 0
+        info.dom = {
+            visibleText: bounded(dom.visibleText, MAX_VISIBLE_TEXT),
+            html: bounded(dom.html, MAX_DOM_HTML),
+            visibleTextTruncated: String(dom.visibleText || '').length > MAX_VISIBLE_TEXT,
+            htmlTruncated: String(dom.html || '').length > MAX_DOM_HTML,
+        }
+
+        const clientPng = path.join(appDir, 'client.png')
+        await withTimeout(page.screenshot({ path: clientPng, type: 'png' }), Math.max(1000, appDeadline - Date.now()), 'client screenshot')
+        info.clientScreenshot = path.relative(context.output, clientPng)
+    } catch (error) {
+        info.cdp.error = message(error)
+    } finally {
+        if (browser) await withTimeout(browser.close(), Math.max(1, Math.min(5000, context.deadline - Date.now())), 'CDP disconnect').catch(error => { info.cdp.disconnectError = message(error) })
+    }
+
+    if (info.pid) info.nativeWindow = runNativeWindowCapture(context, info.pid, appDir)
+
+    info.aliveAfterCapture = exitReport === null && spawnError === null
+    return info
+}
+
+async function teardownApp (context, info) {
+    const cleanup = { role: info.role, forcedTeardown: true, quitFlowTested: false, rootPid: info.pid, tracked: [], survivors: [], unverifiedDescendants: [], error: null, observation: 'owned process snapshots; this does not verify the application Quit flow or descendants that escape between snapshots' }
+    if (!info.rootIdentity) {
+        cleanup.error = 'no verified owned root identity; automatic termination refused'
+        return cleanup
+    }
+    const fresh = snapshotProcessTree(context.powerShell, info.pid, context.cleanupDeadline)
+    const currentRoot = fresh.processes.find(entry => entry.pid === info.pid)
+    if (currentRoot && currentRoot.creationTimeUTC !== info.rootIdentity.creationTimeUTC) {
+        cleanup.error = 'root PID was reused; automatic termination refused'
+        return cleanup
+    }
+    const tracked = new Map()
+    for (const entry of [...info.initialProcessTree.processes, ...(info.finalProcessObservation?.processes ?? []), ...fresh.processes]) tracked.set(`${entry.pid}:${entry.creationTimeUTC}`, entry)
+    cleanup.tracked = [...tracked.values()]
+    if (fresh.error) cleanup.error = fresh.error
+    const encoded = Buffer.from(JSON.stringify(cleanup.tracked), 'utf8').toString('base64')
+    const script = `$ErrorActionPreference = 'Stop'
+$entries = @([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encoded}')) | ConvertFrom-Json)
+$stopped = @(); $survivors = @(); $reused = @(); $errors = @()
+foreach ($entry in $entries) {
+    $current = Get-CimInstance Win32_Process -Filter "ProcessId = $($entry.pid)"
+    if (-not $current) { continue }
+    if ($current.CreationDate.ToUniversalTime().ToString('o') -ne $entry.creationTimeUTC) { $reused += $entry.pid; continue }
+    try {
+        $owned = Get-Process -Id $entry.pid -ErrorAction Stop
+        if ([Math]::Abs(($owned.StartTime.ToUniversalTime() - $current.CreationDate.ToUniversalTime()).TotalMilliseconds) -gt 1) { throw 'process identity changed before termination' }
+        $owned.Kill(); $owned.WaitForExit(5000) | Out-Null; $stopped += $entry.pid
+    } catch { $errors += "PID $($entry.pid): $($_.Exception.Message)" }
+}
+foreach ($entry in $entries) {
+    $current = Get-CimInstance Win32_Process -Filter "ProcessId = $($entry.pid)"
+    if ($current -and $current.CreationDate.ToUniversalTime().ToString('o') -eq $entry.creationTimeUTC) { $survivors += $entry.pid }
+}
+@{ stopped = @($stopped); survivors = @($survivors); reused = @($reused); errors = @($errors) } | ConvertTo-Json -Compress -Depth 4`
+    const output = runPowerShell(context.powerShell, script, Math.max(1000, Math.min(30000, context.cleanupDeadline - Date.now())))
+    try {
+        if (!output.ok) throw new Error(output.error || output.stderr || `process termination exited ${output.status}`)
+        const report = JSON.parse(output.stdout)
+        cleanup.termination = report
+        cleanup.survivors = report.survivors
+        cleanup.unverifiedDescendants = report.survivors
+        if (report.survivors.length || report.errors.length) cleanup.error = JSON.stringify(report)
+    } catch (error) { cleanup.error = message(error) }
+    return cleanup
+}
+
+function cleanupComplete (cleanup) {
+    if (!cleanup) return false
+    return cleanup.survivors.length === 0 && !cleanup.error
+}
+
+function computeOutcome (result) {
+    const reference = result.reference || {}
+    const native = result.native || {}
+    result.substitutionDetected = reference.tauriBridge === true
+    result.checks = {
+        referenceLaunched: Boolean(reference.launched),
+        nativeLaunched: Boolean(native.launched),
+        referenceCdp: Boolean(reference.cdp && reference.cdp.ok),
+        nativeCdp: Boolean(native.cdp && native.cdp.ok),
+        referenceTauriBridgeAbsent: reference.tauriBridge === false,
+        nativeTauriBridgePresent: native.tauriBridge === true,
+        referencePageRendered: reference.blankPage === false,
+        nativePageRendered: native.blankPage === false,
+        referenceAliveThroughCapture: reference.aliveAfterCapture === true,
+        nativeAliveThroughCapture: native.aliveAfterCapture === true,
+        bothAliveBeforeTeardown: result.bothAliveBeforeTeardown === true,
+        referenceObservedPageErrorsAbsent: reference.pageErrors?.length === 0,
+        nativeObservedPageErrorsAbsent: native.pageErrors?.length === 0,
+        referenceClientScreenshot: Boolean(reference.clientScreenshot),
+        nativeClientScreenshot: Boolean(native.clientScreenshot),
+        referenceNativeWindow: Boolean(reference.nativeWindow && reference.nativeWindow.ok),
+        nativeNativeWindow: Boolean(native.nativeWindow && native.nativeWindow.ok),
+        referenceCleanupComplete: cleanupComplete(reference.cleanup),
+        nativeCleanupComplete: cleanupComplete(native.cleanup),
+    }
+    result.captured = Boolean(reference.clientScreenshot || (reference.nativeWindow && reference.nativeWindow.screenshotPath))
+        && Boolean(native.clientScreenshot || (native.nativeWindow && native.nativeWindow.screenshotPath))
+    result.ok = Object.values(result.checks).every(Boolean)
+    return result
+}
+
+function writeResult (output, result) {
+    const target = path.join(output, 'result.json')
+    writeFileSync(target, `${JSON.stringify(result, null, 2)}\n`)
+    return target
+}
+
+function printSummary (result) {
+    const failed = Object.entries(result.checks).filter(([, value]) => !value).map(([key]) => key)
+    process.stdout.write(`kind: ${result.kind}\n`)
+    process.stdout.write(`sourceRevision: ${result.sourceRevision}\n`)
+    process.stdout.write(`captured (diagnostics only): ${result.captured}\n`)
+    process.stdout.write(`startup capture ok: ${result.ok}\n`)
+    process.stdout.write(`fullParityPassed: ${result.fullParityPassed}\n`)
+    process.stdout.write(`manualVisualReview: ${result.manualVisualReview}\n`)
+    if (failed.length) process.stdout.write(`failed checks: ${failed.join(', ')}\n`)
+    for (const error of result.errors) process.stdout.write(`error: ${error}\n`)
+}
+
+async function main () {
+    const argv = process.argv.slice(2)
+    if (argv.length === 0 || argv.includes('--help') || argv.includes('-h')) {
+        process.stdout.write(`${usage()}\n`)
+        return 0
+    }
+
+    const { values, errors: parseErrors } = parseCliArgs(argv)
+    const { errors: validationErrors, referencePort, rsPort } = validateOptions(values)
+    const errors = [...parseErrors, ...validationErrors]
+    if (errors.length) {
+        for (const error of errors) process.stderr.write(`error: ${error}\n`)
+        process.stderr.write(`\n${usage()}\n`)
+        return 2
+    }
+
+    const output = values.output
+    const result = {
+        kind: KIND,
+        stage: 'startup-capture',
+        sourceRevision: values.sourceRevision,
+        platform: process.platform,
+        referenceExe: values.referenceExe,
+        rsExe: values.rsExe,
+        referencePort,
+        rsPort,
+        startedAt: new Date().toISOString(),
+        finishedAt: null,
+        durationMs: null,
+        captured: false,
+        ok: false,
+        fullParityPassed: false,
+        manualVisualReview: false,
+        parityStatus: 'not-evaluated',
+        substitutionDetected: false,
+        checks: {},
+        reference: null,
+        native: null,
+        cleanup: { forcedTeardown: false, survivors: [], unverifiedDescendants: [] },
+        errors: [],
+        unverified: [
+            'local terminal input through the real PTY was not exercised',
+            'second-invocation paste with a literal pipe or Unicode was not exercised',
+            'actual UI close and child cleanup were not exercised (teardown is forced process termination)',
+            'installer, per-user, and other supported-platform scopes were not exercised',
+            'manual visual review of the captured screenshots was not performed',
+            'console and page errors emitted before listeners attach after the CDP connection are not replayed',
+            'delivery of the diagnostic remote-debugging browser arguments is not independently verified',
+        ],
+    }
+
+    try {
+        mkdirSync(output)
+    } catch (error) {
+        process.stderr.write(`error: --output could not be created fresh: ${message(error)}\n`)
+        return 2
+    }
+
+    let chromium
+    try {
+        ;({ chromium } = await import('playwright-core'))
+    } catch (error) {
+        result.errors.push(`could not import playwright-core: ${message(error)}`)
+        result.finishedAt = new Date().toISOString()
+        writeResult(output, result)
+        process.stderr.write(`error: could not import playwright-core: ${message(error)}\n`)
+        return 1
+    }
+
+    const powerShell = resolvePowerShell()
+    const cleanupDeadline = Date.parse(result.startedAt) + TOTAL_TIMEOUT_MS
+    const context = { output, deadline: cleanupDeadline - 45000, cleanupDeadline, powerShell, chromium, running: new Map() }
+
+    const cleanEnvironment = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(?:TABBY_CONFIG_DIRECTORY|TABBY_RS_(?:BENCHMARK|INSTALLER_SMOKE)_.*|WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS|WEBVIEW2_USER_DATA_FOLDER)$/.test(key)))
+    const referenceArgs = [`--remote-debugging-port=${referencePort}`]
+    const apps = [
+        { role: 'reference', exe: values.referenceExe, port: referencePort, args: referenceArgs, env: cleanEnvironment, browserArguments: referenceArgs },
+        { role: 'native', exe: values.rsExe, port: rsPort, args: [], env: cleanEnvironment, browserArguments: 'compiled TAURI_CONFIG: complete normal window config plus remote-debugging-port; no environment override' },
+    ]
+    try {
+        for (const app of apps) {
+            const info = await captureApp(context, app)
+            result[app.role] = info
+            if (info.error) result.errors.push(`${app.role}: ${info.error}`)
+            if (info.cdp.error) result.errors.push(`${app.role} CDP: ${info.cdp.error}`)
+            if (info.nativeWindow.error) result.errors.push(`${app.role} native window: ${info.nativeWindow.error}`)
+        }
+        result.bothAliveBeforeTeardown = apps.every(app => {
+            const run = context.running.get(app.role)
+            if (!run?.info.rootIdentity) return false
+            const observation = snapshotProcessTree(context.powerShell, run.info.pid, context.deadline)
+            run.info.finalProcessObservation = observation
+            const root = observation.processes.find(entry => entry.pid === run.info.pid)
+            return !observation.error && root?.creationTimeUTC === run.info.rootIdentity.creationTimeUTC && !run.state().exitReport && !run.state().spawnError
+        })
+    } finally {
+        for (const run of context.running.values()) {
+            const info = run.info
+            result[info.role] ??= info
+            info.cleanup = await teardownApp(context, info).catch(error => ({ survivors: [], error: message(error) }))
+            if (info.cleanup.error) result.errors.push(`${info.role} cleanup: ${info.cleanup.error}`)
+        }
+    }
+
+    result.cleanup.forcedTeardown = apps.every(app => result[app.role] && result[app.role].cleanup && result[app.role].cleanup.forcedTeardown)
+    result.cleanup.survivors = apps.flatMap(app => (result[app.role] && result[app.role].cleanup && result[app.role].cleanup.survivors) || [])
+    result.cleanup.unverifiedDescendants = result.cleanup.survivors
+
+    computeOutcome(result)
+    result.finishedAt = new Date().toISOString()
+    result.durationMs = Date.parse(result.finishedAt) - Date.parse(result.startedAt)
+
+    writeResult(output, result)
+    printSummary(result)
+    return result.ok ? 0 : 1
+}
+
+let exitCode = 1
+try {
+    exitCode = await main()
+} catch (error) {
+    process.stderr.write(`error: ${message(error)}\n`)
+    exitCode = 1
+} finally {
+    for (const stream of logStreams) {
+        try {
+            stream.end()
+        } catch { }
+    }
+    await delay(100)
+}
+process.exitCode = exitCode
