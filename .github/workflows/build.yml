@@ -14,11 +14,11 @@ permissions:
   contents: read
   actions: read
 concurrency:
-  group: windows-frame-runtime-reuse-${{ github.ref }}
+  group: windows-frame-caption-color-${{ github.ref }}
   cancel-in-progress: false
 jobs:
   windows-frame-runtime:
-    name: Windows frame input using verified compiled host
+    name: Windows configured caption color in both real applications
     runs-on: windows-2022
     timeout-minutes: 25
     steps:
@@ -61,7 +61,7 @@ jobs:
           $j=& gh run view $id --repo $repo --json jobs; if ($LASTEXITCODE) { throw 'Job API failed' }
           $pres=@(($j|ConvertFrom-Json).jobs|%{$_.steps}|?{$_.name -ceq 'Preserve compiled diagnostic host for bounded tool reruns'})
           if ($pres.Count -ne 1 -or $pres[0].conclusion -cne 'success') { throw 'Artifact-preserve step not uniquely successful' }
-          $ex=@(':(exclude)AGENTS.md',' :(exclude)CLAUDE.md',' :(exclude)docs/**',' :(exclude).github/workflows/build.yml',' :(exclude)scripts/ci/capture-windows-apps.mjs',' :(exclude)scripts/ci/capture-windows-app-window.ps1',' :(exclude)scripts/ci/exercise-windows-terminal.mjs',' :(exclude)scripts/ci/exercise-windows-frame.mjs',' :(exclude)scripts/ci/exercise-windows-window-input.ps1',' :(exclude)scripts/ci/test-windows-frame-cdp-ownership.mjs',' :(exclude)scripts/ci/test-windows-frame-mouse-recovery.mjs',' :(exclude)scripts/ci/test-windows-frame-flow-stop.mjs',' :(exclude)scripts/ci/exercise-windows-frame-restart.mjs')|%{$_.Trim()}
+          $ex=@(':(exclude)AGENTS.md',' :(exclude)CLAUDE.md',' :(exclude)docs/**',' :(exclude).github/workflows/build.yml',' :(exclude)scripts/ci/capture-windows-apps.mjs',' :(exclude)scripts/ci/capture-windows-app-window.ps1',' :(exclude)scripts/ci/exercise-windows-terminal.mjs',' :(exclude)scripts/ci/exercise-windows-frame.mjs',' :(exclude)scripts/ci/exercise-windows-window-input.ps1',' :(exclude)scripts/ci/test-windows-frame-cdp-ownership.mjs',' :(exclude)scripts/ci/test-windows-frame-mouse-recovery.mjs',' :(exclude)scripts/ci/test-windows-frame-flow-stop.mjs',' :(exclude)scripts/ci/exercise-windows-frame-restart.mjs',' :(exclude)scripts/ci/probe-windows-caption-color.ps1',' :(exclude)scripts/ci/test-windows-frame-caption-color.mjs')|%{$_.Trim()}
           & git diff --exit-code $src $env:GITHUB_SHA -- . @ex
           if ($LASTEXITCODE) { throw 'Product/renderer source differs from compiled source' }
           $cd=Join-Path $root 'compiled-host'; New-Item -ItemType Directory -Path $cd|Out-Null
@@ -89,6 +89,12 @@ jobs:
           $app=Join-Path $ref 'app'; Expand-Archive $zip -DestinationPath $app; $rf=@(Get-ChildItem $app -Filter Tabby.exe -File -Recurse)
           if($rf.Count -ne 1){throw 'Expected one original exe'}; $re=$rf[0].FullName; $rd=Join-Path $rf[0].Directory.FullName 'data'
           if(Test-Path -LiteralPath $rd){throw 'Original adjacent data exists'}; New-Item -ItemType Directory -Path $rd|Out-Null
+          $captionConfig = "version: 1`nappearance:`n  frame: thin`nterminal:`n  colorScheme:`n    foreground: '#b050d0'`n"
+          foreach ($portableRoot in @($data,$rd)) {
+            $configPath=Join-Path $portableRoot 'config.yaml'
+            $configStream=[IO.File]::Open($configPath,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+            try { $bytes=[Text.UTF8Encoding]::new($false).GetBytes($captionConfig); $configStream.Write($bytes,0,$bytes.Length) } finally { $configStream.Dispose() }
+          }
           [ordered]@{tag='v1.0.235';baselineCommit='14e2d60b9b6dee84a53c37f05eefeb803787de04';url=$url;sha256=$hash;size=(Get-Item $zip).Length;diagnosticRevision=$env:GITHUB_SHA;nativeProductBase='9d8182060450802d5cbd28fee36a0a36325951d9'}|ConvertTo-Json|Set-Content (Join-Path $ref 'reference-metadata.json') -Encoding utf8
           "TABBY_DESKTOP_RS_EXE=$exe"|Out-File $env:GITHUB_ENV -Append -Encoding utf8
           "TABBY_DESKTOP_REFERENCE_EXE=$re"|Out-File $env:GITHUB_ENV -Append -Encoding utf8
@@ -109,10 +115,16 @@ jobs:
           if($LASTEXITCODE){throw 'mouse fixture'}
           node scripts/ci/test-windows-frame-flow-stop.mjs
           if($LASTEXITCODE){throw 'flow-stop fixture'}
+          node scripts/ci/test-windows-frame-caption-color.mjs
+          if($LASTEXITCODE){throw 'caption-color fixture'}
           $t=$null;$e=$null;$ast=[System.Management.Automation.Language.Parser]::ParseFile((Join-Path $env:GITHUB_WORKSPACE 'scripts/ci/exercise-windows-window-input.ps1'),[ref]$t,[ref]$e)
           if($e.Count){throw ($e|Out-String)}
           $code=$ast.Find({param($n)$n -is [System.Management.Automation.Language.StringConstantExpressionAst] -and $n.Value.StartsWith('using System;')},$true)
           if(!$code){throw 'C# here-string absent'}; Add-Type -TypeDefinition $code.Value -Language CSharp -ErrorAction Stop
+          $ct=$null;$ce=$null;$colorAst=[System.Management.Automation.Language.Parser]::ParseFile((Join-Path $env:GITHUB_WORKSPACE 'scripts/ci/probe-windows-caption-color.ps1'),[ref]$ct,[ref]$ce)
+          if($ce.Count){throw ($ce|Out-String)}
+          $colorCode=$colorAst.Find({param($n)$n -is [System.Management.Automation.Language.StringConstantExpressionAst] -and $n.Value.StartsWith('using System;')},$true)
+          if(!$colorCode){throw 'Caption color native C# here-string absent'}; Add-Type -TypeDefinition $colorCode.Value -Language CSharp -ErrorAction Stop
       - name: Check desktop probe and WebView2
         shell: pwsh
         run: |
@@ -143,7 +155,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: windows-frame-runtime-reuse-${{ github.sha }}-${{ github.run_id }}
+          name: windows-frame-caption-color-${{ github.sha }}-${{ github.run_id }}
           path: |
             ${{ runner.temp }}/tabby-rs-windows-frame-reuse/run-metadata.json
             ${{ runner.temp }}/tabby-rs-windows-frame-reuse/artifact-metadata.json

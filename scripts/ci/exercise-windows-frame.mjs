@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const HELPER = path.join(HERE, 'exercise-windows-window-input.ps1')
+const COLOR_HELPER = path.join(HERE, 'probe-windows-caption-color.ps1')
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
 const literal = value => `'${String(value).replaceAll("'", "''")}'`
 
@@ -17,6 +18,37 @@ export async function exerciseWindowsFrame (options) {
         const left = deadline - Date.now()
         if (left <= 0) throw new Error('full-app frame deadline expired')
         return Math.max(1, Math.min(cap, left))
+    }
+    const captionColor = () => {
+        if (deadline - Date.now() < 30000) throw new Error('insufficient time for caption color proof')
+        const directory = path.join(outputDirectory, 'caption-color')
+        mkdirSync(directory)
+        const run = spawnSync(powerShell, ['-NoProfile', '-NonInteractive', '-File', COLOR_HELPER,
+            '-AppProcessId', String(ownerPid), '-CreationUtc', ownerCreationUtc,
+            '-WindowHandle', String(ownerHwnd), '-ExpectedForeground', '#b050d0', '-OutputDirectory', directory],
+        { encoding: 'utf8', timeout: 25000, maxBuffer: 1024 * 1024, windowsHide: true, shell: false })
+        const evidence = { status: run.status, error: run.error?.message ?? null, stderr: String(run.stderr ?? '').slice(0, 4000), data: null }
+        result.captionColor = evidence
+        const report = path.join(directory, 'caption-color.json')
+        const image = path.join(directory, 'caption-color.png')
+        if (existsSync(report)) evidence.data = JSON.parse(readFileSync(report, 'utf8').replace(/^\uFEFF/, ''))
+        const data = evidence.data
+        const crop = data?.crop
+        const count = data?.exactColorPixelCount
+        if (run.status !== 0 || run.error || data?.ok !== true || data.status !== 'ok' || data.prerequisiteStatus !== 'passed' ||
+            data.expectedForeground !== '#b050d0' || data.requiredExactPixels !== 20 || data.root?.processId !== ownerPid ||
+            Number.parseInt(String(data.root?.handle), 16) !== ownerHwnd || data.root?.creationUtc !== ownerCreationUtc ||
+            data.button?.role !== 'ControlType.Button' || !['Maximize', 'Restore'].includes(data.button?.name) ||
+            data.button?.processId !== ownerPid || data.button?.enabled !== true || data.button?.offscreen !== false ||
+            !Number.isInteger(crop?.width) || crop.width < 1 || crop.width > 256 || !Number.isInteger(crop?.height) || crop.height < 1 || crop.height > 256 ||
+            !Number.isInteger(count) || count < 20 || count > crop.width * crop.height || !existsSync(image)) {
+            throw new Error(`caption color proof failed: ${data?.error ?? evidence.error ?? evidence.stderr}`)
+        }
+        const png = readFileSync(image)
+        if (png.length < 24 || png.length > 1024 * 1024 || !png.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])) ||
+            png.toString('ascii', 12, 16) !== 'IHDR' || png.readUInt32BE(16) !== crop.width || png.readUInt32BE(20) !== crop.height) {
+            throw new Error('caption color PNG evidence is invalid or has different dimensions')
+        }
     }
     const recoverMouse = (file, helperPid, record = () => {}) => {
         const journal = file + '.mouse-down'
@@ -181,6 +213,9 @@ export async function exerciseWindowsFrame (options) {
         const activation = result.activationDom
         if (!activation || Math.abs(activation.innerWidth * activation.dpr - geometry.client.width) > 3 || Math.abs(activation.innerHeight * activation.dpr - geometry.client.height) > 3) throw new Error('no unambiguous owned terminal activation point')
         native('Activate', ['-PointX', String(Math.round(geometry.client.screenX + activation.x * activation.dpr)), '-PointY', String(Math.round(geometry.client.screenY + activation.y * activation.dpr))])
+
+        phase = 'caption color'
+        captionColor()
 
         phase = 'drag'
         const before = native('Snapshot')
