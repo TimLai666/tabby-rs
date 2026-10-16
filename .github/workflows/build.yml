@@ -347,6 +347,9 @@ jobs:
       - name: Test Tauri PTY input ordering
         run: yarn test:tauri-pty-write-order
 
+      - name: Test Tauri PTY startup identity readiness
+        run: yarn test:tauri-pty-shell-readiness
+
       - name: Test serial write queue
         run: yarn test:serial-write-queue
 
@@ -494,6 +497,9 @@ jobs:
 
       - name: Test Tauri PTY input ordering
         run: yarn test:tauri-pty-write-order
+
+      - name: Test Tauri PTY startup identity readiness
+        run: yarn test:tauri-pty-shell-readiness
 
       - name: Test serial write queue
         run: yarn test:serial-write-queue
