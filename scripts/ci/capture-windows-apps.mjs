@@ -46,7 +46,7 @@ function usage () {
         'CDP ports must be distinct integers from 1 through 65535; defaults are 9222 and 9223.',
         'Both executable paths must name actual application copies with empty adjacent data directories.',
         'The reference receives PORTABLE_EXECUTABLE_FILE to disable its automatic updater.',
-        'The native build must already expose its specified CDP port; this tool does not enable it.',
+        'The native process receives common diagnostic WebView2 arguments for its specified CDP port.',
         'Terminal flow executes bounded marker commands, replaces the Windows clipboard, and confirms',
         'only the owned native Paste modal containing its unique test token. It saves failure screenshots.',
         'All flows forcibly stop the owned app processes afterward; application Quit remains untested.',
@@ -790,7 +790,7 @@ async function main () {
     const referenceArgs = [`--remote-debugging-port=${referencePort}`]
     const apps = [
         { role: 'reference', exe: values.referenceExe, port: referencePort, args: referenceArgs, env: { ...cleanEnvironment, PORTABLE_EXECUTABLE_FILE: values.referenceExe }, environmentOverrides: { PORTABLE_EXECUTABLE_FILE: values.referenceExe }, browserArguments: referenceArgs },
-        { role: 'native', exe: values.rsExe, port: rsPort, args: [], env: { ...cleanEnvironment, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: '--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required --remote-debugging-port=' + rsPort }, environmentOverrides: { WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: '--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required --remote-debugging-port=' + rsPort }, browserArguments: 'unchanged compiled TAURI_CONFIG plus the recorded common diagnostic WebView2 arguments for all windows' },
+        { role: 'native', exe: values.rsExe, port: rsPort, args: [], env: { ...cleanEnvironment, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: '--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required --remote-debugging-port=' + rsPort }, environmentOverrides: { WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: '--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required --remote-debugging-port=' + rsPort }, browserArguments: 'unchanged compiled product window configuration plus process-wide diagnostic WebView2 arguments' },
     ]
     try {
         for (const app of apps) {
