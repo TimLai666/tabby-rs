@@ -436,9 +436,10 @@ mod probe {
             window
                 .eval("document.getElementById('probe').style.background='#d84e32'")
                 .map_err(|e| e.to_string())?;
-            wait("actual HTML repaint through hit overlay", || {
-                Ok(pixel(point)? == 0x00324ed8)
-            })?;
+            wait(
+                "HTML repaint preserves both orange center and configured glyph",
+                || Ok(pixel(point)? == 0x00324ed8 && pixel(glyph)? == 0x00d050b0),
+            )?;
             capture_owned(window, "repainted")?;
             if CHILD_COMMANDS.load(Ordering::Acquire) != 1 {
                 return Err("UIA command count changed or duplicated".into());
