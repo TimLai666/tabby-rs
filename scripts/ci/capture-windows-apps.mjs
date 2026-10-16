@@ -4,6 +4,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import { createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { installPtyWriteSerializingProbe, collectPtyWriteSerializingProbe } from './qa-serialize-pty-writes.mjs'
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url))
 const WINDOW_CAPTURE_SCRIPT = path.join(SCRIPT_DIR, 'capture-windows-app-window.ps1')
@@ -808,7 +809,6 @@ async function main () {
                     continue
                 }
                 if (app.role === 'native') {
-                    const { installPtyWriteSerializingProbe } = await import('./qa-serialize-pty-writes.mjs')
                     info.ptyOrderingDiagnostic = await installPtyWriteSerializingProbe(run.page)
                 }
                 const directory = path.join(output, app.role, 'frame-interaction')
@@ -827,7 +827,6 @@ async function main () {
                 })
                 if (!info.frameInteraction.ok) result.errors.push(app.role + ' frame interaction: ' + info.frameInteraction.error)
                 if (app.role === 'native') {
-                    const { collectPtyWriteSerializingProbe } = await import('./qa-serialize-pty-writes.mjs')
                     info.ptyOrderingDiagnostic.stats = await collectPtyWriteSerializingProbe(run.page)
                 }
                 checkpoint(context, app.role + '-frame-interaction-complete')

@@ -13,6 +13,8 @@ async function run (cleanupFailed, flow = 'frame') {
     const result = { errors: [], unverified: [] }
     const context = { running: new Map(), deadline: Date.now() + 10000 }
     const evaluate = vm.runInNewContext(`(async () => { ${block}; return result })`, {
+        installPtyWriteSerializingProbe: async () => ({ installed: true }),
+        collectPtyWriteSerializingProbe: async () => ({ restored: true }),
         apps, result, context, flow, output: '/owned', powerShell: 'pwsh',
         path: { join: (...parts) => parts.join('/') }, mkdirSync: () => {}, checkpoint: () => {}, verifyCdpOwnership: () => {},
         captureApp: async (_context, app) => {
