@@ -84,3 +84,7 @@ pub(crate) fn defer_portable_startup(
         })
         .collect()
 }
+
+#[cfg(test)]
+#[path = "webview_storage_startup_tests.rs"]
+mod startup_tests;
