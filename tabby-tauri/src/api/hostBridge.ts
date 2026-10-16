@@ -1,4 +1,5 @@
 import { InjectionToken } from '@angular/core'
+import type { WindowCaptionState } from '../services/windowsCaption'
 import { BootstrapData, MessageBoxOptions, MessageBoxResult, NodeToolchainStatus, PluginInfo, StoredVault, TransferDescriptor } from 'tabby-core'
 
 export type UpdateChannel = 'stable' | 'nightly'
@@ -306,6 +307,7 @@ export interface WindowCapabilities {
 }
 
 export interface WindowStateSnapshot {
+    captionControls?: WindowCaptionState
     visible: boolean
     alwaysOnTop: boolean
     fullscreen: boolean
@@ -1319,6 +1321,7 @@ export interface HostEventMap {
     'desktop:windowMoved': { x: number; y: number }
     'desktop:windowResized': { width: number; height: number }
     'desktop:windowCloseRequested': null
+    'desktop:windowCaptionChanged': WindowCaptionState | null
     'desktop:fileDrop': { paths: string[]; x: number; y: number }
     'desktop:fileDrag': { x: number; y: number }|null
     'desktop:themeChanged': 'system' | 'light' | 'dark'

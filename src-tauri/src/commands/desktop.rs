@@ -49,6 +49,7 @@ fn window_state(window: &tauri::WebviewWindow) -> Result<WindowStateSnapshot, Ap
         },
         scale_factor: window.scale_factor().map_err(io_error)?,
         capabilities: capabilities(),
+        caption_controls: crate::platform::window_caption_controls(window)?,
     })
 }
 
