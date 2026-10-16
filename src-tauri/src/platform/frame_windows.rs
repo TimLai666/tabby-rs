@@ -13,10 +13,11 @@ use windows_sys::Win32::UI::Shell::{
     DefSubclassProc, GetWindowSubclass, RemoveWindowSubclass, SetWindowSubclass,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    GetWindowLongPtrW, GetWindowRect, IsWindow, IsZoomed, SetWindowPos, GWL_STYLE, SM_CYCAPTION,
-    SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WM_ACTIVATE,
-    WM_DPICHANGED, WM_DWMCOMPOSITIONCHANGED, WM_NCCALCSIZE, WM_NCDESTROY, WM_SHOWWINDOW,
-    WM_STYLECHANGED, WM_WINDOWPOSCHANGED, WS_CAPTION,
+    DefWindowProcW, GetWindowLongPtrW, GetWindowRect, IsIconic, IsWindow, IsZoomed, SetWindowPos,
+    GWL_STYLE, HTCLOSE, HTMAXBUTTON, HTMINBUTTON, SM_CYCAPTION, SWP_FRAMECHANGED, SWP_NOACTIVATE,
+    SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, TITLEBARINFOEX, WM_ACTIVATE, WM_DPICHANGED,
+    WM_DWMCOMPOSITIONCHANGED, WM_GETTITLEBARINFOEX, WM_NCCALCSIZE, WM_NCDESTROY, WM_NCHITTEST,
+    WM_SHOWWINDOW, WM_STYLECHANGED, WM_WINDOWPOSCHANGED, WS_CAPTION,
 };
 
 const FRAME_SUBCLASS_ID: usize = 0x5441_4242;
@@ -251,17 +252,6 @@ unsafe extern "system" fn frame_subclass_proc(
                 outer_top
             };
 
-            if unsafe { IsZoomed(hwnd) } != 0 {
-                use std::io::Write;
-                let native_top = if wparam != 0 {
-                    unsafe {
-                        (*(lparam as *const windows_sys::Win32::UI::WindowsAndMessaging::NCCALCSIZE_PARAMS)).rgrc[0].top
-                    }
-                } else {
-                    unsafe { (*(lparam as *const RECT)).top }
-                };
-                let _ = writeln!(std::io::stderr().lock(), "frame-state-diagnostic NCCALCSIZE outer_top={outer_top} native_top={native_top} dpi={} caption={:?} final_top={client_top} style={style:#x}", unsafe { GetDpiForWindow(hwnd) }, caption_height(hwnd));
-            }
             if wparam != 0 {
                 let params =
                     lparam as *mut windows_sys::Win32::UI::WindowsAndMessaging::NCCALCSIZE_PARAMS;
@@ -274,17 +264,25 @@ unsafe extern "system" fn frame_subclass_proc(
         }
     }
 
+    // With a maximized top inset, DWM can leave its caption buttons visible
+    // but decline hit testing. Keep the native action and current system rects.
+    if ref_data == FRAME_SUBCLASS_ACTIVE
+        && message == WM_NCHITTEST
+        && !dwm_handled
+        && unsafe { IsZoomed(hwnd) } != 0
+        && unsafe { IsIconic(hwnd) } == 0
+        && unsafe { GetWindowLongPtrW(hwnd, GWL_STYLE) } as u32 & WS_CAPTION == WS_CAPTION
+    {
+        if let Some(hit) = native_caption_hit(hwnd, lparam) {
+            return hit;
+        }
+    }
+
     let result = if message != WM_NCCALCSIZE && dwm_handled {
         dwm_result
     } else {
         unsafe { DefSubclassProc(hwnd, message, wparam, lparam) }
     };
-    if message == windows_sys::Win32::UI::WindowsAndMessaging::WM_NCHITTEST {
-        use std::io::Write;
-        let x = (lparam as u16) as i16;
-        let y = ((lparam as usize >> 16) as u16) as i16;
-        let _ = writeln!(std::io::stderr().lock(), "frame-state-diagnostic HIT point=({x},{y}) maximized={} dwm_handled={dwm_handled} dwm_result={dwm_result} final_result={result}", unsafe { IsZoomed(hwnd) } != 0);
-    }
     if ref_data == FRAME_SUBCLASS_ACTIVE
         && matches!(
             message,
@@ -313,6 +311,36 @@ unsafe extern "system" fn frame_subclass_proc(
         }
     }
     result
+}
+
+fn native_caption_hit(hwnd: HWND, lparam: isize) -> Option<isize> {
+    const INACTIVE_BUTTON_STATES: u32 = 0x0000_0001 | 0x0000_8000 | 0x0001_0000;
+    let mut info: TITLEBARINFOEX = unsafe { std::mem::zeroed() };
+    info.cbSize = std::mem::size_of::<TITLEBARINFOEX>() as u32;
+    unsafe {
+        DefWindowProcW(
+            hwnd,
+            WM_GETTITLEBARINFOEX,
+            0,
+            &mut info as *mut TITLEBARINFOEX as isize,
+        );
+    }
+    let x = (lparam as u16) as i16 as i32;
+    let y = ((lparam as usize >> 16) as u16) as i16 as i32;
+    for (index, hit) in [(2, HTMINBUTTON), (3, HTMAXBUTTON), (5, HTCLOSE)] {
+        let rect = info.rgrect[index];
+        if info.rgstate[index] & INACTIVE_BUTTON_STATES == 0
+            && rect.right > rect.left
+            && rect.bottom > rect.top
+            && x >= rect.left
+            && x < rect.right
+            && y >= rect.top
+            && y < rect.bottom
+        {
+            return Some(hit as isize);
+        }
+    }
+    None
 }
 
 fn log_refresh_error(error: &str) {

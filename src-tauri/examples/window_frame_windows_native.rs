@@ -543,6 +543,47 @@ fn run_checks(
                 std::thread::sleep(POLL_INTERVAL);
             }
 
+            focus_owned_window(window, handle, "fullscreen WebView recipient")?;
+            let deadline = Instant::now() + TIMEOUT;
+            loop {
+                let (left, top, right, bottom) = client_screen_rect(window, "fullscreen WebView")?;
+                if right - left < 100 || bottom - top < 16 {
+                    return Err(
+                        "fullscreen client has insufficient area for recipient checks".into(),
+                    );
+                }
+                let points = [
+                    POINT {
+                        x: right - 8,
+                        y: top + 8,
+                    },
+                    POINT {
+                        x: right - 50,
+                        y: top + 8,
+                    },
+                    POINT {
+                        x: left + (right - left) / 2,
+                        y: top + 8,
+                    },
+                ];
+                let blocked = points.iter().find_map(|point| {
+                    let target = unsafe { WindowFromPoint(*point) };
+                    (target.is_null()
+                        || target == handle
+                        || unsafe { GetAncestor(target, GA_ROOT) } != handle)
+                        .then_some((point.x, point.y, target as usize))
+                });
+                if blocked.is_none() {
+                    break;
+                }
+                if Instant::now() >= deadline {
+                    return Err(format!(
+                        "fullscreen WebView retains a clipped or unowned top area: {blocked:?}"
+                    ));
+                }
+                std::thread::sleep(POLL_INTERVAL);
+            }
+
             window
                 .set_fullscreen(false)
                 .map_err(|error| format!("fullscreen-off request failed: {error}"))?;
@@ -553,7 +594,11 @@ fn run_checks(
                     .is_fullscreen()
                     .map_err(|error| format!("fullscreen-off state readback failed: {error}"))?;
                 let state = snapshot(window)?;
-                if !fullscreen && state.outer == baseline.outer {
+                if !fullscreen
+                    && state.outer == baseline.outer
+                    && state.maximized == baseline.maximized
+                    && state.minimized == baseline.minimized
+                {
                     break state;
                 }
                 last_restored = Some((fullscreen, state));
@@ -564,7 +609,16 @@ fn run_checks(
                 }
                 std::thread::sleep(POLL_INTERVAL);
             };
-            let frame_rule_matches = if frame == "native" {
+            let frame_rule_matches = if baseline.maximized {
+                let work_top = monitor_info(handle, "restored maximized monitor")?
+                    .rcWork
+                    .top;
+                if frame == "native" {
+                    restored.client_top > work_top
+                } else {
+                    restored.client_top == work_top
+                }
+            } else if frame == "native" {
                 restored.client_top > restored.outer.1 + 1
             } else {
                 restored.client_top <= restored.outer.1 + 1
@@ -663,20 +717,6 @@ fn run_checks(
                 "window_frame_windows_native caption metadata: label={label:?} index={index} point=({}, {}) rect={:?}",
                 point.x, point.y, (rect.left, rect.top, rect.right, rect.bottom)
             );
-            let mut dwm_buttons: RECT = unsafe { std::mem::zeroed() };
-            let dwm_hr = unsafe {
-                windows_sys::Win32::Graphics::Dwm::DwmGetWindowAttribute(
-                    handle,
-                    windows_sys::Win32::Graphics::Dwm::DWMWA_CAPTION_BUTTON_BOUNDS as u32,
-                    &mut dwm_buttons as *mut RECT as *mut std::ffi::c_void,
-                    std::mem::size_of::<RECT>() as u32,
-                )
-            };
-            eprintln!("frame-state-diagnostic METADATA label={label:?} min={:?} max={:?} close={:?} dwm_hr={dwm_hr} dwm_window_bounds={:?} snapshot={:?}",
-                (info.rgrect[2].left,info.rgrect[2].top,info.rgrect[2].right,info.rgrect[2].bottom),
-                (info.rgrect[3].left,info.rgrect[3].top,info.rgrect[3].right,info.rgrect[3].bottom),
-                (info.rgrect[5].left,info.rgrect[5].top,info.rgrect[5].right,info.rgrect[5].bottom),
-                (dwm_buttons.left,dwm_buttons.top,dwm_buttons.right,dwm_buttons.bottom), snapshot(window));
             let target = unsafe { WindowFromPoint(point) };
             if target != handle {
                 return Err(format!(
@@ -867,11 +907,21 @@ fn run_checks(
 
         CHECKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let maximized = match real_caption_click(window, 3, &format!("{label} maximize")) {
-            Ok(()) => wait_for_state(window, |state| state.maximized, "actual maximize"),
+            Ok(()) => wait_for_state(
+                window,
+                |state| state.maximized && !state.minimized,
+                "actual maximize",
+            ),
             Err(error) => Err(error),
         };
         match maximized {
             Ok(state) => {
+                CHECKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if let Err(error) = exercise_fullscreen_round_trip(window, label, &state) {
+                    failures.push(format!(
+                        "{label} maximized fullscreen round-trip failed: {error}"
+                    ));
+                }
                 CHECKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 match hwnd(window).and_then(|handle| monitor_info(handle, "maximized monitor")) {
                     Ok(monitor) => {
@@ -912,26 +962,30 @@ fn run_checks(
                 failures.push(format!(
                     "{label} actual maximize was not observed; restore action skipped: {error}"
                 ));
-                if let Err(cleanup_error) = window
-                    .unmaximize()
-                    .map_err(|error| error.to_string())
-                    .and_then(|()| {
-                        wait_for_state(
-                            window,
-                            |state| {
-                                !state.minimized
-                                    && !state.maximized
-                                    && state.outer == original_outer
-                            },
-                            "programmatic cleanup after unobserved maximize",
-                        )
-                        .map(|_| ())
-                    })
-                {
-                    failures.push(format!(
-                        "{label} cleanup after unobserved maximize failed: {cleanup_error}"
-                    ));
-                }
+            }
+        }
+        // Preserve the actual-input failure, then restore this fixture's own
+        // ordinary state so later frame modes have independent preconditions.
+        let ordinary = snapshot(window)
+            .map(|state| !state.minimized && !state.maximized && state.outer == original_outer)
+            .unwrap_or(false);
+        if !ordinary {
+            let cleanup = window
+                .unmaximize()
+                .and_then(|()| window.unminimize())
+                .map_err(|error| error.to_string())
+                .and_then(|()| {
+                    wait_for_state(
+                        window,
+                        |state| {
+                            !state.minimized && !state.maximized && state.outer == original_outer
+                        },
+                        "programmatic cleanup after caption actions",
+                    )
+                    .map(|_| ())
+                });
+            if let Err(error) = cleanup {
+                failures.push(format!("{label} caption-action cleanup failed: {error}"));
             }
         }
     }
