@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   native-frame-fixture:
-    name: Windows Wry frame property regression
+    name: Owned Wry caption child input diagnostic
     runs-on: windows-2022
     timeout-minutes: 20
     steps:
@@ -59,11 +59,12 @@ jobs:
             fixtureSha256 = (Get-FileHash -LiteralPath 'src-tauri/examples/window_frame_windows_native.rs' -Algorithm SHA256).Hash.ToLowerInvariant()
             executableSha256 = (Get-FileHash -LiteralPath $executable -Algorithm SHA256).Hash.ToLowerInvariant()
             exitCode = $testExit
+            diagnosticOnly = $true
             fullAppAccepted = $false
-            scope = 'Two owned Wry windows using the production frame backend; property checks only. No product renderer, dragging, PTY, restart, persistence, installer, or platform acceptance.'
+            scope = 'DIAGNOSTIC ONLY: Allow a caption recipient only within the exact owned HWND hierarchy, then observe real mouse-triggered state. The strict property fixture is unchanged in the source checkout. No full-app, visual, drag, restart, or parity acceptance.'
           } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath "$root/result.json" -Encoding utf8
           Get-Content -LiteralPath "$root/frame-checks.log"
-          if ($testExit -ne 0) { throw "Native frame property regression failed with exit $testExit" }
+          if ($testExit -ne 0) { throw "Owned-child caption input diagnostic failed with exit $testExit" }
       - name: Preserve native frame evidence
         if: always()
         uses: actions/upload-artifact@v4

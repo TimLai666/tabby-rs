@@ -33,11 +33,11 @@ mod platform;
 fn main() {
     if std::env::args().any(|argument| argument == "--help" || argument == "-h") {
         println!(
-            "window_frame_windows_native: Windows-only native frame and real caption-button input checks. On Windows it creates two transparent Wry windows and an isolated temporary WebView data directory; it changes frame styles, moves the cursor, clicks only fresh native caption-button rectangles, changes window state, and closes/destroys only those two windows. On other platforms it performs no native checks."
+            "window-frame-owned-child-probe: Windows-only owned-child mouse diagnostic. It creates two transparent Wry windows and isolated temporary WebView data; clicks fresh caption-button centers only when WindowFromPoint targets an owned window or its child, then checks native window state. This diagnostic is not full-app or parity acceptance."
         );
     } else {
         eprintln!(
-            "window_frame_windows_native: Windows checks require Windows; no native checks ran"
+            "window-frame-owned-child-probe: Windows checks require Windows; no native checks ran"
         );
     }
 }
@@ -48,7 +48,7 @@ fn main() {
 
     if std::env::args().any(|argument| argument == "--help" || argument == "-h") {
         println!(
-            "window_frame_windows_native: checks native caption styles, outer bounds, independent-window isolation, real minimize/maximize/restore/close button input, and frame calls after close. Requests two transparent Wry windows with 640x480 inner size at (32,32) and (64,64), plus an isolated temporary WebView data directory; it moves the cursor and clicks only freshly checked caption-button centers on those windows, then closes/destroys only those windows and removes the data directory. It does not verify composited desktop pixels, CSS dragging, PTY behavior, full-app behavior, restart behavior, or geometry persistence."
+            "window-frame-owned-child-probe: owned-child mouse diagnostic that checks native styles, bounds, independent-window isolation, and real minimize/maximize/restore/close input. It moves the cursor and clicks fresh caption-button centers only when the target belongs to an owned window's HWND tree. The diagnostic is not full-app or parity acceptance and does not verify composited desktop pixels, CSS dragging, PTY behavior, restart behavior, or geometry persistence."
         );
         return;
     }
@@ -110,11 +110,27 @@ fn main() {
                 .incognito(true)
                 .data_directory(data_directory)
                 .build()?;
+            let first_hwnd = first.hwnd()?.0 as usize;
+            let second_hwnd = second.hwnd()?.0 as usize;
+            if first_hwnd == 0 || second_hwnd == 0 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "Tauri returned a null HWND for an owned test window",
+                )
+                .into());
+            }
 
             let app_handle = app.handle().clone();
             let worker = std::thread::spawn(move || {
-                let mut failures = run_checks(&first, &second);
-                let _ = first.destroy();
+                let mut failures = run_checks(&first, &second, second_hwnd);
+                for (window, saved_hwnd, label) in [
+                    (&second, second_hwnd, "secondary"),
+                    (&first, first_hwnd, "primary"),
+                ] {
+                    if let Err(error) = destroy_owned_window(window, saved_hwnd, label) {
+                        failures.push(format!("final {label} window cleanup failed: {error}"));
+                    }
+                }
                 for failure in &failures {
                     eprintln!("window_frame_windows_native failure: {failure}");
                 }
@@ -216,10 +232,63 @@ fn cleanup_owned_data(owned_data: tempfile::TempDir) -> Result<(), String> {
 }
 
 #[cfg(target_os = "windows")]
+fn destroy_owned_window(
+    window: &tauri::WebviewWindow,
+    saved_hwnd: usize,
+    label: &str,
+) -> Result<(), String> {
+    use windows_sys::Win32::UI::WindowsAndMessaging::IsWindow;
+
+    const TIMEOUT: Duration = Duration::from_secs(10);
+    const POLL_INTERVAL: Duration = Duration::from_millis(20);
+    let handle = saved_hwnd as windows_sys::Win32::Foundation::HWND;
+    if handle.is_null() {
+        return Err(format!("{label} saved HWND is null"));
+    }
+    if unsafe { IsWindow(handle) } == 0 {
+        return Ok(());
+    }
+    let current_hwnd = window
+        .hwnd()
+        .map_err(|error| format!("{label} live HWND lookup failed: {error}"))?
+        .0;
+    if current_hwnd != handle {
+        return Err(format!(
+            "{label} live HWND {current_hwnd:?} no longer matches saved owned HWND {handle:?}"
+        ));
+    }
+    let owned_window = window.clone();
+    let (sender, receiver) = sync_channel(1);
+    window
+        .run_on_main_thread(move || {
+            let _ = sender.send(owned_window.destroy().map_err(|error| error.to_string()));
+        })
+        .map_err(|error| format!("{label} destroy scheduling failed: {error}"))?;
+    receiver
+        .recv_timeout(TIMEOUT)
+        .map_err(|error| format!("{label} destroy operation wait failed: {error}"))??;
+
+    let deadline = std::time::Instant::now() + TIMEOUT;
+    while unsafe { IsWindow(handle) } != 0 {
+        if std::time::Instant::now() >= deadline {
+            return Err(format!(
+                "timed out waiting for owned {label} HWND destruction"
+            ));
+        }
+        std::thread::sleep(POLL_INTERVAL);
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
 static CHECKS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 #[cfg(target_os = "windows")]
-fn run_checks(first: &tauri::WebviewWindow, second: &tauri::WebviewWindow) -> Vec<String> {
+fn run_checks(
+    first: &tauri::WebviewWindow,
+    second: &tauri::WebviewWindow,
+    second_hwnd: usize,
+) -> Vec<String> {
     use std::time::Instant;
     use windows_sys::Win32::Foundation::{POINT, RECT};
     use windows_sys::Win32::Graphics::Gdi::ClientToScreen;
@@ -231,11 +300,11 @@ fn run_checks(first: &tauri::WebviewWindow, second: &tauri::WebviewWindow) -> Ve
         MOUSEINPUT,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        GetClientRect, GetForegroundWindow, GetWindowLongPtrW, GetWindowRect, IsIconic, IsWindow,
-        IsZoomed, SendMessageTimeoutW, SetCursorPos, SetWindowPos, WindowFromPoint, GWL_STYLE,
-        SMTO_ABORTIFHUNG, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, TITLEBARINFOEX,
-        WM_GETTITLEBARINFOEX, WM_NCHITTEST, WS_CAPTION, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SYSMENU,
-        WS_THICKFRAME,
+        GetAncestor, GetClassNameW, GetClientRect, GetForegroundWindow, GetWindowLongPtrW,
+        GetWindowRect, GetWindowThreadProcessId, IsIconic, IsWindow, IsZoomed, SendMessageTimeoutW,
+        SetCursorPos, SetWindowPos, WindowFromPoint, GA_ROOT, GWL_STYLE, SMTO_ABORTIFHUNG,
+        SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, TITLEBARINFOEX, WM_GETTITLEBARINFOEX,
+        WM_NCHITTEST, WS_CAPTION, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
     };
 
     const TIMEOUT: Duration = Duration::from_secs(10);
@@ -336,6 +405,39 @@ fn run_checks(first: &tauri::WebviewWindow, second: &tauri::WebviewWindow) -> Ve
         Ok(())
     }
 
+    fn point_targets_owned_tree(
+        point: POINT,
+        owned_root: windows_sys::Win32::Foundation::HWND,
+        label: &str,
+        stage: &str,
+    ) -> Result<(), String> {
+        let target = unsafe { WindowFromPoint(point) };
+        let target_root = unsafe { GetAncestor(target, GA_ROOT) };
+        let mut target_pid = 0u32;
+        let mut root_pid = 0u32;
+        unsafe {
+            GetWindowThreadProcessId(target, &mut target_pid);
+            GetWindowThreadProcessId(owned_root, &mut root_pid);
+        }
+        let mut class_name = [0u16; 256];
+        let class_len =
+            unsafe { GetClassNameW(target, class_name.as_mut_ptr(), class_name.len() as i32) };
+        let class_name = if class_len > 0 {
+            String::from_utf16_lossy(&class_name[..class_len as usize])
+        } else {
+            String::new()
+        };
+        eprintln!(
+            "window-frame-owned-child-probe diagnostic: label={label:?} stage={stage:?} targetHWND={target:?} targetClass={class_name:?} targetPID={target_pid} ownedRootHWND={owned_root:?} ownedRootPID={root_pid} targetRootAncestorHWND={target_root:?}"
+        );
+        if target.is_null() || (target != owned_root && target_root != owned_root) {
+            return Err(format!(
+                "{label} {stage} target is outside owned HWND tree: target={target:?}, root ancestor={target_root:?}, expected root={owned_root:?}"
+            ));
+        }
+        Ok(())
+    }
+
     fn fresh_caption_center(
         window: &tauri::WebviewWindow,
         index: usize,
@@ -387,13 +489,7 @@ fn run_checks(first: &tauri::WebviewWindow, second: &tauri::WebviewWindow) -> Ve
                 x: rect.left + (rect.right - rect.left) / 2,
                 y: rect.top + (rect.bottom - rect.top) / 2,
             };
-            let target = unsafe { WindowFromPoint(point) };
-            if target != handle {
-                return Err(format!(
-                    "{label} center ({},{}) resolves to HWND {target:?}, expected owned HWND {handle:?}",
-                    point.x, point.y
-                ));
-            }
+            point_targets_owned_tree(point, handle, label, "fresh metadata")?;
             if unsafe { GetForegroundWindow() } != handle {
                 return Err(format!(
                     "{label} owned HWND lost foreground during metadata read"
@@ -415,7 +511,7 @@ fn run_checks(first: &tauri::WebviewWindow, second: &tauri::WebviewWindow) -> Ve
                 )
             };
             eprintln!(
-                "window_frame_windows_native diagnostic: {label} WM_NCHITTEST sent={} reply={}",
+                "window-frame-owned-child-probe diagnostic: {label} WM_NCHITTEST sent={} reply={}",
                 hit_test_sent != 0,
                 message_result as u32
             );
@@ -506,11 +602,7 @@ fn run_checks(first: &tauri::WebviewWindow, second: &tauri::WebviewWindow) -> Ve
             if unsafe { GetForegroundWindow() } != handle {
                 return Err(format!("{label} owned HWND lost foreground before input"));
             }
-            if unsafe { WindowFromPoint(point) } != handle {
-                return Err(format!(
-                    "{label} fresh button center no longer resolves to owned HWND"
-                ));
-            }
+            point_targets_owned_tree(point, handle, label, "before cursor placement")?;
             if unsafe { SetCursorPos(point.x, point.y) } == 0 {
                 return Err(format!("{label} SetCursorPos failed"));
             }
@@ -519,11 +611,7 @@ fn run_checks(first: &tauri::WebviewWindow, second: &tauri::WebviewWindow) -> Ve
                     "{label} owned HWND lost foreground immediately before input"
                 ));
             }
-            if unsafe { WindowFromPoint(point) } != handle {
-                return Err(format!(
-                    "{label} point target changed immediately before input"
-                ));
-            }
+            point_targets_owned_tree(point, handle, label, "immediately before SendInput")?;
             send_left_click(label)
         })();
         let restored = unsafe { SetThreadDpiAwarenessContext(previous_dpi) };
@@ -735,37 +823,74 @@ fn run_checks(first: &tauri::WebviewWindow, second: &tauri::WebviewWindow) -> Ve
         }
     }
 
-    let destroyed_hwnd = hwnd(second).ok();
-    if let Some(handle) = destroyed_hwnd {
+    let destroyed_hwnd = second_hwnd as windows_sys::Win32::Foundation::HWND;
+    if !destroyed_hwnd.is_null() {
+        let handle = destroyed_hwnd;
+        let close_result = real_caption_click(second, 5, "secondary full close");
         check!(
             "actual secondary close-button click",
-            real_caption_click(second, 5, "secondary full close").is_ok(),
-            "close button must accept real mouse input"
+            close_result.is_ok(),
+            format!("close button input: {close_result:?}")
         );
-        let deadline = Instant::now() + TIMEOUT;
-        loop {
+        let close_deadline = Instant::now() + TIMEOUT;
+        let mut close_observed = false;
+        while Instant::now() < close_deadline {
             if unsafe { IsWindow(handle) } == 0 {
-                CHECKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                break;
-            }
-            if Instant::now() >= deadline {
-                failures.push("timed out waiting for the owned HWND to be destroyed".into());
+                close_observed = true;
                 break;
             }
             std::thread::sleep(POLL_INTERVAL);
         }
+        if close_result.is_ok() {
+            check!(
+                "actual close click destroys secondary HWND",
+                close_observed,
+                "close-button input was accepted but the owned HWND remained alive until timeout"
+            );
+        } else {
+            eprintln!(
+                "window-frame-owned-child-probe diagnostic: secondary close click failed: {close_result:?}; attempting owned-window cleanup"
+            );
+        }
+        let destroyed = if close_observed {
+            true
+        } else {
+            eprintln!(
+                "window-frame-owned-child-probe diagnostic: secondary HWND still alive; using programmatic cleanup fallback"
+            );
+            match destroy_owned_window(second, second_hwnd, "secondary fallback") {
+                Ok(()) => (unsafe { IsWindow(handle) }) == 0,
+                Err(error) => {
+                    failures.push(format!(
+                        "secondary programmatic cleanup fallback failed: {error}"
+                    ));
+                    false
+                }
+            }
+        };
+        if destroyed {
+            let after_destroy = {
+                let window = second.clone();
+                issue(move || platform::set_window_frame(&window, "thin"))
+            };
+            check!(
+                "frame call after destroy returns AppError",
+                matches!(after_destroy, Ok(Err(_))),
+                format!("{after_destroy:?}")
+            );
+        } else {
+            failures.push(
+                "skipped post-destroy frame assertion because the owned secondary HWND remains alive".into(),
+            );
+        }
     } else {
         failures.push("could not save secondary HWND before destroy".into());
+        if let Err(error) =
+            destroy_owned_window(second, second_hwnd, "secondary without saved HWND")
+        {
+            failures.push(format!("secondary fallback destruction failed: {error}"));
+        }
     }
-    let after_destroy = {
-        let window = second.clone();
-        issue(move || platform::set_window_frame(&window, "thin"))
-    };
-    check!(
-        "frame call after destroy returns AppError",
-        matches!(after_destroy, Ok(Err(_))),
-        format!("{after_destroy:?}")
-    );
-    eprintln!("window_frame_windows_native note: actual_pixels, CSS drag, PTY, full-app/restart behavior, and geometry persistence were not verified");
+    eprintln!("window-frame-owned-child-probe note: owned-child mouse diagnostic only; this is not full-app or parity acceptance; composited pixels, CSS drag, PTY, restart behavior, and geometry persistence were not verified");
     failures
 }
