@@ -552,7 +552,7 @@ async function teardownApp (context, info) {
     const encoded = Buffer.from(JSON.stringify(cleanup.tracked), 'utf8').toString('base64')
     const script = `$ErrorActionPreference = 'Stop'
 $entries = @([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encoded}')) | ConvertFrom-Json)
-$stopped = @(); $survivors = @(); $reused = @(); $errors = @()
+$stopped = @(); $survivors = @(); $reused = @(); $exited = @(); $errors = @()
 foreach ($entry in $entries) {
     $current = Get-CimInstance Win32_Process -Filter "ProcessId = $($entry.pid)"
     if (-not $current) { continue }
@@ -561,13 +561,19 @@ foreach ($entry in $entries) {
         $owned = Get-Process -Id $entry.pid -ErrorAction Stop
         if ([Math]::Abs(($owned.StartTime.ToUniversalTime() - $current.CreationDate.ToUniversalTime()).TotalMilliseconds) -gt 1) { throw 'process identity changed before termination' }
         $owned.Kill(); $owned.WaitForExit(5000) | Out-Null; $stopped += $entry.pid
-    } catch { $errors += "PID $($entry.pid): $($_.Exception.Message)" }
+    } catch {
+        $terminationError = $_.Exception.Message
+        $after = Get-CimInstance Win32_Process -Filter "ProcessId = $($entry.pid)" -ErrorAction Stop
+        if (-not $after) { $exited += $entry.pid }
+        elseif ($after.CreationDate.ToUniversalTime().Ticks -ne ([DateTime]$entry.creationTimeUTC).ToUniversalTime().Ticks) { $reused += $entry.pid }
+        else { $errors += "PID $($entry.pid): $terminationError" }
+    }
 }
 foreach ($entry in $entries) {
     $current = Get-CimInstance Win32_Process -Filter "ProcessId = $($entry.pid)"
     if ($current -and $current.CreationDate.ToUniversalTime().Ticks -eq ([DateTime]$entry.creationTimeUTC).ToUniversalTime().Ticks) { $survivors += $entry.pid }
 }
-@{ stopped = @($stopped); survivors = @($survivors); reused = @($reused); errors = @($errors) } | ConvertTo-Json -Compress -Depth 4`
+@{ stopped = @($stopped); survivors = @($survivors); reused = @($reused); exited = @($exited); errors = @($errors) } | ConvertTo-Json -Compress -Depth 4`
     const output = runPowerShell(context.powerShell, script, Math.max(1000, Math.min(30000, context.cleanupDeadline - Date.now())))
     try {
         if (!output.ok) throw new Error(output.error || output.stderr || `process termination exited ${output.status}`)
