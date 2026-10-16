@@ -107,6 +107,8 @@ jobs:
         env:
           TABBY_RS_SKIP_ELECTRON_NATIVE_REBUILD: '1'
         run: yarn install --frozen-lockfile --network-timeout ${{ env.YARN_NETWORK_TIMEOUT }}
+      - name: Test focused terminal CLI paste routing
+        run: yarn test:terminal-cli-paste
       - name: Build shared packages
         run: yarn build
       - name: Build Tauri renderer

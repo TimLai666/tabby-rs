@@ -225,6 +225,38 @@ Apply this exception only to invalid allocated Remote reply values. Keep the SSH
 and platform manifest entries pending until their complete scopes and supported
 desktop behavior have been verified.
 
+## Approved CLI paste behavior exception
+
+After confirmation, `tabby paste` sends text to the currently focused terminal
+inside the active split container. It preserves cancellation, shell escaping,
+and the guard against missing terminal sessions. Other panes receive no input.
+The fixed `14e2d60` handler checks the top-level active tab directly; ordinary
+tabs are split containers, so confirmation can finish without sending input.
+
+The user approved this focused-terminal correction as a narrow exception to
+complete parity, conditional on actual Windows paste verification before merge.
+The timestamp records this approval when entered in the release contract:
+
+```json
+{
+  "id": "terminal.cli-paste-focused-pane",
+  "baseline": "14e2d60b9b6dee84a53c37f05eefeb803787de04",
+  "approval": {
+    "decision": "accepted-difference",
+    "approver": "user",
+    "approvedAt": "2026-10-16T13:09:39Z"
+  }
+}
+```
+
+`TerminalCLIHandler` in `tabby-terminal/src/cli.ts` resolves the focused pane
+only after confirmation. Run its controlled routing regression with
+`yarn test:terminal-cli-paste`. This test exercises the actual handler and split
+focus accessor with modal and terminal boundaries substituted. Actual native
+confirmation, complete pasted text, terminal output, and process cleanup still
+need desktop evidence. Keep CLI and platform manifest entries pending until
+their complete scopes have been verified.
+
 ## Windows x64
 
 Run on a real Windows host matching the currently supported Tauri/CI
