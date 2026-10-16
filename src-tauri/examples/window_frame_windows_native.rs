@@ -33,7 +33,7 @@ mod platform;
 fn main() {
     if std::env::args().any(|argument| argument == "--help" || argument == "-h") {
         println!(
-            "window_frame_windows_native: Windows-only native frame checks. On Windows this creates two transparent Wry windows and an isolated temporary WebView data directory; it changes frame styles, window state, and destroys only those two windows. On other platforms it performs no native checks."
+            "window_frame_windows_native: Windows-only native frame and real caption-button input checks. On Windows it creates two transparent Wry windows and an isolated temporary WebView data directory; it changes frame styles, moves the cursor, clicks only fresh native caption-button rectangles, changes window state, and closes/destroys only those two windows. On other platforms it performs no native checks."
         );
     } else {
         eprintln!(
@@ -48,7 +48,7 @@ fn main() {
 
     if std::env::args().any(|argument| argument == "--help" || argument == "-h") {
         println!(
-            "window_frame_windows_native: checks native caption styles, outer bounds, independent-window isolation, minimize/maximize/restore, and frame calls after destroy. Requests two transparent Wry windows with 640x480 inner size at (32,32) and (64,64), plus an isolated temporary WebView data directory, then destroys only those windows and removes that directory. It does not verify composited desktop pixels, CSS dragging, PTY behavior, full-app behavior, restart behavior, or geometry persistence."
+            "window_frame_windows_native: checks native caption styles, outer bounds, independent-window isolation, real minimize/maximize/restore/close button input, and frame calls after close. Requests two transparent Wry windows with 640x480 inner size at (32,32) and (64,64), plus an isolated temporary WebView data directory; it moves the cursor and clicks only freshly checked caption-button centers on those windows, then closes/destroys only those windows and removes the data directory. It does not verify composited desktop pixels, CSS dragging, PTY behavior, full-app behavior, restart behavior, or geometry persistence."
         );
         return;
     }
@@ -62,27 +62,28 @@ fn main() {
             std::process::exit(1);
         }
     };
-    let watchdog_data = isolated_data.path().to_path_buf();
-    let timeout_data = watchdog_data.clone();
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_secs(180));
         eprintln!("window_frame_windows_native watchdog: timed out after 180 seconds");
-        let _ = std::fs::remove_dir_all(timeout_data);
         std::process::exit(1);
     });
 
     let mut context = tauri::generate_context!();
     let Some(main_config) = context.config().app.windows.first().cloned() else {
-        let _ = isolated_data.close();
         eprintln!("window_frame_windows_native: generated config has no primary window");
+        if let Err(error) = cleanup_owned_data(isolated_data) {
+            eprintln!("window_frame_windows_native {error}");
+        }
         std::process::exit(1);
     };
     context.config_mut().identifier = format!(
         "io.tabbyrs.tests.window-frame-windows.{}",
         std::process::id()
     );
+    let data_directory = isolated_data.path().to_path_buf();
     context.config_mut().app.windows.clear();
     let (completed, completion) = sync_channel(1);
+    let (worker_ready, worker_handle) = sync_channel(1);
     let app_result = tauri::Builder::default()
         .setup(move |app| {
             let blank = WebviewUrl::External("about:blank".parse()?);
@@ -96,7 +97,7 @@ fn main() {
                 .inner_size(640.0, 480.0)
                 .position(32.0, 32.0)
                 .incognito(true)
-                .data_directory(isolated_data.path().to_path_buf())
+                .data_directory(data_directory.clone())
                 .build()?;
 
             let mut second_config = first_config.clone();
@@ -107,18 +108,13 @@ fn main() {
                 .inner_size(640.0, 480.0)
                 .position(64.0, 64.0)
                 .incognito(true)
-                .data_directory(isolated_data.path().to_path_buf())
+                .data_directory(data_directory)
                 .build()?;
 
             let app_handle = app.handle().clone();
-            let owned_data = isolated_data;
-            std::thread::spawn(move || {
+            let worker = std::thread::spawn(move || {
                 let mut failures = run_checks(&first, &second);
                 let _ = first.destroy();
-                let _ = second.destroy();
-                if let Err(error) = owned_data.close() {
-                    failures.push(format!("temporary data cleanup failed: {error}"));
-                }
                 for failure in &failures {
                     eprintln!("window_frame_windows_native failure: {failure}");
                 }
@@ -131,6 +127,7 @@ fn main() {
                 let _ = completed.send(exit_code);
                 app_handle.exit(exit_code);
             });
+            let _ = worker_ready.send(worker);
             Ok(())
         })
         .build(context);
@@ -138,15 +135,86 @@ fn main() {
         Ok(app) => app,
         Err(error) => {
             eprintln!("window_frame_windows_native startup failure: {error}");
-            let _ = std::fs::remove_dir_all(watchdog_data);
+            let cleanup_result = cleanup_owned_data(isolated_data);
+            if let Err(cleanup_error) = cleanup_result {
+                eprintln!("window_frame_windows_native {cleanup_error}");
+            }
             std::process::exit(1);
         }
     };
-    app.run_return(|_, _| {});
-    let exit_code = completion
+    let worker = worker_handle.recv_timeout(Duration::from_secs(10));
+    if worker.is_err() {
+        eprintln!("window_frame_windows_native: worker did not start before timeout");
+        let _ = app.handle().exit(1);
+        let _ = app.run_return(|_, _| {});
+        if let Err(error) = cleanup_owned_data(isolated_data) {
+            eprintln!("window_frame_windows_native {error}");
+        }
+        std::process::exit(1);
+    }
+    let worker = worker.unwrap();
+    let app_exit_code = app.run_return(|_, _| {});
+    let mut exit_code = completion
         .recv_timeout(Duration::from_secs(10))
         .unwrap_or(1);
+    if app_exit_code != 0 {
+        exit_code = app_exit_code;
+    }
+    if let Err(error) = join_worker_bounded(worker) {
+        eprintln!("window_frame_windows_native {error}");
+        exit_code = 1;
+    }
+    if let Err(error) = cleanup_owned_data(isolated_data) {
+        eprintln!("window_frame_windows_native {error}");
+        exit_code = 1;
+    }
     std::process::exit(exit_code);
+}
+
+#[cfg(target_os = "windows")]
+fn join_worker_bounded(worker: std::thread::JoinHandle<()>) -> Result<(), String> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while !worker.is_finished() {
+        if std::time::Instant::now() >= deadline {
+            return Err("worker did not release its window handles before timeout".into());
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    worker
+        .join()
+        .map_err(|_| "window-frame worker panicked".to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn cleanup_owned_data(owned_data: tempfile::TempDir) -> Result<(), String> {
+    let owned_path = owned_data.path().to_path_buf();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let mut last_error = None;
+    loop {
+        match std::fs::remove_dir_all(&owned_path) {
+            Ok(()) => {
+                let _ = owned_data.keep();
+                return Ok(());
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let _ = owned_data.keep();
+                return Ok(());
+            }
+            Err(error) => last_error = Some(error),
+        }
+        if std::time::Instant::now() >= deadline {
+            let retained_path = owned_data.keep();
+            let error = last_error
+                .map(|error| error.to_string())
+                .unwrap_or_else(|| "no filesystem error was returned".to_string());
+            return Err(format!(
+                "temporary data cleanup failed after bounded retries for {}: {} (directory retained)",
+                retained_path.display(),
+                error
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -157,17 +225,26 @@ fn run_checks(first: &tauri::WebviewWindow, second: &tauri::WebviewWindow) -> Ve
     use std::time::Instant;
     use windows_sys::Win32::Foundation::{POINT, RECT};
     use windows_sys::Win32::Graphics::Gdi::ClientToScreen;
+    use windows_sys::Win32::UI::HiDpi::{
+        SetThreadDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+    };
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
+        MOUSEINPUT,
+    };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         GetClientRect, GetForegroundWindow, GetWindowLongPtrW, GetWindowRect, IsIconic, IsWindow,
-        IsZoomed, SendMessageTimeoutW, SetWindowPos, WindowFromPoint, GWL_STYLE, HTCLOSE,
-        HTMAXBUTTON, HTMINBUTTON, SMTO_ABORTIFHUNG, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-        SWP_NOZORDER, TITLEBARINFOEX, WM_GETTITLEBARINFOEX, WM_NCHITTEST, WS_CAPTION,
-        WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
+        IsZoomed, SendMessageTimeoutW, SetCursorPos, SetWindowPos, WindowFromPoint, GWL_STYLE,
+        SMTO_ABORTIFHUNG, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, TITLEBARINFOEX,
+        WM_GETTITLEBARINFOEX, WM_NCHITTEST, WS_CAPTION, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SYSMENU,
+        WS_THICKFRAME,
     };
 
     const TIMEOUT: Duration = Duration::from_secs(10);
     const POLL_INTERVAL: Duration = Duration::from_millis(20);
     const STATE_SYSTEM_INVISIBLE: u32 = 0x0000_8000;
+    const STATE_SYSTEM_UNAVAILABLE: u32 = 0x0000_0001;
+    const STATE_SYSTEM_OFFSCREEN: u32 = 0x0001_0000;
     const FRAME_BITS: u32 =
         WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_THICKFRAME;
 
@@ -241,157 +318,273 @@ fn run_checks(first: &tauri::WebviewWindow, second: &tauri::WebviewWindow) -> Ve
         }
     }
 
-    fn hit_test_caption_button(
+    fn focus_owned_window(
+        window: &tauri::WebviewWindow,
         handle: windows_sys::Win32::Foundation::HWND,
-        index: usize,
-        expected_hit: u32,
         label: &str,
     ) -> Result<(), String> {
-        let mut info: TITLEBARINFOEX = unsafe { std::mem::zeroed() };
-        info.cbSize = std::mem::size_of::<TITLEBARINFOEX>() as u32;
-        let mut message_result = 0usize;
-        let sent = unsafe {
-            SendMessageTimeoutW(
-                handle,
-                WM_GETTITLEBARINFOEX,
-                0,
-                (&mut info as *mut TITLEBARINFOEX) as isize,
-                SMTO_ABORTIFHUNG,
-                TIMEOUT.as_millis() as u32,
-                &mut message_result,
-            )
-        };
-        if sent == 0 {
-            return Err(format!(
-                "WM_GETTITLEBARINFOEX timed out or failed for {label}"
-            ));
-        }
-        let rect = info.rgrect[index];
-        let state = info.rgstate[index];
-        if rect.right <= rect.left || rect.bottom <= rect.top {
-            return Err(format!(
-                "{label} rectangle is empty: {:?}",
-                (rect.left, rect.top, rect.right, rect.bottom)
-            ));
-        }
-        if state & STATE_SYSTEM_INVISIBLE != 0 {
-            return Err(format!("{label} is marked invisible: state={state:#x}"));
-        }
-        let x = rect.left + (rect.right - rect.left) / 2;
-        let y = rect.top + (rect.bottom - rect.top) / 2;
-        // A direct WM_NCHITTEST reply alone cannot prove a child WebView does
-        // not intercept actual mouse input in the native button rectangle.
-        let target = unsafe { WindowFromPoint(POINT { x, y }) };
-        if target != handle {
-            return Err(format!("{label} center ({x},{y}) is covered by HWND {target:?}, expected foreground native HWND {handle:?}"));
-        }
-        let packed_point = (((y as u16 as u32) << 16) | x as u16 as u32) as isize;
-        message_result = 0;
-        let sent = unsafe {
-            SendMessageTimeoutW(
-                handle,
-                WM_NCHITTEST,
-                0,
-                packed_point,
-                SMTO_ABORTIFHUNG,
-                TIMEOUT.as_millis() as u32,
-                &mut message_result,
-            )
-        };
-        if sent == 0 {
-            return Err(format!("WM_NCHITTEST timed out or failed for {label}"));
-        }
-        if message_result as u32 != expected_hit {
-            return Err(format!(
-                "{label} center ({x},{y}) returned hit code {}, expected {expected_hit}",
-                message_result as u32
-            ));
+        window
+            .set_focus()
+            .map_err(|error| format!("{label} focus request failed: {error}"))?;
+        let deadline = Instant::now() + TIMEOUT;
+        while unsafe { GetForegroundWindow() } != handle {
+            if Instant::now() >= deadline {
+                return Err(format!(
+                    "{label} owned HWND did not become foreground within {TIMEOUT:?}"
+                ));
+            }
+            std::thread::sleep(POLL_INTERVAL);
         }
         Ok(())
     }
 
-    fn check_caption_buttons(
+    fn fresh_caption_center(
         window: &tauri::WebviewWindow,
+        index: usize,
         label: &str,
-        failures: &mut Vec<String>,
-    ) {
-        let handle = match hwnd(window) {
-            Ok(handle) => handle,
-            Err(error) => {
-                failures.push(format!("{label} caption HWND: {error}"));
-                return;
-            }
-        };
-        if let Err(error) = window.set_focus() {
-            failures.push(format!("{label} cannot focus owned test window: {error}"));
-            return;
+    ) -> Result<POINT, String> {
+        let handle = hwnd(window)?;
+        focus_owned_window(window, handle, label)?;
+        let previous_dpi =
+            unsafe { SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
+        if previous_dpi.is_null() {
+            return Err(format!("{label} could not set per-monitor-v2 DPI context"));
         }
-        let deadline = Instant::now() + TIMEOUT;
-        while unsafe { GetForegroundWindow() } != handle {
-            if Instant::now() >= deadline {
-                failures.push(format!(
-                    "{label} owned test window did not become foreground before hit-testing"
+        let result = (|| {
+            let mut info: TITLEBARINFOEX = unsafe { std::mem::zeroed() };
+            info.cbSize = std::mem::size_of::<TITLEBARINFOEX>() as u32;
+            let mut message_result = 0usize;
+            let sent = unsafe {
+                SendMessageTimeoutW(
+                    handle,
+                    WM_GETTITLEBARINFOEX,
+                    0,
+                    (&mut info as *mut TITLEBARINFOEX) as isize,
+                    SMTO_ABORTIFHUNG,
+                    TIMEOUT.as_millis() as u32,
+                    &mut message_result,
+                )
+            };
+            if sent == 0 {
+                return Err(format!(
+                    "WM_GETTITLEBARINFOEX timed out or failed for {label}"
                 ));
-                return;
             }
-            std::thread::sleep(POLL_INTERVAL);
-        }
-        for (index, expected, name) in [
-            (2, HTMINBUTTON, "minimize"),
-            (3, HTMAXBUTTON, "maximize"),
-            (5, HTCLOSE, "close"),
-        ] {
-            CHECKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            if let Err(error) = hit_test_caption_button(handle, index, expected, name) {
-                failures.push(format!("{label} {name} caption hit-test: {error}"));
+            let rect = info.rgrect[index];
+            let state = info.rgstate[index];
+            if rect.right <= rect.left || rect.bottom <= rect.top {
+                return Err(format!(
+                    "{label} rectangle is empty: {:?}",
+                    (rect.left, rect.top, rect.right, rect.bottom)
+                ));
             }
+            if state & (STATE_SYSTEM_INVISIBLE | STATE_SYSTEM_UNAVAILABLE | STATE_SYSTEM_OFFSCREEN)
+                != 0
+            {
+                return Err(format!(
+                    "{label} is unavailable/offscreen: state={state:#x}"
+                ));
+            }
+            let point = POINT {
+                x: rect.left + (rect.right - rect.left) / 2,
+                y: rect.top + (rect.bottom - rect.top) / 2,
+            };
+            let target = unsafe { WindowFromPoint(point) };
+            if target != handle {
+                return Err(format!(
+                    "{label} center ({},{}) resolves to HWND {target:?}, expected owned HWND {handle:?}",
+                    point.x, point.y
+                ));
+            }
+            if unsafe { GetForegroundWindow() } != handle {
+                return Err(format!(
+                    "{label} owned HWND lost foreground during metadata read"
+                ));
+            }
+            // Windows hit-test results are diagnostic only; a real mouse input
+            // followed by observed window state is the pass condition.
+            let packed_point = (((point.y as u16 as u32) << 16) | point.x as u16 as u32) as isize;
+            message_result = 0;
+            let hit_test_sent = unsafe {
+                SendMessageTimeoutW(
+                    handle,
+                    WM_NCHITTEST,
+                    0,
+                    packed_point,
+                    SMTO_ABORTIFHUNG,
+                    TIMEOUT.as_millis() as u32,
+                    &mut message_result,
+                )
+            };
+            eprintln!(
+                "window_frame_windows_native diagnostic: {label} WM_NCHITTEST sent={} reply={}",
+                hit_test_sent != 0,
+                message_result as u32
+            );
+            Ok(point)
+        })();
+        let restored = unsafe { SetThreadDpiAwarenessContext(previous_dpi) };
+        if restored.is_null() {
+            return Err(format!("{label} failed to restore prior DPI context"));
         }
+        result
     }
 
-    fn exercise_window_states(
+    fn send_left_click(label: &str) -> Result<(), String> {
+        let events = [
+            INPUT {
+                r#type: INPUT_MOUSE,
+                Anonymous: INPUT_0 {
+                    mi: MOUSEINPUT {
+                        dx: 0,
+                        dy: 0,
+                        mouseData: 0,
+                        dwFlags: MOUSEEVENTF_LEFTDOWN,
+                        time: 0,
+                        dwExtraInfo: 0,
+                    },
+                },
+            },
+            INPUT {
+                r#type: INPUT_MOUSE,
+                Anonymous: INPUT_0 {
+                    mi: MOUSEINPUT {
+                        dx: 0,
+                        dy: 0,
+                        mouseData: 0,
+                        dwFlags: MOUSEEVENTF_LEFTUP,
+                        time: 0,
+                        dwExtraInfo: 0,
+                    },
+                },
+            },
+        ];
+        let sent = unsafe {
+            SendInput(
+                events.len() as u32,
+                events.as_ptr(),
+                std::mem::size_of::<INPUT>() as i32,
+            )
+        };
+        if sent == events.len() as u32 {
+            return Ok(());
+        }
+        let release = if sent == 1 {
+            let event = INPUT {
+                r#type: INPUT_MOUSE,
+                Anonymous: INPUT_0 {
+                    mi: MOUSEINPUT {
+                        dx: 0,
+                        dy: 0,
+                        mouseData: 0,
+                        dwFlags: MOUSEEVENTF_LEFTUP,
+                        time: 0,
+                        dwExtraInfo: 0,
+                    },
+                },
+            };
+            Some(unsafe { SendInput(1, &event, std::mem::size_of::<INPUT>() as i32) })
+        } else {
+            None
+        };
+        Err(format!(
+            "{label} SendInput accepted {sent}/2 events; emergency left-button release accepted {release:?}"
+        ))
+    }
+
+    fn real_caption_click(
+        window: &tauri::WebviewWindow,
+        index: usize,
+        label: &str,
+    ) -> Result<(), String> {
+        let handle = hwnd(window)?;
+        let point = fresh_caption_center(window, index, label)?;
+        let previous_dpi =
+            unsafe { SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
+        if previous_dpi.is_null() {
+            return Err(format!("{label} could not set input-thread DPI context"));
+        }
+        let result = (|| {
+            if unsafe { GetForegroundWindow() } != handle {
+                return Err(format!("{label} owned HWND lost foreground before input"));
+            }
+            if unsafe { WindowFromPoint(point) } != handle {
+                return Err(format!(
+                    "{label} fresh button center no longer resolves to owned HWND"
+                ));
+            }
+            if unsafe { SetCursorPos(point.x, point.y) } == 0 {
+                return Err(format!("{label} SetCursorPos failed"));
+            }
+            if unsafe { GetForegroundWindow() } != handle {
+                return Err(format!(
+                    "{label} owned HWND lost foreground immediately before input"
+                ));
+            }
+            if unsafe { WindowFromPoint(point) } != handle {
+                return Err(format!(
+                    "{label} point target changed immediately before input"
+                ));
+            }
+            send_left_click(label)
+        })();
+        let restored = unsafe { SetThreadDpiAwarenessContext(previous_dpi) };
+        if restored.is_null() {
+            return Err(format!(
+                "{label} failed to restore input-thread DPI context"
+            ));
+        }
+        result
+    }
+
+    fn exercise_real_caption_actions(
         window: &tauri::WebviewWindow,
         label: &str,
+        original_outer: (i32, i32, i32, i32),
         failures: &mut Vec<String>,
     ) {
-        let baseline = match snapshot(window) {
-            Ok(state) => state,
-            Err(error) => {
-                failures.push(format!("{label} state baseline: {error}"));
-                return;
-            }
-        };
-        macro_rules! state_step {
-            ($name:literal, $call:expr, $predicate:expr) => {{
-                CHECKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                match $call {
-                    Ok(()) => match wait_for_state(window, $predicate, $name) {
-                        Ok(_) => {}
-                        Err(error) => failures.push(format!("{label} {error}")),
-                    },
-                    Err(error) => failures.push(format!("{label} {} operation: {error}", $name)),
-                }
-            }};
+        CHECKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        match real_caption_click(window, 2, &format!("{label} minimize")) {
+            Ok(()) => match wait_for_state(window, |state| state.minimized, "actual minimize") {
+                Ok(_) => {}
+                Err(error) => failures.push(error),
+            },
+            Err(error) => failures.push(error),
         }
-        state_step!("minimize", window.minimize(), |state: &Snapshot| state
-            .minimized);
-        state_step!("unminimize", window.unminimize(), |state: &Snapshot| !state
-            .minimized
-            && !state.maximized);
-        state_step!("maximize", window.maximize(), |state: &Snapshot| state
-            .maximized);
-        state_step!("unmaximize", window.unmaximize(), |state: &Snapshot| !state
-            .minimized
-            && !state.maximized);
-        match wait_for_state(
-            window,
-            |state| !state.minimized && !state.maximized && state.outer == baseline.outer,
-            "restored outer bounds",
-        ) {
-            Ok(_) => {
-                CHECKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        CHECKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        match window.unminimize() {
+            Ok(()) => {
+                if let Err(error) = wait_for_state(
+                    window,
+                    |state| !state.minimized && !state.maximized,
+                    "programmatic unminimize fixture reset",
+                ) {
+                    failures.push(format!("{label} {error}"));
+                }
             }
-            Err(error) => failures.push(format!("{label} restore bounds: {error}")),
-        };
+            Err(error) => failures.push(format!("{label} unminimize reset failed: {error}")),
+        }
+
+        CHECKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        match real_caption_click(window, 3, &format!("{label} maximize")) {
+            Ok(()) => match wait_for_state(window, |state| state.maximized, "actual maximize") {
+                Ok(_) => {}
+                Err(error) => failures.push(error),
+            },
+            Err(error) => failures.push(error),
+        }
+        CHECKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        match real_caption_click(window, 3, &format!("{label} restore")) {
+            Ok(()) => match wait_for_state(
+                window,
+                |state| !state.minimized && !state.maximized && state.outer == original_outer,
+                "actual restore to original outer bounds",
+            ) {
+                Ok(_) => {}
+                Err(error) => failures.push(error),
+            },
+            Err(error) => failures.push(error),
+        }
     }
 
     fn issue(
@@ -513,8 +706,7 @@ fn run_checks(first: &tauri::WebviewWindow, second: &tauri::WebviewWindow) -> Ve
                     );
                 }
             }
-            check_caption_buttons(first, frame, &mut failures);
-            exercise_window_states(first, frame, &mut failures);
+            exercise_real_caption_actions(first, frame, baseline.outer, &mut failures);
             if let Some(state) = capture!("secondary isolation", second) {
                 check!(
                     "other window unchanged",
@@ -532,7 +724,6 @@ fn run_checks(first: &tauri::WebviewWindow, second: &tauri::WebviewWindow) -> Ve
                 result.is_ok(),
                 format!("{frame}: {result:?}")
             );
-            check_caption_buttons(second, &format!("secondary {frame}"), &mut failures);
             if let (Some(expected), Some(actual)) = (
                 main_after_first_pass.as_ref(),
                 capture!("main secondary isolation", first),
@@ -544,32 +735,15 @@ fn run_checks(first: &tauri::WebviewWindow, second: &tauri::WebviewWindow) -> Ve
                 );
             }
         }
-        let restore_secondary = apply_frame(second, "native");
-        check!(
-            "restore secondary native frame",
-            restore_secondary.is_ok(),
-            format!("{restore_secondary:?}")
-        );
     }
 
     let destroyed_hwnd = hwnd(second).ok();
-    let destroyed = {
-        let window = second.clone();
-        let (tx, rx) = sync_channel(1);
-        let scheduled = second.run_on_main_thread(move || {
-            let _ = tx.send(window.destroy().map_err(|error| error.to_string()));
-        });
-        scheduled.map_err(|error| error.to_string()).and_then(|_| {
-            rx.recv_timeout(TIMEOUT)
-                .map_err(|error| format!("destroy wait error: {error}"))?
-        })
-    };
-    check!(
-        "destroy second test window",
-        destroyed.is_ok(),
-        format!("{destroyed:?}")
-    );
     if let Some(handle) = destroyed_hwnd {
+        check!(
+            "actual secondary close-button click",
+            real_caption_click(second, 5, "secondary full close").is_ok(),
+            "close button must accept real mouse input"
+        );
         let deadline = Instant::now() + TIMEOUT;
         loop {
             if unsafe { IsWindow(handle) } == 0 {

@@ -22,6 +22,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: 'src-tauri -> target'
+          shared-key: windows-native-frame-20261016
+          cache-on-failure: true
       - name: Restore Tauri icons
         run: node scripts/restore-tauri-icons.mjs
       - name: Check actual desktop
