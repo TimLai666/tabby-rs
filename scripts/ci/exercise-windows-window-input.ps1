@@ -4,7 +4,9 @@ Exercise or recover mouse input for one existing owned application's native wind
 .DESCRIPTION
 Checks PID creation identity and HWND ownership before an action. Snapshot only
 observes. Drag and Resize use real mouse input and bounded cursor motion; caption
-actions click fresh native TITLEBARINFOEX rectangles. RecoverMouse validates and
+actions click fresh native TITLEBARINFOEX rectangles, or uniquely matched accessible
+caption controls with the same owned root and native hit-test when original self-painted
+controls have no system rectangle. RecoverMouse validates and
 releases only the left button recorded in a fresh owned mouse journal. The journal
 contains three UTF-8 decimal lines: owner PID, root HWND, and helper PID. Recovery
 records the button state and journal outcome and does not require a live target HWND.
@@ -223,6 +225,21 @@ public static class ExistingWindowInput {
         throw new InvalidOperationException(action+" geometry did not match the requested motion (drag allows one initial sample; resize allows 3 pixels)");
     }
     static int HitTest(int x,int y) { long p=((long)(ushort)x)|((long)(ushort)y<<16); UIntPtr result; Check(SendMessageTimeoutW(hwnd,WM_NCHITTEST,UIntPtr.Zero,new IntPtr(p),SMTO_BLOCK|SMTO_ABORTIFHUNG,1000,out result)!=IntPtr.Zero,"WM_NCHITTEST timed out"); return unchecked((int)result.ToUInt64()); }
+    static bool CaptionPointMatches(int index,int x,int y) {
+        Validate(); RECT bounds; Check(GetWindowRect(hwnd,out bounds)!=0,"caption point bounds could not be read");
+        if(x<bounds.left||x>=bounds.right||y<bounds.top||y>=bounds.bottom)return false;
+        POINT point=new POINT{x=x,y=y};
+        if(WindowFromPoint(point)!=hwnd)return false;
+        int expected=index==2?8:index==3?9:index==5?20:0;
+        Check(expected!=0,"caption index is unsupported");
+        return HitTest(x,y)==expected;
+    }
+    public static bool MatchesCaptionPoint(int index,int x,int y) {
+        IntPtr previous=SetThreadDpiAwarenessContext(new IntPtr(-4));
+        Check(previous!=IntPtr.Zero,"could not set caption discovery DPI awareness");
+        try { return CaptionPointMatches(index,x,y); }
+        finally { Check(SetThreadDpiAwarenessContext(previous)!=IntPtr.Zero,"could not restore caption discovery DPI awareness"); }
+    }
     static POINT CaptionCenter(int index) {
         TITLEBARINFOEX info=new TITLEBARINFOEX{cbSize=(uint)Marshal.SizeOf(typeof(TITLEBARINFOEX)),rgstate=new uint[6],rgrect=new RECT[6]};
         IntPtr p=Marshal.AllocHGlobal(Marshal.SizeOf(typeof(TITLEBARINFOEX)));
@@ -234,6 +251,13 @@ public static class ExistingWindowInput {
     static bool WaitState(string action,bool icon,bool zoom) { var sw=Stopwatch.StartNew(); while(sw.ElapsedMilliseconds<3000) { if(action=="Close") { if(IsWindow(hwnd)==0)return true; } else { Validate(); if((IsIconic(hwnd)!=0)==icon&&(IsZoomed(hwnd)!=0)==zoom)return true; } Thread.Sleep(40); } return false; }
     static Dictionary<string,object> Envelope(bool ok,string error,object before,object after,bool inputSent) { return new Dictionary<string,object>{{"ok",ok},{"before",before},{"after",after},{"inputSent",inputSent},{"error",error}}; }
     public static Dictionary<string,object> Run(int processId,string creationUtc,long windowHandle,string action,int px,int py,int dx,int dy,string inputJournalPath) {
+        return RunInternal(processId,creationUtc,windowHandle,action,px,py,dx,dy,inputJournalPath,false,0,0);
+    }
+    public static Dictionary<string,object> RunWithCaptionPoint(int processId,string creationUtc,long windowHandle,string action,int px,int py,int dx,int dy,string inputJournalPath,int captionX,int captionY) {
+        Check(action=="Minimize"||action=="Maximize"||action=="Restore"||action=="Close","a caption point is only valid for caption actions");
+        return RunInternal(processId,creationUtc,windowHandle,action,px,py,dx,dy,inputJournalPath,true,captionX,captionY);
+    }
+    static Dictionary<string,object> RunInternal(int processId,string creationUtc,long windowHandle,string action,int px,int py,int dx,int dy,string inputJournalPath,bool useCaptionPoint,int captionX,int captionY) {
         Check(Environment.Is64BitProcess,"this input helper requires 64-bit PowerShell"); pid=processId; hwnd=new IntPtr(windowHandle); journalPath=inputJournalPath;
         DateTimeOffset parsed; Check(DateTimeOffset.TryParse(creationUtc,out parsed),"CreationUtc is invalid"); creationFileTime=parsed.UtcDateTime.ToFileTimeUtc();
         Check(!File.Exists(journalPath),"a preexisting mouse journal blocks normal actions");
@@ -268,7 +292,10 @@ public static class ExistingWindowInput {
                     Check(under!=IntPtr.Zero&&GetAncestor(under,GA_ROOT)==hwnd,"right border midpoint is not on an owned descendant"); Check(HitTest(start.x,start.y)==HTRIGHT,"right border midpoint did not hit-test as HTRIGHT");
                     end=new POINT{x=start.x+dx,y=start.y}; start=PositionAndVerify(start,false); Check(HitTest(start.x,start.y)==HTRIGHT,"right edge lost HTRIGHT hit-test before input"); PressAt(start,false); inputSent=true; MoveGradually(start.x,start.y,end.x,end.y); ClickUp(); WaitGeometry(before,action,dx,0);
                 } else {
-                    int index=action=="Minimize"?2:action=="Close"?5:3; POINT c=CaptionCenter(index); c=PositionAndVerify(c,true); PressAt(c,true); inputSent=true; ClickUp();
+                    int index=action=="Minimize"?2:action=="Close"?5:3; POINT c;
+                    if(useCaptionPoint) { Check(CaptionPointMatches(index,captionX,captionY),"accessible caption point no longer matches the owned native control"); c=new POINT{x=captionX,y=captionY}; }
+                    else c=CaptionCenter(index);
+                    c=PositionAndVerify(c,true); Check(CaptionPointMatches(index,c.x,c.y),"caption point lost its native hit-test before input"); PressAt(c,true); inputSent=true; ClickUp();
                     bool expectedIcon=action=="Minimize"?true:false, expectedZoom=action=="Maximize"?true:action=="Restore"?false:wasZoom;
                     Check(WaitState(action,expectedIcon,expectedZoom),action+" state was not observed after real mouse input");
                 }
@@ -307,6 +334,49 @@ public static class ExistingWindowInput {
 }
 '@
 
+
+function Find-AccessibleCaptionPoint {
+    param([int]$Index)
+    Add-Type -AssemblyName UIAutomationClient
+    Add-Type -AssemblyName UIAutomationTypes
+    $providers = [Reflection.Assembly]::Load('UIAutomationClientSideProviders')
+    Add-Type -ReferencedAssemblies @([System.Windows.Automation.AutomationElement].Assembly.Location, [System.Windows.Automation.ControlType].Assembly.Location, $providers.Location) -TypeDefinition @'
+public static class CaptionAutomationProviders {
+    public static void Register() {
+        System.Windows.Automation.ClientSettings.RegisterClientSideProviders(UIAutomationClientsideProviders.UIAutomationClientSideProviders.ClientSideProviderDescriptionTable);
+    }
+}
+'@
+    [CaptionAutomationProviders]::Register()
+    $deadline = [DateTime]::UtcNow.AddSeconds(8)
+    $root = [System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]$WindowHandle)
+    if ($root.Current.ProcessId -ne $AppProcessId) { throw 'Accessible root ownership changed' }
+    $condition = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)
+    $buttons = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $condition)
+    if ($buttons.Count -gt 200) { throw 'Caption discovery has more than 200 accessible buttons' }
+    $matches = @()
+    foreach ($button in $buttons) {
+        if ([DateTime]::UtcNow -gt $deadline) { throw 'Accessible caption discovery exceeded 8 seconds' }
+        $current = $button.Current
+        if ($current.ProcessId -ne $AppProcessId -or $current.IsOffscreen -or -not $current.IsEnabled) { continue }
+        $rect = $current.BoundingRectangle
+        if ($rect.IsEmpty -or $rect.Width -le 0 -or $rect.Height -le 0) { continue }
+        $x = [int][Math]::Floor($rect.X + $rect.Width/2)
+        $y = [int][Math]::Floor($rect.Y + $rect.Height/2)
+        if ([ExistingWindowInput]::MatchesCaptionPoint($Index,$x,$y)) { $matches += ,$button }
+    }
+    if ($matches.Count -ne 1) { throw "Expected exactly one accessible owned native caption control; found $($matches.Count)" }
+    if ([DateTime]::UtcNow -gt $deadline) { throw 'Accessible caption discovery exceeded 8 seconds' }
+    $current = $matches[0].Current
+    if ($current.ProcessId -ne $AppProcessId -or $current.IsOffscreen -or -not $current.IsEnabled) { throw 'Accessible caption control changed before input' }
+    $rect = $current.BoundingRectangle
+    if ($rect.IsEmpty -or $rect.Width -le 0 -or $rect.Height -le 0) { throw 'Accessible caption control no longer has bounds' }
+    $x = [int][Math]::Floor($rect.X + $rect.Width/2)
+    $y = [int][Math]::Floor($rect.Y + $rect.Height/2)
+    if (-not [ExistingWindowInput]::MatchesCaptionPoint($Index,$x,$y)) { throw 'Accessible caption point no longer matches the owned native control' }
+    return @{ x=$x; y=$y; name=[string]$current.Name; bounds=@{x=$rect.X;y=$rect.Y;width=$rect.Width;height=$rect.Height}; source='UIAutomation'; nativeHitTest=$(if($Index -eq 2){8}elseif($Index -eq 3){9}else{20}) }
+}
+
 $result = [ordered]@{ ok=$false; action=$Action; appProcessId=$AppProcessId; hwnd=$WindowHandle; before=$null; after=$null; inputSent=$false; error=$null }
 $canWrite = $false
 try {
@@ -344,6 +414,14 @@ try {
         if ($actualCreation -cne $CreationUtc) { throw 'CreationUtc does not match the owned process identity' }
         Add-Type -TypeDefinition $script -Language CSharp -ErrorAction Stop
         $native = [ExistingWindowInput]::Run($AppProcessId,$CreationUtc,$WindowHandle,$Action,$PointX,$PointY,$DeltaX,$DeltaY,$journalPath)
+        if (-not $native['ok'] -and -not $native['inputSent'] -and $native['error'] -ceq 'InvalidOperationException: caption button rectangle is empty' -and @('Minimize','Maximize','Restore','Close') -ccontains $Action) {
+            if (Test-Path -LiteralPath $journalPath) { throw 'Caption discovery cannot proceed with an existing mouse journal' }
+            $index = if($Action -eq 'Minimize'){2}elseif($Action -eq 'Close'){5}else{3}
+            $result['captionFallbackInitial'] = $native
+            $point = Find-AccessibleCaptionPoint -Index $index
+            $result['captionAccessibility'] = $point
+            $native = [ExistingWindowInput]::RunWithCaptionPoint($AppProcessId,$CreationUtc,$WindowHandle,$Action,$PointX,$PointY,$DeltaX,$DeltaY,$journalPath,$point.x,$point.y)
+        }
         foreach ($key in @('ok','before','after','inputSent','error')) { $result[$key]=$native[$key] }
     }
 } catch {
