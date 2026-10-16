@@ -1,5 +1,9 @@
 use crate::error::AppError;
 
+#[cfg(target_os = "windows")]
+#[path = "frame_windows.rs"]
+mod windows;
+
 pub fn set_window_frame(window: &tauri::WebviewWindow, frame: &str) -> Result<(), AppError> {
     let native = match frame {
         "native" => true,
@@ -73,7 +77,10 @@ pub fn set_window_frame(window: &tauri::WebviewWindow, frame: &str) -> Result<()
             .map_err(|error| AppError::Io(error.to_string()))?;
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    return windows::set_window_frame(window, native);
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         let _ = (window, native);
         Err(AppError::Unsupported(
