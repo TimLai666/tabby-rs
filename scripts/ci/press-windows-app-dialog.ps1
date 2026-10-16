@@ -93,7 +93,8 @@ try {
     $outputStream = [IO.File]::Open($outputPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
     Add-Type -AssemblyName UIAutomationClient
     Add-Type -AssemblyName UIAutomationTypes
-    [System.Windows.Automation.ClientSettings]::RegisterClientSideProviderAssembly([Reflection.AssemblyName]::new('UIAutomationClientsideProviders'))
+    $providerAssembly = [Reflection.Assembly]::Load('UIAutomationClientsideProviders')
+    [System.Windows.Automation.ClientSettings]::RegisterClientSideProviderAssembly($providerAssembly.GetName())
     Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
