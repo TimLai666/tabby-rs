@@ -139,10 +139,29 @@ public static class CaptionButtonNativeChecks {
             nativeWindowHandle = ('0x{0:X}' -f $pointNativeHandle)
             controlType = $pointType
             name = $pointNameValue
+            isControlElement = [bool]$pointData.IsControlElement
+            isContentElement = [bool]$pointData.IsContentElement
+            controlNormalized = $null
+            contentNormalized = $null
         }
         $evidence.points.Add($record)
+        foreach ($normalView in @('control', 'content')) {
+            $walker = if ($normalView -eq 'control') { [System.Windows.Automation.TreeWalker]::ControlViewWalker } else { [System.Windows.Automation.TreeWalker]::ContentViewWalker }
+            $normalized = $walker.Normalize($pointElement).Current
+            $record[$normalView + 'Normalized'] = @{
+                hwnd = ('0x{0:X}' -f [long]$normalized.NativeWindowHandle)
+                processId = [int]$normalized.ProcessId
+                type = [string]$normalized.ControlType.ProgrammaticName
+                name = [string]$normalized.Name
+                isControlElement = [bool]$normalized.IsControlElement
+                isContentElement = [bool]$normalized.IsContentElement
+            }
+        }
         if ($pointNativeHandle -ne $ButtonHandle -or $pointProcessId -ne $AppProcessId -or
             $pointType -cne 'ControlType.Button' -or $pointNameValue -cne 'Maximize') {
+            # Preserve raw/control/content evidence before the same strict failure.
+            $exactButton = [System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]$ButtonHandle)
+            Assert-ButtonDescendantViews -rootElement $exactButton -phase 'point-failure-diagnostic'
             throw "UIA ElementFromPoint did not return the exact Maximize ButtonHandle at $pointName ($phase)"
         }
     }
