@@ -30,6 +30,13 @@ WebView. The same startup snapshot selects host paths and the
 `data/webview` directory for every configured or subsequently created window.
 Installed mode retains its existing WebView configuration.
 
+On Windows and Linux, portable configured windows are created during setup after
+host state is registered. Each keeps its full startup configuration and receives
+an explicit builder data directory, matching subsequent windows. Originally manual
+windows remain manual. A construction error stops startup. The pinned Tauri
+configuration conversion drops the data-directory field, so setting that field
+alone does not select the portable browser store.
+
 On macOS, the pinned Wry runtime ignores `data_directory` when selecting a
 persistent WKWebsiteDataStore. The native adapter creates one directory-backed
 store before window construction and supplies it through `defaultDataStore`.

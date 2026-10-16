@@ -20,7 +20,12 @@
   Compare the remaining desktop cases with upstream before full acceptance.
 - Portable host paths and every WebView use the same startup marker snapshot.
   Keep `data/webview` selected before primary construction and for subsequent
-  windows. On macOS, retain the directory-backed persistent store adapter;
+  windows. On Windows and Linux, defer originally automatic portable windows
+  until setup, then preserve their complete configuration and explicitly set
+  the builder data directory before construction. Keep originally manual windows
+  manual and register each created window's desktop events once.
+  Do not rely on WindowConfig data_directory in the pinned Tauri conversion.
+  On macOS, retain the directory-backed persistent store adapter;
   the pinned Wry runtime does not select it from `data_directory` alone.
   A native installation error must stop startup before any shared store opens.
   Keep installed configuration, explicit incognito settings, and existing
