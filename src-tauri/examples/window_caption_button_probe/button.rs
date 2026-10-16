@@ -344,8 +344,32 @@ pub unsafe fn install(parent: HWND, container: HWND, rect: RECT) -> Result<HWND,
 
 // C drawing slot: paint one centered 10x10 outline with the supplied COLORREF.
 // Transparent pixels must keep the underlying HTML compositor visible. The slot
-// deliberately starts empty; the independent native pixel check must fail.
-unsafe fn paint_symbol(_dc: windows_sys::Win32::Graphics::Gdi::HDC, _rect: RECT, _color: u32) {}
+// was initially empty; actual run38950004028 fails its independent white pixel check.
+unsafe fn paint_symbol(dc: windows_sys::Win32::Graphics::Gdi::HDC, rect: RECT, color: u32) {
+    if dc.is_null() || rect.right - rect.left < 10 || rect.bottom - rect.top < 10 {
+        return;
+    }
+    let left = (rect.left + rect.right) / 2 - 5;
+    let top = (rect.top + rect.bottom) / 2 - 5;
+    // Write only the outline. No brush, selected GDI object, background copy,
+    // layered alpha or persistent DC is needed for this bounded feasibility slot.
+    for offset in 0..10 {
+        for (x, y) in [
+            (left + offset, top),
+            (left + offset, top + 9),
+            (left, top + offset),
+            (left + 9, top + offset),
+        ] {
+            if windows_sys::Win32::Graphics::Gdi::SetPixelV(dc, x, y, color) == 0 {
+                eprintln!(
+                    "caption_button_probe native glyph pixel failed: {}",
+                    std::io::Error::last_os_error()
+                );
+                return;
+            }
+        }
+    }
+}
 
 pub unsafe fn set_symbol_color(child: HWND, color: u32) -> Result<(), String> {
     let mut data = 0;
