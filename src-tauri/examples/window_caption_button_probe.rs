@@ -506,6 +506,11 @@ mod probe {
                 .and_then(|window| {
                     let hwnd = window.hwnd().map_err(|e| e.to_string())?.0 as usize;
                     let tested = checks(&window, &loaded);
+                    if tested.is_err() {
+                        if let Err(error) = capture_owned(&window, "failure") {
+                            eprintln!("caption_button_probe failure capture failed: {error}");
+                        }
+                    }
                     window.destroy().map_err(|e| e.to_string())?;
                     wait("owned parent destroyed", || {
                         Ok(unsafe { IsWindow(hwnd as HWND) } == 0)

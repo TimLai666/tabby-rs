@@ -346,6 +346,10 @@ pub unsafe fn install(parent: HWND, container: HWND, rect: RECT) -> Result<HWND,
 // Transparent pixels must keep the underlying HTML compositor visible. The slot
 // was initially empty; actual run38950004028 fails its independent white pixel check.
 unsafe fn paint_symbol(dc: windows_sys::Win32::Graphics::Gdi::HDC, rect: RECT, color: u32) {
+    eprintln!(
+        "caption_button_probe draw entry: dc={dc:?} rect={},{},{},{} color={color:#x}",
+        rect.left, rect.top, rect.right, rect.bottom
+    );
     if dc.is_null() || rect.right - rect.left < 10 || rect.bottom - rect.top < 10 {
         return;
     }
@@ -369,6 +373,11 @@ unsafe fn paint_symbol(dc: windows_sys::Win32::Graphics::Gdi::HDC, rect: RECT, c
             }
         }
     }
+    eprintln!(
+        "caption_button_probe draw readback: glyph={:#x} center={:#x}",
+        windows_sys::Win32::Graphics::Gdi::GetPixel(dc, left, top),
+        windows_sys::Win32::Graphics::Gdi::GetPixel(dc, left + 5, top + 5)
+    );
 }
 
 pub unsafe fn set_symbol_color(child: HWND, color: u32) -> Result<(), String> {
