@@ -10,7 +10,7 @@ fn main() {
 #[cfg(target_os = "windows")]
 fn main() {
     if std::env::args().any(|arg| arg == "--help" || arg == "-h") {
-        println!("window_caption_overlay_probe: disposable Windows Wry hover/pixel experiment. Creates one isolated undecorated WebView and an optional transparent caption hit overlay. Moves the real cursor, observes actual parent non-client hover, and verifies HTML compositor pixels before/after repaint. Sends no mouse-down. No click/Snap/DPI/product acceptance. Exit 0 requires every observation and owned cleanup; failures return 1. No parameters. Run on an interactive Windows desktop.");
+        println!("window_caption_overlay_probe: disposable Windows Wry hover/pixel experiment. Creates one isolated undecorated WebView and an optional transparent caption hit overlay. Moves the real cursor, observes actual parent non-client hover, and verifies HTML compositor pixels before/after repaint. Sends no mouse-down. No click/Snap/DPI/product acceptance. Exit 0 requires every observation and owned cleanup; failures return 1. No parameters. Required environment: CAPTION_PROBE_EVIDENCE is the existing owned output root, CAPTION_PROBE_CAPTURE_HELPER is the existing native capture script path. Run on an interactive Windows desktop.");
         return;
     }
     if let Err(error) = probe::run() {
@@ -273,6 +273,16 @@ mod probe {
         let loaded = Arc::new(AtomicBool::new(false));
         let loaded_callback = loaded.clone();
         let mut context = tauri::generate_context!();
+        eprintln!(
+            "caption_overlay_probe embedded frontend config: {:?}",
+            context.config().build.frontend_dist
+        );
+        if !matches!(
+            context.config().build.frontend_dist,
+            Some(tauri::utils::config::FrontendDist::Directory(_))
+        ) {
+            return Err("probe requires an embedded frontend directory; Windows absolute drive paths can parse as URLs".into());
+        }
         context.config_mut().identifier =
             format!("io.tabbyrs.tests.caption-overlay.{}", std::process::id());
         context.config_mut().app.windows.clear();
@@ -340,10 +350,8 @@ mod probe {
             eprintln!("caption_overlay_probe observed failure before cleanup: {error}");
         }
         cleanup_data(data)?;
-        if exit_code != if tested.is_ok() { 0 } else { 1 } {
-            return Err(format!(
-                "event-loop exit code {exit_code} disagrees with test result"
-            ));
+        if exit_code != 0 {
+            return Err(format!("event-loop returned failure code {exit_code}"));
         }
         tested
     }

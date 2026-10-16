@@ -38,7 +38,9 @@ jobs:
           $assets=Join-Path $root 'assets'
           New-Item -ItemType Directory -Path $assets -ErrorAction Stop | Out-Null
           '<!doctype html><html><head><meta charset="utf-8"><title>Owned HTML caption probe</title><style>body{margin:0;background:#112233}#probe{position:fixed;left:200px;top:16px;width:46px;height:32px;background:#0088cc}</style></head><body><div id="probe"></div></body></html>' | Set-Content -LiteralPath (Join-Path $assets 'index.html') -Encoding utf8
-          $env:TAURI_CONFIG=@{build=@{frontendDist=$assets}}|ConvertTo-Json -Compress -Depth 6
+          $relativeAssets=[IO.Path]::GetRelativePath((Join-Path $env:GITHUB_WORKSPACE 'src-tauri'),$assets)
+          if([IO.Path]::IsPathRooted($relativeAssets)){throw 'Fixture assets must have a relative directory path'}
+          $env:TAURI_CONFIG=@{build=@{frontendDist=$relativeAssets}}|ConvertTo-Json -Compress -Depth 6
           $env:TAURI_CONFIG|Set-Content "$root/fixture-config.json"
           cargo run --locked --manifest-path src-tauri/Cargo.toml --example window_caption_overlay_probe -- --help *> "$root/build-and-help.log"
           if($LASTEXITCODE){Get-Content "$root/build-and-help.log" -Tail 80;throw 'Probe compilation/help failed; no behavioral result'}
