@@ -26,6 +26,7 @@ public static class ModalFixture {
             if (m == 0x110) {
                 label = CreateWindowExW(0,"STATIC",token,0x50000000,12,20,400,40,w,IntPtr.Zero,IntPtr.Zero,IntPtr.Zero);
                 CreateWindowExW(0,"BUTTON","Paste",0x50010001,12,80,100,30,w,new IntPtr(100),IntPtr.Zero,IntPtr.Zero);
+                File.WriteAllText(statePath + ".hwnd",w.ToInt64().ToString());
                 File.WriteAllText(statePath,"ready");
                 return new IntPtr(1);
             }
@@ -109,6 +110,17 @@ foreach ($case in $cases) {
         $readyDeadline = [DateTime]::UtcNow.AddSeconds(15)
         while (-not (Test-Path -LiteralPath $state) -and [DateTime]::UtcNow -lt $readyDeadline -and -not $workerProcess.HasExited) { Start-Sleep -Milliseconds 100 }
         if (-not (Test-Path -LiteralPath $state)) { throw 'Actual native fixture did not become ready' }
+        Add-Type -AssemblyName UIAutomationClient
+        Add-Type -AssemblyName UIAutomationTypes
+        $hwnd = [IntPtr]::new([long](Get-Content -LiteralPath ($state + '.hwnd') -Raw))
+        $actual = [System.Windows.Automation.AutomationElement]::FromHandle($hwnd)
+        $wp = $null
+        $hasPattern = $actual.TryGetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern,[ref]$wp)
+        $condition = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ProcessIdProperty,$workerProcess.Id)
+        $top = [System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children,$condition)
+        $children = $actual.FindAll([System.Windows.Automation.TreeScope]::Children,[System.Windows.Automation.Condition]::TrueCondition)
+        $summary = @{hwnd=$hwnd.ToInt64(); name=$actual.Current.Name; class=$actual.Current.ClassName; isOffscreen=$actual.Current.IsOffscreen; isEnabled=$actual.Current.IsEnabled; windowPattern=$hasPattern; modal=$(if($hasPattern){$wp.Current.IsModal}else{$null}); top=@($top | ForEach-Object { @{hwnd=$_.Current.NativeWindowHandle;name=$_.Current.Name;class=$_.Current.ClassName} }); children=@($children | ForEach-Object { @{name=$_.Current.Name;class=$_.Current.ClassName;control=$_.Current.ControlType.ProgrammaticName;offscreen=$_.Current.IsOffscreen;enabled=$_.Current.IsEnabled} })}
+        $summary | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $dir 'actual-uia.json')
         $inspect = Invoke-Helper $case.helper $workerProcess.Id $nonce 'Inspect' $dir
         if ($inspect.exitCode -ne 0 -or -not $inspect.result.ok -or $inspect.result.actualAction -or (Get-Content -LiteralPath $state -Raw) -cne 'ready') { throw 'Inspect failed or acted on the dialog' }
         $confirm = Invoke-Helper $case.helper $workerProcess.Id $nonce 'Confirm' $dir
