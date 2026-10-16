@@ -54,11 +54,13 @@ jobs:
           $process.StartInfo.UseShellExecute=$false
           $process.StartInfo.RedirectStandardOutput=$true
           $process.StartInfo.RedirectStandardError=$true
+          $process.StartInfo.Environment['CAPTION_PROBE_EVIDENCE']=$root
+          $process.StartInfo.Environment['CAPTION_PROBE_CAPTURE_HELPER']=Join-Path $env:GITHUB_WORKSPACE 'scripts/ci/capture-windows-app-window.ps1'
           if(!$process.Start()){throw 'Own probe did not start'}
           $stdout=$process.StandardOutput.ReadToEndAsync()
           $stderr=$process.StandardError.ReadToEndAsync()
           try {
-            if(!$process.WaitForExit(60000)){throw 'Own probe exceeded 60s; no acceptance'}
+            if(!$process.WaitForExit(120000)){throw 'Own probe exceeded 120s; no acceptance'}
             $stdoutText=$stdout.GetAwaiter().GetResult()
             $stdoutText|Set-Content "$root/stdout.log"
             $stderr.GetAwaiter().GetResult()|Set-Content "$root/stderr.log"

@@ -87,6 +87,74 @@ mod probe {
             Ok(color)
         }
     }
+    fn capture_owned(window: &tauri::WebviewWindow, label: &str) -> Result<(), String> {
+        let root = std::env::var_os("CAPTION_PROBE_EVIDENCE")
+            .ok_or("CAPTION_PROBE_EVIDENCE is required")?;
+        let helper = std::env::var_os("CAPTION_PROBE_CAPTURE_HELPER")
+            .ok_or("CAPTION_PROBE_CAPTURE_HELPER is required")?;
+        let directory = std::path::PathBuf::from(root).join(label);
+        std::fs::create_dir(&directory).map_err(|e| e.to_string())?;
+        let stdout = std::fs::File::create_new(directory.join("capture-stdout.log"))
+            .map_err(|e| e.to_string())?;
+        let stderr = std::fs::File::create_new(directory.join("capture-stderr.log"))
+            .map_err(|e| e.to_string())?;
+        let mut child = std::process::Command::new("pwsh")
+            .arg("-NoProfile")
+            .arg("-File")
+            .arg(helper)
+            .arg("-AppProcessId")
+            .arg(std::process::id().to_string())
+            .arg("-WindowHandle")
+            .arg((window.hwnd().map_err(|e| e.to_string())?.0 as usize).to_string())
+            .arg("-OutputDirectory")
+            .arg(&directory)
+            .stdout(stdout)
+            .stderr(stderr)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        let start = Instant::now();
+        loop {
+            if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
+                return if status.success() {
+                    Ok(())
+                } else {
+                    Err(format!("owned capture {label} failed: {status}"))
+                };
+            }
+            if start.elapsed() > Duration::from_secs(45) {
+                child.kill().map_err(|e| e.to_string())?;
+                child.wait().map_err(|e| e.to_string())?;
+                return Err(format!(
+                    "owned capture {label} timed out and was terminated"
+                ));
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    }
+    fn cleanup_data(data: tempfile::TempDir) -> Result<(), String> {
+        let path = data.path().to_path_buf();
+        let started = Instant::now();
+        loop {
+            match std::fs::remove_dir_all(&path) {
+                Ok(()) => {
+                    let _ = data.keep();
+                    return Ok(());
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    let _ = data.keep();
+                    return Ok(());
+                }
+                Err(error) if started.elapsed() >= Duration::from_secs(5) => {
+                    let retained = data.keep();
+                    return Err(format!(
+                        "isolated data cleanup failed; retained {}: {error}",
+                        retained.display()
+                    ));
+                }
+                Err(_) => std::thread::sleep(Duration::from_millis(50)),
+            }
+        }
+    }
     fn on_ui<T: Send + 'static>(
         window: &tauri::WebviewWindow,
         task: impl FnOnce() -> Result<T, String> + Send + 'static,
@@ -128,9 +196,18 @@ mod probe {
                 return Err("ClientToScreen failed".into());
             }
             eprintln!("caption_overlay_probe identity: pid={} parent={parent:#x} dpiScale={scale} point={},{}",std::process::id(),point.x,point.y);
-            wait("baseline actual HTML pixel", || {
-                Ok(pixel(point)? == 0x00cc8800)
-            })?;
+            let mut baseline_color = 0;
+            let baseline = wait("baseline actual HTML pixel", || {
+                baseline_color = pixel(point)?;
+                Ok(baseline_color == 0x00cc8800)
+            });
+            eprintln!("caption_overlay_probe baseline actual color={baseline_color:#08x}, expected=0xcc8800");
+            let captured = capture_owned(window, "baseline");
+            if let Err(error) = &captured {
+                eprintln!("caption_overlay_probe baseline capture error: {error}");
+            }
+            baseline?;
+            captured?;
             EXPECTED_POINT.store(
                 (point.x as u16 as u32) | ((point.y as u16 as u32) << 16),
                 Ordering::Release,
@@ -183,6 +260,7 @@ mod probe {
             wait("actual HTML repaint through hit overlay", || {
                 Ok(pixel(point)? == 0x00324ed8)
             })?;
+            capture_owned(window, "repainted")?;
             Ok(())
         })();
         if unsafe { SetThreadDpiAwarenessContext(previous) }.is_null() {
@@ -261,8 +339,7 @@ mod probe {
         if let Err(error) = &tested {
             eprintln!("caption_overlay_probe observed failure before cleanup: {error}");
         }
-        data.close()
-            .map_err(|e| format!("isolated data cleanup failed: {e}"))?;
+        cleanup_data(data)?;
         if exit_code != if tested.is_ok() { 0 } else { 1 } {
             return Err(format!(
                 "event-loop exit code {exit_code} disagrees with test result"
