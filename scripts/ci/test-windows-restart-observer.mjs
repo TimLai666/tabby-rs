@@ -44,13 +44,16 @@ function startProcess (executable, args, label) {
     let stdout = '';
     let stderr = '';
     let spawnError = null;
+    const exited = new Promise(resolve => {
+        child.once('exit', (code, signal) => resolve({ label, code, signal }));
+    });
     child.stdout.on('data', bytes => { stdout = (stdout + bytes.toString('utf8')).slice(-16000); });
     child.stderr.on('data', bytes => { stderr = (stderr + bytes.toString('utf8')).slice(-16000); });
     const closed = new Promise(resolve => {
         child.once('error', error => { spawnError = error; });
         child.once('close', (code, signal) => resolve({ label, code, signal, stdout, stderr, spawnError: spawnError?.message ?? null }));
     });
-    return { child, closed, label, get stdout () { return stdout; }, get stderr () { return stderr; } };
+    return { child, exited, closed, label, get stdout () { return stdout; }, get stderr () { return stderr; } };
 }
 
 async function closeWithin (entry, timeoutMs, label = entry.label) {
@@ -63,6 +66,22 @@ async function closeWithin (entry, timeoutMs, label = entry.label) {
         clearTimeout(timeout);
         if (outcome.spawnError) throw new Error(`${label} failed to spawn: ${outcome.spawnError}`);
         return outcome;
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
+async function exitWithin (entry, timeoutMs, label = entry.label) {
+    let timeout;
+    try {
+        return await Promise.race([
+            entry.exited,
+            entry.closed.then(outcome => {
+                if (outcome.spawnError) throw new Error(`${label} failed to spawn: ${outcome.spawnError}`);
+                return { label, code: outcome.code, signal: outcome.signal };
+            }),
+            new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error(`${label} did not exit before timeout`)), timeoutMs); }),
+        ]);
     } finally {
         clearTimeout(timeout);
     }
@@ -371,10 +390,19 @@ async function runFixture ({ outputDir, powerShell }) {
             throw new Error('relaunch candidate does not match its exact post-start CIM identity/parent');
         }
         writeFileSync(allowExitPath, `${randomUUID()}\n`, { flag: 'wx', encoding: 'utf8' });
-        const middleExit = await closeWithin(relauncher, Math.min(12000, Math.max(1000, deadline - Date.now())));
+        // The .NET-launched candidate can keep inherited stdout/stderr pipe handles
+        // open after the middle process exits, delaying Node's `close` event.
+        const middleExit = await exitWithin(relauncher, Math.min(12000, Math.max(1000, deadline - Date.now())));
         middleHeld.exit = middleExit;
+        if (!await waitForIdentityGone(powerShell, middleHeld.identity, Date.now() + 5000)) {
+            throw new Error('intermediate PowerShell process remained alive after its natural exit');
+        }
         const middleAfterExit = await queryIdentity(powerShell, middleHeld.identity.pid);
         if (sameIdentity(middleHeld.identity, middleAfterExit)) throw new Error('intermediate PowerShell process remained alive after its natural exit');
+        const candidateAfterMiddleExit = await queryIdentity(powerShell, candidateIdentity.pid);
+        if (!sameIdentity(candidateIdentity, candidateAfterMiddleExit)) {
+            throw new Error('relaunch candidate did not remain alive after its intermediate process exited');
+        }
 
         const chainTrace = await waitForTraceEvents(observer, [middleHeld.identity.pid, candidateIdentity.pid], deadline);
         const chainProof = proveRestartOrigin({ candidate: candidateIdentity, seeds: [nodeSeed], trace: chainTrace, triggeredUtc: chainTriggeredUtc });
@@ -384,6 +412,7 @@ async function runFixture ({ outputDir, powerShell }) {
             intermediate: middleHeld.identity,
             intermediateExit: middleExit,
             candidate: candidateIdentity,
+            candidateAfterMiddleExit,
             proof: chainProof,
             trace: chainTrace,
         });

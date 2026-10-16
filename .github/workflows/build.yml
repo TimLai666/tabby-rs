@@ -18,7 +18,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
-          foreach($file in @('restart-process-origin.mjs','restart-process-observer.mjs','test-restart-process-origin.mjs','test-windows-restart-observer.mjs')) {
+          foreach($file in @('restart-process-origin.mjs','restart-process-observer.mjs','test-restart-process-origin.mjs','test-windows-restart-observer.mjs','test-restart-observer-final-trace.mjs')) {
             node --check "scripts/ci/$file"
             if($LASTEXITCODE){throw "Syntax failed: $file"}
           }
@@ -27,6 +27,8 @@ jobs:
           if($errors.Count){throw ($errors|Out-String)}
           node scripts/ci/test-restart-process-origin.mjs
           if($LASTEXITCODE){throw 'Pure origin contract failed'}
+          node scripts/ci/test-restart-observer-final-trace.mjs
+          if($LASTEXITCODE){throw 'Final observer trace contract failed'}
           node scripts/ci/test-windows-restart-observer.mjs --help
           if($LASTEXITCODE){throw 'Native observer fixture help failed'}
       - name: Prove native positive case rejects an unimplemented origin slot

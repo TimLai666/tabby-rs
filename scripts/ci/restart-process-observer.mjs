@@ -27,25 +27,29 @@ export async function startRestartProcessObserver ({ powerShell, directory, dead
     })
     let ready
     const descriptor = { pid: child.pid, nonce, eventsFile, readyFile, stopFile, ready: null, cleanup: null }
-    const trace = () => {
-        if (spawnError || ended) throw new Error('native observer exited before observation finished: ' + (spawnError?.message || stderr))
+    const trace = (final = false) => {
+        if (spawnError || ended && !final) throw new Error('native observer exited before observation finished: ' + (spawnError?.message || stderr))
         if (!ready || !existsSync(eventsFile)) throw new Error('native observer is not ready')
         const bytes = readFileSync(eventsFile, 'utf8')
         const lastNewline = bytes.lastIndexOf('\n')
-        if (lastNewline < 0) throw new Error('native observer has no complete records')
+        if (lastNewline < 0 || final && lastNewline !== bytes.length - 1) throw new Error('native observer final records are truncated or incomplete')
         const records = bytes.slice(0, lastNewline).split('\n').filter(Boolean).map(line => JSON.parse(line))
         if (records.some(row => row.nonce !== nonce)) throw new Error('native observer record nonce mismatch')
         const header = records[0]
         if (header.kind !== 'ready' || header.pid !== child.pid || header.creationTimeUTC !== ready.creationTimeUTC || header.readyUtc !== ready.readyUtc) throw new Error('native observer identity mismatch')
         const events = []
-        let heartbeat
-        for (const row of records.slice(1)) {
+        let heartbeat, stopped = false
+        for (const [index, row] of records.slice(1).entries()) {
             if (row.kind === 'start') events.push({ pid: row.pid, parentPid: row.parentPid, fileTime: row.fileTime })
             else if (row.kind === 'heartbeat') {
                 if (row.eventsCount !== events.length) throw new Error('native observer record count mismatch')
                 heartbeat = row
+            } else if (row.kind === 'stopped' && final) {
+                if (index !== records.length - 2 || row.eventsCount !== events.length) throw new Error('native observer stopped record count or final position mismatch')
+                stopped = true
             } else throw new Error('native observer reported ' + row.kind + ': ' + (row.message || ''))
         }
+        if (final && !stopped) throw new Error('native observer final stopped record is missing')
         const observed = Date.parse(heartbeat?.observedUtc)
         if (!Number.isFinite(observed) || Date.now() - observed > 5000 || observed > Date.now() + 1000) throw new Error('native observer heartbeat is missing or stale')
         return { readyUtc: ready.readyUtc, overflow: false, error: null, events }
@@ -67,6 +71,7 @@ export async function startRestartProcessObserver ({ powerShell, directory, dead
         const outcome = await completion
         descriptor.cleanup = { ...outcome, forced, stopError, spawnError: spawnError?.message ?? null, stderr, stdout }
         if (outcome.code !== 0 || forced || stopError || spawnError) throw new Error('native observer cleanup failed: ' + JSON.stringify(descriptor.cleanup))
+        descriptor.cleanup.trace = trace(true)
         return descriptor.cleanup
     }
     try {
