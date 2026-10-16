@@ -29,120 +29,29 @@ env:
 
 jobs:
   windows-desktop-probe:
-    name: Windows full app desktop comparison
+    name: Native modal observer regression
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.windows_desktop_probe }}
     runs-on: windows-2022
-    timeout-minutes: 60
+    timeout-minutes: 5
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Fetch upstream tags and verify build version
+      - uses: actions/checkout@v4
+      - name: Parse fixture and observer
         shell: pwsh
         run: |
-          git fetch --force --tags https://github.com/Eugeny/tabby.git '+refs/tags/*:refs/tags/*'
-          if ($LASTEXITCODE -ne 0) { throw 'Upstream build tags could not be fetched' }
-          git describe --tags
-          if ($LASTEXITCODE -ne 0) { throw 'Build version cannot be described before dependency installation' }
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-      - name: Check capture tool syntax and help
-        shell: pwsh
-        run: |
-          node --check scripts/ci/capture-windows-apps.mjs
-          if ($LASTEXITCODE -ne 0) { throw 'Capture controller syntax failed' }
-          node scripts/ci/capture-windows-apps.mjs --help
-          if ($LASTEXITCODE -ne 0) { throw 'Capture controller help failed' }
-          foreach ($script in @('capture-windows-app-window.ps1', 'press-windows-app-dialog.ps1')) {
+          foreach ($name in @('modal-observer-fixture.ps1', 'press-windows-app-dialog.ps1')) {
             $tokens = $null; $errors = $null
-            $path = Join-Path $env:GITHUB_WORKSPACE "scripts/ci/$script"
-            [System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors) | Out-Null
+            [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $env:GITHUB_WORKSPACE "scripts/ci/$name"), [ref]$tokens, [ref]$errors) | Out-Null
             if ($errors.Count -gt 0) { throw ($errors | Out-String) }
-            Get-Help $path -Full | Out-String | Write-Output
           }
-      - name: Check native desktop rendering
+      - name: Exercise actual native dialog presence
         shell: pwsh
-        run: pwsh -NoProfile -File scripts/ci/probe-windows-desktop.ps1 -OutputDirectory "$env:RUNNER_TEMP/tabby-rs-windows-desktop-compare/preflight"
-      - name: Check WebView2 runtime
-        shell: pwsh
-        run: |
-          $runtime = @(Get-ChildItem "${env:ProgramFiles(x86)}/Microsoft/EdgeWebView/Application/*/msedgewebview2.exe" -ErrorAction SilentlyContinue)
-          if ($runtime.Count -eq 0) { throw 'WebView2 runtime is missing; no full app rendering can be accepted' }
-          $runtime | Select-Object FullName, @{Name='Version';Expression={$_.VersionInfo.FileVersion}} | ConvertTo-Json -Depth 4 | Set-Content "$env:RUNNER_TEMP/tabby-rs-windows-desktop-compare/webview2-runtime.json"
-      - name: Restore Tauri icons
-        run: node scripts/restore-tauri-icons.mjs
-      - name: Build hardened UAC helper
-        shell: pwsh
-        run: |
-          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          $msbuild = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -find 'MSBuild\**\Bin\MSBuild.exe' | Select-Object -First 1
-          if (-not $msbuild) { throw 'MSBuild was not found' }
-          & $msbuild 'tabby-uac/UAC.sln' '/m' '/p:Configuration=Release' '/p:Platform=x64' '/p:PlatformToolset=v143' '/p:WindowsTargetPlatformVersion=10.0' "/p:OutDir=$env:GITHUB_WORKSPACE\extras\"
-          if ($LASTEXITCODE -ne 0 -or -not (Test-Path "$env:GITHUB_WORKSPACE/extras/UAC.exe")) { throw 'Hardened UAC helper compilation failed' }
-      - name: Install Windows build dependencies
-        shell: pwsh
-        run: pwsh -NoProfile -File scripts/ci/install-nasm.ps1
-      - name: Install Yarn
-        run: npm install --global yarn@${{ env.YARN_VERSION }}
-      - name: Install dependencies
-        env:
-          TABBY_RS_SKIP_ELECTRON_NATIVE_REBUILD: '1'
-        run: yarn install --frozen-lockfile --network-timeout ${{ env.YARN_NETWORK_TIMEOUT }}
-      - name: Build shared packages
-        run: yarn build
-      - name: Build Tauri renderer
-        run: yarn build:tauri:frontend
-      - name: Verify Tauri renderer output
-        run: node scripts/ci/assert-tauri-output.mjs
-      - name: Build actual Tauri host with diagnostic CDP port
-        shell: pwsh
-        run: |
-          $config = Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
-          foreach ($window in $config.app.windows) {
-            $window | Add-Member -NotePropertyName additionalBrowserArgs -NotePropertyValue '--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required --remote-debugging-port=9223'
-          }
-          $override = @{ app = @{ windows = @($config.app.windows) } }
-          $env:TAURI_CONFIG = $override | ConvertTo-Json -Depth 30 -Compress
-          $env:TAURI_CONFIG | Set-Content "$env:RUNNER_TEMP/tabby-rs-windows-desktop-compare/diagnostic-window-config.json"
-          cargo build --locked --manifest-path src-tauri/Cargo.toml
-          if ($LASTEXITCODE -ne 0) { throw 'Actual native host compilation failed' }
-          $native = Join-Path $env:GITHUB_WORKSPACE 'src-tauri/target/debug/tabby-rs.exe'
-          if (-not (Test-Path -LiteralPath $native -PathType Leaf)) { throw 'Native executable is missing' }
-          $data = Join-Path (Split-Path $native -Parent) 'data'
-          if (Test-Path -LiteralPath $data) { throw 'Unexpected pre-existing native portable data' }
-          New-Item -ItemType Directory -Path $data | Out-Null
-          "TABBY_DESKTOP_RS_EXE=$native" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-      - name: Download and verify pinned original release
-        shell: pwsh
-        run: |
-          $root = Join-Path $env:RUNNER_TEMP 'tabby-original-1.0.235-runtime'
-          if (Test-Path -LiteralPath $root) { throw 'Unexpected pre-existing reference runtime' }
-          New-Item -ItemType Directory -Path $root | Out-Null
-          $archive = Join-Path $root 'tabby-1.0.235-portable-x64.zip'
-          $url = 'https://github.com/Eugeny/tabby/releases/download/v1.0.235/tabby-1.0.235-portable-x64.zip'
-          Invoke-WebRequest -Uri $url -OutFile $archive
-          $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
-          if ($hash -ne '192ee1f402e046f8be5a31118da1dfa38aa290387e7e57dceafcc0b3dfd1a835' -or (Get-Item -LiteralPath $archive).Length -ne 174563816) { throw 'Original release archive does not match pinned digest and size' }
-          Expand-Archive -LiteralPath $archive -DestinationPath (Join-Path $root 'app')
-          $executables = @(Get-ChildItem (Join-Path $root 'app') -Recurse -Filter Tabby.exe -File)
-          if ($executables.Count -ne 1) { throw 'Expected exactly one original Tabby.exe' }
-          $reference = $executables[0].FullName
-          $data = Join-Path (Split-Path $reference -Parent) 'data'
-          if (-not (Test-Path -LiteralPath $data)) { New-Item -ItemType Directory -Path $data | Out-Null }
-          @{ tag = 'v1.0.235'; baselineCommit = '14e2d60b9b6dee84a53c37f05eefeb803787de04'; url = $url; sha256 = $hash; size = (Get-Item -LiteralPath $archive).Length; diagnosticRevision = $env:GITHUB_SHA; nativeProductBase = '9d8182060450802d5cbd28fee36a0a36325951d9' } | ConvertTo-Json -Depth 4 | Set-Content "$env:RUNNER_TEMP/tabby-rs-windows-desktop-compare/reference-build-metadata.json"
-          "TABBY_DESKTOP_REFERENCE_EXE=$reference" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-      - name: Capture both actual applications
-        shell: pwsh
-        run: node scripts/ci/capture-windows-apps.mjs --reference-exe "$env:TABBY_DESKTOP_REFERENCE_EXE" --rs-exe "$env:TABBY_DESKTOP_RS_EXE" --output "$env:RUNNER_TEMP/tabby-rs-windows-desktop-compare/capture" --source-revision "$env:GITHUB_SHA"
-      - name: Preserve full app desktop evidence
+        run: pwsh -NoProfile -File scripts/ci/modal-observer-fixture.ps1 -HelperPath "$env:GITHUB_WORKSPACE/scripts/ci/press-windows-app-dialog.ps1" -OutputDirectory "$env:RUNNER_TEMP/native-modal-observer-regression"
+      - name: Preserve observer evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: windows-desktop-compare-${{ github.sha }}
-          path: ${{ runner.temp }}/tabby-rs-windows-desktop-compare
+          name: native-modal-observer-${{ github.sha }}
+          path: ${{ runner.temp }}/native-modal-observer-regression
           if-no-files-found: error
           retention-days: 7
 
