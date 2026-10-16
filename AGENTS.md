@@ -1021,6 +1021,10 @@
   unknown termination errors retain the record for retry. Restore and shared
   proxy creation must preserve an existing PTY. Verify fresh failure, normal
   spawn, restored sessions, real child termination, and blocked-reader cleanup.
+  Keep Tauri PTY writes in call order within each proxy. Snapshot input bytes
+  before queueing, preserve each write failure, and allow later writes to proceed
+  after rejection. Queues for separate proxies must remain independent. Include
+  `yarn test:tauri-pty-write-order` when changing the renderer PTY adapter.
   Windows fresh sessions must omit parent cursor inheritance. Read
   `src-tauri/vendor/portable-pty/TABBY-RS-PATCHES.md` before updating the crate
   or its Windows PTY creation flags. Preserve the other native flags and verify

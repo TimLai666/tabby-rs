@@ -114,6 +114,7 @@ export class TauriPTYProxy extends PTYProxy {
     private pendingExit: PtyExitEvent|null = null
     private expectedSequence: number|null = null
     private truePID: Promise<number>
+    private pendingWrite: Promise<void> = Promise.resolve()
     private resizeTimer: ReturnType<typeof setTimeout>|null = null
     private pendingResize: {
         columns: number
@@ -226,10 +227,13 @@ export class TauriPTYProxy extends PTYProxy {
     }
 
     override async write (data: Buffer): Promise<void> {
-        await this.bridge.invoke('pty.write', {
+        const request = {
             id: this.response.id,
             data: Array.from(data),
-        })
+        }
+        const write = this.pendingWrite.then(() => this.bridge.invoke('pty.write', request))
+        this.pendingWrite = write.then(() => undefined, () => undefined)
+        await write
     }
 
     override async kill (signal?: string): Promise<void> {
