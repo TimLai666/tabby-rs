@@ -116,7 +116,7 @@ public static class NativeCaptionProbe {
     static WndProc proc;
     static QueryData query;
 
-    static IntPtr PackPoint(int x, int y) { return new IntPtr((short)x | (int)((ushort)(short)y << 16)); }
+    static IntPtr PackPoint(int x, int y) { return new IntPtr(unchecked((int)((uint)(ushort)x | ((uint)(ushort)y << 16)))); }
     static Dictionary<string, object> Dict(params object[] kv) { var d = new Dictionary<string, object>(); for(int i=0;i<kv.Length;i+=2) d[(string)kv[i]]=kv[i+1]; return d; }
     static IntPtr WndProcImpl(IntPtr h, uint msg, IntPtr wp, IntPtr lp) {
         if(msg == WM_APP + QUERY_NCHITTEST) {
