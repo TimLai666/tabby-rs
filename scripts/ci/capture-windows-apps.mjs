@@ -46,7 +46,7 @@ function usage () {
         'CDP ports must be distinct integers from 1 through 65535; defaults are 9222 and 9223.',
         'Both executable paths must name actual application copies with empty adjacent data directories.',
         'The reference receives PORTABLE_EXECUTABLE_FILE to disable its automatic updater.',
-        'The native process receives common diagnostic WebView2 arguments for its specified CDP port.',
+        'The native process receives common diagnostic WebView2 arguments and an explicit isolated portable WebView profile.',
         'Terminal flow executes bounded marker commands, replaces the Windows clipboard, and confirms',
         'only the owned native Paste modal containing its unique test token. It saves failure screenshots.',
         'All flows forcibly stop the owned app processes afterward; application Quit remains untested.',
@@ -261,7 +261,7 @@ function runPowerShell (powerShell, script, timeoutMs) {
 
 const SNAPSHOT_SCRIPT = `$ErrorActionPreference = 'Stop'
 $root = __ROOT__
-$procs = Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, CreationDate, Name
+$procs = Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, CreationDate, Name, CommandLine
 $children = @{}
 foreach ($p in $procs) {
   $parent = [int]$p.ParentProcessId
@@ -278,7 +278,7 @@ while ($stack.Count -gt 0) {
   $seen[$id] = $true
   $match = $procs | Where-Object { $_.ProcessId -eq $id } | Select-Object -First 1
   if ($match) {
-    $result.Add([ordered]@{ pid = [int]$match.ProcessId; parentPid = [int]$match.ParentProcessId; creationTimeUTC = $match.CreationDate.ToUniversalTime().ToString('o'); executableBasename = [string]$match.Name })
+    $result.Add([ordered]@{ pid = [int]$match.ProcessId; parentPid = [int]$match.ParentProcessId; creationTimeUTC = $match.CreationDate.ToUniversalTime().ToString('o'); executableBasename = [string]$match.Name; browserCommandLine = $(if($match.Name -ieq "msedgewebview2.exe"){$match.CommandLine}else{$null}) })
   }
   if ($match -and $children.ContainsKey($id)) {
     foreach ($child in $children[$id]) {
@@ -790,7 +790,7 @@ async function main () {
     const referenceArgs = [`--remote-debugging-port=${referencePort}`]
     const apps = [
         { role: 'reference', exe: values.referenceExe, port: referencePort, args: referenceArgs, env: { ...cleanEnvironment, PORTABLE_EXECUTABLE_FILE: values.referenceExe }, environmentOverrides: { PORTABLE_EXECUTABLE_FILE: values.referenceExe }, browserArguments: referenceArgs },
-        { role: 'native', exe: values.rsExe, port: rsPort, args: [], env: { ...cleanEnvironment, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: '--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required --remote-debugging-port=' + rsPort }, environmentOverrides: { WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: '--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required --remote-debugging-port=' + rsPort }, browserArguments: 'unchanged compiled product window configuration plus process-wide diagnostic WebView2 arguments' },
+        { role: 'native', exe: values.rsExe, port: rsPort, args: [], env: { ...cleanEnvironment, WEBVIEW2_USER_DATA_FOLDER: path.join(path.dirname(values.rsExe), 'data', 'webview'), WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: '--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required --remote-debugging-port=' + rsPort }, environmentOverrides: { WEBVIEW2_USER_DATA_FOLDER: path.join(path.dirname(values.rsExe), 'data', 'webview'), WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: '--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required --remote-debugging-port=' + rsPort }, browserArguments: 'unchanged compiled product; process-wide diagnostic WebView2 arguments and an explicit isolated portable WebView profile' },
     ]
     try {
         for (const app of apps) {
