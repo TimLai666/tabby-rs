@@ -78,6 +78,9 @@ public static class NativeCaptionProbe {
     }
     delegate IntPtr WndProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam);
     [StructLayout(LayoutKind.Sequential)] struct RECT { public int left, top, right, bottom; }
+    [StructLayout(LayoutKind.Sequential)] struct WINDOWPOS { public IntPtr hwnd, after; public int x, y, width, height; public uint flags; }
+    [StructLayout(LayoutKind.Sequential)] struct MONITORINFO { public uint size; public RECT monitor, work; public uint flags; }
+
     [StructLayout(LayoutKind.Sequential)] struct MARGINS { public int left, right, top, bottom; }
     [StructLayout(LayoutKind.Sequential)] struct DWM_BLURBEHIND { public uint flags; public int enable; public IntPtr region; public int transition; }
     [StructLayout(LayoutKind.Sequential)] struct TITLEBARINFOEX {
@@ -125,6 +128,11 @@ public static class NativeCaptionProbe {
     [DllImport("gdi32.dll")] static extern IntPtr CreateRectRgn(int left, int top, int right, int bottom);
     [DllImport("gdi32.dll")] static extern int DeleteObject(IntPtr obj);
 
+    [DllImport("user32.dll")] static extern IntPtr MonitorFromRect(ref RECT rect, uint flags);
+    [DllImport("user32.dll", EntryPoint="GetMonitorInfoW")] static extern int GetMonitorInfo(IntPtr monitor, ref MONITORINFO info);
+    [DllImport("user32.dll")] static extern int GetWindowRect(IntPtr h, out RECT rect);
+    [DllImport("user32.dll")] static extern int ClientToScreen(IntPtr h, ref POINT point);
+
     static readonly object gate = new object();
     static IntPtr hwnd;
     static string title;
@@ -162,6 +170,22 @@ public static class NativeCaptionProbe {
             return result;
         }
         IntPtr answer=dwmHandled ? dwmResult : DefWindowProc(h,msg,wp,lp);
+        if(msg == 0x0046 && lp != IntPtr.Zero && IsZoomed(h)!=0) {
+            WINDOWPOS pos=Marshal.PtrToStructure<WINDOWPOS>(lp);
+            if((pos.flags & 3)==0) {
+                RECT proposed=new RECT{left=pos.x,top=pos.y,right=pos.x+pos.width,bottom=pos.y+pos.height};
+                IntPtr monitor=MonitorFromRect(ref proposed,2);
+                MONITORINFO info=new MONITORINFO{size=(uint)Marshal.SizeOf<MONITORINFO>()};
+                if(monitor!=IntPtr.Zero && GetMonitorInfo(monitor,ref info)!=0) {
+                    long delta=(long)info.work.top-pos.y;
+                    if(delta>0 && delta<pos.height) {
+                        Console.Error.WriteLine("pure-custom-frame MAXPOSITION oldY={0} newY={1} oldHeight={2} delta={3}",pos.y,info.work.top,pos.height,delta);
+                        pos.y=info.work.top;pos.height-=(int)delta;
+                        Marshal.StructureToPtr(pos,lp,false);
+                    }
+                }
+            }
+        }
         if(msg == WM_ACTIVATE) {
             uint dpi=GetDpiForWindow(h);
             MARGINS margins=new MARGINS{top=dpi==0 ? 0 : GetSystemMetricsForDpi(SM_CYCAPTION,dpi)};
@@ -264,6 +288,15 @@ public static class NativeCaptionProbe {
             record["observedWindowExists"]=IsWindow(hwnd)!=0;
             record["observedIsIconic"]=IsWindow(hwnd)!=0 && IsIconic(hwnd)!=0;
             record["observedIsZoomed"]=IsWindow(hwnd)!=0 && IsZoomed(hwnd)!=0;
+            if(wantZoomed && IsWindow(hwnd)!=0) {
+                RECT outer; POINT origin=new POINT();
+                if(GetWindowRect(hwnd,out outer)==0 || ClientToScreen(hwnd,ref origin)==0) throw new Exception("Maximized geometry readback failed");
+                IntPtr monitor=MonitorFromRect(ref outer,2);
+                MONITORINFO info=new MONITORINFO{size=(uint)Marshal.SizeOf<MONITORINFO>()};
+                if(monitor==IntPtr.Zero || GetMonitorInfo(monitor,ref info)==0) throw new Exception("Maximized monitor readback failed");
+                record["maximizedClientTop"]=origin.y;record["monitorWorkTop"]=info.work.top;
+                if(origin.y!=info.work.top) throw new Exception("Maximized client top does not match work area");
+            }
             record["observedWindowStatePassed"]=true;
             record["elapsedMs"]=(long)((Stopwatch.GetTimestamp()-actionStarted)*1000.0/Stopwatch.Frequency);
             return record;
@@ -320,7 +353,7 @@ public static class NativeCaptionProbe {
             MARGINS customMargins=new MARGINS{top=GetSystemMetricsForDpi(SM_CYCAPTION,GetDpiForWindow(hwnd))};
             if(customMargins.top<=0 || DwmExtendFrameIntoClientArea(hwnd,ref customMargins)<0) throw new Exception("Pure custom DWM extension failed");
             if(SetWindowPos(hwnd,IntPtr.Zero,0,0,0,0,0x37)==0) throw new Exception("Pure custom frame-change failed");
-            metadata["scope"]="Diagnostic no top non-client inset, including maximized; no Wry child or product backend";
+            metadata["scope"]="Diagnostic maximized outer top aligned with work area and zero top inset; no Wry child or product backend";
             ShowWindow(hwnd,5);
 
             uiThread=GetWindowThreadProcessId(hwnd,out ownerPid);
