@@ -87,7 +87,7 @@ try {
     if ($AppProcessId -le 0) { throw 'AppProcessId must be positive' }
     if ([string]::IsNullOrWhiteSpace($ExpectedTextToken) -or $ExpectedTextToken.Length -lt 16) { throw 'ExpectedTextToken must contain at least 16 characters' }
     if ([string]::IsNullOrWhiteSpace($ButtonText)) { throw 'ButtonText is required' }
-    if (-not ([IO.Path]::GetPathRoot($OutputDirectory).Length -gt 2) -or -not (Test-Path -LiteralPath $OutputDirectory -PathType Container)) { throw 'OutputDirectory must be an existing absolute directory' }
+    if (-not [IO.Path]::IsPathFullyQualified($OutputDirectory) -or -not (Test-Path -LiteralPath $OutputDirectory -PathType Container)) { throw 'OutputDirectory must be an existing absolute directory' }
     $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
     $outputPath = Join-Path $OutputDirectory $(if ($Action -eq 'Inspect') { 'dialog-inspect.json' } else { 'dialog-confirm.json' })
     $outputStream = [IO.File]::Open($outputPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
