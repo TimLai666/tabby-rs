@@ -157,6 +157,21 @@ export async function exerciseWindowsFrame (options) {
         await page.locator('.xterm-helper-textarea:visible').waitFor({ timeout: timeout(20000) })
         await pty('before')
 
+        phase = 'terminal activation'
+        const geometry = native('Snapshot')
+        result.activationDom = await page.evaluate(() => {
+            const terminals = [...document.querySelectorAll('.xterm-screen')].filter(element => element.getBoundingClientRect().width > 100 && element.getBoundingClientRect().height > 100)
+            if (terminals.length !== 1) return null
+            const rect = terminals[0].getBoundingClientRect()
+            const x = rect.left + rect.width / 2
+            const y = rect.top + rect.height * 0.75
+            const hit = document.elementFromPoint(x, y)
+            return hit?.closest('.xterm') ? { x, y, dpr: devicePixelRatio, innerWidth, innerHeight } : null
+        })
+        const activation = result.activationDom
+        if (!activation || Math.abs(activation.innerWidth * activation.dpr - geometry.client.width) > 3 || Math.abs(activation.innerHeight * activation.dpr - geometry.client.height) > 3) throw new Error('no unambiguous owned terminal activation point')
+        native('Activate', ['-PointX', String(Math.round(geometry.client.screenX + activation.x * activation.dpr)), '-PointY', String(Math.round(geometry.client.screenY + activation.y * activation.dpr))])
+
         phase = 'drag'
         const before = native('Snapshot')
         result.dragDom = await page.evaluate(() => {

@@ -8,6 +8,7 @@ actions click fresh native TITLEBARINFOEX rectangles. RecoverMouse validates and
 releases only the left button recorded in a fresh owned mouse journal. The journal
 contains three UTF-8 decimal lines: owner PID, root HWND, and helper PID. Recovery
 records the button state and journal outcome and does not require a live target HWND.
+Activate raises the existing owned visible window within normal Z order and clicks only the supplied owned client point to request foreground.
 Never creates or shows a window, sends a system command, changes a window rectangle programmatically,
 or kills a process. Run normal actions with a 25-second process timeout and reserve at
 least 45 seconds for the action and recovery. Run RecoverMouse with a 15-second timeout.
@@ -21,11 +22,11 @@ Exact CIM CreationDate.ToUniversalTime().ToString('o') recorded by the launcher;
 .PARAMETER WindowHandle
 Existing owned root HWND, positive decimal value; recovery does not require it to remain live.
 .PARAMETER Action
-Snapshot, Drag, Resize, Minimize, Maximize, Restore, Close, or RecoverMouse.
+Snapshot, Activate, Drag, Resize, Minimize, Maximize, Restore, Close, or RecoverMouse.
 .PARAMETER PointX
-Screen pixel X for the Drag start point; Resize uses the visible right border midpoint.
+Screen pixel X for Drag or an Activate point inside the caller-verified terminal client; Resize uses the visible right border midpoint.
 .PARAMETER PointY
-Screen pixel Y for the Drag start point.
+Screen pixel Y for Drag or Activate.
 .PARAMETER DeltaX
 Bounded screen pixel horizontal movement for Drag or Resize (maximum absolute 120).
 .PARAMETER DeltaY
@@ -88,6 +89,8 @@ public static class ExistingWindowInput {
     [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(POINT p);
     [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] static extern int SetForegroundWindow(IntPtr h);
+    [DllImport("user32.dll",SetLastError=true)] static extern int SetWindowPos(IntPtr h,IntPtr after,int x,int y,int width,int height,uint flags);
+    [DllImport("user32.dll")] static extern int GetSystemMetrics(int index);
     [DllImport("user32.dll")] static extern int GetWindowRect(IntPtr h,out RECT r);
     [DllImport("user32.dll")] static extern int GetClientRect(IntPtr h,out RECT r);
     [DllImport("user32.dll")] static extern int ClientToScreen(IntPtr h,ref POINT p);
@@ -156,10 +159,10 @@ public static class ExistingWindowInput {
     static void RemoveVerifiedJournal(int owner,long target,int helper,string path) {
         CheckJournal(owner,target,helper,path); File.Delete(path); Check(!File.Exists(path),"verified mouse journal could not be removed");
     }
-    static void PressAt(POINT expected,bool exactRoot) {
+    static void PressAt(POINT expected,bool exactRoot,bool requireForeground=true) {
         Check(!LeftButtonDown(),"physical left button is already held; refusing to begin input");
         WriteOwnJournal();
-        CheckCursor(expected); Validate(); Check(GetForegroundWindow()==hwnd,"foreground target changed before LEFTDOWN");
+        CheckCursor(expected); Validate(); Check(!requireForeground||GetForegroundWindow()==hwnd,"foreground target changed before LEFTDOWN");
         POINT actual=ReadCursor(); IntPtr under=WindowFromPoint(actual); Check(under!=IntPtr.Zero,"cursor point no longer resolves to a window");
         Check(exactRoot ? under==hwnd : GetAncestor(under,GA_ROOT)==hwnd,"cursor ownership changed before LEFTDOWN");
         Check(!LeftButtonDown(),"left button became held before LEFTDOWN; journal retained for recovery");
@@ -170,10 +173,10 @@ public static class ExistingWindowInput {
         Send(LEFTUP); WaitLeftButtonUp(); buttonDown=false;
         RemoveVerifiedJournal(pid,hwnd.ToInt64(),Environment.ProcessId,journalPath);
     }
-    static POINT PositionAndVerify(POINT requested,bool exactRoot) {
+    static POINT PositionAndVerify(POINT requested,bool exactRoot,bool requireForeground=true) {
         Check(SetCursorPos(requested.x,requested.y)!=0,"SetCursorPos to validated input point failed; Win32="+Marshal.GetLastWin32Error());
         POINT actual=ReadCursor(); Check(actual.x==requested.x&&actual.y==requested.y,"cursor was clipped before input");
-        Validate(); Check(GetForegroundWindow()==hwnd,"foreground target changed before input");
+        Validate(); Check(!requireForeground||GetForegroundWindow()==hwnd,"foreground target changed before input");
         IntPtr under=WindowFromPoint(actual); Check(under!=IntPtr.Zero,"input point no longer resolves to a window");
         IntPtr underRoot=GetAncestor(under,GA_ROOT);
         if (!(exactRoot ? under==hwnd : underRoot==hwnd)) {
@@ -183,12 +186,22 @@ public static class ExistingWindowInput {
         }
         return actual;
     }
+    static void SendMove(int x,int y) {
+        int left=GetSystemMetrics(76),top=GetSystemMetrics(77),width=GetSystemMetrics(78),height=GetSystemMetrics(79);
+        Check(width>1&&height>1&&x>=left&&x<left+width&&y>=top&&y<top+height,"requested input point is outside the virtual desktop");
+        INPUT input=new INPUT(); input.type=INPUT_MOUSE;
+        input.U.mi=new MOUSEINPUT{dx=(int)Math.Round((x-left)*65535.0/(width-1)),dy=(int)Math.Round((y-top)*65535.0/(height-1)),dwFlags=0x0001|0x4000|0x8000};
+        Check(SendInput(1,new[]{input},Marshal.SizeOf(typeof(INPUT)))==1,"SendInput MOVE failed; Win32="+Marshal.GetLastWin32Error());
+        var sw=Stopwatch.StartNew();
+        while(sw.ElapsedMilliseconds<500) { Validate(); Check(GetForegroundWindow()==hwnd,"foreground changed while awaiting cursor input"); POINT observed=ReadCursor(); if(observed.x==x&&observed.y==y)return; Thread.Sleep(2); }
+        throw new InvalidOperationException("injected cursor motion did not reach the exact requested point");
+    }
     static void MoveGradually(int x0,int y0,int x1,int y1) {
         const int steps=12;
         for(int i=1;i<=steps;i++) {
             Validate(); Check(GetForegroundWindow()==hwnd,"foreground changed during mouse input");
             int x=x0+(int)Math.Round((x1-x0)*(i/(double)steps)), y=y0+(int)Math.Round((y1-y0)*(i/(double)steps));
-            Check(SetCursorPos(x,y)!=0,"SetCursorPos failed; Win32="+Marshal.GetLastWin32Error()); POINT actual=ReadCursor();
+            SendMove(x,y); POINT actual=ReadCursor();
             Check(actual.x==x&&actual.y==y,"cursor was clipped during gradual movement");
             IntPtr under=WindowFromPoint(actual); Check(under!=IntPtr.Zero&&GetAncestor(under,GA_ROOT)==hwnd,"gradual mouse movement reached a foreign window"); Thread.Sleep(20);
         }
@@ -222,6 +235,16 @@ public static class ExistingWindowInput {
             oldDpi=SetThreadDpiAwarenessContext(new IntPtr(-4)); changed=oldDpi!=IntPtr.Zero; Check(changed,"could not set per-monitor-v2 thread DPI context");
             Validate(); beforeSnapshot=ReadSnapshot();
             if(action=="Snapshot") { afterSnapshot=beforeSnapshot; ok=true; }
+            else if(action=="Activate") {
+                Check(IsIconic(hwnd)==0,"Activate requires an already visible non-minimized window");
+                RECT original,client; Check(GetWindowRect(hwnd,out original)!=0,"Activate outer geometry could not be read"); Check(GetClientRect(hwnd,out client)!=0,"Activate client geometry could not be read");
+                POINT origin=new POINT{x=0,y=0}; Check(ClientToScreen(hwnd,ref origin)!=0,"Activate client origin failed");
+                Check(px>=origin.x&&px<origin.x+client.right&&py>=origin.y&&py<origin.y+client.bottom,"Activate point must be in the owned client");
+                Check(SetWindowPos(hwnd,IntPtr.Zero,0,0,0,0,0x0001|0x0002|0x0010)!=0,"could not raise the existing owned window without activation or geometry changes");
+                POINT point=PositionAndVerify(new POINT{x=px,y=py},false,false); PressAt(point,false,false); inputSent=true; ClickUp(); Foreground();
+                RECT current; Check(GetWindowRect(hwnd,out current)!=0&&current.left==original.left&&current.top==original.top&&current.right==original.right&&current.bottom==original.bottom,"Activate changed window geometry");
+                afterSnapshot=ReadSnapshot(); ok=true;
+            }
             else {
                 bool wasIcon=IsIconic(hwnd)!=0, wasZoom=IsZoomed(hwnd)!=0;
                 if(action=="Maximize") Check(!wasIcon&&!wasZoom,"Maximize requires an ordinary window");
@@ -289,7 +312,7 @@ try {
     if ($AppProcessId -le 0) { throw 'AppProcessId must be a positive 32-bit integer' }
     if ($WindowHandle -le 0) { throw 'WindowHandle must be a positive 64-bit integer' }
     if ($DeltaX -lt -120 -or $DeltaX -gt 120 -or $DeltaY -lt -120 -or $DeltaY -gt 120) { throw 'DeltaX and DeltaY must be within -120..120' }
-    if (@('Snapshot','Drag','Resize','Minimize','Maximize','Restore','Close','RecoverMouse') -cnotcontains $Action) { throw 'Action is unsupported' }
+    if (@('Snapshot','Activate','Drag','Resize','Minimize','Maximize','Restore','Close','RecoverMouse') -cnotcontains $Action) { throw 'Action is unsupported' }
     if (-not $IsWindows) { throw 'This helper requires Windows PowerShell 7+' }
     if (-not [Environment]::Is64BitProcess) { throw 'This input helper requires 64-bit PowerShell' }
     if ($Action -eq 'RecoverMouse') {
