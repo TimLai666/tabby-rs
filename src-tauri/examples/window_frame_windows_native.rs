@@ -865,10 +865,17 @@ fn run_checks(
         result
     }
 
+    enum MaximizeCycle {
+        DirectRestore,
+        FullscreenThenRestore,
+        MinimizeThenRestore,
+    }
+
     fn exercise_real_caption_actions(
         window: &tauri::WebviewWindow,
         label: &str,
         original_outer: (i32, i32, i32, i32),
+        cycle: MaximizeCycle,
         failures: &mut Vec<String>,
     ) {
         CHECKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -916,11 +923,46 @@ fn run_checks(
         };
         match maximized {
             Ok(state) => {
-                CHECKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                if let Err(error) = exercise_fullscreen_round_trip(window, label, &state) {
-                    failures.push(format!(
-                        "{label} maximized fullscreen round-trip failed: {error}"
-                    ));
+                match cycle {
+                    MaximizeCycle::DirectRestore => {}
+                    MaximizeCycle::FullscreenThenRestore => {
+                        CHECKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if let Err(error) = exercise_fullscreen_round_trip(window, label, &state) {
+                            failures.push(format!(
+                                "{label} maximized fullscreen round-trip failed: {error}"
+                            ));
+                        }
+                    }
+                    MaximizeCycle::MinimizeThenRestore => {
+                        CHECKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        match real_caption_click(window, 2, &format!("{label} maximized minimize"))
+                        {
+                            Ok(()) => {
+                                if let Err(error) = wait_for_state(
+                                    window,
+                                    |state| state.minimized,
+                                    "actual minimize from maximized",
+                                ) {
+                                    failures.push(error);
+                                }
+                            }
+                            Err(error) => failures.push(error),
+                        }
+                        CHECKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let reset = window
+                            .unminimize()
+                            .map_err(|error| error.to_string())
+                            .and_then(|()| {
+                                wait_for_state(
+                                    window,
+                                    |state| state.maximized && !state.minimized,
+                                    "unminimize returns to maximized state",
+                                )
+                            });
+                        if let Err(error) = reset {
+                            failures.push(format!("{label} maximized unminimize failed: {error}"));
+                        }
+                    }
                 }
                 CHECKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 match hwnd(window).and_then(|handle| monitor_info(handle, "maximized monitor")) {
@@ -1166,7 +1208,15 @@ fn run_checks(
                     failures.push(format!("{frame} fullscreen round-trip failed: {error}"));
                 }
             }
-            exercise_real_caption_actions(first, frame, baseline.outer, &mut failures);
+            // The direct cycle must stay first: fullscreen can refresh native
+            // state and must not hide a maximize-to-restore regression.
+            for cycle in [
+                MaximizeCycle::DirectRestore,
+                MaximizeCycle::FullscreenThenRestore,
+                MaximizeCycle::MinimizeThenRestore,
+            ] {
+                exercise_real_caption_actions(first, frame, baseline.outer, cycle, &mut failures);
+            }
             if let Some(state) = capture!("secondary isolation", second) {
                 check!(
                     "other window unchanged",
@@ -1200,7 +1250,19 @@ fn run_checks(
     let destroyed_hwnd = second_hwnd as windows_sys::Win32::Foundation::HWND;
     if !destroyed_hwnd.is_null() {
         let handle = destroyed_hwnd;
-        let close_result = real_caption_click(second, 5, "secondary full close");
+        CHECKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let maximize_result = real_caption_click(second, 3, "secondary full maximize before close")
+            .and_then(|()| {
+                wait_for_state(
+                    second,
+                    |state| state.maximized && !state.minimized,
+                    "secondary actual maximize before close",
+                )
+            });
+        let close_result = match maximize_result {
+            Ok(_) => real_caption_click(second, 5, "secondary maximized full close"),
+            Err(error) => Err(format!("maximized close precondition failed: {error}")),
+        };
         check!(
             "actual secondary close-button click",
             close_result.is_ok(),
