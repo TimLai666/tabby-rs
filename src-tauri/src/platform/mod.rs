@@ -1,7 +1,7 @@
 use crate::{desktop::VibrancyOptions, error::AppError};
 
 mod frame;
-pub use frame::set_window_frame;
+pub use frame::{set_window_frame, window_caption_controls};
 
 #[cfg(target_os = "macos")]
 pub(crate) mod macos_quit;

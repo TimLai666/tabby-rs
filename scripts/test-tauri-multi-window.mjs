@@ -16,7 +16,7 @@ const bridge = read('tabby-tauri/src/api/hostBridge.ts')
 const capability = JSON.parse(read('src-tauri/capabilities/default.json'))
 const windowEvents = ['desktop:windowFocused', 'desktop:windowMoved', 'desktop:windowResized',
     'desktop:windowCloseRequested', 'desktop:fileDrop', 'desktop:themeChanged', 'desktop:displayMetricsChanged']
-const scopedEvents = [...windowEvents, 'app:launch']
+const scopedEvents = [...windowEvents, 'desktop:windowCaptionChanged', 'app:launch']
 const bridgeCode = ts.transpileModule(read('tabby-tauri/src/services/tauriHostBridge.service.ts'), {
     compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS, experimentalDecorators: true },
 }).outputText

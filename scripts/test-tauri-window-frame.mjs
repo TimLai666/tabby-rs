@@ -94,24 +94,26 @@ async function createHost (platform, startupWindowFrame, { rejectRestart = false
     return { service, calls, runtimeInfo, get configReads () { return configReads } }
 }
 
-for (const [saved, expected] of [
-    ['native', 'native'], ['full', 'full'], ['thin', 'thin'],
-    [undefined, 'thin'], [null, 'thin'], ['', 'thin'], ['invalid', 'thin'], [[], 'thin'],
-]) {
-    const host = await createHost('macos', saved)
-    assert.equal(host.calls.filter(call => call.command === 'window.applyState').length, 0,
-        'the constructor does not send frame before emitReady')
-    host.runtimeInfo.startupWindowFrame = 'full'
-    host.runtimeInfo.platform = 'linux'
-    assert.doesNotThrow(() => host.service.emitReady())
-    await settle()
-    assert.equal(host.configReads, 0, 'constructor and emitReady do not read ConfigService')
-    const readyCalls = host.calls.filter(call => call.command === 'window.applyState')
-    assert.deepEqual(readyCalls, [{ command: 'window.applyState', request: { frame: expected, visible: true } }],
-        `macOS uses its constructor-time startup snapshot (${String(saved)}) with visibility`)
+for (const platform of ['macos', 'windows']) {
+    for (const [saved, expected] of [
+        ['native', 'native'], ['full', 'full'], ['thin', 'thin'],
+        [undefined, 'thin'], [null, 'thin'], ['', 'thin'], ['invalid', 'thin'], [[], 'thin'],
+    ]) {
+        const host = await createHost(platform, saved)
+        assert.equal(host.calls.filter(call => call.command === 'window.applyState').length, 0,
+            'the constructor does not send frame before emitReady')
+        host.runtimeInfo.startupWindowFrame = 'full'
+        host.runtimeInfo.platform = 'linux'
+        assert.doesNotThrow(() => host.service.emitReady())
+        await settle()
+        assert.equal(host.configReads, 0, 'constructor and emitReady do not read ConfigService')
+        const readyCalls = host.calls.filter(call => call.command === 'window.applyState')
+        assert.deepEqual(readyCalls, [{ command: 'window.applyState', request: { frame: expected, visible: true } }],
+            `${platform} uses its constructor-time startup snapshot (${String(saved)}) with visibility`)
+    }
 }
 
-for (const platform of ['windows', 'linux']) {
+for (const platform of ['linux', 'web']) {
     const host = await createHost(platform, 'native')
     host.service.emitReady()
     await settle()
@@ -153,7 +155,7 @@ async function checkPlatformService (platform, expected) {
     assert.equal(provider.supportsWindowControls, expected, `${platform} frame capability`)
 }
 await checkPlatformService('macos', true)
-await checkPlatformService('windows', false)
+await checkPlatformService('windows', true)
 await checkPlatformService('linux', false)
 
 const template = fs.readFileSync(path.join(root, 'tabby-settings/src/components/windowSettingsTab.component.pug'), 'utf8')

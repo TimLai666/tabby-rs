@@ -1,5 +1,9 @@
 use crate::error::AppError;
 
+#[cfg(target_os = "windows")]
+#[path = "frame_windows.rs"]
+mod windows;
+
 pub fn set_window_frame(window: &tauri::WebviewWindow, frame: &str) -> Result<(), AppError> {
     let native = match frame {
         "native" => true,
@@ -73,11 +77,26 @@ pub fn set_window_frame(window: &tauri::WebviewWindow, frame: &str) -> Result<()
             .map_err(|error| AppError::Io(error.to_string()))?;
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    return windows::set_window_frame(window, native);
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         let _ = (window, native);
         Err(AppError::Unsupported(
-            "window frame is available only on macOS".into(),
+            "window frame is available only on macOS and Windows".into(),
         ))
+    }
+}
+
+pub fn window_caption_controls(
+    window: &tauri::WebviewWindow,
+) -> Result<Option<crate::desktop::WindowCaptionState>, AppError> {
+    #[cfg(target_os = "windows")]
+    return windows::caption_controls(window);
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = window;
+        Ok(None)
     }
 }

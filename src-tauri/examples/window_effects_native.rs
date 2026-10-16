@@ -3,7 +3,13 @@ use std::time::Duration;
 
 // These are deliberately minimal boundary shapes for the real platform module.
 // They are not application implementations and contain no tested behavior.
+#[path = "../src/window_caption.rs"]
+mod caption;
+
 mod desktop {
+    pub use crate::caption::WindowCaptionState;
+    #[cfg(target_os = "windows")]
+    pub use crate::caption::{WindowCaptionButton, WindowCaptionButtonKind};
     #[derive(Clone)]
     pub struct VibrancyOptions {
         pub enabled: bool,
