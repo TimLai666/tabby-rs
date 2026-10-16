@@ -663,6 +663,20 @@ fn run_checks(
                 "window_frame_windows_native caption metadata: label={label:?} index={index} point=({}, {}) rect={:?}",
                 point.x, point.y, (rect.left, rect.top, rect.right, rect.bottom)
             );
+            let mut dwm_buttons: RECT = unsafe { std::mem::zeroed() };
+            let dwm_hr = unsafe {
+                windows_sys::Win32::Graphics::Dwm::DwmGetWindowAttribute(
+                    handle,
+                    windows_sys::Win32::Graphics::Dwm::DWMWA_CAPTION_BUTTON_BOUNDS as u32,
+                    &mut dwm_buttons as *mut RECT as *mut std::ffi::c_void,
+                    std::mem::size_of::<RECT>() as u32,
+                )
+            };
+            eprintln!("frame-state-diagnostic METADATA label={label:?} min={:?} max={:?} close={:?} dwm_hr={dwm_hr} dwm_window_bounds={:?} snapshot={:?}",
+                (info.rgrect[2].left,info.rgrect[2].top,info.rgrect[2].right,info.rgrect[2].bottom),
+                (info.rgrect[3].left,info.rgrect[3].top,info.rgrect[3].right,info.rgrect[3].bottom),
+                (info.rgrect[5].left,info.rgrect[5].top,info.rgrect[5].right,info.rgrect[5].bottom),
+                (dwm_buttons.left,dwm_buttons.top,dwm_buttons.right,dwm_buttons.bottom), snapshot(window));
             let target = unsafe { WindowFromPoint(point) };
             if target != handle {
                 return Err(format!(

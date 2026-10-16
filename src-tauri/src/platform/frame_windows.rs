@@ -8,17 +8,15 @@ mod region;
 use windows_sys::Win32::Foundation::{HWND, RECT};
 use windows_sys::Win32::Graphics::Dwm::{DwmDefWindowProc, DwmExtendFrameIntoClientArea};
 use windows_sys::Win32::UI::Controls::MARGINS;
-use windows_sys::Win32::UI::HiDpi::{
-    AdjustWindowRectExForDpi, GetDpiForWindow, GetSystemMetricsForDpi,
-};
+use windows_sys::Win32::UI::HiDpi::{GetDpiForWindow, GetSystemMetricsForDpi};
 use windows_sys::Win32::UI::Shell::{
     DefSubclassProc, GetWindowSubclass, RemoveWindowSubclass, SetWindowSubclass,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    GetWindowLongPtrW, GetWindowRect, IsWindow, IsZoomed, SetWindowPos, GWL_EXSTYLE, GWL_STYLE,
-    SM_CYCAPTION, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
-    WM_ACTIVATE, WM_DPICHANGED, WM_DWMCOMPOSITIONCHANGED, WM_NCCALCSIZE, WM_NCDESTROY,
-    WM_SHOWWINDOW, WM_STYLECHANGED, WM_WINDOWPOSCHANGED, WS_CAPTION,
+    GetWindowLongPtrW, GetWindowRect, IsWindow, IsZoomed, SetWindowPos, GWL_STYLE, SM_CYCAPTION,
+    SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WM_ACTIVATE,
+    WM_DPICHANGED, WM_DWMCOMPOSITIONCHANGED, WM_NCCALCSIZE, WM_NCDESTROY, WM_SHOWWINDOW,
+    WM_STYLECHANGED, WM_WINDOWPOSCHANGED, WS_CAPTION,
 };
 
 const FRAME_SUBCLASS_ID: usize = 0x5441_4242;
@@ -235,14 +233,35 @@ unsafe extern "system" fn frame_subclass_proc(
 
             let result = unsafe { DefSubclassProc(hwnd, message, wparam, lparam) };
             let client_top = if unsafe { IsZoomed(hwnd) } != 0 {
-                let ex_style = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) } as u32;
-                maximized_frame_inset(hwnd, style, ex_style)
-                    .map(|inset| outer_top.saturating_add(inset))
-                    .unwrap_or(outer_top)
+                let native_top = if wparam != 0 {
+                    let params = lparam
+                        as *const windows_sys::Win32::UI::WindowsAndMessaging::NCCALCSIZE_PARAMS;
+                    unsafe { (*params).rgrc[0].top }
+                } else {
+                    unsafe { (*(lparam as *const RECT)).top }
+                };
+                match caption_height(hwnd) {
+                    Ok(height) => native_top.saturating_sub(height),
+                    Err(error) => {
+                        log_refresh_error(&error);
+                        native_top
+                    }
+                }
             } else {
                 outer_top
             };
 
+            if unsafe { IsZoomed(hwnd) } != 0 {
+                use std::io::Write;
+                let native_top = if wparam != 0 {
+                    unsafe {
+                        (*(lparam as *const windows_sys::Win32::UI::WindowsAndMessaging::NCCALCSIZE_PARAMS)).rgrc[0].top
+                    }
+                } else {
+                    unsafe { (*(lparam as *const RECT)).top }
+                };
+                let _ = writeln!(std::io::stderr().lock(), "frame-state-diagnostic NCCALCSIZE outer_top={outer_top} native_top={native_top} dpi={} caption={:?} final_top={client_top} style={style:#x}", unsafe { GetDpiForWindow(hwnd) }, caption_height(hwnd));
+            }
             if wparam != 0 {
                 let params =
                     lparam as *mut windows_sys::Win32::UI::WindowsAndMessaging::NCCALCSIZE_PARAMS;
@@ -260,6 +279,12 @@ unsafe extern "system" fn frame_subclass_proc(
     } else {
         unsafe { DefSubclassProc(hwnd, message, wparam, lparam) }
     };
+    if message == windows_sys::Win32::UI::WindowsAndMessaging::WM_NCHITTEST {
+        use std::io::Write;
+        let x = (lparam as u16) as i16;
+        let y = ((lparam as usize >> 16) as u16) as i16;
+        let _ = writeln!(std::io::stderr().lock(), "frame-state-diagnostic HIT point=({x},{y}) maximized={} dwm_handled={dwm_handled} dwm_result={dwm_result} final_result={result}", unsafe { IsZoomed(hwnd) } != 0);
+    }
     if ref_data == FRAME_SUBCLASS_ACTIVE
         && matches!(
             message,
@@ -296,24 +321,6 @@ fn log_refresh_error(error: &str) {
         std::io::stderr().lock(),
         "Windows frame refresh failed: {error}"
     );
-}
-
-fn maximized_frame_inset(hwnd: HWND, style: u32, ex_style: u32) -> Option<i32> {
-    let dpi = unsafe { GetDpiForWindow(hwnd) };
-    if dpi == 0 {
-        return None;
-    }
-    let mut frame = RECT {
-        left: 0,
-        top: 0,
-        right: 0,
-        bottom: 0,
-    };
-    let border_style = style & !WS_CAPTION;
-    if unsafe { AdjustWindowRectExForDpi(&mut frame, border_style, 0, ex_style, dpi) } == 0 {
-        return None;
-    }
-    Some(frame.top.saturating_neg())
 }
 
 unsafe fn frame_changed(hwnd: HWND) -> i32 {
@@ -449,20 +456,24 @@ fn custom_margins(hwnd: HWND) -> Result<MARGINS, String> {
             cyBottomHeight: 0,
         });
     }
-    let dpi = unsafe { GetDpiForWindow(hwnd) };
-    if dpi == 0 {
-        return Err("could not determine the window DPI while rolling back".into());
-    }
-    let caption_height = unsafe { GetSystemMetricsForDpi(SM_CYCAPTION, dpi) };
-    if caption_height <= 0 {
-        return Err("could not determine the caption height while rolling back".into());
-    }
     Ok(MARGINS {
         cxLeftWidth: 0,
         cxRightWidth: 0,
-        cyTopHeight: caption_height,
+        cyTopHeight: caption_height(hwnd)?,
         cyBottomHeight: 0,
     })
+}
+
+fn caption_height(hwnd: HWND) -> Result<i32, String> {
+    let dpi = unsafe { GetDpiForWindow(hwnd) };
+    if dpi == 0 {
+        return Err("could not determine the window DPI".into());
+    }
+    let height = unsafe { GetSystemMetricsForDpi(SM_CYCAPTION, dpi) };
+    if height <= 0 {
+        return Err("could not determine the caption height".into());
+    }
+    Ok(height)
 }
 
 fn with_rollback(message: &str, rollback: Result<(), String>) -> AppError {
