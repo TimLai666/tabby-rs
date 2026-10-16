@@ -156,7 +156,7 @@ public static class NativeCaptionProbe {
             uint dpi=GetDpiForWindow(h);
             int caption=dpi==0 ? 0 : GetSystemMetricsForDpi(SM_CYCAPTION,dpi);
             int nativeTop=after.top;
-            after.top=IsZoomed(h)!=0 && caption>0 ? after.top-caption : before.top;
+            after.top=before.top; // Diagnostic: no top non-client inset, including maximized.
             Marshal.StructureToPtr(after,lp,false);
             Console.Error.WriteLine("pure-custom-frame NCCALCSIZE zoom={0} outerTop={1} nativeTop={2} caption={3} finalTop={4}",IsZoomed(h)!=0,before.top,nativeTop,caption,after.top);
             return result;
@@ -320,7 +320,7 @@ public static class NativeCaptionProbe {
             MARGINS customMargins=new MARGINS{top=GetSystemMetricsForDpi(SM_CYCAPTION,GetDpiForWindow(hwnd))};
             if(customMargins.top<=0 || DwmExtendFrameIntoClientArea(hwnd,ref customMargins)<0) throw new Exception("Pure custom DWM extension failed");
             if(SetWindowPos(hwnd,IntPtr.Zero,0,0,0,0,0x37)==0) throw new Exception("Pure custom frame-change failed");
-            metadata["scope"]="Pure Win32 custom NCCALCSIZE plus DWM margins; no Wry child or product backend";
+            metadata["scope"]="Diagnostic no top non-client inset, including maximized; no Wry child or product backend";
             ShowWindow(hwnd,5);
 
             uiThread=GetWindowThreadProcessId(hwnd,out ownerPid);
