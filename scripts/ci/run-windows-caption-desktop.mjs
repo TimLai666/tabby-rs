@@ -118,6 +118,20 @@ export function createOwnedCaptionDriver (options) {
         sessions.set(identity.hwnd, meta.shell)
         const record = { identity, name, focus, marker, file, meta, exactBytes: true, renderedMarkerCopied: false }
         evidence.terminal.push(record)
+        if (hold && options.role === 'native') {
+            record.nativeProcessInspection = await pages.get(identity.hwnd).evaluate(async () => {
+                const probe = window.__TABBY_PTY_SERIAL_PROBE
+                if (!probe || !probe.stats.requests.length) throw new Error('native PTY inspection requires observed real write requests')
+                const id = probe.stats.requests.at(-1).sessionId
+                const api = window.__TAURI__.core
+                const pid = await api.invoke('pty_get_pid', { request: { id } })
+                const truePid = await api.invoke('pty_get_true_pid', { request: { id } })
+                const children = await api.invoke('pty_get_children', { request: { id } })
+                const stats = structuredClone(probe.stats)
+                return { id, pid, truePid, children, stats, scope: 'runtime causal diagnostic only' }
+            })
+            writeFileSync(stem + '-native-inspection.json', JSON.stringify(record, null, 2), { flag: 'wx' })
+        }
         if (hold) { busy.set(identity.hwnd, meta.child); return record }
         const target = pages.get(identity.hwnd)
         const copyUntil = Date.now() + timeout(15000)
