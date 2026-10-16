@@ -5,7 +5,7 @@ permissions:
   contents: read
 jobs:
   native-caption:
-    name: Owned native caption input control
+    name: Pure Win32 custom frame with and without Tao blur
     runs-on: windows-2022
     timeout-minutes: 5
     steps:
@@ -19,15 +19,25 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Native desktop preflight failed' }
           & pwsh -NoProfile -File scripts/ci/probe-native-caption.ps1 -Help > "$root/help.log" 2>&1
           if ($LASTEXITCODE -ne 0) { throw 'Native caption control help failed' }
-          & pwsh -NoProfile -File scripts/ci/probe-native-caption.ps1 -OutputDirectory $root > "$root/probe.log" 2>&1
-          $probeExit = $LASTEXITCODE
+          $plain = Join-Path $root 'pure-custom'
+          $blur = Join-Path $root 'pure-custom-tao-blur'
+          New-Item -ItemType Directory -Path $plain -ErrorAction Stop | Out-Null
+          New-Item -ItemType Directory -Path $blur -ErrorAction Stop | Out-Null
+          & pwsh -NoProfile -File scripts/ci/probe-native-caption.ps1 -OutputDirectory $plain > "$root/pure-custom.log" 2>&1
+          $plainExit = $LASTEXITCODE
+          & pwsh -NoProfile -File scripts/ci/probe-native-caption.ps1 -OutputDirectory $blur -TaoBlur > "$root/pure-custom-tao-blur.log" 2>&1
+          $blurExit = $LASTEXITCODE
+          $probeExit = [int](($plainExit -ne 0) -or ($blurExit -ne 0))
           @{
             revision = $env:GITHUB_SHA
             scriptSha256 = (Get-FileHash scripts/ci/probe-native-caption.ps1 -Algorithm SHA256).Hash.ToLowerInvariant()
             exitCode = $probeExit
+            pureCustomExitCode = $plainExit
+            pureCustomTaoBlurExitCode = $blurExit
             fullAppAccepted = $false
           } | ConvertTo-Json | Set-Content "$root/provenance.json" -Encoding utf8
-          Get-Content "$root/probe.log"
+          Get-Content "$root/pure-custom.log"
+          Get-Content "$root/pure-custom-tao-blur.log"
           if ($probeExit -ne 0) { throw "Native caption control failed with exit $probeExit" }
       - name: Preserve native caption evidence
         if: always()

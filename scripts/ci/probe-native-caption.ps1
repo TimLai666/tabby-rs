@@ -1,12 +1,16 @@
 [CmdletBinding()]
 param(
     [string]$OutputDirectory = (Get-Location).Path,
-    [switch]$Help
+    [switch]$Help,
+    [switch]$TaoBlur
 )
 
 if ($Help) {
     @'
-probe-native-caption.ps1 [-OutputDirectory <directory>] [-Help]
+probe-native-custom-caption.ps1 [-OutputDirectory <directory>] [-TaoBlur] [-Help]
+
+Custom-frame diagnostic. -TaoBlur additionally applies the pinned Tao transparency call.
+This uses pure Win32 and no Wry child. FullAppAccepted is always false.
 
 Runs a bounded native Windows caption-button input probe. On a non-Windows
 host, or with -Help, it exits without creating a window. A successful run
@@ -44,6 +48,9 @@ public static class NativeCaptionProbe {
     const uint WM_DESTROY = 0x0002;
     const uint WM_NCHITTEST = 0x0084;
     const uint WM_APP = 0x8000;
+    const uint WM_NCCALCSIZE = 0x0083;
+    const uint WM_ACTIVATE = 0x0006;
+    const int SM_CYCAPTION = 4;
     const uint WM_GETTITLEBARINFOEX = 0x033F;
     const uint PM_REMOVE = 0x0001;
     const uint SMTO_BLOCK = 0x0001;
@@ -71,6 +78,8 @@ public static class NativeCaptionProbe {
     }
     delegate IntPtr WndProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam);
     [StructLayout(LayoutKind.Sequential)] struct RECT { public int left, top, right, bottom; }
+    [StructLayout(LayoutKind.Sequential)] struct MARGINS { public int left, right, top, bottom; }
+    [StructLayout(LayoutKind.Sequential)] struct DWM_BLURBEHIND { public uint flags; public int enable; public IntPtr region; public int transition; }
     [StructLayout(LayoutKind.Sequential)] struct TITLEBARINFOEX {
         public uint cbSize; public RECT rcTitleBar;
         [MarshalAs(UnmanagedType.ByValArray, SizeConst=6)] public uint[] rgstate;
@@ -107,6 +116,14 @@ public static class NativeCaptionProbe {
     [DllImport("user32.dll", SetLastError=true)] static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
     [DllImport("user32.dll")] static extern int GetAwarenessFromDpiAwarenessContext(IntPtr context);
     [DllImport("dwmapi.dll")] static extern int DwmDefWindowProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam, out IntPtr result);
+    [DllImport("dwmapi.dll")] static extern int DwmExtendFrameIntoClientArea(IntPtr hwnd, ref MARGINS margins);
+    [DllImport("user32.dll")] static extern int GetSystemMetricsForDpi(int index, uint dpi);
+    [DllImport("user32.dll", SetLastError=true)] static extern int SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int width, int height, uint flags);
+
+
+    [DllImport("dwmapi.dll")] static extern int DwmEnableBlurBehindWindow(IntPtr hwnd, ref DWM_BLURBEHIND blur);
+    [DllImport("gdi32.dll")] static extern IntPtr CreateRectRgn(int left, int top, int right, int bottom);
+    [DllImport("gdi32.dll")] static extern int DeleteObject(IntPtr obj);
 
     static readonly object gate = new object();
     static IntPtr hwnd;
@@ -130,7 +147,29 @@ public static class NativeCaptionProbe {
             return IntPtr.Zero;
         }
         if(msg == WM_DESTROY) { PostQuitMessage(0); return IntPtr.Zero; }
-        return DefWindowProc(h,msg,wp,lp);
+        IntPtr dwmResult;
+        bool dwmHandled=DwmDefWindowProc(h,msg,wp,lp,out dwmResult)!=0;
+        if(msg == WM_NCCALCSIZE && lp != IntPtr.Zero) {
+            RECT before=Marshal.PtrToStructure<RECT>(lp);
+            IntPtr result=DefWindowProc(h,msg,wp,lp);
+            RECT after=Marshal.PtrToStructure<RECT>(lp);
+            uint dpi=GetDpiForWindow(h);
+            int caption=dpi==0 ? 0 : GetSystemMetricsForDpi(SM_CYCAPTION,dpi);
+            int nativeTop=after.top;
+            after.top=IsZoomed(h)!=0 && caption>0 ? after.top-caption : before.top;
+            Marshal.StructureToPtr(after,lp,false);
+            Console.Error.WriteLine("pure-custom-frame NCCALCSIZE zoom={0} outerTop={1} nativeTop={2} caption={3} finalTop={4}",IsZoomed(h)!=0,before.top,nativeTop,caption,after.top);
+            return result;
+        }
+        IntPtr answer=dwmHandled ? dwmResult : DefWindowProc(h,msg,wp,lp);
+        if(msg == WM_ACTIVATE) {
+            uint dpi=GetDpiForWindow(h);
+            MARGINS margins=new MARGINS{top=dpi==0 ? 0 : GetSystemMetricsForDpi(SM_CYCAPTION,dpi)};
+            int hr=DwmExtendFrameIntoClientArea(h,ref margins);
+            Console.Error.WriteLine("pure-custom-frame extend hr={0} dpi={1}",hr,dpi);
+        }
+        if(msg == WM_NCHITTEST) Console.Error.WriteLine("pure-custom-frame HIT zoom={0} dwm={1} dwmResult={2} final={3}",IsZoomed(h)!=0,dwmHandled,dwmResult,answer);
+        return answer;
     }
 
     static int Remaining(Stopwatch total, int requested) {
@@ -247,7 +286,7 @@ public static class NativeCaptionProbe {
         if(!done.WaitOne(0)) throw new TimeoutException("UI pump exceeded total 30 second bound");
     }
 
-    public static string Run(string outputDirectory) {
+    public static string Run(string outputDirectory, bool taoBlur) {
         var started=Stopwatch.StartNew(); var actions=new List<object>(); var errors=new List<string>();
         var checks=new List<Dictionary<string,object>>(); var metadata=Dict("hostIsWindows",true,"powershellVersionRequirement","7+","FullAppAccepted",false);
         var done=new ManualResetEvent(false); Exception workerError=null; bool registered=false; bool created=false;
@@ -265,8 +304,25 @@ public static class NativeCaptionProbe {
             proc=new WndProc(WndProcImpl);
             WNDCLASSEX wc=new WNDCLASSEX{cbSize=(uint)Marshal.SizeOf(typeof(WNDCLASSEX)),lpfnWndProc=proc,hInstance=module,lpszClassName=className};
             if(RegisterClassEx(ref wc)==0) throw new Exception("RegisterClassEx failed, Win32="+Marshal.GetLastWin32Error()); registered=true;
-            hwnd=CreateWindowEx(0,className,title,WS_OVERLAPPEDWINDOW|WS_VISIBLE,32,32,640,480,IntPtr.Zero,IntPtr.Zero,module,IntPtr.Zero);
+            hwnd=CreateWindowEx(0,className,title,WS_OVERLAPPEDWINDOW,32,32,640,480,IntPtr.Zero,IntPtr.Zero,module,IntPtr.Zero);
             if(hwnd==IntPtr.Zero) throw new Exception("CreateWindowEx failed, Win32="+Marshal.GetLastWin32Error()); created=true;
+            metadata["taoBlur"] = taoBlur;
+            if(taoBlur) {
+                IntPtr region=CreateRectRgn(0,0,-1,-1);
+                if(region==IntPtr.Zero) throw new Exception("Tao blur region allocation failed");
+                try {
+                    DWM_BLURBEHIND blur=new DWM_BLURBEHIND{flags=3,enable=1,region=region,transition=0};
+                    int hr=DwmEnableBlurBehindWindow(hwnd,ref blur);
+                    metadata["taoBlurHResult"]=hr;
+                    if(hr<0) throw new Exception("Tao blur DWM call failed: "+hr);
+                } finally { DeleteObject(region); }
+            }
+            MARGINS customMargins=new MARGINS{top=GetSystemMetricsForDpi(SM_CYCAPTION,GetDpiForWindow(hwnd))};
+            if(customMargins.top<=0 || DwmExtendFrameIntoClientArea(hwnd,ref customMargins)<0) throw new Exception("Pure custom DWM extension failed");
+            if(SetWindowPos(hwnd,IntPtr.Zero,0,0,0,0,0x37)==0) throw new Exception("Pure custom frame-change failed");
+            metadata["scope"]="Pure Win32 custom NCCALCSIZE plus DWM margins; no Wry child or product backend";
+            ShowWindow(hwnd,5);
+
             uiThread=GetWindowThreadProcessId(hwnd,out ownerPid);
             metadata["windowTitle"]=title; metadata["windowOuterBoundsRequested"] = Dict("x",32,"y",32,"width",640,"height",480);
             metadata["windowDpi"] = GetDpiForWindow(hwnd); metadata["windowThreadId"]=uiThread; metadata["windowProcessId"]=ownerPid;
@@ -351,7 +407,7 @@ public static class NativeCaptionProbe {
 
 try {
     Add-Type -TypeDefinition $source -Language CSharp -ErrorAction Stop
-    $json = [NativeCaptionProbe]::Run([System.IO.Path]::GetFullPath($OutputDirectory))
+    $json = [NativeCaptionProbe]::Run([System.IO.Path]::GetFullPath($OutputDirectory), [bool]$TaoBlur)
     [Console]::WriteLine($json)
     $result = $json | ConvertFrom-Json
     if (-not $result.passed) { exit 1 }
