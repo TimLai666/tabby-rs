@@ -275,6 +275,10 @@ mod probe {
         })
     }
     fn verify_real_hover(point: POINT, button: usize) -> Result<(), String> {
+        EXPECTED_POINT.store(
+            (point.x as u16 as u32) | ((point.y as u16 as u32) << 16),
+            Ordering::Release,
+        );
         let before_child = CHILD_REAL_MOVES.load(Ordering::Acquire);
         let before_root = ROOT_MOVES.load(Ordering::Acquire);
         move_cursor(POINT {
@@ -363,6 +367,15 @@ mod probe {
                 return Err("ClientToScreen failed".into());
             }
             eprintln!("caption_visual_probe identity: pid={} parent={parent:#x} dpiScale={scale} point={},{}",std::process::id(),point.x,point.y);
+            let glyph = POINT {
+                x: point.x - 5,
+                y: point.y - 5,
+            };
+            let corner = POINT {
+                x: point.x - (rect.right - rect.left) / 2 + 3,
+                y: point.y - (rect.bottom - rect.top) / 2 + 3,
+            };
+
             let mut baseline_color = 0;
             let baseline = wait("baseline actual HTML pixel", || {
                 baseline_color = pixel(point)?;
@@ -443,18 +456,66 @@ mod probe {
             wait("exactly two UIA Invokes reach owned root", || {
                 Ok(CHILD_COMMANDS.load(Ordering::Acquire) == 2)
             })?;
-            verify_real_hover(point, overlay)?;
+            for hit in [point, glyph, corner] {
+                verify_real_hover(hit, overlay)?;
+            }
             wait("HTML pixels survive transparent hit overlay", || {
-                Ok(pixel(point)? == 0x00cc8800)
+                Ok(pixel(point)? == 0x00cc8800 && pixel(corner)? == 0x00cc8800)
             })?;
-            let glyph = POINT {
-                x: point.x - 5,
-                y: point.y - 5,
-            };
             wait("actual white self-painted glyph pixel", || {
-                Ok(pixel(glyph)? == 0x00ffffff)
+                Ok(pixel(glyph)? == 0x00ffffff
+                    && pixel(point)? == 0x00cc8800
+                    && pixel(corner)? == 0x00cc8800)
             })?;
             capture_owned(window, "white-symbol")?;
+            let layer = on_ui(window, move || unsafe {
+                let class: Vec<u16> = "STATIC\0".encode_utf16().collect();
+                let visual = FindWindowExW(
+                    overlay as HWND,
+                    std::ptr::null_mut(),
+                    class.as_ptr(),
+                    std::ptr::null(),
+                );
+                if visual.is_null() {
+                    return Err("owned visual is absent for error checks".into());
+                }
+                for (width, height) in [
+                    (0, 32),
+                    (46, 0),
+                    (-1, 32),
+                    (9, 32),
+                    (46, 9),
+                    (i32::MAX, i32::MAX),
+                ] {
+                    if super::button::visual::render(visual, width, height, 0x00ffffff, false)
+                        .is_ok()
+                    {
+                        return Err(format!(
+                            "invalid visual dimensions accepted: {width}x{height}"
+                        ));
+                    }
+                }
+                if super::button::visual::render(std::ptr::null_mut(), 46, 32, 0x00ffffff, false)
+                    .is_ok()
+                {
+                    return Err("null visual accepted".into());
+                }
+                Ok(visual as usize)
+            })?;
+            if unsafe { super::button::visual::render(layer as HWND, 46, 32, 0x00ffffff, false) }
+                .is_ok()
+            {
+                return Err("visual renderer accepted wrong UI thread".into());
+            }
+            wait(
+                "invalid render requests preserve white glyph and transparent corners",
+                || {
+                    Ok(pixel(glyph)? == 0x00ffffff
+                        && pixel(point)? == 0x00cc8800
+                        && pixel(corner)? == 0x00cc8800)
+                },
+            )?;
+
             on_ui(window, move || unsafe {
                 super::button::set_symbol_color(overlay as HWND, 0x00d050b0)
             })?;
@@ -462,17 +523,23 @@ mod probe {
                 Ok(pixel(glyph)? == 0x00d050b0)
             })?;
             wait("hollow glyph center preserves blue HTML", || {
-                Ok(pixel(point)? == 0x00cc8800)
+                Ok(pixel(point)? == 0x00cc8800 && pixel(corner)? == 0x00cc8800)
             })?;
             on_ui(window, move || unsafe {
                 super::button::set_hover(overlay as HWND, true)
             })?;
             wait(
                 "actual white-alpha26 hover over blue and retained configured glyph",
-                || Ok(near_color(pixel(point)?, 0x00d1941a) && pixel(glyph)? == 0x00d050b0),
+                || {
+                    Ok(near_color(pixel(point)?, 0x00d1941a)
+                        && near_color(pixel(corner)?, 0x00d1941a)
+                        && pixel(glyph)? == 0x00d050b0)
+                },
             )?;
             capture_owned(window, "blue-hover")?;
-            verify_real_hover(point, overlay)?;
+            for hit in [point, glyph, corner] {
+                verify_real_hover(hit, overlay)?;
+            }
             check_accessible_button(window, overlay, "hover")?;
             wait("exactly three UIA Invokes reach owned root", || {
                 Ok(CHILD_COMMANDS.load(Ordering::Acquire) == 3)
@@ -482,7 +549,11 @@ mod probe {
                 .map_err(|e| e.to_string())?;
             wait(
                 "HTML repaint preserves orange-alpha26 hover blend and configured glyph",
-                || Ok(near_color(pixel(point)?, 0x004760dc) && pixel(glyph)? == 0x00d050b0),
+                || {
+                    Ok(near_color(pixel(point)?, 0x004760dc)
+                        && near_color(pixel(corner)?, 0x004760dc)
+                        && pixel(glyph)? == 0x00d050b0)
+                },
             )?;
             capture_owned(window, "repainted-hover")?;
             on_ui(window, move || unsafe {
@@ -490,9 +561,15 @@ mod probe {
             })?;
             wait(
                 "cleared hover preserves exact orange HTML and configured glyph",
-                || Ok(pixel(point)? == 0x00324ed8 && pixel(glyph)? == 0x00d050b0),
+                || {
+                    Ok(pixel(point)? == 0x00324ed8
+                        && pixel(corner)? == 0x00324ed8
+                        && pixel(glyph)? == 0x00d050b0)
+                },
             )?;
-            verify_real_hover(point, overlay)?;
+            for hit in [point, glyph, corner] {
+                verify_real_hover(hit, overlay)?;
+            }
             capture_owned(window, "repainted-clear")?;
             if CHILD_COMMANDS.load(Ordering::Acquire) != 3 {
                 return Err("UIA command count changed or duplicated".into());

@@ -1,7 +1,7 @@
 // Disposable experiment slot. No product code includes this file.
 use std::{cell::Cell, sync::Arc};
 #[path = "visual.rs"]
-mod visual;
+pub(super) mod visual;
 use windows_sys::Win32::UI::Controls::DRAWITEMSTRUCT;
 use windows_sys::Win32::{
     Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM},
