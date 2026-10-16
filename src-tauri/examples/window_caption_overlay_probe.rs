@@ -318,7 +318,7 @@ mod probe {
         let handle = app.handle().clone();
         let worker = std::thread::spawn(move || {
             let result = ready_receive
-                .recv_timeout(WAIT)
+                .recv_timeout(Duration::from_secs(60))
                 .map_err(|e| e.to_string())
                 .and_then(|window| {
                     let hwnd = window.hwnd().map_err(|e| e.to_string())?.0 as usize;
