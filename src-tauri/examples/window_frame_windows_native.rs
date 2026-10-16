@@ -425,8 +425,10 @@ fn run_checks(
             };
             let result = (|| {
                 let root = saved_root as windows_sys::Win32::Foundation::HWND;
-                let child = unsafe { webview.controller().ParentWindow() }
-                    .map_err(|error| format!("controller parent: {error}"))?.0;
+                let mut parent = unsafe { std::mem::zeroed() };
+                unsafe { webview.controller().ParentWindow(&mut parent) }
+                    .map_err(|error| format!("controller parent: {error}"))?;
+                let child = parent.0;
                 if child.is_null() || unsafe { IsWindow(root) } == 0
                     || unsafe { IsWindow(child) } == 0
                     || unsafe { GetParent(child) } != root {
