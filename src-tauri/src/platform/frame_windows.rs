@@ -5,19 +5,20 @@ use std::sync::mpsc::sync_channel;
 #[path = "frame_windows_region.rs"]
 mod region;
 
-use windows_sys::Win32::Foundation::{HWND, RECT};
+use windows_sys::Win32::Foundation::{HWND, POINT, RECT};
 use windows_sys::Win32::Graphics::Dwm::{DwmDefWindowProc, DwmExtendFrameIntoClientArea};
+use windows_sys::Win32::Graphics::Gdi::ClientToScreen;
 use windows_sys::Win32::UI::Controls::MARGINS;
 use windows_sys::Win32::UI::HiDpi::{GetDpiForWindow, GetSystemMetricsForDpi};
 use windows_sys::Win32::UI::Shell::{
     DefSubclassProc, GetWindowSubclass, RemoveWindowSubclass, SetWindowSubclass,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    DefWindowProcW, GetWindowLongPtrW, GetWindowRect, IsIconic, IsWindow, IsZoomed, SetWindowPos,
-    GWL_STYLE, HTCLOSE, HTMAXBUTTON, HTMINBUTTON, SM_CYCAPTION, SWP_FRAMECHANGED, SWP_NOACTIVATE,
-    SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, TITLEBARINFOEX, WM_ACTIVATE, WM_DPICHANGED,
-    WM_DWMCOMPOSITIONCHANGED, WM_GETTITLEBARINFOEX, WM_NCCALCSIZE, WM_NCDESTROY, WM_NCHITTEST,
-    WM_SHOWWINDOW, WM_STYLECHANGED, WM_WINDOWPOSCHANGED, WS_CAPTION,
+    DefWindowProcW, GetWindowLongPtrW, GetWindowRect, IsIconic, IsWindow, IsWindowVisible,
+    IsZoomed, SetWindowPos, GWL_STYLE, HTCLOSE, HTMAXBUTTON, HTMINBUTTON, SM_CYCAPTION,
+    SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, TITLEBARINFOEX,
+    WM_ACTIVATE, WM_DPICHANGED, WM_DWMCOMPOSITIONCHANGED, WM_GETTITLEBARINFOEX, WM_NCCALCSIZE,
+    WM_NCDESTROY, WM_NCHITTEST, WM_SHOWWINDOW, WM_STYLECHANGED, WM_WINDOWPOSCHANGED, WS_CAPTION,
 };
 
 const FRAME_SUBCLASS_ID: usize = 0x5441_4242;
@@ -159,7 +160,10 @@ unsafe fn set_window_frame_hwnd(hwnd: HWND, native: bool) -> Result<(), AppError
     }
 
     if !native {
-        if let Err(error) = region::refresh(hwnd) {
+        if let Err(error) = extend_custom_frame(hwnd)
+            .map_err(io_error)
+            .and_then(|_| region::refresh(hwnd))
+        {
             return Err(with_rollback(
                 &format!("could not expose the native caption controls: {error}"),
                 restore_original_frame(hwnd, had_subclass, was_active),
@@ -484,10 +488,30 @@ fn custom_margins(hwnd: HWND) -> Result<MARGINS, String> {
             cyBottomHeight: 0,
         });
     }
+    let mut height = caption_height(hwnd)?;
+    if unsafe { IsWindowVisible(hwnd) } != 0 && unsafe { IsIconic(hwnd) } == 0 {
+        let buttons = region::caption_button_bounds(hwnd).map_err(|error| error.to_string())?;
+        let mut outer = RECT {
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+        };
+        let mut origin = POINT { x: 0, y: 0 };
+        if unsafe { GetWindowRect(hwnd, &mut outer) } == 0
+            || unsafe { ClientToScreen(hwnd, &mut origin) } == 0
+        {
+            return Err("could not locate the caption overlay in the client area".into());
+        }
+        let bottom = i64::from(outer.top) + i64::from(buttons.bottom) - i64::from(origin.y);
+        let bottom =
+            i32::try_from(bottom).map_err(|_| "caption overlay exceeds DWM margin coordinates")?;
+        height = height.max(bottom);
+    }
     Ok(MARGINS {
         cxLeftWidth: 0,
         cxRightWidth: 0,
-        cyTopHeight: caption_height(hwnd)?,
+        cyTopHeight: height,
         cyBottomHeight: 0,
     })
 }

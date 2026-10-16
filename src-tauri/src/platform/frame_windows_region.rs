@@ -247,26 +247,7 @@ fn refresh_guarded(parent: HWND, child: HWND) -> Result<(), AppError> {
         return set_region(child, std::ptr::null_mut());
     }
 
-    let mut buttons = RECT {
-        left: 0,
-        top: 0,
-        right: 0,
-        bottom: 0,
-    };
-    let hr = unsafe {
-        DwmGetWindowAttribute(
-            parent,
-            DWMWA_CAPTION_BUTTON_BOUNDS as u32,
-            &mut buttons as *mut RECT as *mut c_void,
-            std::mem::size_of::<RECT>() as u32,
-        )
-    };
-    if hr < 0 || buttons.right <= buttons.left || buttons.bottom <= buttons.top {
-        return Err(io_error(format!(
-            "DWM returned invalid caption-button bounds (HRESULT 0x{:08x})",
-            hr as u32
-        )));
-    }
+    let buttons = caption_button_bounds(parent)?;
 
     let left = i64::from(parent_rect.left) + i64::from(buttons.left) - i64::from(child_rect.left);
     let top = i64::from(parent_rect.top) + i64::from(buttons.top) - i64::from(child_rect.top);
@@ -300,6 +281,31 @@ fn refresh_guarded(parent: HWND, child: HWND) -> Result<(), AppError> {
     }
     unsafe { DeleteObject(hole_region) };
     set_region(child, full)
+}
+
+pub(super) fn caption_button_bounds(parent: HWND) -> Result<RECT, AppError> {
+    let mut buttons = RECT {
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+    };
+    let hr = unsafe {
+        DwmGetWindowAttribute(
+            parent,
+            DWMWA_CAPTION_BUTTON_BOUNDS as u32,
+            &mut buttons as *mut RECT as *mut c_void,
+            std::mem::size_of::<RECT>() as u32,
+        )
+    };
+    if hr < 0 || buttons.right <= buttons.left || buttons.bottom <= buttons.top {
+        return Err(io_error(format!(
+            "DWM returned invalid caption-button bounds (HRESULT 0x{:08x})",
+            hr as u32
+        )));
+    }
+
+    Ok(buttons)
 }
 
 fn set_region(

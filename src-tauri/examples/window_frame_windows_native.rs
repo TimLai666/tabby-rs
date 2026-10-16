@@ -37,7 +37,7 @@ mod platform;
 fn main() {
     if std::env::args().any(|argument| argument == "--help" || argument == "-h") {
         println!(
-            "window_frame_windows_native: Windows-only native frame and real caption-button input checks. On Windows it creates two transparent Wry windows and an isolated temporary WebView data directory; it changes frame styles, moves the cursor, clicks only fresh native caption-button rectangles, changes window state, and closes/destroys only those two windows. On other platforms it performs no native checks."
+            "window_frame_windows_native: Windows-only native frame and real caption-button input checks. On Windows it creates two transparent Wry windows and an isolated temporary WebView data directory; it changes frame styles, moves the cursor, clicks only fresh native caption-button rectangles, checks fullscreen round trips and retained keyboard-focus properties, changes window state, and closes/destroys only those two windows. On other platforms it performs no native checks."
         );
     } else {
         eprintln!(
@@ -52,7 +52,7 @@ fn main() {
 
     if std::env::args().any(|argument| argument == "--help" || argument == "-h") {
         println!(
-            "window_frame_windows_native: checks native caption styles, outer bounds, independent-window isolation, real minimize/maximize/restore/close button input, and frame calls after close. Requests two transparent Wry windows with 640x480 inner size at (32,32) and (64,64), plus an isolated temporary WebView data directory; it moves the cursor and clicks only freshly checked caption-button centers on those windows, then closes/destroys only those windows and removes the data directory. It does not verify composited desktop pixels, CSS dragging, PTY behavior, full-app behavior, restart behavior, or geometry persistence."
+            "window_frame_windows_native: checks native caption styles, outer bounds, independent-window isolation, real minimize/maximize/direct-restore/close button input, maximized minimize and close, fullscreen round trips from ordinary and maximized states, retained keyboard-focus properties, and frame calls after close. Requests two transparent Wry windows with 640x480 inner size at (32,32) and (64,64), plus an isolated temporary WebView data directory; it moves the cursor and clicks only freshly checked caption-button centers on those windows, then closes/destroys only those windows and removes the data directory. It does not verify composited desktop pixels, CSS dragging, PTY behavior, full-app behavior, restart behavior, or geometry persistence."
         );
         return;
     }

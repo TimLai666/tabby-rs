@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { spawn, spawnSync } from 'node:child_process'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -117,6 +117,16 @@ export async function exerciseWindowsFrame (options) {
             throw new Error('interrupted probe did not prove a real independent LEFTUP after termination')
         }
     }
+    const nativeScreenshot = async name => {
+        phase = `native screenshot ${name}`
+        if (typeof options.captureNativeWindow !== 'function') throw new Error('owned native screenshot callback is required')
+        const directory = path.join(outputDirectory, `native-${name}`)
+        mkdirSync(directory)
+        const capture = await options.captureNativeWindow(directory)
+        result.nativeCaptures ??= {}
+        result.nativeCaptures[name] = capture
+        if (!capture.ok || capture.data?.appProcessId !== ownerPid || Number.parseInt(String(capture.data?.hwnd), 16) !== ownerHwnd) throw new Error('native screenshot did not confirm the original owned HWND')
+    }
     const pty = async name => {
         phase = `PTY ${name}`
         const file = path.join(outputDirectory, `pty-${name}.txt`)
@@ -208,11 +218,13 @@ export async function exerciseWindowsFrame (options) {
         phase = 'caption max/restore'
         native('Maximize')
         await pty('maximized')
+        await nativeScreenshot('maximized')
         const restored = native('Restore')
         for (const edge of ['left', 'top', 'right', 'bottom']) {
             if (restored.outer[edge] !== resized.outer[edge]) throw new Error(`restore changed the ordinary outer ${edge}`)
         }
         await pty('restored')
+        await nativeScreenshot('restored')
         phase = 'settings visibility'
         await page.keyboard.press('Control+,', { timeout: timeout(5000) })
         const navigation = page.locator('settings-tab .nav-pills a')
@@ -235,6 +247,6 @@ export async function exerciseWindowsFrame (options) {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-    process.stdout.write('exercise-windows-frame.mjs exports exerciseWindowsFrame(options) for the owned full-app capture controller. It requires an existing page, PID/creation identity, HWND, deadline and fresh output directory. Exercises actual native input and PTY output; does not accept Full/Native restart, secondary windows or platform parity.\n')
+    process.stdout.write('exercise-windows-frame.mjs exports exerciseWindowsFrame(options) for the owned full-app capture controller. It requires an existing page, PID/creation identity, HWND, deadline, an owned captureNativeWindow(directory) callback and fresh output directory. Captures native composited max/restore states for manual pixel comparison. Exercises actual native input and PTY output; does not accept Full/Native restart, secondary windows or platform parity.\n')
     if (!process.argv.includes('--help') && !process.argv.includes('-h')) process.exitCode = 2
 }

@@ -815,6 +815,9 @@ async function main () {
                     ownerCreationUtc: info.rootIdentity.creationTimeUTC,
                     ownerHwnd: Number.parseInt(String(info.nativeWindow.data.hwnd), 16),
                     outputDirectory: directory, deadline: context.deadline, powerShell,
+                    captureNativeWindow: captureDirectory => runNativeWindowCapture(
+                        { ...context, nativeCaptureTimeoutMs: 30000 }, info.pid, captureDirectory,
+                        Number.parseInt(String(info.nativeWindow.data.hwnd), 16)),
                 })
                 if (!info.frameInteraction.ok) result.errors.push(app.role + ' frame interaction: ' + info.frameInteraction.error)
                 checkpoint(context, app.role + '-frame-interaction-complete')

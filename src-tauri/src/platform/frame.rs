@@ -84,7 +84,7 @@ pub fn set_window_frame(window: &tauri::WebviewWindow, frame: &str) -> Result<()
     {
         let _ = (window, native);
         Err(AppError::Unsupported(
-            "window frame is available only on macOS".into(),
+            "window frame is available only on macOS and Windows".into(),
         ))
     }
 }
