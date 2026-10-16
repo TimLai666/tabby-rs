@@ -234,6 +234,16 @@ public static class ExistingWindowInput {
         Check(expected!=0,"caption index is unsupported");
         return HitTest(x,y)==expected;
     }
+    public static Dictionary<string,object> InspectCaptionPoint(int index,int x,int y) {
+        IntPtr previous=SetThreadDpiAwarenessContext(new IntPtr(-4));
+        Check(previous!=IntPtr.Zero,"could not set caption inspection DPI awareness");
+        try {
+            Validate(); POINT point=new POINT{x=x,y=y}; IntPtr under=WindowFromPoint(point),root=GetAncestor(under,GA_ROOT);
+            uint underPid; GetWindowThreadProcessId(under,out underPid);
+            var name=new StringBuilder(256); GetClassNameW(under,name,name.Capacity);
+            return new Dictionary<string,object>{{"matched",CaptionPointMatches(index,x,y)},{"underHwnd",under.ToInt64()},{"underRootHwnd",root.ToInt64()},{"expectedRootHwnd",hwnd.ToInt64()},{"underPid",underPid},{"underClass",name.ToString()},{"hitTest",HitTest(x,y)}};
+        } finally { Check(SetThreadDpiAwarenessContext(previous)!=IntPtr.Zero,"could not restore caption inspection DPI awareness"); }
+    }
     public static bool MatchesCaptionPoint(int index,int x,int y) {
         IntPtr previous=SetThreadDpiAwarenessContext(new IntPtr(-4));
         Check(previous!=IntPtr.Zero,"could not set caption discovery DPI awareness");
@@ -368,7 +378,8 @@ public static class CaptionAutomationProviders {
         if ($rect.IsEmpty -or $rect.Width -le 0 -or $rect.Height -le 0) { continue }
         $x = [int][Math]::Floor($rect.X + $rect.Width/2)
         $y = [int][Math]::Floor($rect.Y + $rect.Height/2)
-        $observation.nativeMatch = [ExistingWindowInput]::MatchesCaptionPoint($Index,$x,$y)
+        $observation['nativeInspection'] = [ExistingWindowInput]::InspectCaptionPoint($Index,$x,$y)
+        $observation.nativeMatch = $observation['nativeInspection']['matched']
         if ($observation.nativeMatch) { $matches += ,$button }
     }
     if ($matches.Count -ne 1) { throw "Expected exactly one accessible owned native caption control; found $($matches.Count)" }
