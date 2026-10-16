@@ -42,14 +42,14 @@ function usage () {
         '  node scripts/ci/capture-windows-apps.mjs --reference-exe ABS --rs-exe ABS \\',
         '       --output FRESH_ABS_DIR --source-revision SHA [--reference-port 9222] [--rs-port 9223]',
         '',
-        'Optional --flow startup (default) or terminal (real keyboard and second-instance paste).',
+        'Optional --flow startup, terminal (keyboard and CLI paste), or frame (native drag/resize and PTY).',
         'CDP ports must be distinct integers from 1 through 65535; defaults are 9222 and 9223.',
         'Both executable paths must name actual application copies with empty adjacent data directories.',
         'The reference receives PORTABLE_EXECUTABLE_FILE to disable its automatic updater.',
         'The native build must already expose its specified CDP port; this tool does not enable it.',
         'Terminal flow executes bounded marker commands, replaces the Windows clipboard, and confirms',
         'only the owned native Paste modal containing its unique test token. It saves failure screenshots.',
-        'Both flows forcibly stop the owned app processes afterward; application Quit remains untested.',
+        'All flows forcibly stop the owned app processes afterward; application Quit remains untested.',
         'Runs on Windows only. Produces actual application diagnostics under --output.',
         'Exit codes: 0 required checks passed (or help), 1 capture failed, 2 invalid arguments.',
         'This capture supplies diagnostic evidence; it does not establish full parity.',
@@ -197,7 +197,7 @@ function validateOptions (values) {
     }
 
     const flow = values.flow ?? 'startup'
-    if (!['startup', 'terminal'].includes(flow)) errors.push('--flow: must be startup or terminal')
+    if (!['startup', 'terminal', 'frame'].includes(flow)) errors.push('--flow: must be startup, terminal or frame')
     return { errors, referencePort, rsPort, flow }
 }
 
@@ -630,6 +630,10 @@ function computeOutcome (result) {
         result.checks.referenceTerminalInteraction = reference.terminalInteraction?.ok === true
         result.checks.nativeTerminalInteraction = native.terminalInteraction?.ok === true
     }
+    if (result.flow === 'frame') {
+        result.checks.referenceFrameInteraction = reference.frameInteraction?.ok === true
+        result.checks.nativeFrameInteraction = native.frameInteraction?.ok === true
+    }
     result.ok = Object.values(result.checks).every(Boolean)
     return result
 }
@@ -736,7 +740,7 @@ async function main () {
     }
 
     const powerShell = resolvePowerShell()
-    const cleanupDeadline = Date.parse(result.startedAt) + (flow === 'terminal' ? TERMINAL_TIMEOUT_MS : TOTAL_TIMEOUT_MS)
+    const cleanupDeadline = Date.parse(result.startedAt) + (flow !== 'startup' ? TERMINAL_TIMEOUT_MS : TOTAL_TIMEOUT_MS)
     const context = { output, result, deadline: cleanupDeadline - 45000, cleanupDeadline, powerShell, chromium, running: new Map() }
     checkpoint(context, 'starting')
     const watchdog = setTimeout(() => {
@@ -790,6 +794,29 @@ async function main () {
             }
             result.unverified = result.unverified.filter(item => !item.startsWith('local terminal input') && !item.startsWith('second-invocation paste'))
             result.unverified.push('terminal interaction acceptance requires reviewing the actual per-app results and screenshots')
+        }
+        if (flow === 'frame') {
+            const { exerciseWindowsFrame } = await import('./exercise-windows-frame.mjs')
+            for (const app of apps) {
+                const run = context.running.get(app.role)
+                const info = result[app.role]
+                if (!run?.page || !info.rootIdentity || !info.nativeWindow?.ok || info.cdp.error || info.error) {
+                    info.frameInteraction = { ok: false, error: 'actual startup did not establish an owned HWND, usable page and process identity' }
+                    continue
+                }
+                const directory = path.join(output, app.role, 'frame-interaction')
+                mkdirSync(directory)
+                checkpoint(context, app.role + '-frame-interaction')
+                info.frameInteraction = await exerciseWindowsFrame({
+                    page: run.page, role: app.role, ownerPid: info.pid,
+                    ownerCreationUtc: info.rootIdentity.creationTimeUTC,
+                    ownerHwnd: Number.parseInt(String(info.nativeWindow.data.hwnd), 16),
+                    outputDirectory: directory, deadline: context.deadline, powerShell,
+                })
+                if (!info.frameInteraction.ok) result.errors.push(app.role + ' frame interaction: ' + info.frameInteraction.error)
+                checkpoint(context, app.role + '-frame-interaction-complete')
+            }
+            result.unverified.push('Full/Native frame restart, secondary windows, cross-DPI and geometry persistence were not exercised')
         }
         result.bothAliveBeforeTeardown = apps.every(app => {
             const run = context.running.get(app.role)
