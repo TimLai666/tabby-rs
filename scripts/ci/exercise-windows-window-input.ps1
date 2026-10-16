@@ -71,7 +71,7 @@ public static class ExistingWindowInput {
     const uint GA_ROOT=2, WM_GETTITLEBARINFOEX=0x033F, WM_NCHITTEST=0x0084;
     const uint SMTO_BLOCK=1, SMTO_ABORTIFHUNG=2, INPUT_MOUSE=0;
     const uint LEFTDOWN=2, LEFTUP=4, STATE_UNAVAILABLE=1, STATE_INVISIBLE=0x8000, STATE_OFFSCREEN=0x10000;
-    const int HTRIGHT=11, VK_LBUTTON=1;
+    const int HTRIGHT=11, VK_LBUTTON=1, DRAG_STEPS=12;
     static IntPtr hwnd; static int pid; static long creationFileTime; static bool buttonDown; static string journalPath;
     [StructLayout(LayoutKind.Sequential)] struct POINT { public int x,y; }
     [StructLayout(LayoutKind.Sequential)] struct RECT { public int left,top,right,bottom; }
@@ -197,23 +197,30 @@ public static class ExistingWindowInput {
         throw new InvalidOperationException("injected cursor motion did not reach the exact requested point");
     }
     static void MoveGradually(int x0,int y0,int x1,int y1) {
-        const int steps=12;
-        for(int i=1;i<=steps;i++) {
+        for(int i=1;i<=DRAG_STEPS;i++) {
             Validate(); Check(GetForegroundWindow()==hwnd,"foreground changed during mouse input");
-            int x=x0+(int)Math.Round((x1-x0)*(i/(double)steps)), y=y0+(int)Math.Round((y1-y0)*(i/(double)steps));
+            int x=x0+(int)Math.Round((x1-x0)*(i/(double)DRAG_STEPS)), y=y0+(int)Math.Round((y1-y0)*(i/(double)DRAG_STEPS));
             SendMove(x,y); POINT actual=ReadCursor();
             Check(actual.x==x&&actual.y==y,"cursor was clipped during gradual movement");
             IntPtr under=WindowFromPoint(actual); Check(under!=IntPtr.Zero&&GetAncestor(under,GA_ROOT)==hwnd,"gradual mouse movement reached a foreign window"); Thread.Sleep(20);
         }
     }
+    static bool DragAxisMatches(int requested,int observed) {
+        if(requested==0)return observed==0;
+        if(Math.Sign(observed)!=Math.Sign(requested))return false;
+        // Chromium starts its native move loop on the first movement sample.
+        // Permit at most that sample to be consumed, plus normal pixel rounding.
+        int missing=Math.Abs(requested)-Math.Abs(observed);
+        return missing>=-3 && missing<=(int)Math.Ceiling(Math.Abs(requested)/(double)DRAG_STEPS)+3;
+    }
     static void WaitGeometry(RECT before,string action,int dx,int dy) {
         var sw=Stopwatch.StartNew(); RECT r;
         while(sw.ElapsedMilliseconds<3000) { Validate(); Check(GetWindowRect(hwnd,out r)!=0,"GetWindowRect failed after input");
-            if(action=="Drag" && Math.Abs((r.left-before.left)-dx)<=3 && Math.Abs((r.top-before.top)-dy)<=3 && r.right-r.left==before.right-before.left && r.bottom-r.top==before.bottom-before.top) return;
+            if(action=="Drag" && DragAxisMatches(dx,r.left-before.left) && DragAxisMatches(dy,r.top-before.top) && r.right-r.left==before.right-before.left && r.bottom-r.top==before.bottom-before.top) return;
             if(action=="Resize" && Math.Abs((r.right-before.right)-dx)<=3 && r.left==before.left && r.top==before.top && r.bottom==before.bottom) return;
             Thread.Sleep(40);
         }
-        throw new InvalidOperationException(action+" geometry change was not observed within 3 pixels");
+        throw new InvalidOperationException(action+" geometry did not match the requested motion (drag allows one initial sample; resize allows 3 pixels)");
     }
     static int HitTest(int x,int y) { long p=((long)(ushort)x)|((long)(ushort)y<<16); UIntPtr result; Check(SendMessageTimeoutW(hwnd,WM_NCHITTEST,UIntPtr.Zero,new IntPtr(p),SMTO_BLOCK|SMTO_ABORTIFHUNG,1000,out result)!=IntPtr.Zero,"WM_NCHITTEST timed out"); return unchecked((int)result.ToUInt64()); }
     static POINT CaptionCenter(int index) {
