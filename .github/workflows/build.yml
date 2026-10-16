@@ -56,6 +56,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Capture controller syntax failed' }
           node --check scripts/ci/exercise-windows-terminal.mjs
           if ($LASTEXITCODE -ne 0) { throw 'Terminal interaction syntax failed' }
+          node --check scripts/ci/capture-exited-process-fixture.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Process-exit fixture syntax failed' }
           node scripts/ci/capture-windows-apps.mjs --help
           if ($LASTEXITCODE -ne 0) { throw 'Capture controller help failed' }
           foreach ($script in @('capture-windows-app-window.ps1', 'press-windows-app-dialog.ps1', 'modal-observer-fixture.ps1')) {
@@ -82,6 +84,8 @@ jobs:
           New-Item -ItemType Directory -Path $toolRoot | Out-Null
           node scripts/ci/capture-lifecycle-fixture.mjs "$env:GITHUB_WORKSPACE/scripts/ci/capture-windows-apps.mjs" "$toolRoot/process-cleanup"
           if ($LASTEXITCODE -ne 0) { throw 'Actual process cleanup regression failed' }
+          node scripts/ci/capture-exited-process-fixture.mjs "$env:GITHUB_WORKSPACE/scripts/ci/capture-windows-apps.mjs" "$toolRoot/process-exit-race"
+          if ($LASTEXITCODE -ne 0) { throw 'Actual process exit race regression failed' }
           pwsh -NoProfile -File scripts/ci/modal-observer-fixture.ps1 -HelperPath "$env:GITHUB_WORKSPACE/scripts/ci/press-windows-app-dialog.ps1" -OutputDirectory "$toolRoot/modal-observer"
           if ($LASTEXITCODE -ne 0) { throw 'Actual native dialog observer regression failed' }
       - name: Restore Tauri icons
@@ -123,6 +127,13 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Actual native host compilation failed' }
           $native = Join-Path $env:GITHUB_WORKSPACE 'src-tauri/target/debug/tabby-rs.exe'
           if (-not (Test-Path -LiteralPath $native -PathType Leaf)) { throw 'Native executable is missing' }
+          $resourceExtras = Join-Path (Split-Path $native -Parent) 'resources/extras'
+          if (Test-Path -LiteralPath $resourceExtras) { throw 'Unexpected existing native diagnostic resources' }
+          New-Item -ItemType Directory -Path $resourceExtras | Out-Null
+          Copy-Item -LiteralPath "$env:GITHUB_WORKSPACE/extras/clink" -Destination (Join-Path $resourceExtras 'clink') -Recurse
+          Copy-Item -LiteralPath "$env:GITHUB_WORKSPACE/extras/UAC.exe" -Destination (Join-Path $resourceExtras 'UAC.exe')
+          if (-not (Test-Path -LiteralPath (Join-Path $resourceExtras 'clink/clink_x64.exe') -PathType Leaf)) { throw 'Native Clink resource is missing' }
+          Get-ChildItem -LiteralPath $resourceExtras -Recurse -File | Get-FileHash -Algorithm SHA256 | Select-Object Path, Hash | ConvertTo-Json -Depth 5 | Set-Content "$env:RUNNER_TEMP/tabby-rs-windows-desktop-compare/native-resource-hashes.json"
           $data = Join-Path (Split-Path $native -Parent) 'data'
           if (Test-Path -LiteralPath $data) { throw 'Unexpected pre-existing native portable data' }
           New-Item -ItemType Directory -Path $data | Out-Null
@@ -146,6 +157,16 @@ jobs:
           if (-not (Test-Path -LiteralPath $data)) { New-Item -ItemType Directory -Path $data | Out-Null }
           @{ tag = 'v1.0.235'; baselineCommit = '14e2d60b9b6dee84a53c37f05eefeb803787de04'; url = $url; sha256 = $hash; size = (Get-Item -LiteralPath $archive).Length; diagnosticRevision = $env:GITHUB_SHA; nativeProductBase = '9d8182060450802d5cbd28fee36a0a36325951d9' } | ConvertTo-Json -Depth 4 | Set-Content "$env:RUNNER_TEMP/tabby-rs-windows-desktop-compare/reference-build-metadata.json"
           "TABBY_DESKTOP_REFERENCE_EXE=$reference" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Preserve compiled diagnostic host for bounded tool reruns
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-desktop-native-${{ github.sha }}
+          path: |
+            src-tauri/target/debug/tabby-rs.exe
+            src-tauri/target/debug/resources
+          if-no-files-found: error
+          retention-days: 2
+
       - name: Capture both actual applications
         timeout-minutes: 10
         shell: pwsh
