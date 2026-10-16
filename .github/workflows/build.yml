@@ -149,6 +149,29 @@ jobs:
             if(!$one.Server.IsBound -or !$two.Server.IsBound){throw 'Listeners did not survive'}
             $global:LASTEXITCODE=0
           } finally {$one.Stop();$two.Stop()}
+      - name: Verify stale CIM cleanup with actual owned workers
+        timeout-minutes: 3
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $root=Join-Path $env:RUNNER_TEMP 'tabby-rs-windows-frame-reuse'
+          $baseline=Join-Path $root 'stale-cim-red-controller.mjs'
+          $text=(& git show 'e72d1479bd19f0a7c569e7f592da9e573e8141e7:scripts/ci/capture-windows-apps.mjs') -join "`n"
+          if($LASTEXITCODE){throw 'Exact pre-fix controller is unavailable'}
+          [IO.File]::WriteAllText($baseline,$text+[char]10,[Text.UTF8Encoding]::new($false))
+          node --check scripts/ci/capture-stale-cim-fixture.mjs
+          if($LASTEXITCODE){throw 'Stale CIM fixture syntax failed'}
+          node scripts/ci/capture-stale-cim-fixture.mjs --help
+          if($LASTEXITCODE){throw 'Stale CIM fixture help failed'}
+          node scripts/ci/capture-stale-cim-fixture.mjs $baseline (Join-Path $root 'stale-cim-red')
+          if($LASTEXITCODE -ne 1){throw 'Pre-fix stale CIM teardown must fail'}
+          $r=Get-Content (Join-Path $root 'stale-cim-red/result.json') -Raw|ConvertFrom-Json
+          if($r.status -cne 'FAIL' -or $r.error -or $r.injection.staleRowsDelivered.Count -ne 2 -or $r.assertions.actualTargetKillAndWait -ne $true -or $r.assertions.siblingPreservedInActualCimQuery -ne $true -or $r.assertions.targetAbsentInActualCimQuery -ne $true -or $r.assertions.fixtureChildrenReaped -ne $true -or $r.assertions.teardownSurvivorsEmpty -ne $false -or $r.assertions.teardownErrorNull -ne $false){throw 'RED did not prove the exact stale-CIM failure and cleanup'}
+          $global:LASTEXITCODE=0
+          node scripts/ci/capture-stale-cim-fixture.mjs (Join-Path $env:GITHUB_WORKSPACE 'scripts/ci/capture-windows-apps.mjs') (Join-Path $root 'stale-cim-green')
+          if($LASTEXITCODE){throw 'Fixed stale CIM teardown failed'}
+          $r=Get-Content (Join-Path $root 'stale-cim-green/result.json') -Raw|ConvertFrom-Json
+          if($r.status -cne 'PASS' -or $r.injection.staleRowsDelivered.Count -ne 2 -or @($r.assertions.psobject.Properties).Count -ne 10 -or @($r.assertions.psobject.Properties|Where-Object {$_.Value -ne $true}).Count){throw 'GREEN stale CIM readback is incomplete'}
       - name: Capture both actual applications
         timeout-minutes: 16
         shell: pwsh
@@ -166,5 +189,7 @@ jobs:
             ${{ runner.temp }}/tabby-rs-windows-frame-reuse/capture/**
             ${{ runner.temp }}/tabby-rs-windows-frame-reuse/preflight/**
             ${{ runner.temp }}/tabby-rs-windows-frame-reuse/cdp-occupied/**
+            ${{ runner.temp }}/tabby-rs-windows-frame-reuse/stale-cim-red/**
+            ${{ runner.temp }}/tabby-rs-windows-frame-reuse/stale-cim-green/**
           if-no-files-found: error
           retention-days: 7

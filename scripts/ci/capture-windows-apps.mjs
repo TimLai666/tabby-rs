@@ -592,7 +592,7 @@ async function teardownApp (context, info) {
     const encoded = Buffer.from(JSON.stringify(cleanup.tracked), 'utf8').toString('base64')
     const script = `$ErrorActionPreference = 'Stop'
 $entries = @([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encoded}')) | ConvertFrom-Json)
-$stopped = @(); $survivors = @(); $reused = @(); $exited = @(); $errors = @()
+$stopped = @(); $survivors = @(); $reused = @(); $exited = @(); $errors = @(); $attemptErrors = @{}
 foreach ($entry in $entries) {
     $current = Get-CimInstance Win32_Process -Filter "ProcessId = $($entry.pid)"
     if (-not $current) { continue }
@@ -606,14 +606,23 @@ foreach ($entry in $entries) {
         $after = Get-CimInstance Win32_Process -Filter "ProcessId = $($entry.pid)" -ErrorAction Stop
         if (-not $after) { $exited += $entry.pid }
         elseif ($after.CreationDate.ToUniversalTime().Ticks -ne ([DateTime]$entry.creationTimeUTC).ToUniversalTime().Ticks) { $reused += $entry.pid }
-        else { $errors += "PID $($entry.pid): $terminationError" }
+        else { $attemptErrors[[int]$entry.pid] = $terminationError }
     }
 }
-foreach ($entry in $entries) {
-    $current = Get-CimInstance Win32_Process -Filter "ProcessId = $($entry.pid)"
-    if ($current -and $current.CreationDate.ToUniversalTime().Ticks -eq ([DateTime]$entry.creationTimeUTC).ToUniversalTime().Ticks) { $survivors += $entry.pid }
+$verificationUntil = [DateTime]::UtcNow.AddSeconds(5)
+do {
+    $survivors = @()
+    foreach ($entry in $entries) {
+        $current = Get-CimInstance Win32_Process -Filter "ProcessId = $($entry.pid)"
+        if ($current -and $current.CreationDate.ToUniversalTime().Ticks -eq ([DateTime]$entry.creationTimeUTC).ToUniversalTime().Ticks) { $survivors += $entry.pid }
+    }
+    if (-not $survivors.Count) { break }
+    Start-Sleep -Milliseconds 50
+} while ([DateTime]::UtcNow -lt $verificationUntil)
+foreach ($failedPid in $attemptErrors.Keys) {
+    if ($survivors -contains $failedPid) { $errors += "PID $($failedPid): $($attemptErrors[$failedPid])" }
 }
-@{ stopped = @($stopped); survivors = @($survivors); reused = @($reused); exited = @($exited); errors = @($errors) } | ConvertTo-Json -Compress -Depth 4`
+@{ stopped = @($stopped); survivors = @($survivors); reused = @($reused); exited = @($exited); errors = @($errors); attemptErrors = $attemptErrors } | ConvertTo-Json -Compress -Depth 4`
     const output = runPowerShell(context.powerShell, script, Math.max(1000, Math.min(30000, context.cleanupDeadline - Date.now())))
     try {
         if (!output.ok) throw new Error(output.error || output.stderr || `process termination exited ${output.status}`)
