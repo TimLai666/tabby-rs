@@ -56,9 +56,13 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Capture controller syntax failed' }
           node scripts/ci/capture-windows-apps.mjs --help
           if ($LASTEXITCODE -ne 0) { throw 'Capture controller help failed' }
-          $tokens = $null; $errors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $env:GITHUB_WORKSPACE 'scripts/ci/capture-windows-app-window.ps1'), [ref]$tokens, [ref]$errors) | Out-Null
-          if ($errors.Count -gt 0) { throw ($errors | Out-String) }
+          foreach ($script in @('capture-windows-app-window.ps1', 'press-windows-app-dialog.ps1')) {
+            $tokens = $null; $errors = $null
+            $path = Join-Path $env:GITHUB_WORKSPACE "scripts/ci/$script"
+            [System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors.Count -gt 0) { throw ($errors | Out-String) }
+            Get-Help $path -Full | Out-String | Write-Output
+          }
       - name: Check native desktop rendering
         shell: pwsh
         run: pwsh -NoProfile -File scripts/ci/probe-windows-desktop.ps1 -OutputDirectory "$env:RUNNER_TEMP/tabby-rs-windows-desktop-compare/preflight"
@@ -95,8 +99,6 @@ jobs:
         run: node scripts/ci/assert-tauri-output.mjs
       - name: Build actual Tauri host with diagnostic CDP port
         shell: pwsh
-        env:
-          RUSTFLAGS: '-C link-arg=/MANIFESTINPUT:${{ github.workspace }}/src-tauri/windows-app-manifest.xml -C link-arg=/MANIFEST:EMBED'
         run: |
           $config = Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
           foreach ($window in $config.app.windows) {

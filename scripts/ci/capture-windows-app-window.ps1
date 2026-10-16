@@ -22,6 +22,8 @@ visual review only. This process stops nothing; cleanup of the app tree is the
 caller's responsibility.
 .PARAMETER AppProcessId
 Positive PID of the full application process that owns the visible window.
+.PARAMETER WindowHandle
+Optional existing visible HWND owned by AppProcessId. Zero selects the largest owned visible window.
 .PARAMETER OutputDirectory
 Owned app evidence directory. Existing native-window output files are refused.
 .EXAMPLE
@@ -33,7 +35,9 @@ param(
     [int]$AppProcessId,
 
     [Parameter(Mandatory = $true)]
-    [string]$OutputDirectory
+    [string]$OutputDirectory,
+
+    [long]$WindowHandle = 0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -209,7 +213,8 @@ $helperSource = @'
 param(
     [int]$TargetPid,
     [string]$PngPath,
-    [long]$DeadlineUnixMs
+    [long]$DeadlineUnixMs,
+    [long]$TargetWindowHandle
 )
 
 $ErrorActionPreference = 'Stop'
@@ -243,6 +248,7 @@ function Get-BestVisibleWindow {
     $best = [IntPtr]::Zero
     $bestArea = [int64]-1
     foreach ($candidate in [Win32Native]::GetWindowsForProcess($ProcessId)) {
+        if ($TargetWindowHandle -ne 0 -and $candidate.ToInt64() -ne $TargetWindowHandle) { continue }
         if (-not [Win32Native]::IsWindow($candidate)) { continue }
         if (-not [Win32Native]::IsWindowVisible($candidate)) { continue }
         if ([Win32Native]::IsIconic($candidate)) { continue }
@@ -433,7 +439,7 @@ function Get-OwnedProcessTree {
 $resultPath = Join-Path $OutputDirectory 'native-window.json'
 $pngPath = Join-Path $OutputDirectory 'native-window.png'
 
-if (-not [System.IO.Path]::IsPathRooted($OutputDirectory)) {
+if (-not [System.IO.Path]::IsPathFullyQualified($OutputDirectory)) {
     throw 'OutputDirectory must be an absolute existing owned evidence directory.'
 }
 if (-not (Test-Path -LiteralPath $OutputDirectory -PathType Container)) {
@@ -532,6 +538,7 @@ try {
         [void]$powerShell.AddArgument($AppProcessId)
         [void]$powerShell.AddArgument($pngPath)
         [void]$powerShell.AddArgument([int64]$observationDeadlineUnixMs)
+        [void]$powerShell.AddArgument($WindowHandle)
 
         $asyncResult = $powerShell.BeginInvoke()
         $waitBudget = $observationDeadlineUnixMs - [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() + 15000
@@ -594,6 +601,7 @@ $result = [ordered]@{
     kind                      = $Kind
     ok                        = [bool]$ok
     appProcessId              = $AppProcessId
+    requestedWindowHandle     = $WindowHandle
     capturedUtc               = (Get-Date).ToUniversalTime().ToString('o')
     hwnd                      = $captureHwnd
     title                     = $captureTitle
