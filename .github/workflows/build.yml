@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   native-frame-fixture:
-    name: Owned Wry caption region input diagnostic
+    name: Extended Windows Wry frame state regression
     runs-on: windows-2022
     timeout-minutes: 20
     steps:
@@ -59,12 +59,11 @@ jobs:
             fixtureSha256 = (Get-FileHash -LiteralPath 'src-tauri/examples/window_frame_windows_native.rs' -Algorithm SHA256).Hash.ToLowerInvariant()
             executableSha256 = (Get-FileHash -LiteralPath $executable -Algorithm SHA256).Hash.ToLowerInvariant()
             exitCode = $testExit
-            diagnosticOnly = $true
             fullAppAccepted = $false
-            scope = 'DIAGNOSTIC ONLY: Clip the owned Wry container around actual DWM caption bounds immediately before each input, require the exact parent recipient, then observe real mouse-triggered state. Production refresh is not implemented. No full-app, visual, drag, restart, or parity acceptance.'
+            scope = 'Two owned Wry windows using the production frame backend; native input, maximized client placement, fullscreen round-trip, and ordinary frame focus property checks only. No product renderer, dragging, PTY, restart, persistence, installer, or platform acceptance.'
           } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath "$root/result.json" -Encoding utf8
           Get-Content -LiteralPath "$root/frame-checks.log"
-          if ($testExit -ne 0) { throw "Owned-container region diagnostic failed with exit $testExit" }
+          if ($testExit -ne 0) { throw "Native frame property regression failed with exit $testExit" }
       - name: Preserve native frame evidence
         if: always()
         uses: actions/upload-artifact@v4
