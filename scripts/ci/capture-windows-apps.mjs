@@ -304,6 +304,35 @@ function snapshotProcessTree (powerShell, rootPid, deadline) {
     }
 }
 
+function cdpListeners (context, port) {
+    if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('invalid CDP identity port')
+    const script = `$ErrorActionPreference='Stop'
+$entries = @(Get-NetTCPConnection -State Listen -ErrorAction Stop | Where-Object LocalPort -eq ${port} | ForEach-Object {
+    $p = Get-CimInstance Win32_Process -Filter "ProcessId = $($_.OwningProcess)" -ErrorAction Stop
+    if (-not $p) { throw 'CDP listener process disappeared' }
+    @{ pid=[int]$p.ProcessId; creationTimeUTC=$p.CreationDate.ToUniversalTime().ToString('o') }
+})
+ConvertTo-Json -Compress -InputObject $entries`
+    const left = context.deadline - Date.now()
+    if (left <= 0) throw new Error('CDP identity deadline expired')
+    const query = runPowerShell(context.powerShell, script, Math.min(10000, left))
+    if (!query.ok) throw new Error('CDP listener identity query failed: ' + (query.error || query.stderr))
+    const entries = JSON.parse(query.stdout)
+    if (!Array.isArray(entries)) throw new Error('CDP listener identity is not an array')
+    return entries
+}
+
+function verifyCdpOwnership (context, info, port) {
+    const tree = snapshotProcessTree(context.powerShell, info.pid, context.deadline)
+    const root = tree.processes.find(entry => entry.pid === info.pid)
+    if (tree.error || !root || root.creationTimeUTC !== info.rootIdentity.creationTimeUTC) throw new Error('owned CDP process tree identity changed')
+    const listeners = cdpListeners(context, port)
+    if (!listeners.length || !listeners.every(listener => tree.processes.some(process => process.pid === listener.pid && process.creationTimeUTC === listener.creationTimeUTC))) {
+        throw new Error('CDP port is not exclusively owned by the launched application process tree')
+    }
+    info.cdp.ownership = { port, listeners, rootIdentity: root, verified: true }
+}
+
 function pickPage (browser) {
     const pages = []
     for (const context of browser.contexts()) pages.push(...context.pages())
@@ -421,6 +450,7 @@ async function captureApp (context, app) {
     try {
         info.executableSha256 = await sha256File(app.exe)
         info.portableDataRoot = ensurePortableRoot(app.exe)
+        if (cdpListeners(context, app.port).length) throw new Error('requested CDP port is already occupied; application was not launched')
     } catch (error) {
         info.error = `preparation failed: ${message(error)}`
         return info
@@ -469,6 +499,7 @@ async function captureApp (context, app) {
             return null
         })
         context.running.get(app.role).browser = browser
+        verifyCdpOwnership(context, info, app.port)
         info.cdp.ok = true
         try {
             info.cdp.engineVersion = browser.version()
@@ -807,6 +838,7 @@ async function main () {
                 const directory = path.join(output, app.role, 'frame-interaction')
                 mkdirSync(directory)
                 checkpoint(context, app.role + '-frame-interaction')
+                verifyCdpOwnership(context, info, app.port)
                 info.frameInteraction = await exerciseWindowsFrame({
                     page: run.page, role: app.role, ownerPid: info.pid,
                     ownerCreationUtc: info.rootIdentity.creationTimeUTC,

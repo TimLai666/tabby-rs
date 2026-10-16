@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -18,20 +18,93 @@ export async function exerciseWindowsFrame (options) {
         if (left <= 0) throw new Error('full-app frame deadline expired')
         return Math.max(1, Math.min(cap, left))
     }
+    const recoverMouse = (file, helperPid, record = () => {}) => {
+        const journal = file + '.mouse-down'
+        if (!existsSync(journal)) return null
+        if (!Number.isInteger(helperPid) || helperPid <= 0) throw new Error('input journal has no known owned helper PID')
+        const recoveryFile = file + '.recovery.json'
+        const recovery = spawnSync(powerShell, ['-NoProfile', '-NonInteractive', '-File', HELPER,
+                '-AppProcessId', String(ownerPid),
+                '-WindowHandle', String(ownerHwnd), '-Action', 'RecoverMouse',
+                '-InputJournal', journal, '-InputHelperPid', String(helperPid),
+                '-OutputFile', recoveryFile],
+            { encoding: 'utf8', timeout: 15000, maxBuffer: 1024 * 1024, windowsHide: true, shell: false })
+        const evidence = { status: recovery.status, error: recovery.error?.message ?? null, stderr: String(recovery.stderr ?? '').slice(0, 4000), data: null }
+        record(evidence)
+        if (existsSync(recoveryFile)) evidence.data = JSON.parse(readFileSync(recoveryFile, 'utf8').replace(/^\uFEFF/, ''))
+        if (recovery.status !== 0 || recovery.error || evidence.data?.ok !== true || evidence.data.action !== 'RecoverMouse' || evidence.data.appProcessId !== ownerPid || Number(evidence.data.hwnd) !== ownerHwnd || existsSync(journal)) throw new Error('independent recovery could not confirm that the own mouse press was released')
+        return evidence
+    }
     const native = (action, extra = []) => {
         const file = path.join(outputDirectory, `${result.actions.length}-${action.toLowerCase()}.json`)
-        if (existsSync(file)) throw new Error('native evidence path already exists')
+        const journal = file + '.mouse-down'
+        if (existsSync(file) || existsSync(journal)) throw new Error('native evidence or input journal path already exists')
+        if (deadline - Date.now() < 45000) throw new Error('insufficient time for native input and independent mouse recovery')
         const run = spawnSync(powerShell, ['-NoProfile', '-NonInteractive', '-File', HELPER,
             '-AppProcessId', String(ownerPid), '-CreationUtc', ownerCreationUtc,
             '-WindowHandle', String(ownerHwnd), '-Action', action, '-OutputFile', file, ...extra],
-        { encoding: 'utf8', timeout: timeout(25000), maxBuffer: 1024 * 1024, windowsHide: true, shell: false })
+        { encoding: 'utf8', timeout: 25000, maxBuffer: 1024 * 1024, windowsHide: true, shell: false })
         const evidence = { action, status: run.status, error: run.error?.message ?? null, stderr: String(run.stderr ?? '').slice(0, 4000), data: null }
         result.actions.push(evidence)
+        const journalRemained = existsSync(journal)
+        if (journalRemained) {
+            evidence.recovery = recoverMouse(file, run.pid, recovery => { evidence.recovery = recovery })
+        }
         if (existsSync(file)) evidence.data = JSON.parse(readFileSync(file, 'utf8').replace(/^\uFEFF/, ''))
-        if (run.status !== 0 || run.error || evidence.data?.ok !== true || evidence.data.appProcessId !== ownerPid || Number(evidence.data.hwnd) !== ownerHwnd || evidence.data.action !== action) {
+        if (journalRemained || run.status !== 0 || run.error || evidence.data?.ok !== true || evidence.data.appProcessId !== ownerPid || Number(evidence.data.hwnd) !== ownerHwnd || evidence.data.action !== action) {
             throw new Error(`${action} did not prove the requested owned action: ${evidence.data?.error ?? evidence.error ?? evidence.stderr}`)
         }
         return evidence.data.after ?? evidence.data.before
+    }
+    const interruptedInput = async extra => {
+        if (deadline - Date.now() < 45000) throw new Error('insufficient time for interrupted mouse recovery probe')
+        const file = path.join(outputDirectory, 'interrupted-drag.json')
+        const journal = file + '.mouse-down'
+        if (existsSync(file) || existsSync(journal)) throw new Error('interrupted input evidence already exists')
+        let child
+        let exit
+        let ended = false
+        const evidence = { journalObserved: false, killedWhileJournalPresent: false, helperPid: null, recovery: null }
+        result.interruptedInput = evidence
+        try {
+            child = spawn(powerShell, ['-NoProfile', '-NonInteractive', '-File', HELPER,
+                '-AppProcessId', String(ownerPid), '-CreationUtc', ownerCreationUtc,
+                '-WindowHandle', String(ownerHwnd), '-Action', 'Drag', '-OutputFile', file, ...extra],
+            { windowsHide: true, shell: false, stdio: 'ignore' })
+            evidence.helperPid = child.pid ?? null
+            exit = new Promise((resolve, reject) => {
+                child.once('error', error => { ended = true; reject(error) })
+                child.once('close', (code, signal) => { ended = true; resolve({ code, signal }) })
+            })
+            void exit.catch(() => {})
+            const until = Date.now() + 15000
+            let ready = false
+            while (!ended && Date.now() < until) {
+                try {
+                    const lines = readFileSync(journal, 'utf8').trim().split(/\r?\n/)
+                    ready = lines.length === 3 && lines[0] === String(ownerPid) && lines[1] === String(ownerHwnd) && lines[2] === String(child.pid)
+                } catch (error) {
+                    if (!['ENOENT', 'EBUSY', 'EACCES'].includes(error.code)) throw error
+                }
+                if (ready) break
+                await delay(5)
+            }
+            if (!ready || ended) throw new Error('interrupted probe did not observe a complete active own mouse journal')
+            evidence.journalObserved = true
+            await delay(40)
+            if (!existsSync(journal) || ended) throw new Error('interrupted probe finished before it could be terminated; no interrupted release is proven')
+            evidence.killedWhileJournalPresent = child.kill()
+        } finally {
+            try {
+                if (child && !ended) child.kill()
+                if (exit) evidence.exit = await Promise.race([exit, delay(3000).then(() => { throw new Error('owned interrupted helper did not terminate') })])
+            } finally {
+                if (existsSync(journal)) evidence.recovery = recoverMouse(file, child?.pid, recovery => { evidence.recovery = recovery })
+            }
+        }
+        if (!evidence.killedWhileJournalPresent || evidence.recovery?.data?.recoveryButtonWasDown !== true || evidence.recovery?.data?.recoveryReleaseSent !== true) {
+            throw new Error('interrupted probe did not prove a real independent LEFTUP after termination')
+        }
     }
     const pty = async name => {
         phase = `PTY ${name}`
@@ -84,7 +157,16 @@ export async function exerciseWindowsFrame (options) {
         if (!result.dragDom) throw new Error('the actual shared layout has no visible unambiguous drag region')
         const dom = result.dragDom
         if (Math.abs(dom.innerWidth * dom.dpr - before.client.width) > 3 || Math.abs(dom.innerHeight * dom.dpr - before.client.height) > 3) throw new Error('DOM and native client coordinate scales do not match')
-        native('Drag', ['-PointX', String(Math.round(before.client.screenX + dom.x * dom.dpr)), '-PointY', String(Math.round(before.client.screenY + dom.y * dom.dpr)), '-DeltaX', '-60', '-DeltaY', '0'])
+        const dragArguments = ['-PointX', String(Math.round(before.client.screenX + dom.x * dom.dpr)), '-PointY', String(Math.round(before.client.screenY + dom.y * dom.dpr)), '-DeltaX', '-60', '-DeltaY', '0']
+        if (options.role === 'native') {
+            await interruptedInput(dragArguments)
+            // The interrupted gesture can move this owned window before release.
+            // Re-read the client origin for the independently required full drag.
+            const recovered = native('Snapshot')
+            dragArguments[1] = String(Math.round(recovered.client.screenX + dom.x * dom.dpr))
+            dragArguments[3] = String(Math.round(recovered.client.screenY + dom.y * dom.dpr))
+        }
+        native('Drag', dragArguments)
         await pty('after-drag')
         phase = 'resize'
         const resized = native('Resize', ['-DeltaX', '-60', '-DeltaY', '0'])

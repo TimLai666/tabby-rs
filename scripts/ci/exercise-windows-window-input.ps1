@@ -1,21 +1,27 @@
 <#
 .SYNOPSIS
-Exercise one existing owned application's native window using actual mouse input.
+Exercise or recover mouse input for one existing owned application's native window.
 .DESCRIPTION
-Checks PID creation identity and HWND ownership before any action. Snapshot only
-observes. Drag and Resize use SendInput and bounded cursor motion; caption actions
-click fresh native TITLEBARINFOEX rectangles. Never creates or shows a window,
-sends a system command, changes a window rectangle programmatically, or kills a process.
-Writes one fresh JSON result, restores the thread DPI context, and always releases
-its own pressed mouse button. Use Get-Help -Full for argument details.
+Checks PID creation identity and HWND ownership before an action. Snapshot only
+observes. Drag and Resize use real mouse input and bounded cursor motion; caption
+actions click fresh native TITLEBARINFOEX rectangles. RecoverMouse validates and
+releases only the left button recorded in a fresh owned mouse journal. The journal
+contains three UTF-8 decimal lines: owner PID, root HWND, and helper PID. Recovery
+records the button state and journal outcome and does not require a live target HWND.
+Never creates or shows a window, sends a system command, changes a window rectangle programmatically,
+or kills a process. Run normal actions with a 25-second process timeout and reserve at
+least 45 seconds for the action and recovery. Run RecoverMouse with a 15-second timeout.
+After a timed-out or failed action, recover a remaining verified journal, retain the
+recovery JSON as evidence, and do not launch another action unless recovery succeeds.
+Use Get-Help -Full for argument details.
 .PARAMETER AppProcessId
-Existing owned root process ID.
+Existing owner process ID recorded in the mouse journal.
 .PARAMETER CreationUtc
-Exact CIM CreationDate.ToUniversalTime().ToString('o') recorded by the launcher.
+Exact CIM CreationDate.ToUniversalTime().ToString('o') recorded by the launcher; required except for RecoverMouse.
 .PARAMETER WindowHandle
-Existing owned visible top-level HWND, positive decimal value.
+Existing owned root HWND, positive decimal value; recovery does not require it to remain live.
 .PARAMETER Action
-Snapshot, Drag, Resize, Minimize, Maximize, Restore, or Close.
+Snapshot, Drag, Resize, Minimize, Maximize, Restore, Close, or RecoverMouse.
 .PARAMETER PointX
 Screen pixel X for the Drag start point; Resize uses the visible right border midpoint.
 .PARAMETER PointY
@@ -24,20 +30,28 @@ Screen pixel Y for the Drag start point.
 Bounded screen pixel horizontal movement for Drag or Resize (maximum absolute 120).
 .PARAMETER DeltaY
 Bounded screen pixel vertical movement for Drag; Resize requires zero.
+.PARAMETER InputJournal
+For RecoverMouse, absolute path to the journal in the same directory as OutputFile.
+.PARAMETER InputHelperPid
+For RecoverMouse, decimal PID of the terminated helper recorded in InputJournal.
 .PARAMETER OutputFile
 Fresh absolute JSON evidence path inside the launcher's owned output directory.
 .EXAMPLE
 pwsh -NoProfile -File exercise-windows-window-input.ps1 -AppProcessId 1234 -CreationUtc 2026-10-16T15:00:00.0000000Z -WindowHandle 12345 -Action Snapshot -OutputFile C:\owned\snapshot.json
+.EXAMPLE
+pwsh -NoProfile -File exercise-windows-window-input.ps1 -AppProcessId 1234 -WindowHandle 12345 -Action RecoverMouse -InputJournal C:\owned\drag.json.mouse-down -InputHelperPid 5678 -OutputFile C:\owned\recover.json
 #>
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory=$true)][ValidateRange(1,2147483647)][int]$AppProcessId,
-    [Parameter(Mandatory=$true)][string]$CreationUtc,
-    [Parameter(Mandatory=$true)][ValidateRange(1,9223372036854775807)][long]$WindowHandle,
-    [Parameter(Mandatory=$true)][ValidateSet('Snapshot','Drag','Resize','Minimize','Maximize','Restore','Close')][string]$Action,
+    [Parameter(Mandatory=$true)][int]$AppProcessId,
+    [string]$CreationUtc,
+    [Parameter(Mandatory=$true)][long]$WindowHandle,
+    [Parameter(Mandatory=$true)][string]$Action,
     [int]$PointX=0, [int]$PointY=0,
-    [ValidateRange(-120,120)][int]$DeltaX=60,
-    [ValidateRange(-120,120)][int]$DeltaY=40,
+    [int]$DeltaX=60,
+    [int]$DeltaY=40,
+    [string]$InputJournal,
+    [int]$InputHelperPid=0,
     [Parameter(Mandatory=$true)][string]$OutputFile
 )
 $ErrorActionPreference='Stop'
@@ -46,15 +60,18 @@ $script = @'
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
+using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading;
 
 public static class ExistingWindowInput {
     const uint GA_ROOT=2, WM_GETTITLEBARINFOEX=0x033F, WM_NCHITTEST=0x0084;
     const uint SMTO_BLOCK=1, SMTO_ABORTIFHUNG=2, INPUT_MOUSE=0;
     const uint LEFTDOWN=2, LEFTUP=4, STATE_UNAVAILABLE=1, STATE_INVISIBLE=0x8000, STATE_OFFSCREEN=0x10000;
-    const int HTRIGHT=11;
-    static IntPtr hwnd; static int pid; static long creationFileTime; static bool buttonDown;
+    const int HTRIGHT=11, VK_LBUTTON=1;
+    static IntPtr hwnd; static int pid; static long creationFileTime; static bool buttonDown; static string journalPath;
     [StructLayout(LayoutKind.Sequential)] struct POINT { public int x,y; }
     [StructLayout(LayoutKind.Sequential)] struct RECT { public int left,top,right,bottom; }
     [StructLayout(LayoutKind.Sequential)] struct TITLEBARINFOEX { public uint cbSize; public RECT rcTitleBar; [MarshalAs(UnmanagedType.ByValArray,SizeConst=6)] public uint[] rgstate; [MarshalAs(UnmanagedType.ByValArray,SizeConst=6)] public RECT[] rgrect; }
@@ -75,6 +92,8 @@ public static class ExistingWindowInput {
     [DllImport("user32.dll")] static extern int GetClientRect(IntPtr h,out RECT r);
     [DllImport("user32.dll")] static extern int ClientToScreen(IntPtr h,ref POINT p);
     [DllImport("user32.dll")] static extern uint GetDpiForWindow(IntPtr h);
+    [DllImport("user32.dll",SetLastError=true)] static extern short GetAsyncKeyState(int key);
+    [DllImport("user32.dll",SetLastError=true)] static extern int GetCursorPos(out POINT p);
     [DllImport("user32.dll",SetLastError=true)] static extern IntPtr SendMessageTimeoutW(IntPtr h,uint msg,UIntPtr wp,IntPtr lp,uint flags,uint timeout,out UIntPtr result);
     [DllImport("user32.dll",SetLastError=true)] static extern int SetCursorPos(int x,int y);
     [DllImport("user32.dll",SetLastError=true)] static extern uint SendInput(uint n,INPUT[] a,int size);
@@ -83,8 +102,8 @@ public static class ExistingWindowInput {
     [DllImport("kernel32.dll")] static extern int CloseHandle(IntPtr h);
     [DllImport("user32.dll",SetLastError=true)] static extern IntPtr SetThreadDpiAwarenessContext(IntPtr c);
 
-    // CIM_DATETIME preserves microseconds, while FILETIME has 100ns ticks.
     static long FileTime(FILETIME f) { return ((long)f.high<<32)|f.low; }
+    static bool LeftButtonDown() { return (((ushort)GetAsyncKeyState(VK_LBUTTON))&0x8000)!=0; }
     static void Check(bool ok,string message) { if(!ok) throw new InvalidOperationException(message); }
     static Dictionary<string,object> Bounds(RECT r) { return new Dictionary<string,object>{{"left",r.left},{"top",r.top},{"right",r.right},{"bottom",r.bottom}}; }
     static Dictionary<string,object> ReadSnapshot() {
@@ -105,22 +124,64 @@ public static class ExistingWindowInput {
         var sw=Stopwatch.StartNew(); while(sw.ElapsedMilliseconds<1500) { Validate(); if(GetForegroundWindow()==hwnd)return; Thread.Sleep(25); }
         throw new InvalidOperationException("owned HWND did not become foreground");
     }
+    static POINT ReadCursor() { POINT p; Check(GetCursorPos(out p)!=0,"GetCursorPos failed; Win32="+Marshal.GetLastWin32Error()); return p; }
+    static void CheckCursor(POINT expected) { POINT actual=ReadCursor(); Check(actual.x==expected.x&&actual.y==expected.y,"GetCursorPos did not match requested screen point (cursor clipping)"); }
+    static void WaitLeftButtonUp() {
+        var sw=Stopwatch.StartNew(); while(sw.ElapsedMilliseconds<500) { if(!LeftButtonDown())return; Thread.Sleep(10); }
+        throw new InvalidOperationException("left button remained down after LEFTUP");
+    }
     static uint Send(uint flags) {
         INPUT i=new INPUT(); i.type=INPUT_MOUSE; i.U.mi=new MOUSEINPUT{dwFlags=flags};
         uint sent=SendInput(1,new[]{i},Marshal.SizeOf(typeof(INPUT)));
         Check(sent==1,"SendInput failed to deliver mouse event; Win32="+Marshal.GetLastWin32Error()); return sent;
     }
-    static void PositionAndVerify(POINT p,bool exactRoot) {
-        Check(SetCursorPos(p.x,p.y)!=0,"SetCursorPos to validated input point failed; Win32="+Marshal.GetLastWin32Error());
-        Validate(); Check(GetForegroundWindow()==hwnd,"foreground target changed before input");
-        IntPtr under=WindowFromPoint(p); Check(under!=IntPtr.Zero,"input point no longer resolves to a window");
-        Check((exactRoot ? under==hwnd : GetAncestor(under,GA_ROOT)==hwnd),"input point moved over a foreign window");
+    static void WriteOwnJournal() {
+        string[] lines={pid.ToString(CultureInfo.InvariantCulture),hwnd.ToInt64().ToString(CultureInfo.InvariantCulture),Environment.ProcessId.ToString(CultureInfo.InvariantCulture)};
+        using(FileStream fs=new FileStream(journalPath,FileMode.CreateNew,FileAccess.Write,FileShare.None))
+        using(StreamWriter w=new StreamWriter(fs,new UTF8Encoding(false,true))) { foreach(string line in lines) w.WriteLine(line); w.Flush(); fs.Flush(true); }
     }
-    static void ClickDown() { Send(LEFTDOWN); buttonDown=true; }
-    static void ClickUp() { if(buttonDown) { Send(LEFTUP); buttonDown=false; } }
+    static void CheckJournal(int expectedOwner,long expectedHwnd,int expectedHelper,string path) {
+        Check(File.Exists(path),"mouse journal does not exist");
+        string[] lines=File.ReadAllLines(path,new UTF8Encoding(false,true)); Check(lines.Length==3,"mouse journal must contain exactly three identity lines");
+        int owner,helper; long target;
+        Check(Int32.TryParse(lines[0],NumberStyles.None,CultureInfo.InvariantCulture,out owner)&&owner>0,"mouse journal owner PID is invalid");
+        Check(Int64.TryParse(lines[1],NumberStyles.None,CultureInfo.InvariantCulture,out target)&&target>0,"mouse journal HWND is invalid");
+        Check(Int32.TryParse(lines[2],NumberStyles.None,CultureInfo.InvariantCulture,out helper)&&helper>0,"mouse journal helper PID is invalid");
+        Check(owner==expectedOwner&&target==expectedHwnd&&helper==expectedHelper,"mouse journal identity does not match supplied owner, HWND and helper PID");
+    }
+    static void RemoveVerifiedJournal(int owner,long target,int helper,string path) {
+        CheckJournal(owner,target,helper,path); File.Delete(path); Check(!File.Exists(path),"verified mouse journal could not be removed");
+    }
+    static void PressAt(POINT expected,bool exactRoot) {
+        Check(!LeftButtonDown(),"physical left button is already held; refusing to begin input");
+        WriteOwnJournal();
+        CheckCursor(expected); Validate(); Check(GetForegroundWindow()==hwnd,"foreground target changed before LEFTDOWN");
+        POINT actual=ReadCursor(); IntPtr under=WindowFromPoint(actual); Check(under!=IntPtr.Zero,"cursor point no longer resolves to a window");
+        Check(exactRoot ? under==hwnd : GetAncestor(under,GA_ROOT)==hwnd,"cursor ownership changed before LEFTDOWN");
+        Check(!LeftButtonDown(),"left button became held before LEFTDOWN; journal retained for recovery");
+        Send(LEFTDOWN); buttonDown=true;
+    }
+    static void ClickUp() {
+        if(!buttonDown)return;
+        Send(LEFTUP); WaitLeftButtonUp(); buttonDown=false;
+        RemoveVerifiedJournal(pid,hwnd.ToInt64(),Environment.ProcessId,journalPath);
+    }
+    static POINT PositionAndVerify(POINT requested,bool exactRoot) {
+        Check(SetCursorPos(requested.x,requested.y)!=0,"SetCursorPos to validated input point failed; Win32="+Marshal.GetLastWin32Error());
+        POINT actual=ReadCursor(); Check(actual.x==requested.x&&actual.y==requested.y,"cursor was clipped before input");
+        Validate(); Check(GetForegroundWindow()==hwnd,"foreground target changed before input");
+        IntPtr under=WindowFromPoint(actual); Check(under!=IntPtr.Zero,"input point no longer resolves to a window");
+        Check(exactRoot ? under==hwnd : GetAncestor(under,GA_ROOT)==hwnd,"input point moved over a foreign window"); return actual;
+    }
     static void MoveGradually(int x0,int y0,int x1,int y1) {
         const int steps=12;
-        for(int i=1;i<=steps;i++) { Validate(); Check(GetForegroundWindow()==hwnd,"foreground changed during mouse input"); int x=x0+(int)Math.Round((x1-x0)*(i/(double)steps)); int y=y0+(int)Math.Round((y1-y0)*(i/(double)steps)); Check(SetCursorPos(x,y)!=0,"SetCursorPos failed; Win32="+Marshal.GetLastWin32Error()); Thread.Sleep(20); }
+        for(int i=1;i<=steps;i++) {
+            Validate(); Check(GetForegroundWindow()==hwnd,"foreground changed during mouse input");
+            int x=x0+(int)Math.Round((x1-x0)*(i/(double)steps)), y=y0+(int)Math.Round((y1-y0)*(i/(double)steps));
+            Check(SetCursorPos(x,y)!=0,"SetCursorPos failed; Win32="+Marshal.GetLastWin32Error()); POINT actual=ReadCursor();
+            Check(actual.x==x&&actual.y==y,"cursor was clipped during gradual movement");
+            IntPtr under=WindowFromPoint(actual); Check(under!=IntPtr.Zero&&GetAncestor(under,GA_ROOT)==hwnd,"gradual mouse movement reached a foreign window"); Thread.Sleep(20);
+        }
     }
     static void WaitGeometry(RECT before,string action,int dx,int dy) {
         var sw=Stopwatch.StartNew(); RECT r;
@@ -141,40 +202,67 @@ public static class ExistingWindowInput {
         POINT c=new POINT{x=r.left+(r.right-r.left)/2,y=r.top+(r.bottom-r.top)/2}; Check(WindowFromPoint(c)==hwnd&&GetAncestor(WindowFromPoint(c),GA_ROOT)==hwnd,"caption center is not owned root HWND"); return c;
     }
     static bool WaitState(string action,bool icon,bool zoom) { var sw=Stopwatch.StartNew(); while(sw.ElapsedMilliseconds<3000) { if(action=="Close") { if(IsWindow(hwnd)==0)return true; } else { Validate(); if((IsIconic(hwnd)!=0)==icon&&(IsZoomed(hwnd)!=0)==zoom)return true; } Thread.Sleep(40); } return false; }
-    public static Dictionary<string,object> Run(int processId,string creationUtc,long windowHandle,string action,int px,int py,int dx,int dy) {
-        Check(Environment.Is64BitProcess,"this input helper requires 64-bit PowerShell"); pid=processId; hwnd=new IntPtr(windowHandle); DateTimeOffset parsed; Check(DateTimeOffset.TryParse(creationUtc,out parsed),"CreationUtc is invalid"); creationFileTime=parsed.UtcDateTime.ToFileTimeUtc();
-        IntPtr oldDpi=IntPtr.Zero; bool changed=false; Dictionary<string,object> result=new Dictionary<string,object>{{"ok",false},{"before",null},{"after",null},{"inputSent",false},{"error",null}};
+    static Dictionary<string,object> Envelope(bool ok,string error,object before,object after,bool inputSent) { return new Dictionary<string,object>{{"ok",ok},{"before",before},{"after",after},{"inputSent",inputSent},{"error",error}}; }
+    public static Dictionary<string,object> Run(int processId,string creationUtc,long windowHandle,string action,int px,int py,int dx,int dy,string inputJournalPath) {
+        Check(Environment.Is64BitProcess,"this input helper requires 64-bit PowerShell"); pid=processId; hwnd=new IntPtr(windowHandle); journalPath=inputJournalPath;
+        DateTimeOffset parsed; Check(DateTimeOffset.TryParse(creationUtc,out parsed),"CreationUtc is invalid"); creationFileTime=parsed.UtcDateTime.ToFileTimeUtc();
+        Check(!File.Exists(journalPath),"a preexisting mouse journal blocks normal actions");
+        IntPtr oldDpi=IntPtr.Zero; bool changed=false; object beforeSnapshot=null,afterSnapshot=null; bool inputSent=false; string error=null; bool ok=false;
         try {
             oldDpi=SetThreadDpiAwarenessContext(new IntPtr(-4)); changed=oldDpi!=IntPtr.Zero; Check(changed,"could not set per-monitor-v2 thread DPI context");
-            Validate(); result["before"]=ReadSnapshot();
-            if(action=="Snapshot") { result["after"]=result["before"]; result["ok"]=true; return result; }
-            bool wasIcon=IsIconic(hwnd)!=0, wasZoom=IsZoomed(hwnd)!=0;
-            if(action=="Maximize") Check(!wasIcon&&!wasZoom,"Maximize requires an ordinary window");
-            if(action=="Restore") Check(wasZoom&&!wasIcon,"Restore requires a maximized window");
-            Foreground(); RECT before; Check(GetWindowRect(hwnd,out before)!=0,"GetWindowRect failed before input");
-            POINT start,end;
-            if(action=="Drag") {
-                Check(px>=before.left&&px<before.right&&py>=before.top&&py<before.bottom,"Drag point is outside current outer bounds");
-                start=new POINT{x=px,y=py}; IntPtr under=WindowFromPoint(start); Check(under!=IntPtr.Zero&&GetAncestor(under,GA_ROOT)==hwnd,"Drag point is not on an owned descendant");
-                end=new POINT{x=px+dx,y=py+dy}; Check(dx!=0||dy!=0,"Drag delta must move the window");
-                PositionAndVerify(start,false); ClickDown(); result["inputSent"]=true; MoveGradually(start.x,start.y,end.x,end.y); ClickUp(); WaitGeometry(before,action,dx,dy);
-            } else if(action=="Resize") {
-                Check(dy==0&&dx!=0,"Resize requires nonzero DeltaX and DeltaY=0");
-                start=new POINT{x=before.right-1,y=before.top+(before.bottom-before.top)/2}; IntPtr under=WindowFromPoint(start);
-                Check(under!=IntPtr.Zero&&GetAncestor(under,GA_ROOT)==hwnd,"right border midpoint is not on an owned descendant"); Check(HitTest(start.x,start.y)==HTRIGHT,"right border midpoint did not hit-test as HTRIGHT");
-                end=new POINT{x=start.x+dx,y=start.y}; PositionAndVerify(start,false); Check(HitTest(start.x,start.y)==HTRIGHT,"right edge lost HTRIGHT hit-test before input"); ClickDown(); result["inputSent"]=true; MoveGradually(start.x,start.y,end.x,end.y); ClickUp(); WaitGeometry(before,action,dx,0);
-            } else {
-                int index=action=="Minimize"?2:action=="Close"?5:3; POINT c=CaptionCenter(index);
-                PositionAndVerify(c,true); ClickDown(); result["inputSent"]=true; ClickUp();
-                bool expectedIcon=action=="Minimize"?true:false, expectedZoom=action=="Maximize"?true:action=="Restore"?false:wasZoom;
-                Check(WaitState(action,expectedIcon,expectedZoom),action+" state was not observed after real mouse input");
+            Validate(); beforeSnapshot=ReadSnapshot();
+            if(action=="Snapshot") { afterSnapshot=beforeSnapshot; ok=true; }
+            else {
+                bool wasIcon=IsIconic(hwnd)!=0, wasZoom=IsZoomed(hwnd)!=0;
+                if(action=="Maximize") Check(!wasIcon&&!wasZoom,"Maximize requires an ordinary window");
+                if(action=="Restore") Check(wasZoom&&!wasIcon,"Restore requires a maximized window");
+                Foreground(); RECT before; Check(GetWindowRect(hwnd,out before)!=0,"GetWindowRect failed before input"); POINT start,end;
+                if(action=="Drag") {
+                    Check(px>=before.left&&px<before.right&&py>=before.top&&py<before.bottom,"Drag point is outside current outer bounds");
+                    POINT requested=new POINT{x=px,y=py}; POINT verified=PositionAndVerify(requested,false); IntPtr under=WindowFromPoint(verified); Check(under!=IntPtr.Zero&&GetAncestor(under,GA_ROOT)==hwnd,"Drag point is not on an owned descendant");
+                    end=new POINT{x=px+dx,y=py+dy}; Check(dx!=0||dy!=0,"Drag delta must move the window");
+                    PressAt(verified,false); inputSent=true; MoveGradually(verified.x,verified.y,end.x,end.y); ClickUp(); WaitGeometry(before,action,dx,dy);
+                } else if(action=="Resize") {
+                    Check(dy==0&&dx!=0,"Resize requires nonzero DeltaX and DeltaY=0");
+                    start=new POINT{x=before.right-1,y=before.top+(before.bottom-before.top)/2}; IntPtr under=WindowFromPoint(start);
+                    Check(under!=IntPtr.Zero&&GetAncestor(under,GA_ROOT)==hwnd,"right border midpoint is not on an owned descendant"); Check(HitTest(start.x,start.y)==HTRIGHT,"right border midpoint did not hit-test as HTRIGHT");
+                    end=new POINT{x=start.x+dx,y=start.y}; start=PositionAndVerify(start,false); Check(HitTest(start.x,start.y)==HTRIGHT,"right edge lost HTRIGHT hit-test before input"); PressAt(start,false); inputSent=true; MoveGradually(start.x,start.y,end.x,end.y); ClickUp(); WaitGeometry(before,action,dx,0);
+                } else {
+                    int index=action=="Minimize"?2:action=="Close"?5:3; POINT c=CaptionCenter(index); c=PositionAndVerify(c,true); PressAt(c,true); inputSent=true; ClickUp();
+                    bool expectedIcon=action=="Minimize"?true:false, expectedZoom=action=="Maximize"?true:action=="Restore"?false:wasZoom;
+                    Check(WaitState(action,expectedIcon,expectedZoom),action+" state was not observed after real mouse input");
+                }
+                if(action=="Close") { Check(IsWindow(hwnd)==0,"Close input did not destroy original HWND"); afterSnapshot=null; }
+                else afterSnapshot=ReadSnapshot(); ok=true;
             }
-            if(action=="Close") { Check(IsWindow(hwnd)==0,"Close input did not destroy original HWND"); result["after"]=null; }
-            else result["after"]=ReadSnapshot();
-            result["ok"]=true;
-        } catch(Exception ex) { result["error"]=ex.GetType().Name+": "+ex.Message; try { if(IsWindow(hwnd)!=0)result["after"]=ReadSnapshot(); } catch {} }
-        finally { if(buttonDown) { try { Send(LEFTUP); buttonDown=false; } catch(Exception ex) { result["ok"]=false; if(result["error"]==null)result["error"]="mouse release failed: "+ex.Message; } } if(changed) { try { if(SetThreadDpiAwarenessContext(oldDpi)==IntPtr.Zero) { result["ok"]=false; if(result["error"]==null)result["error"]="failed to restore thread DPI context"; } } catch(Exception ex) { result["ok"]=false; if(result["error"]==null)result["error"]="DPI restore failed: "+ex.Message; } } }
-        return result;
+        } catch(Exception ex) { error=ex.GetType().Name+": "+ex.Message; try { if(IsWindow(hwnd)!=0)afterSnapshot=ReadSnapshot(); } catch {} }
+        finally {
+            if(buttonDown) {
+                try { Send(LEFTUP); WaitLeftButtonUp(); buttonDown=false; RemoveVerifiedJournal(pid,hwnd.ToInt64(),Environment.ProcessId,journalPath); }
+                catch(Exception ex) { ok=false; if(error==null)error="own mouse release or journal removal failed: "+ex.Message; }
+            }
+            if(changed) { try { if(SetThreadDpiAwarenessContext(oldDpi)==IntPtr.Zero) { ok=false; if(error==null)error="failed to restore thread DPI context"; } } catch(Exception ex) { ok=false; if(error==null)error="DPI restore failed: "+ex.Message; } }
+        }
+        return Envelope(ok,error,beforeSnapshot,afterSnapshot,inputSent);
+    }
+    static bool HelperTerminated(int helperPid) {
+        try { using(Process p=Process.GetProcessById(helperPid)) return p.HasExited; }
+        catch(ArgumentException) { return true; }
+    }
+    public static Dictionary<string,object> Recover(int expectedOwnerPid,long expectedHwnd,int expectedHelperPid,string journalPath) {
+        Dictionary<string,object> observation=new Dictionary<string,object>{{"journalPath",journalPath},{"expectedOwnerPid",expectedOwnerPid},{"expectedHwnd",expectedHwnd},{"expectedHelperPid",expectedHelperPid},{"currentHelperPid",Environment.ProcessId},{"journalVerified",false},{"helperTerminated",false},{"leftButtonWasDown",null},{"recoveryLeftUpSent",false},{"recoveryButtonWasDown",false},{"recoveryButtonStateObserved",false},{"recoveryReleaseSent",false},{"leftButtonDownAfter",null},{"journalRemoved",false}};
+        bool inputSent=false; string error=null; bool ok=false;
+        try {
+            Check(Environment.Is64BitProcess,"this input helper requires 64-bit PowerShell"); Check(expectedOwnerPid>0&&expectedHwnd>0&&expectedHelperPid>0,"recovery identities must be positive");
+            Check(expectedHelperPid!=Environment.ProcessId,"recovery helper PID must differ from current helper PID");
+            CheckJournal(expectedOwnerPid,expectedHwnd,expectedHelperPid,journalPath); observation["journalVerified"]=true;
+            bool terminated=HelperTerminated(expectedHelperPid); observation["helperTerminated"]=terminated; Check(terminated,"recorded input helper is still running or its termination is uncertain");
+            bool down=LeftButtonDown(); observation["leftButtonWasDown"]=down; observation["recoveryButtonWasDown"]=down; observation["recoveryButtonStateObserved"]=true;
+            if(down) { Send(LEFTUP); inputSent=true; observation["recoveryLeftUpSent"]=true; observation["recoveryReleaseSent"]=true; WaitLeftButtonUp(); }
+            bool downAfter=LeftButtonDown(); observation["leftButtonDownAfter"]=downAfter; Check(!downAfter,"left button remains down after recovery release");
+            RemoveVerifiedJournal(expectedOwnerPid,expectedHwnd,expectedHelperPid,journalPath); observation["journalRemoved"]=true; ok=true;
+        } catch(Exception ex) { error=ex.GetType().Name+": "+ex.Message; try { observation["leftButtonDownAfter"]=LeftButtonDown(); } catch {} }
+        Dictionary<string,object> result=Envelope(ok,error,null,null,inputSent); result["recoveryButtonWasDown"]=observation["recoveryButtonWasDown"]; result["recoveryButtonStateObserved"]=observation["recoveryButtonStateObserved"]; result["recoveryReleaseSent"]=observation["recoveryReleaseSent"]; result["recovery"]=observation; return result;
     }
 }
 '@
@@ -188,29 +276,51 @@ try {
     if (-not (Test-Path -LiteralPath $parent -PathType Container)) { throw 'OutputFile parent directory does not exist' }
     if (Test-Path -LiteralPath $fullOutput) { throw 'OutputFile already exists' }
     $canWrite = $true
+    if ($AppProcessId -le 0) { throw 'AppProcessId must be a positive 32-bit integer' }
+    if ($WindowHandle -le 0) { throw 'WindowHandle must be a positive 64-bit integer' }
+    if ($DeltaX -lt -120 -or $DeltaX -gt 120 -or $DeltaY -lt -120 -or $DeltaY -gt 120) { throw 'DeltaX and DeltaY must be within -120..120' }
+    if (@('Snapshot','Drag','Resize','Minimize','Maximize','Restore','Close','RecoverMouse') -cnotcontains $Action) { throw 'Action is unsupported' }
     if (-not $IsWindows) { throw 'This helper requires Windows PowerShell 7+' }
-    $proc = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $AppProcessId" -ErrorAction Stop
-    if ($null -eq $proc) { throw 'Owned process does not exist' }
-    $actualCreation = $proc.CreationDate.ToUniversalTime().ToString('o')
-    if ($actualCreation -cne $CreationUtc) { throw 'CreationUtc does not match the owned process identity' }
-    Add-Type -TypeDefinition $script -Language CSharp -ErrorAction Stop
-    $native = [ExistingWindowInput]::Run($AppProcessId,$CreationUtc,$WindowHandle,$Action,$PointX,$PointY,$DeltaX,$DeltaY)
-    foreach ($key in @('ok','before','after','inputSent','error')) { $result[$key]=$native[$key] }
+    if (-not [Environment]::Is64BitProcess) { throw 'This input helper requires 64-bit PowerShell' }
+    if ($Action -eq 'RecoverMouse') {
+        if (-not $PSBoundParameters.ContainsKey('InputJournal') -or -not $PSBoundParameters.ContainsKey('InputHelperPid')) { throw 'RecoverMouse requires InputJournal and InputHelperPid' }
+        if ($PSBoundParameters.ContainsKey('CreationUtc')) { throw 'CreationUtc must be omitted for RecoverMouse' }
+        if (-not [IO.Path]::IsPathRooted($InputJournal)) { throw 'InputJournal must be an absolute path' }
+        $fullJournal = [IO.Path]::GetFullPath($InputJournal)
+        if (-not [string]::Equals([IO.Path]::GetDirectoryName($fullJournal),$parent,[StringComparison]::OrdinalIgnoreCase)) { throw 'InputJournal must be in the OutputFile parent directory' }
+        Add-Type -TypeDefinition $script -Language CSharp -ErrorAction Stop
+        $native = [ExistingWindowInput]::Recover($AppProcessId,$WindowHandle,$InputHelperPid,$fullJournal)
+        foreach ($key in @('ok','before','after','inputSent','error','recoveryButtonWasDown','recoveryButtonStateObserved','recoveryReleaseSent','recovery')) { $result[$key]=$native[$key] }
+    } else {
+        if ($PSBoundParameters.ContainsKey('InputJournal') -or $PSBoundParameters.ContainsKey('InputHelperPid')) { throw 'InputJournal and InputHelperPid are recovery-only parameters' }
+        if ([string]::IsNullOrWhiteSpace($CreationUtc)) { throw 'CreationUtc is required for normal actions' }
+        $journalPath = $fullOutput + '.mouse-down'
+        $existingJournals = @(Get-ChildItem -LiteralPath $parent -Filter '*.mouse-down' -File -ErrorAction Stop)
+        if ($existingJournals.Count -gt 0) { throw 'A preexisting mouse journal blocks normal actions' }
+        if (Test-Path -LiteralPath $journalPath) { throw 'A preexisting mouse journal blocks normal actions' }
+        $proc = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $AppProcessId" -ErrorAction Stop
+        if ($null -eq $proc) { throw 'Owned process does not exist' }
+        $actualCreation = $proc.CreationDate.ToUniversalTime().ToString('o')
+        if ($actualCreation -cne $CreationUtc) { throw 'CreationUtc does not match the owned process identity' }
+        Add-Type -TypeDefinition $script -Language CSharp -ErrorAction Stop
+        $native = [ExistingWindowInput]::Run($AppProcessId,$CreationUtc,$WindowHandle,$Action,$PointX,$PointY,$DeltaX,$DeltaY,$journalPath)
+        foreach ($key in @('ok','before','after','inputSent','error')) { $result[$key]=$native[$key] }
+    }
 } catch {
     $result.error = $_.Exception.GetType().Name + ': ' + $_.Exception.Message
 }
 if ($canWrite) {
-    $json = $result | ConvertTo-Json -Depth 8
+    $json = $result | ConvertTo-Json -Depth 10
     $stream = $null
     try {
         $stream = [IO.File]::Open($fullOutput,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
         $writer = [IO.StreamWriter]::new($stream,[Text.UTF8Encoding]::new($false))
-        $writer.WriteLine($json); $writer.Flush(); $writer.Dispose(); $stream=$null
+        $writer.WriteLine($json); $writer.Flush(); $stream.Flush($true); $writer.Dispose(); $stream=$null
     } catch {
         if ($null -ne $stream) { $stream.Dispose() }
         [Console]::Error.WriteLine('Could not create fresh evidence file: ' + $_.Exception.Message)
         exit 1
     }
 }
-[Console]::WriteLine(($result | ConvertTo-Json -Depth 8 -Compress))
+[Console]::WriteLine(($result | ConvertTo-Json -Depth 10 -Compress))
 if ($result.ok) { exit 0 } else { exit 1 }

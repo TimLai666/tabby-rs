@@ -62,6 +62,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Process-exit fixture syntax failed' }
           node scripts/ci/capture-windows-apps.mjs --help
           if ($LASTEXITCODE -ne 0) { throw 'Capture controller help failed' }
+          node scripts/ci/test-windows-frame-cdp-ownership.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'CDP ownership controlled checks failed' }
+          node scripts/ci/test-windows-frame-mouse-recovery.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Mouse recovery orchestration checks failed' }
           foreach ($script in @('exercise-windows-window-input.ps1', 'capture-windows-app-window.ps1', 'press-windows-app-dialog.ps1', 'modal-observer-fixture.ps1')) {
             $tokens = $null; $errors = $null
             $path = Join-Path $env:GITHUB_WORKSPACE "scripts/ci/$script"
@@ -185,6 +189,29 @@ jobs:
             src-tauri/target/debug/resources
           if-no-files-found: error
           retention-days: 2
+
+      - name: Reject preoccupied CDP ports before launching applications
+        shell: pwsh
+        run: |
+          $first = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 9222)
+          $second = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 9223)
+          try {
+            $first.Start()
+            $second.Start()
+            $output = Join-Path $env:RUNNER_TEMP 'tabby-rs-windows-desktop-compare/cdp-occupied'
+            node scripts/ci/capture-windows-apps.mjs --reference-exe "$env:TABBY_DESKTOP_REFERENCE_EXE" --rs-exe "$env:TABBY_DESKTOP_RS_EXE" --output "$output" --source-revision "$env:GITHUB_SHA"
+            if ($LASTEXITCODE -ne 1) { throw 'Occupied-port capture did not fail as expected' }
+            $result = Get-Content -LiteralPath (Join-Path $output 'result.json') -Raw | ConvertFrom-Json
+            foreach ($role in @('reference','native')) {
+              if ($result.$role.launched -ne $false -or $result.$role.error -notmatch 'CDP port is already occupied') {
+                throw "Occupied CDP port did not stop $role before launch"
+              }
+            }
+            if (-not $first.Server.IsBound -or -not $second.Server.IsBound) { throw 'The independent listener was unexpectedly stopped' }
+          } finally {
+            $first.Stop()
+            $second.Stop()
+          }
 
       - name: Capture both actual applications
         timeout-minutes: 10
