@@ -142,17 +142,7 @@ fn main() {
             std::process::exit(1);
         }
     };
-    let worker = worker_handle.recv_timeout(Duration::from_secs(10));
-    if worker.is_err() {
-        eprintln!("window_frame_windows_native: worker did not start before timeout");
-        let _ = app.handle().exit(1);
-        let _ = app.run_return(|_, _| {});
-        if let Err(error) = cleanup_owned_data(isolated_data) {
-            eprintln!("window_frame_windows_native {error}");
-        }
-        std::process::exit(1);
-    }
-    let worker = worker.unwrap();
+    // setup starts the worker only after the event loop receives Ready.
     let app_exit_code = app.run_return(|_, _| {});
     let mut exit_code = completion
         .recv_timeout(Duration::from_secs(10))
@@ -160,9 +150,17 @@ fn main() {
     if app_exit_code != 0 {
         exit_code = app_exit_code;
     }
-    if let Err(error) = join_worker_bounded(worker) {
-        eprintln!("window_frame_windows_native {error}");
-        exit_code = 1;
+    match worker_handle.recv_timeout(Duration::from_secs(10)) {
+        Ok(worker) => {
+            if let Err(error) = join_worker_bounded(worker) {
+                eprintln!("window_frame_windows_native {error}");
+                exit_code = 1;
+            }
+        }
+        Err(error) => {
+            eprintln!("window_frame_windows_native: worker did not start: {error}");
+            exit_code = 1;
+        }
     }
     if let Err(error) = cleanup_owned_data(isolated_data) {
         eprintln!("window_frame_windows_native {error}");
