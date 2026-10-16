@@ -51,10 +51,13 @@ function Get-DialogMatch {
         if (-not $windowPattern.Current.IsModal) { continue }
         $all = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
         if ($all.Count -gt 200) { throw 'Dialog has more than 200 accessible descendants' }
-        $texts = @(); $buttons = @()
+        $texts = @(); $buttons = @(); $observed = @()
         foreach ($item in $all) {
             if ([DateTime]::UtcNow -gt $script:uiaDeadline) { throw 'UIA inspection exceeded 15 seconds' }
             if ($item.Current.IsOffscreen) { continue }
+            $diagnosticInvoke = $null
+            $supportsInvoke = $item.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$diagnosticInvoke)
+            $observed += @{name=[string]$item.Current.Name;class=$item.Current.ClassName;type=$item.Current.ControlType.ProgrammaticName;isButton=($item.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button);enabled=$item.Current.IsEnabled;supportsInvoke=$supportsInvoke}
             $name = [string]$item.Current.Name
             if ($name) { $texts += $name }
             $valuePattern = $null
@@ -68,6 +71,7 @@ function Get-DialogMatch {
         $nonceCount = [regex]::Matches($visibleText, [regex]::Escape($ExpectedTextToken)).Count
         if ($nonceCount -eq 0) { continue }
         if ($nonceCount -ne 1) { throw 'Expected nonce occurs more than once in a matching dialog' }
+        $result.observedControls = $observed
         if ($buttons.Count -ne 1) { throw "Expected exactly one visible enabled Invoke button named '$ButtonText'; found $($buttons.Count)" }
         $ownerPid = [int]$window.Current.ProcessId
         $proc = Get-Process -Id $ownerPid -ErrorAction Stop
