@@ -48,14 +48,31 @@ fn inside(state: &State, lparam: LPARAM) -> bool {
     }
 }
 
+// B slot: relay only an actual child non-client mouse move to its fixed owned root.
+// Preserve packed screen coordinates, retain state across reentrant destruction,
+// and return Some(0) after handling. Other messages return None. Never synthesize
+// hover from hit-test, setup, timers or observers. No mouse-down belongs here.
+unsafe fn relay_child_input(
+    _hwnd: HWND,
+    _message: u32,
+    _wparam: WPARAM,
+    _lparam: LPARAM,
+    _data: usize,
+) -> Option<LRESULT> {
+    None
+}
+
 unsafe extern "system" fn child_proc(
     hwnd: HWND,
     msg: u32,
     w: WPARAM,
     l: LPARAM,
     _: usize,
-    _: usize,
+    data: usize,
 ) -> LRESULT {
+    if let Some(result) = relay_child_input(hwnd, msg, w, l, data) {
+        return result;
+    }
     if msg == WM_NCDESTROY {
         let mut data = 0;
         if GetWindowSubclass(hwnd, Some(child_proc), CHILD_ID, &mut data) != 0 {
@@ -73,7 +90,7 @@ unsafe extern "system" fn child_proc(
         }
     }
     if msg == WM_NCHITTEST {
-        return HTTRANSPARENT as LRESULT;
+        return HTMAXBUTTON as LRESULT;
     }
     DefSubclassProc(hwnd, msg, w, l)
 }
@@ -148,7 +165,7 @@ unsafe fn detach(hwnd: HWND, proc: SUBCLASSPROC, id: usize) {
 
 unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
     if msg == WM_NCHITTEST {
-        return HTTRANSPARENT as LRESULT;
+        return HTMAXBUTTON as LRESULT;
     }
     DefWindowProcW(hwnd, msg, w, l)
 }
