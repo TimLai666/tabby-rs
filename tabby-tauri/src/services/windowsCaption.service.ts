@@ -55,6 +55,10 @@ export class TauriWindowsCaptionService implements OnDestroy {
         this.cleanup()
     }
 
+    private isActive (): boolean {
+        return this.active && !this.destroyed
+    }
+
     private async initializeWindows (): Promise<void> {
         try {
             await this.config.ready$.toPromise()
@@ -80,17 +84,17 @@ export class TauriWindowsCaptionService implements OnDestroy {
                 this.eventRevision++
                 this.acceptState(state)
             })
-            if (!this.active || this.destroyed) {
+            if (!this.isActive()) {
                 this.release(unlisten)
                 return
             }
             this.unlisten = unlisten
 
             const snapshot = await this.bridge.invoke('window.getState', {})
-            if (!this.active || this.destroyed || this.eventRevision !== readRevision) {
+            if (!this.isActive() || this.eventRevision !== readRevision) {
                 return
             }
-            this.acceptState(snapshot?.captionControls ?? null)
+            this.acceptState(snapshot.captionControls ?? null)
         } catch (error) {
             this.cleanup()
             throw error
@@ -249,7 +253,9 @@ export class TauriWindowsCaptionService implements OnDestroy {
             this.cancelAnimation()
             return
         }
-        if (this.animationFrame !== null) return
+        if (this.animationFrame !== null) {
+            return
+        }
         this.animationFrame = requestAnimationFrame(now => {
             this.animationFrame = null
             if (this.active) {
