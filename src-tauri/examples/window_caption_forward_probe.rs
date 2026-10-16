@@ -294,9 +294,10 @@ mod probe {
             let tag = (std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_err(|e| e.to_string())?
-                .as_nanos() as usize)
+                .as_nanos() as u32) as usize
                 | 1;
             INPUT_TAG.store(tag, Ordering::Release);
+            eprintln!("caption_forward_probe expected input tag={tag:#x}");
             let overlay = on_ui(window, move || unsafe {
                 let class: Vec<u16> = "WRY_WEBVIEW\0".encode_utf16().collect();
                 let container = FindWindowExW(
