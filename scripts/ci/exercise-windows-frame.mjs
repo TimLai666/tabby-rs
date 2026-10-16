@@ -132,12 +132,20 @@ export async function exerciseWindowsFrame (options) {
         const until = Date.now() + timeout(20000)
         while (Date.now() < until && !existsSync(file)) await delay(100)
         if (!existsSync(file) || !readFileSync(file).equals(Buffer.from(marker, 'utf8'))) throw new Error('PTY did not produce the exact fresh output bytes')
-        await page.keyboard.press('Control+Shift+A', { timeout: timeout(5000) })
-        await page.keyboard.press('Control+Shift+C', { timeout: timeout(5000) })
-        const copy = spawnSync(powerShell, ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from("[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); [Console]::Write([string](Get-Clipboard -Raw))", 'utf16le').toString('base64')], { encoding: 'utf8', timeout: timeout(10000), maxBuffer: 1024 * 1024, windowsHide: true, shell: false })
-        const copied = String(copy.stdout ?? '')
-        if (copy.status !== 0 || copy.error || !copied.replace(/[\r\n]/g, '').includes(marker)) throw new Error('rendered terminal output was not read through the OS clipboard')
-        result[`pty_${name}`] = { marker, file, exactBytes: true, renderedMarkerCopied: true }
+        const copyUntil = Date.now() + timeout(20000)
+        let attempts = 0
+        let renderedMarkerCopied = false
+        while (Date.now() < copyUntil && !renderedMarkerCopied) {
+            attempts++
+            await page.keyboard.press('Control+Shift+A', { timeout: timeout(5000) })
+            await page.keyboard.press('Control+Shift+C', { timeout: timeout(5000) })
+            const copy = spawnSync(powerShell, ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from("[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); [Console]::Write([string](Get-Clipboard -Raw))", 'utf16le').toString('base64')], { encoding: 'utf8', timeout: Math.max(1, Math.min(timeout(10000), copyUntil - Date.now())), maxBuffer: 1024 * 1024, windowsHide: true, shell: false })
+            const copied = String(copy.stdout ?? '')
+            renderedMarkerCopied = copy.status === 0 && !copy.error && copied.replace(/[\r\n]/g, '').includes(marker)
+            if (!renderedMarkerCopied) await delay(100)
+        }
+        if (!renderedMarkerCopied) throw new Error('rendered terminal output was not read through the OS clipboard')
+        result[`pty_${name}`] = { marker, file, exactBytes: true, renderedMarkerCopied, clipboardAttempts: attempts }
         await page.screenshot({ path: path.join(outputDirectory, `pty-${name}.png`), timeout: timeout(15000) })
     }
     try {
