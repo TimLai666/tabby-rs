@@ -7,7 +7,7 @@ const source = readFileSync(new URL('./exercise-windows-frame.mjs', import.meta.
 const start = source.indexOf('    const recoverMouse = (')
 const end = source.indexOf('    const interruptedInput = async extra => {', start)
 assert.ok(start >= 0 && end > start)
-function harness ({ remaining = 100000, recoverOk = true, malformed = false, leaveJournal = true } = {}) {
+function harness ({ remaining = 100000, recoverOk = true, malformed = false, recoveryMalformed = false, leaveJournal = true } = {}) {
     const files = new Map()
     const calls = []
     const result = { actions: [] }
@@ -21,7 +21,7 @@ function harness ({ remaining = 100000, recoverOk = true, malformed = false, lea
             const file = argv[argv.indexOf('-OutputFile') + 1]
             const action = argv[argv.indexOf('-Action') + 1]
             if (action === 'RecoverMouse') {
-                files.set(file, JSON.stringify({ ok: recoverOk, action, appProcessId: 100, hwnd: 999 }))
+                files.set(file, recoveryMalformed ? 'invalid json' : JSON.stringify({ ok: recoverOk, action, appProcessId: 100, hwnd: 999 }))
                 if (recoverOk) files.delete(argv[argv.indexOf('-InputJournal') + 1])
                 return { status: recoverOk ? 0 : 1, pid: 556 }
             }
@@ -63,6 +63,14 @@ let checks = 0
     assert.throws(() => test.native('Drag'), /could not confirm/)
     assert.equal(test.calls.length, 2)
     assert.equal(test.result.actions[0].recovery.data.ok, false)
+    assert.equal(test.result.inputCleanupFailed, true)
+    checks++
+}
+{
+    const test = harness({ recoveryMalformed: true })
+    assert.throws(() => test.native('Drag'), /JSON/)
+    assert.equal(test.result.inputCleanupFailed, true)
+    assert.equal(test.calls.length, 2)
     checks++
 }
 {

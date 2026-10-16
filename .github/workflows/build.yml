@@ -66,6 +66,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'CDP ownership controlled checks failed' }
           node scripts/ci/test-windows-frame-mouse-recovery.mjs
           if ($LASTEXITCODE -ne 0) { throw 'Mouse recovery orchestration checks failed' }
+          node scripts/ci/test-windows-frame-flow-stop.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'GUI flow cleanup-stop checks failed' }
           foreach ($script in @('exercise-windows-window-input.ps1', 'capture-windows-app-window.ps1', 'press-windows-app-dialog.ps1', 'modal-observer-fixture.ps1')) {
             $tokens = $null; $errors = $null
             $path = Join-Path $env:GITHUB_WORKSPACE "scripts/ci/$script"

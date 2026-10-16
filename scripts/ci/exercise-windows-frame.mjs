@@ -10,7 +10,7 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
 const literal = value => `'${String(value).replaceAll("'", "''")}'`
 
 export async function exerciseWindowsFrame (options) {
-    const result = { ok: false, scope: 'Actual primary Thin window input, resize, caption actions, PTY and settings visibility only', fullFrameAccepted: false, actions: [], error: null }
+    const result = { ok: false, scope: 'Actual primary Thin window input, resize, caption actions, PTY and settings visibility only', fullFrameAccepted: false, inputCleanupFailed: false, actions: [], error: null }
     const { page, powerShell, ownerPid, ownerCreationUtc, ownerHwnd, outputDirectory, deadline } = options
     let phase = 'validation'
     const timeout = cap => {
@@ -21,19 +21,27 @@ export async function exerciseWindowsFrame (options) {
     const recoverMouse = (file, helperPid, record = () => {}) => {
         const journal = file + '.mouse-down'
         if (!existsSync(journal)) return null
-        if (!Number.isInteger(helperPid) || helperPid <= 0) throw new Error('input journal has no known owned helper PID')
-        const recoveryFile = file + '.recovery.json'
-        const recovery = spawnSync(powerShell, ['-NoProfile', '-NonInteractive', '-File', HELPER,
-                '-AppProcessId', String(ownerPid),
-                '-WindowHandle', String(ownerHwnd), '-Action', 'RecoverMouse',
-                '-InputJournal', journal, '-InputHelperPid', String(helperPid),
-                '-OutputFile', recoveryFile],
-            { encoding: 'utf8', timeout: 15000, maxBuffer: 1024 * 1024, windowsHide: true, shell: false })
-        const evidence = { status: recovery.status, error: recovery.error?.message ?? null, stderr: String(recovery.stderr ?? '').slice(0, 4000), data: null }
-        record(evidence)
-        if (existsSync(recoveryFile)) evidence.data = JSON.parse(readFileSync(recoveryFile, 'utf8').replace(/^\uFEFF/, ''))
-        if (recovery.status !== 0 || recovery.error || evidence.data?.ok !== true || evidence.data.action !== 'RecoverMouse' || evidence.data.appProcessId !== ownerPid || Number(evidence.data.hwnd) !== ownerHwnd || existsSync(journal)) throw new Error('independent recovery could not confirm that the own mouse press was released')
-        return evidence
+        try {
+            if (!Number.isInteger(helperPid) || helperPid <= 0) throw new Error('input journal has no known owned helper PID')
+            const recoveryFile = file + '.recovery.json'
+            const recovery = spawnSync(powerShell, ['-NoProfile', '-NonInteractive', '-File', HELPER,
+                    '-AppProcessId', String(ownerPid),
+                    '-WindowHandle', String(ownerHwnd), '-Action', 'RecoverMouse',
+                    '-InputJournal', journal, '-InputHelperPid', String(helperPid),
+                    '-OutputFile', recoveryFile],
+                { encoding: 'utf8', timeout: 15000, maxBuffer: 1024 * 1024, windowsHide: true, shell: false })
+            const evidence = { status: recovery.status, error: recovery.error?.message ?? null, stderr: String(recovery.stderr ?? '').slice(0, 4000), data: null }
+            record(evidence)
+            if (existsSync(recoveryFile)) evidence.data = JSON.parse(readFileSync(recoveryFile, 'utf8').replace(/^\uFEFF/, ''))
+            if (recovery.status !== 0 || recovery.error || evidence.data?.ok !== true || evidence.data.action !== 'RecoverMouse' || evidence.data.appProcessId !== ownerPid || Number(evidence.data.hwnd) !== ownerHwnd || existsSync(journal)) {
+                result.inputCleanupFailed = true
+                throw new Error('independent recovery could not confirm that the own mouse press was released')
+            }
+            return evidence
+        } catch (error) {
+            result.inputCleanupFailed = true
+            throw error
+        }
     }
     const native = (action, extra = []) => {
         const file = path.join(outputDirectory, `${result.actions.length}-${action.toLowerCase()}.json`)
@@ -98,6 +106,9 @@ export async function exerciseWindowsFrame (options) {
             try {
                 if (child && !ended) child.kill()
                 if (exit) evidence.exit = await Promise.race([exit, delay(3000).then(() => { throw new Error('owned interrupted helper did not terminate') })])
+            } catch (error) {
+                result.inputCleanupFailed = true
+                throw error
             } finally {
                 if (existsSync(journal)) evidence.recovery = recoverMouse(file, child?.pid, recovery => { evidence.recovery = recovery })
             }
@@ -190,7 +201,9 @@ export async function exerciseWindowsFrame (options) {
         result.ok = true
     } catch (error) {
         result.error = `${phase}: ${error instanceof Error ? error.message : String(error)}`
-        try { await page.screenshot({ path: path.join(outputDirectory, 'failure.png'), timeout: timeout(5000) }) } catch (captureError) { result.screenshotError = String(captureError) }
+        if (!result.inputCleanupFailed) {
+            try { await page.screenshot({ path: path.join(outputDirectory, 'failure.png'), timeout: timeout(5000) }) } catch (captureError) { result.screenshotError = String(captureError) }
+        }
     }
     writeFileSync(path.join(outputDirectory, 'frame-result.json'), `${JSON.stringify(result, null, 2)}\n`, { flag: 'wx' })
     return result

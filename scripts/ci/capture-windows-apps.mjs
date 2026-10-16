@@ -847,6 +847,10 @@ async function main () {
                 })
                 if (!info.frameInteraction.ok) result.errors.push(app.role + ' frame interaction: ' + info.frameInteraction.error)
                 checkpoint(context, app.role + '-frame-interaction-complete')
+                if (info.frameInteraction.inputCleanupFailed) {
+                    result.errors.push('Stopped all GUI actions because own input cleanup is unverified')
+                    break
+                }
             }
             result.unverified.push('Full/Native frame restart, secondary windows, cross-DPI and geometry persistence were not exercised')
         }
