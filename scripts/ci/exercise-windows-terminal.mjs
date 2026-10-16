@@ -1,7 +1,7 @@
 // Exercise actual keyboard/PTY input and second-instance native paste on an existing full-app page.
 import { randomUUID } from 'node:crypto'
 import { spawn, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url))
@@ -96,18 +96,18 @@ function readWindowsClipboard (options) {
 }
 async function proveRenderedClipboardMarker (options, marker, updateEvidence) {
     const until = Math.min(options.deadline, Date.now() + 20000)
-    const evidence = { renderedTextSource: 'Windows OS clipboard via Get-Clipboard -Raw', selectAction: 'Control+Shift+A', copyAction: 'Control+Shift+C', readbackAttempts: 0, markerFound: false, lastReadback: null }
-    await within(options.page.keyboard.press('Control+Shift+A'), timeoutFor(options.deadline, 5000), 'terminal select-all action')
-    evidence.selectActionCompleted = true
-    await within(options.page.keyboard.press('Control+Shift+C'), timeoutFor(options.deadline, 5000), 'terminal copy action')
-    evidence.copyActionCompleted = true
-    updateEvidence?.(evidence)
+    const evidence = { renderedTextSource: 'Windows OS clipboard via Get-Clipboard -Raw', selectAction: 'Control+Shift+A', copyAction: 'Control+Shift+C', matchNormalization: 'remove CR/LF display wrapping only', readbackAttempts: 0, markerFound: false, lastReadback: null }
     while (Date.now() < until) {
+        await within(options.page.keyboard.press('Control+Shift+A'), timeoutFor(options.deadline, 5000), 'terminal select-all action')
+        evidence.selectActionCompleted = true
+        await within(options.page.keyboard.press('Control+Shift+C'), timeoutFor(options.deadline, 5000), 'terminal copy action')
+        evidence.copyActionCompleted = true
+        updateEvidence?.(evidence)
         const remainingMs = Math.min(5000, until - Date.now(), remaining(options.deadline))
         const readback = readWindowsClipboard({ ...options, deadline: Date.now() + remainingMs })
         evidence.readbackAttempts++
         evidence.lastReadback = { ok: readback.ok, status: readback.status, error: readback.error, stderr: readback.stderr, text: readback.stdout }
-        if (readback.ok && readback.stdout.text.includes(marker)) {
+        if (readback.ok && readback.stdout.text.replace(/[\r\n]/g, '').includes(marker.replace(/[\r\n]/g, ''))) {
             evidence.markerFound = true
             evidence.copiedText = readback.stdout
             updateEvidence?.(evidence)
@@ -200,6 +200,7 @@ export async function exerciseWindowsTerminal (options) {
         screenshots: {},
         unverified: ['Installer behavior, actual application Quit, and supported-platform acceptance require separate evidence.', 'Secondary process descendants were not inspected or terminated.'],
     }
+    let preparedOutput = false
     try {
         if (!options || !options.page || typeof options.page.keyboard?.press !== 'function') throw new Error('an existing connected Playwright page is required')
         if (!Number.isInteger(options.ownerPid) || options.ownerPid <= 0 || !options.ownerCreationUtc) throw new Error('positive ownerPid and ownerCreationUtc are required')
@@ -219,6 +220,7 @@ export async function exerciseWindowsTerminal (options) {
         const keyboardFile = path.join(root, 'keyboard.txt')
         const pasteFile = path.join(root, 'paste.txt')
         if (existsSync(keyboardFile) || existsSync(pasteFile)) throw new Error('marker output file already exists in fresh evidence directory')
+        preparedOutput = true
         result.keyboard.markerFile = keyboardFile
         result.primary.rendererPagesBefore = pageCount(options.page)
         verifyPrimary(options, result, 'before')
@@ -284,6 +286,9 @@ export async function exerciseWindowsTerminal (options) {
         }
 
         await focusTextarea(options.page, options.deadline)
+        result.secondary.pasteEcho = await proveRenderedClipboardMarker(options, pasteCommand, evidence => { result.secondary.pasteEcho = evidence })
+        result.secondary.pasteFileAbsentBeforeEnter = !existsSync(pasteFile)
+        if (!result.secondary.pasteFileAbsentBeforeEnter) throw new Error('pasted command created its output before Enter was sent')
         await within(options.page.keyboard.press('Enter'), timeoutFor(options.deadline, 5000), 'pasted command submission')
         result.secondary.pty = {}
         result.secondary.pty = await waitForPtyMarker(options.page, pasteFile, Buffer.from(pasteContent, 'utf8'), pasteMarker, options.deadline, 'paste', evidence => { result.secondary.pty = evidence })
@@ -296,6 +301,15 @@ export async function exerciseWindowsTerminal (options) {
         result.ok = true
     } catch (error) {
         result.error = message(error)
+        result.failure = { clientScreenshot: null, screenshotError: null, preparedOutput }
+        if (preparedOutput && options.deadline > Date.now()) {
+            try {
+                const png = path.join(options.outputDirectory, 'failure-client.png')
+                const bytes = await within(options.page.screenshot({ type: 'png' }), timeoutFor(options.deadline, 5000), 'failure client screenshot')
+                writeFileSync(png, bytes, { flag: 'wx' })
+                result.failure.clientScreenshot = png
+            } catch (captureError) { result.failure.screenshotError = message(captureError) }
+        }
     }
     if (result.primary.before && options?.powerShell && options?.ownerPid && options?.ownerCreationUtc) {
         try { verifyPrimary(options, result, 'after') } catch (error) {

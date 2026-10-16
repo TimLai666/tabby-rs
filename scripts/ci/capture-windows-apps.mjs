@@ -43,8 +43,16 @@ function usage () {
         '       --output FRESH_ABS_DIR --source-revision SHA [--reference-port 9222] [--rs-port 9223]',
         '',
         'Optional --flow startup (default) or terminal (real keyboard and second-instance paste).',
+        'CDP ports must be distinct integers from 1 through 65535; defaults are 9222 and 9223.',
+        'Both executable paths must name actual application copies with empty adjacent data directories.',
+        'The reference receives PORTABLE_EXECUTABLE_FILE to disable its automatic updater.',
+        'The native build must already expose its specified CDP port; this tool does not enable it.',
+        'Terminal flow executes bounded marker commands, replaces the Windows clipboard, and confirms',
+        'only the owned native Paste modal containing its unique test token. It saves failure screenshots.',
+        'Both flows forcibly stop the owned app processes afterward; application Quit remains untested.',
         'Runs on Windows only. Produces actual application diagnostics under --output.',
-        'This capture is diagnostic evidence of desktop startup; it does not establish parity.',
+        'Exit codes: 0 required checks passed (or help), 1 capture failed, 2 invalid arguments.',
+        'This capture supplies diagnostic evidence; it does not establish full parity.',
     ].join('\n')
 }
 
@@ -363,6 +371,7 @@ function failureInfo (app, error) {
         executableSha256: null,
         pid: null,
         browserArguments: app.browserArguments,
+        environmentOverrides: app.environmentOverrides ?? {},
         portableDataRoot: null,
         cdp: { ok: false, endpoint: `http://127.0.0.1:${app.port}`, engineVersion: null, error: null },
         page: null,
@@ -393,6 +402,7 @@ async function captureApp (context, app) {
         executableSha256: null,
         pid: null,
         browserArguments: app.browserArguments,
+        environmentOverrides: app.environmentOverrides ?? {},
         portableDataRoot: null,
         cdp: { ok: false, endpoint: `http://127.0.0.1:${app.port}`, engineVersion: null, error: null },
         page: null,
@@ -550,7 +560,7 @@ async function teardownApp (context, info) {
     const encoded = Buffer.from(JSON.stringify(cleanup.tracked), 'utf8').toString('base64')
     const script = `$ErrorActionPreference = 'Stop'
 $entries = @([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encoded}')) | ConvertFrom-Json)
-$stopped = @(); $survivors = @(); $reused = @(); $errors = @()
+$stopped = @(); $survivors = @(); $reused = @(); $exited = @(); $errors = @()
 foreach ($entry in $entries) {
     $current = Get-CimInstance Win32_Process -Filter "ProcessId = $($entry.pid)"
     if (-not $current) { continue }
@@ -559,13 +569,19 @@ foreach ($entry in $entries) {
         $owned = Get-Process -Id $entry.pid -ErrorAction Stop
         if ([Math]::Abs(($owned.StartTime.ToUniversalTime() - $current.CreationDate.ToUniversalTime()).TotalMilliseconds) -gt 1) { throw 'process identity changed before termination' }
         $owned.Kill(); $owned.WaitForExit(5000) | Out-Null; $stopped += $entry.pid
-    } catch { $errors += "PID $($entry.pid): $($_.Exception.Message)" }
+    } catch {
+        $terminationError = $_.Exception.Message
+        $after = Get-CimInstance Win32_Process -Filter "ProcessId = $($entry.pid)" -ErrorAction Stop
+        if (-not $after) { $exited += $entry.pid }
+        elseif ($after.CreationDate.ToUniversalTime().Ticks -ne ([DateTime]$entry.creationTimeUTC).ToUniversalTime().Ticks) { $reused += $entry.pid }
+        else { $errors += "PID $($entry.pid): $terminationError" }
+    }
 }
 foreach ($entry in $entries) {
     $current = Get-CimInstance Win32_Process -Filter "ProcessId = $($entry.pid)"
     if ($current -and $current.CreationDate.ToUniversalTime().Ticks -eq ([DateTime]$entry.creationTimeUTC).ToUniversalTime().Ticks) { $survivors += $entry.pid }
 }
-@{ stopped = @($stopped); survivors = @($survivors); reused = @($reused); errors = @($errors) } | ConvertTo-Json -Compress -Depth 4`
+@{ stopped = @($stopped); survivors = @($survivors); reused = @($reused); exited = @($exited); errors = @($errors) } | ConvertTo-Json -Compress -Depth 4`
     const output = runPowerShell(context.powerShell, script, Math.max(1000, Math.min(30000, context.cleanupDeadline - Date.now())))
     try {
         if (!output.ok) throw new Error(output.error || output.stderr || `process termination exited ${output.status}`)
@@ -737,7 +753,7 @@ async function main () {
     const cleanEnvironment = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(?:TABBY_CONFIG_DIRECTORY|TABBY_RS_(?:BENCHMARK|INSTALLER_SMOKE)_.*|WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS|WEBVIEW2_USER_DATA_FOLDER)$/.test(key)))
     const referenceArgs = [`--remote-debugging-port=${referencePort}`]
     const apps = [
-        { role: 'reference', exe: values.referenceExe, port: referencePort, args: referenceArgs, env: cleanEnvironment, browserArguments: referenceArgs },
+        { role: 'reference', exe: values.referenceExe, port: referencePort, args: referenceArgs, env: { ...cleanEnvironment, PORTABLE_EXECUTABLE_FILE: values.referenceExe }, environmentOverrides: { PORTABLE_EXECUTABLE_FILE: values.referenceExe }, browserArguments: referenceArgs },
         { role: 'native', exe: values.rsExe, port: rsPort, args: [], env: cleanEnvironment, browserArguments: 'compiled TAURI_CONFIG: complete normal window config plus remote-debugging-port; no environment override' },
     ]
     try {
