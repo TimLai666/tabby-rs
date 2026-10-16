@@ -63,14 +63,14 @@ public static class ModalFixture {
 if (-not [IO.Path]::IsPathFullyQualified($HelperPath) -or -not (Test-Path -LiteralPath $HelperPath -PathType Leaf)) { throw 'Existing absolute helper path required' }
 if (-not [IO.Path]::IsPathFullyQualified($OutputDirectory) -or (Test-Path -LiteralPath $OutputDirectory)) { throw 'Fresh absolute output directory required' }
 [IO.Directory]::CreateDirectory($OutputDirectory) | Out-Null
-function Start-OwnedProcess([string[]]$Arguments) {
-    $si = [Diagnostics.ProcessStartInfo]::new((Get-Process -Id $PID).Path)
+function Start-OwnedProcess([string[]]$Arguments, [string]$Executable=(Get-Process -Id $PID).Path) {
+    $si = [Diagnostics.ProcessStartInfo]::new($Executable)
     $si.UseShellExecute = $false
     foreach ($argument in $Arguments) { $si.ArgumentList.Add($argument) }
     return [Diagnostics.Process]::Start($si)
 }
 function Invoke-Helper([string]$File, [int]$OwnerPid, [string]$Nonce, [string]$Action, [string]$Directory) {
-    $p = Start-OwnedProcess @('-NoProfile','-File',$File,'-AppProcessId',"$OwnerPid",'-ExpectedTextToken',$Nonce,'-ButtonText','Paste','-Action',$Action,'-OutputDirectory',$Directory)
+    $p = Start-OwnedProcess -Executable (Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe') -Arguments @('-NoProfile','-File',$File,'-AppProcessId',"$OwnerPid",'-ExpectedTextToken',$Nonce,'-ButtonText','Paste','-Action',$Action,'-OutputDirectory',$Directory)
     try {
         if (-not $p.WaitForExit(30000)) { $p.Kill(); throw 'Dialog helper external deadline exceeded' }
         $resultPath = Join-Path $Directory "dialog-$($Action.ToLowerInvariant()).json"
