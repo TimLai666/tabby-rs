@@ -363,6 +363,7 @@ function failureInfo (app, error) {
         executableSha256: null,
         pid: null,
         browserArguments: app.browserArguments,
+        environmentOverrides: app.environmentOverrides ?? {},
         portableDataRoot: null,
         cdp: { ok: false, endpoint: `http://127.0.0.1:${app.port}`, engineVersion: null, error: null },
         page: null,
@@ -393,6 +394,7 @@ async function captureApp (context, app) {
         executableSha256: null,
         pid: null,
         browserArguments: app.browserArguments,
+        environmentOverrides: app.environmentOverrides ?? {},
         portableDataRoot: null,
         cdp: { ok: false, endpoint: `http://127.0.0.1:${app.port}`, engineVersion: null, error: null },
         page: null,
@@ -737,7 +739,7 @@ async function main () {
     const cleanEnvironment = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(?:TABBY_CONFIG_DIRECTORY|TABBY_RS_(?:BENCHMARK|INSTALLER_SMOKE)_.*|WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS|WEBVIEW2_USER_DATA_FOLDER)$/.test(key)))
     const referenceArgs = [`--remote-debugging-port=${referencePort}`]
     const apps = [
-        { role: 'reference', exe: values.referenceExe, port: referencePort, args: referenceArgs, env: cleanEnvironment, browserArguments: referenceArgs },
+        { role: 'reference', exe: values.referenceExe, port: referencePort, args: referenceArgs, env: { ...cleanEnvironment, PORTABLE_EXECUTABLE_FILE: values.referenceExe }, environmentOverrides: { PORTABLE_EXECUTABLE_FILE: values.referenceExe }, browserArguments: referenceArgs },
         { role: 'native', exe: values.rsExe, port: rsPort, args: [], env: cleanEnvironment, browserArguments: 'compiled TAURI_CONFIG: complete normal window config plus remote-debugging-port; no environment override' },
     ]
     try {
