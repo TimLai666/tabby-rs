@@ -938,9 +938,9 @@
   verify production secondary creation and command delivery separately.
   AppKit property checks do not accept composited pixels, user gestures,
   supported-platform desktop parity, or installers.
-- macOS Window frame uses the first raw bootstrap configuration captured for
+- macOS and Windows Window frame use the first raw bootstrap configuration captured for
   the process, matching the fixed upstream constructor. Native restores the system
-  title bar; Thin and Full share hidden native chrome and the existing renderer
+  title bar; Thin and Full use the platform's custom frame and shared renderer
   layout. Secondary windows retain that process snapshot until restart. Keep
   missing or unknown selections on Thin; an encrypted wrapper without appearance
   also uses Thin. Do not substitute the decrypted ConfigService selection.
@@ -954,10 +954,18 @@
   Their controlled renderer and AppKit property checks do not establish native
   command delivery, keyboard input, window dragging, composited desktop pixels,
   fullscreen transitions, or production secondary-window creation.
-- Window frame controls remain unavailable on Windows and Linux until their
-  backends are implemented and compared with the fixed upstream. Windows needs
-  its original native controls overlay; do not substitute a borderless window
-  that hides its controls. Verify CSS drag regions on each native WebView.
+- Windows Native uses the system title bar. Thin and Full retain the decorated
+  native host, expand its client area, and use standard native BUTTON controls
+  for input and accessibility. The owning WebView paints their glyphs in one
+  pointer-transparent, aria-hidden canvas using the terminal foreground color.
+  Keep caption state and events scoped to the owning window. Preserve native
+  capture, close confirmation, terminal focus, resize borders, and fullscreen
+  hiding. Retain test:windows-caption and the windows_caption_native example.
+  Use the Common Controls v6 manifest when running that Windows example; follow
+  the PowerShell command in CONTRIBUTING.md and preserve the CI linker flags.
+  Compare actual Wry rendering, physical input, restart persistence, secondary
+  isolation, Windows 11, and display scaling with fixed upstream before accepting
+  the corresponding desktop behavior. Linux frame controls remain unavailable.
 - Verify actual process replacement, restored startup configuration, all-window
   closure, and native session cleanup before accepting restart parity. A browser
   reload fixture only verifies renderer delivery and persistence.
