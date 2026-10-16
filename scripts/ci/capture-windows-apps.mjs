@@ -790,7 +790,7 @@ async function main () {
     const referenceArgs = [`--remote-debugging-port=${referencePort}`]
     const apps = [
         { role: 'reference', exe: values.referenceExe, port: referencePort, args: referenceArgs, env: { ...cleanEnvironment, PORTABLE_EXECUTABLE_FILE: values.referenceExe }, environmentOverrides: { PORTABLE_EXECUTABLE_FILE: values.referenceExe }, browserArguments: referenceArgs },
-        { role: 'native', exe: values.rsExe, port: rsPort, args: [], env: cleanEnvironment, browserArguments: 'compiled TAURI_CONFIG: complete normal window config plus remote-debugging-port; no environment override' },
+        { role: 'native', exe: values.rsExe, port: rsPort, args: [], env: { ...cleanEnvironment, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: '--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required --remote-debugging-port=' + rsPort }, environmentOverrides: { WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: '--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required --remote-debugging-port=' + rsPort }, browserArguments: 'unchanged compiled TAURI_CONFIG plus the recorded common diagnostic WebView2 arguments for all windows' },
     ]
     try {
         for (const app of apps) {

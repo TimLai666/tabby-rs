@@ -136,16 +136,28 @@ export function createOwnedCaptionDriver (options) {
         await activate(primary)
         const before = helper(primary, 'EnumerateWindows').ownedWindows
         if (!Array.isArray(before)) throw new Error('owned window inventory missing')
-        const context = page.context(), previousPages = context.pages()
-        const created = context.waitForEvent('page', { timeout: timeout(15000) })
-        void created.catch(() => {})
+        const context = page.context(), browser = context.browser()
+        if (!browser) throw new Error('owned CDP browser is unavailable')
+        const allPages = () => browser.contexts().flatMap(entry => entry.pages())
+        const previousPages = allPages()
         await page.keyboard.press('Control+Shift+N', { timeout: timeout(5000) })
-        const target = await created
+        const until = Date.now() + timeout(20000)
+        let after, newWindows, newPages
+        const observations = []
+        do {
+            after = helper(primary, 'EnumerateWindows').ownedWindows
+            if (!Array.isArray(after)) throw new Error('secondary window inventory missing')
+            newWindows = after.filter(w => !before.some(old => old.hwnd === w.hwnd))
+            newPages = allPages().filter(p => !previousPages.includes(p))
+            observations.push({ windows: after, contexts: browser.contexts().length, newPages: newPages.map(p => p.url()) })
+            if (newWindows.length > 1 || newPages.length > 1) throw new Error('secondary HWND/page mapping is ambiguous')
+            if (newWindows.length === 1 && newPages.length === 1) break
+            await delay(100)
+        } while (Date.now() < until)
+        evidence.secondaryDiscovery = observations
+        if (newWindows.length !== 1 || newPages.length !== 1) throw new Error('secondary HWND/page was not observed: ' + JSON.stringify(observations.at(-1)))
+        const target = newPages[0]
         await target.waitForLoadState('domcontentloaded', { timeout: timeout(15000) })
-        const after = helper(primary, 'EnumerateWindows').ownedWindows
-        const newWindows = after.filter(w => !before.some(old => old.hwnd === w.hwnd))
-        const newPages = context.pages().filter(p => !previousPages.includes(p))
-        if (newWindows.length !== 1 || newPages.length !== 1 || newPages[0] !== target) throw new Error('secondary HWND/page mapping is ambiguous')
         const identity = { pid: ownerPid, creationUtc: ownerCreationUtc, hwnd: Number(newWindows[0].hwnd) }
         if (!Number.isSafeInteger(identity.hwnd) || identity.hwnd <= 0 || identity.hwnd === ownerHwnd) throw new Error('invalid secondary HWND')
         const url = target.url()
@@ -164,6 +176,7 @@ export async function runWindowsCaptionDesktop (options) {
     const { page, ownerPid, ownerCreationUtc, ownerHwnd, powerShell, outputDirectory, deadline, captureNativeWindow, snapshotProcessTree } = options
     const { primary, pages, sessions, busy, warnings, evidence, helper, activate, commandProbe, tree, waitGone, createSecondary, timeout, getInputCleanupFailed } = createOwnedCaptionDriver(options)
     let report
+    const normalBounds = new Map()
     try {
         if (typeof snapshotProcessTree !== 'function' || typeof captureNativeWindow !== 'function') throw new Error('owned process/capture callbacks required')
         mkdirSync(outputDirectory)
@@ -184,6 +197,21 @@ export async function runWindowsCaptionDesktop (options) {
                 }
                 const warning = warnings.get(identity.hwnd)
                 const data = helper(identity, action, action === 'CancelClose' ? ['-DialogHandle', String(warning?.dialogHwnd), '-ExpectedWarningText', warning?.warningText ?? ''] : [])
+                if (action === 'InvokeMaximize' && data.before?.minimized === false && data.before?.maximized === false) normalBounds.set(identity.hwnd, data.before.bounds)
+                if (action === 'InvokeRestore') {
+                    const expected = normalBounds.get(identity.hwnd)
+                    if (!expected) throw new Error('restore lacks the observed normal bounds')
+                    const matches = state => state?.minimized === false && state?.maximized === false && ['x', 'y', 'width', 'height'].every(key => state.bounds?.[key] === expected[key])
+                    const until = Date.now() + timeout(10000)
+                    data.restoreSnapshots = []
+                    while (!matches(data.after) && Date.now() < until) {
+                        await delay(100)
+                        const settled = helper(identity, 'Snapshot')
+                        data.restoreSnapshots.push(settled.after)
+                        data.after = settled.after
+                    }
+                    if (!matches(data.after)) throw new Error('restored bounds did not settle to the observed normal bounds')
+                }
                 if (action === 'InvokeClose') warnings.set(identity.hwnd, data)
                 if (action === 'CloseSecondary') {
                     const shell = sessions.get(identity.hwnd)
