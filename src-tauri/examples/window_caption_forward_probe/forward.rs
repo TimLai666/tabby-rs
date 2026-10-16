@@ -11,9 +11,10 @@ use windows_sys::Win32::{
         },
         WindowsAndMessaging::{
             CreateWindowExW, DefWindowProcW, DestroyWindow, GetClassInfoW, GetClientRect,
-            GetParent, GetWindowThreadProcessId, IsWindow, RegisterClassW, SetWindowPos,
-            HTMAXBUTTON, HTTRANSPARENT, HWND_TOP, SWP_NOACTIVATE, SWP_SHOWWINDOW, WM_NCDESTROY,
-            WM_NCHITTEST, WNDCLASSW, WS_CHILD, WS_EX_NOACTIVATE, WS_VISIBLE,
+            GetParent, GetWindowThreadProcessId, IsWindow, RegisterClassW, SendMessageW,
+            SetWindowPos, HTMAXBUTTON, HTTRANSPARENT, HWND_TOP, SWP_NOACTIVATE, SWP_SHOWWINDOW,
+            WM_NCDESTROY, WM_NCHITTEST, WM_NCMOUSEMOVE, WNDCLASSW, WS_CHILD, WS_EX_NOACTIVATE,
+            WS_VISIBLE,
         },
     },
 };
@@ -32,6 +33,7 @@ struct State {
     child: Cell<HWND>,
     rect: RECT,
     closing: Cell<bool>,
+    relaying: Cell<bool>,
 }
 
 fn inside(state: &State, lparam: LPARAM) -> bool {
@@ -53,13 +55,61 @@ fn inside(state: &State, lparam: LPARAM) -> bool {
 // and return Some(0) after handling. Other messages return None. Never synthesize
 // hover from hit-test, setup, timers or observers. No mouse-down belongs here.
 unsafe fn relay_child_input(
-    _hwnd: HWND,
-    _message: u32,
-    _wparam: WPARAM,
-    _lparam: LPARAM,
-    _data: usize,
+    hwnd: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+    data: usize,
 ) -> Option<LRESULT> {
-    None
+    if message != WM_NCMOUSEMOVE || wparam != HTMAXBUTTON as usize || data == 0 {
+        return None;
+    }
+    let state_ptr = data as *const State;
+    Arc::increment_strong_count(state_ptr);
+    let state = Arc::from_raw(state_ptr);
+    if state.closing.get()
+        || hwnd != state.child.get()
+        || state.parent.is_null()
+        || IsWindow(hwnd) == 0
+        || IsWindow(state.parent) == 0
+        || GetParent(hwnd) != state.parent
+    {
+        return None;
+    }
+    let mut child_pid = 0;
+    let mut parent_pid = 0;
+    let child_tid = GetWindowThreadProcessId(hwnd, &mut child_pid);
+    let parent_tid = GetWindowThreadProcessId(state.parent, &mut parent_pid);
+    let current_tid = GetCurrentThreadId();
+    if child_pid != std::process::id()
+        || parent_pid != child_pid
+        || child_tid == 0
+        || child_tid != parent_tid
+        || child_tid != current_tid
+    {
+        return None;
+    }
+    let mut active_child_data = 0;
+    let mut active_root_data = 0;
+    if GetWindowSubclass(hwnd, Some(child_proc), CHILD_ID, &mut active_child_data) == 0
+        || active_child_data != data
+        || GetWindowSubclass(
+            state.parent,
+            Some(root_proc),
+            ROOT_ID,
+            &mut active_root_data,
+        ) == 0
+        || active_root_data != data
+        || !inside(&state, lparam)
+    {
+        return None;
+    }
+    if state.relaying.replace(true) {
+        return Some(0);
+    }
+    SendMessageW(state.parent, message, wparam, lparam);
+    state.relaying.set(false);
+    Some(0)
 }
 
 unsafe extern "system" fn child_proc(
@@ -254,6 +304,7 @@ pub unsafe fn install(parent: HWND, container: HWND, rect: RECT) -> Result<HWND,
         child: Cell::new(child),
         rect,
         closing: Cell::new(false),
+        relaying: Cell::new(false),
     });
     let child_data = Arc::into_raw(Arc::clone(&state)) as usize;
     if SetWindowSubclass(child, Some(child_proc), CHILD_ID, child_data) == 0 {
