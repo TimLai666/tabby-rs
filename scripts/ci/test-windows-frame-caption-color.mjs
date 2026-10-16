@@ -100,7 +100,7 @@ try {
     const root = preparePortable(path.join(emptyApp, 'app.exe'), true)
     const config = path.join(root, 'config.yaml')
     const seeded = readFileSync(config, 'utf8')
-    assert.equal(seeded, "version: 1\nappearance:\n  frame: thin\nterminal:\n  colorScheme:\n    foreground: '#b050d0'\n")
+    assert.equal(seeded, "version: 1\nappearance:\n  frame: thin\nterminal:\n  colorScheme:\n    name: 'Tabby Default'\n    foreground: '#b050d0'\n    background: '#171717'\n    cursor: '#bbbbbb'\n    colors:\n      - '#000000'\n      - '#ff615a'\n      - '#b1e969'\n      - '#ebd99c'\n      - '#5da9f6'\n      - '#e86aff'\n      - '#82fff7'\n      - '#dedacf'\n      - '#313131'\n      - '#f58c80'\n      - '#ddf88f'\n      - '#eee5b2'\n      - '#a5c7ff'\n      - '#ddaaff'\n      - '#b7fff9'\n      - '#ffffff'\n")
     assert.throws(() => preparePortable(path.join(emptyApp, 'app.exe'), true), /pre-existing portable data/)
     assert.equal(readFileSync(config, 'utf8'), seeded)
     const otherApp = path.join(directory, 'other')

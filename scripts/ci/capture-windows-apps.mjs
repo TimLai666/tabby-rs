@@ -218,7 +218,7 @@ function ensurePortableRoot (exePath, captionColor = false) {
     if (!statSync(dataRoot).isDirectory()) {
         throw new Error(`portable data path is not a directory: ${dataRoot}`)
     }
-    if (captionColor) writeFileSync(path.join(dataRoot, 'config.yaml'), "version: 1\nappearance:\n  frame: thin\nterminal:\n  colorScheme:\n    foreground: '#b050d0'\n", { flag: 'wx' })
+    if (captionColor) writeFileSync(path.join(dataRoot, 'config.yaml'), "version: 1\nappearance:\n  frame: thin\nterminal:\n  colorScheme:\n    name: 'Tabby Default'\n    foreground: '#b050d0'\n    background: '#171717'\n    cursor: '#bbbbbb'\n    colors:\n      - '#000000'\n      - '#ff615a'\n      - '#b1e969'\n      - '#ebd99c'\n      - '#5da9f6'\n      - '#e86aff'\n      - '#82fff7'\n      - '#dedacf'\n      - '#313131'\n      - '#f58c80'\n      - '#ddf88f'\n      - '#eee5b2'\n      - '#a5c7ff'\n      - '#ddaaff'\n      - '#b7fff9'\n      - '#ffffff'\n", { flag: 'wx' })
     return dataRoot
 }
 
