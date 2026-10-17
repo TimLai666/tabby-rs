@@ -121,7 +121,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
-          foreach($name in @('test-caption-restart.mjs','test-restart-process-origin.mjs','test-restart-observer-final-trace.mjs','test-restart-adoption.mjs','test-restart-seed-refresh.mjs')) {
+          foreach($name in @('test-caption-restart.mjs','test-restart-process-origin.mjs','test-restart-observer-final-trace.mjs','test-restart-adoption.mjs','test-restart-seed-refresh.mjs','test-controller-fixture-imports.mjs')) {
             node "scripts/ci/$name"
             if($LASTEXITCODE){throw "Restart controlled guard failed: $name"}
           }
