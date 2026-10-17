@@ -606,7 +606,7 @@ foreach ($entry in $entries) {
         $after = Get-CimInstance Win32_Process -Filter "ProcessId = $($entry.pid)" -ErrorAction Stop
         if (-not $after) { $exited += $entry.pid }
         elseif ($after.CreationDate.ToUniversalTime().Ticks -ne ([DateTime]$entry.creationTimeUTC).ToUniversalTime().Ticks) { $reused += $entry.pid }
-        else { $attemptErrors[[int]$entry.pid] = $terminationError }
+        else { $attemptErrors[[string]$entry.pid] = $terminationError }
     }
 }
 $verificationUntil = [DateTime]::UtcNow.AddSeconds(5)
@@ -620,7 +620,7 @@ do {
     Start-Sleep -Milliseconds 50
 } while ([DateTime]::UtcNow -lt $verificationUntil)
 foreach ($failedPid in $attemptErrors.Keys) {
-    if ($survivors -contains $failedPid) { $errors += "PID $($failedPid): $($attemptErrors[$failedPid])" }
+    if ($survivors -contains [int]$failedPid) { $errors += "PID $($failedPid): $($attemptErrors[$failedPid])" }
 }
 @{ stopped = @($stopped); survivors = @($survivors); reused = @($reused); exited = @($exited); errors = @($errors); attemptErrors = $attemptErrors } | ConvertTo-Json -Compress -Depth 4`
     const output = runPowerShell(context.powerShell, script, Math.max(1000, Math.min(30000, context.cleanupDeadline - Date.now())))
