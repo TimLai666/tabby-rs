@@ -628,9 +628,9 @@ public static class RestartWindows {
 }
 '@
 $all=@(Get-CimInstance Win32_Process -ErrorAction Stop)
-$root=@($all|Where-Object {$_.ProcessId -eq $cfg.identity.pid -and $_.CreationDate.ToUniversalTime().ToString('o') -ceq $cfg.identity.creationUtc})
-$remaining=@(foreach($s in $cfg.sessions){$p=@($all|Where-Object {$_.ProcessId -eq $s.pid -and $_.CreationDate.ToUniversalTime().ToString('o') -ceq $s.creationUtc});if($p.Count){$s}})
-$remainingTracked=@(foreach($s in $cfg.tracked){$p=@($all|Where-Object {$_.ProcessId -eq $s.pid -and $_.CreationDate.ToUniversalTime().ToString('o') -ceq $s.creationTimeUTC});if($p.Count){$s}})
+$root=@($all|Where-Object {$_.ProcessId -eq $cfg.identity.pid -and $_.CreationDate.ToUniversalTime().Ticks -eq ([DateTime]$cfg.identity.creationUtc).ToUniversalTime().Ticks})
+$remaining=@(foreach($s in $cfg.sessions){$p=@($all|Where-Object {$_.ProcessId -eq $s.pid -and $_.CreationDate.ToUniversalTime().Ticks -eq ([DateTime]$s.creationUtc).ToUniversalTime().Ticks});if($p.Count){$s}})
+$remainingTracked=@(foreach($s in $cfg.tracked){$p=@($all|Where-Object {$_.ProcessId -eq $s.pid -and $_.CreationDate.ToUniversalTime().Ticks -eq ([DateTime]$s.creationTimeUTC).ToUniversalTime().Ticks});if($p.Count){$s}})
 $windows=@(foreach($w in $cfg.oldWindows){$owner=[RestartWindows]::Owner([long]$w.hwnd);@{hwnd=[long]$w.hwnd;currentOwner=$owner;oldIdentityRetained=($owner -eq $cfg.identity.pid -and $root.Count -eq 1)}})
 $visible=@([RestartWindows]::Visible())
 $matchingExecutableProcesses=@(foreach($p in $all){if($p.ExecutablePath -and [string]::Equals([IO.Path]::GetFullPath($p.ExecutablePath),[IO.Path]::GetFullPath($cfg.executable),[StringComparison]::OrdinalIgnoreCase)){@{pid=[int]$p.ProcessId;parentPid=[int]$p.ParentProcessId;creationTimeUTC=$p.CreationDate.ToUniversalTime().ToString('o');executablePath=$p.ExecutablePath;commandLine=$p.CommandLine;visibleWindows=@($visible|Where-Object {$_.pid -eq $p.ProcessId})}}})
@@ -655,14 +655,16 @@ $candidates=@(foreach($p in $all){if($p.ExecutablePath -and [string]::Equals([IO
                 const candidate = { ...observation.candidates[0] }
                 if (!Array.isArray(candidate.windows)) throw new Error('replacement window inventory is missing')
                 candidate.handles = candidate.windows.filter(w => w.class === primaryWindow[0].class).map(w => Number(w.hwnd))
-                if (candidate.handles?.length !== 1 || candidate.creationTimeUTC === identity.creationUtc && candidate.pid === identity.pid) throw new Error('replacement window/process identity is ambiguous')
+                if (candidate.handles.length > 1 || candidate.creationTimeUTC === identity.creationUtc && candidate.pid === identity.pid) throw new Error('replacement window/process identity is ambiguous')
                 if (selected && (selected.pid !== candidate.pid || selected.creationTimeUTC !== candidate.creationTimeUTC)) throw new Error('replacement identity changed while observing restart')
-                const origin = proveRestartOrigin({ candidate, seeds, trace: observer.trace(), triggeredUtc: started })
-                evidence.ownershipProofs.push({ pid: candidate.pid, creationTimeUTC: candidate.creationTimeUTC, origin })
-                if (selected && !origin.owned) throw new Error('replacement native origin evidence became invalid')
-                if (!selected && origin.owned) {
-                    selected = candidate
-                    evidence.replacement = candidate
+                if (candidate.handles.length === 1) {
+                    const origin = proveRestartOrigin({ candidate, seeds, trace: observer.trace(), triggeredUtc: started })
+                    evidence.ownershipProofs.push({ pid: candidate.pid, creationTimeUTC: candidate.creationTimeUTC, origin })
+                    if (selected && !origin.owned) throw new Error('replacement native origin evidence became invalid')
+                    if (!selected && origin.owned) {
+                        selected = candidate
+                        evidence.replacement = candidate
+                    }
                 }
             }
             if (selected && observation.oldProcessGone && observation.oldWindows.every(w => !w.oldIdentityRetained) && observation.sessionsRemaining.length === 0 && observation.trackedRemaining.length === 0) break
@@ -786,7 +788,7 @@ async function completeConsumedRestartCommand (context, app, info) {
         evidence.childMetadata = metadata
         if (!Array.isArray(metadata.ancestry) || !metadata.ancestry.some(p => p.pid === info.pid && p.creationUtc === info.rootIdentity.creationTimeUTC)) throw new Error('CLI command child lacks actual owned process ancestry')
         const encoded = Buffer.from(JSON.stringify(metadata.child), 'utf8').toString('base64')
-        const query = `$ErrorActionPreference='Stop';$x=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encoded}'))|ConvertFrom-Json;$p=Get-CimInstance Win32_Process -Filter "ProcessId = $($x.pid)";ConvertTo-Json -Compress -InputObject @{present=($null -ne $p -and $p.CreationDate.ToUniversalTime().ToString('o') -ceq $x.creationUtc)}`
+        const query = `$ErrorActionPreference='Stop';$x=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encoded}'))|ConvertFrom-Json;$p=Get-CimInstance Win32_Process -Filter "ProcessId = $($x.pid)";ConvertTo-Json -Compress -InputObject @{present=($null -ne $p -and $p.CreationDate.ToUniversalTime().Ticks -eq ([DateTime]$x.creationUtc).ToUniversalTime().Ticks)}`
         let gone = false
         const exitUntil = Date.now() + timeout(15000)
         while (Date.now() < exitUntil) {
