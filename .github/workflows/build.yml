@@ -118,6 +118,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'CDP ownership controlled checks failed' }
           node scripts/ci/test-windows-frame-flow-stop.mjs
           if ($LASTEXITCODE -ne 0) { throw 'GUI flow cleanup-stop checks failed' }
+          node scripts/ci/test-windows-frame-config-readback.mjs
+          if ($LASTEXITCODE) { throw 'Window frame sparse-default readback checks failed' }
           node scripts/ci/test-windows-frame-restore-settling.mjs
           if ($LASTEXITCODE) { throw 'Restore exact-bound settling controlled checks failed' }
           pwsh -NoProfile -File scripts/ci/test-windows-input-caption-fallback.ps1
