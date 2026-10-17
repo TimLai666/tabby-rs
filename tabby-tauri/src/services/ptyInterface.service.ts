@@ -244,9 +244,24 @@ export class TauriPTYProxy extends PTYProxy {
     }
 
     override async getChildProcesses (): Promise<ChildProcess[]> {
+        const hasExited = () => this.pendingExit !== null
+        if (hasExited()) {
+            return []
+        }
         // Pin the startup shell before inspecting any later jobs beneath it.
         await this.truePID
-        return this.bridge.invoke('pty.getChildren', { id: this.response.id })
+        if (hasExited()) {
+            return []
+        }
+        try {
+            const children = await this.bridge.invoke('pty.getChildren', { id: this.response.id })
+            return hasExited() ? [] : children
+        } catch (error) {
+            if (hasExited()) {
+                return []
+            }
+            throw error
+        }
     }
 
     override async getWorkingDirectory (): Promise<string|null> {
