@@ -67,7 +67,7 @@ fn run_checks() -> Result<usize, String> {
         }
     }
     static CLOSE_PROP: &[u16] = &[67, 108, 111, 115, 101, 82, 101, 113, 117, 101, 115, 116, 0];
-    unsafe fn make_root() -> Result<(HWND, HWND), String> {
+    unsafe fn make_root() -> Result<(HWND, HWND, HWND), String> {
         let instance = GetModuleHandleW(ptr::null());
         let wc = WNDCLASSW {
             style: 0,
@@ -110,7 +110,7 @@ fn run_checks() -> Result<usize, String> {
             0,
             0,
             640,
-            390,
+            420,
             root,
             ptr::null_mut(),
             instance,
@@ -120,7 +120,31 @@ fn run_checks() -> Result<usize, String> {
             DestroyWindow(root);
             return Err("CreateWindowExW STATIC child failed".into());
         }
-        Ok((root, child))
+        // A custom-class descendant behaves like an opaque nested content
+        // surface: unlike the STATIC placeholder above, it does not forward
+        // nonclient hit testing to the root.
+        let descendant = CreateWindowExW(
+            0,
+            CLASS.as_ptr(),
+            [
+                79, 112, 97, 113, 117, 101, 32, 100, 101, 115, 99, 101, 110, 100, 97, 110, 116, 0,
+            ]
+            .as_ptr(),
+            WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
+            0,
+            0,
+            640,
+            420,
+            child,
+            ptr::null_mut(),
+            instance,
+            ptr::null(),
+        );
+        if descendant.is_null() {
+            DestroyWindow(root);
+            return Err("CreateWindowExW nested opaque child failed".into());
+        }
+        Ok((root, child, descendant))
     }
     unsafe fn pump_until(mut pred: impl FnMut() -> bool) -> Result<(), String> {
         let start = std::time::Instant::now();
@@ -176,16 +200,49 @@ fn run_checks() -> Result<usize, String> {
         SendMessageW(b, BM_CLICK, 0, 0);
         Ok(())
     }
+    unsafe fn hit_test_at(x: i32, y: i32) -> Result<(HWND, LRESULT), String> {
+        let point = windows_sys::Win32::Foundation::POINT { x, y };
+        let recipient = WindowFromPoint(point);
+        if recipient.is_null() {
+            return Err(format!("WindowFromPoint returned null at ({x}, {y})"));
+        }
+        let packed = (((y as u16) as isize) << 16) | ((x as u16) as isize);
+        Ok((recipient, SendMessageW(recipient, WM_NCHITTEST, 0, packed)))
+    }
+    unsafe fn is_owned_resize_surface(
+        root: HWND,
+        web: HWND,
+        opaque_descendant: HWND,
+        buttons: [HWND; 3],
+        candidate: HWND,
+    ) -> bool {
+        if candidate.is_null()
+            || candidate == root
+            || candidate == web
+            || candidate == opaque_descendant
+            || buttons.contains(&candidate)
+            || IsWindow(candidate) == 0
+            || GetParent(candidate) != root
+        {
+            return false;
+        }
+        let mut pid = 0;
+        let tid = GetWindowThreadProcessId(candidate, &mut pid);
+        tid == GetCurrentThreadId() && pid == std::process::id()
+    }
     let mut checks = 0usize;
+    let mut deep_hit_failures = Vec::new();
     unsafe {
-        let (root, web) = make_root()?;
+        let (root, web, opaque_descendant) = make_root()?;
         let _root_guard = RootGuard(root);
         let outer_before = {
             let mut r = zeroed();
             GetWindowRect(root, &mut r);
             r
         };
-        let child_ok = GetParent(web) == root;
+        let child_ok = GetParent(web) == root
+            && GetParent(opaque_descendant) == web
+            && IsWindow(opaque_descendant) != 0;
         if !child_ok {
             DestroyWindow(root);
             return Err("STATIC child is not owned by root".into());
@@ -284,8 +341,97 @@ fn run_checks() -> Result<usize, String> {
         }
         checks += 1;
 
+        // Check hit testing on the actual HWND returned by WindowFromPoint,
+        // not only the immediate Wry placeholder. The nested custom-class
+        // child covers the full content area and stays opaque to nonclient hits.
+        let mut content_rect = zeroed();
+        GetWindowRect(opaque_descendant, &mut content_rect);
+        let center_x = content_rect.left + (content_rect.right - content_rect.left) / 2;
+        let center_y = content_rect.top + (content_rect.bottom - content_rect.top) / 2;
+        let (center_recipient, center_result) = hit_test_at(center_x, center_y)?;
+        if center_recipient != opaque_descendant || center_result != HTCLIENT as LRESULT {
+            deep_hit_failures.push(format!(
+                "opaque descendant center hit mismatch: recipient={center_recipient:?}, expected={opaque_descendant:?}, result={center_result}, expected HTCLIENT"
+            ));
+        }
+        let mut root_rect = zeroed();
+        GetWindowRect(root, &mut root_rect);
+        let mid_x = root_rect.left + (root_rect.right - root_rect.left) / 2;
+        let mid_y = root_rect.top + (root_rect.bottom - root_rect.top) / 2;
+        // The last outer pixel lies beyond the Close BUTTON's exclusive right
+        // edge, so all eight resize directions remain independently testable.
+        let resize_points = [
+            (
+                "top-left",
+                root_rect.left + 1,
+                root_rect.top + 1,
+                HTTOPLEFT as LRESULT,
+                None,
+            ),
+            ("top", mid_x, root_rect.top + 1, HTTOP as LRESULT, None),
+            (
+                "top-right",
+                root_rect.right - 1,
+                root_rect.top + 1,
+                HTTOPRIGHT as LRESULT,
+                None::<HWND>,
+            ),
+            ("left", root_rect.left + 1, mid_y, HTLEFT as LRESULT, None),
+            (
+                "right",
+                root_rect.right - 2,
+                mid_y,
+                HTRIGHT as LRESULT,
+                None,
+            ),
+            (
+                "bottom-left",
+                root_rect.left + 1,
+                root_rect.bottom - 2,
+                HTBOTTOMLEFT as LRESULT,
+                None,
+            ),
+            (
+                "bottom",
+                mid_x,
+                root_rect.bottom - 2,
+                HTBOTTOM as LRESULT,
+                None,
+            ),
+            (
+                "bottom-right",
+                root_rect.right - 2,
+                root_rect.bottom - 2,
+                HTBOTTOMRIGHT as LRESULT,
+                None,
+            ),
+        ];
+        for (name, x, y, expected_result, expected_recipient) in resize_points {
+            let (recipient, result) = hit_test_at(x, y)?;
+            if result != expected_result
+                || expected_recipient.map_or(false, |expected| recipient != expected)
+            {
+                deep_hit_failures.push(format!(
+                    "{name} hit mismatch: recipient={recipient:?}, expected recipient={expected_recipient:?}, result={result}, expected {expected_result}"
+                ));
+            }
+        }
+        for expected_button in [min, max, close] {
+            let mut button_rect = zeroed();
+            GetWindowRect(expected_button, &mut button_rect);
+            let x = button_rect.left + (button_rect.right - button_rect.left) / 2;
+            let y = button_rect.top + (button_rect.bottom - button_rect.top) / 2;
+            let (recipient, result) = hit_test_at(x, y)?;
+            if recipient != expected_button || result != HTCLIENT as LRESULT {
+                deep_hit_failures.push(format!(
+                    "caption button center hit mismatch: recipient={recipient:?}, expected={expected_button:?}, result={result}, expected HTCLIENT"
+                ));
+            }
+        }
+        checks += 1;
+
         // Operations target only the HWND whose native child was activated.
-        let (other, _) = make_root()?;
+        let (other, _, _) = make_root()?;
         let _other_guard = RootGuard(other);
         caption::install(other, Box::new(|_| {}))?;
         click(root, "Maximize")?;
@@ -544,7 +690,7 @@ fn run_checks() -> Result<usize, String> {
             return Err("remove leaked captured observer reference".into());
         }
         checks += 1;
-        let (destroy_root, _) = make_root()?;
+        let (destroy_root, _, _) = make_root()?;
         let _destroy_guard = RootGuard(destroy_root);
         let destroy_sentinel = Arc::new(());
         let destroy_capture = destroy_sentinel.clone();
@@ -595,6 +741,137 @@ fn run_checks() -> Result<usize, String> {
         caption::remove(root)?;
         DestroyWindow(root);
         let _ = GetCurrentThreadId();
+
+        // Exercise resize-surface teardown on an isolated owned root so a
+        // missing/foreign hit target cannot disturb the main lifecycle matrix.
+        let (surface_root, surface_web, surface_descendant) = make_root()?;
+        let _surface_root_guard = RootGuard(surface_root);
+        SetWindowPos(
+            surface_root,
+            HWND_TOP,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
+        );
+        let surface_none_events = Arc::new(AtomicUsize::new(0));
+        let surface_capture = Arc::new(());
+        let surface_capture_ref = surface_capture.clone();
+        let none_ref = surface_none_events.clone();
+        caption::install(
+            surface_root,
+            Box::new(move |state| {
+                let _keep_alive = &surface_capture_ref;
+                if state.is_none() {
+                    none_ref.fetch_add(1, Ordering::SeqCst);
+                }
+            }),
+        )?;
+        if Arc::strong_count(&surface_capture) != 2 {
+            return Err("resize-surface observer capture was not retained".into());
+        }
+        let surface_min = button(surface_root, "Minimize")?;
+        let surface_max = button(surface_root, "Maximize")?;
+        let surface_close = button(surface_root, "Close")?;
+        let surface_buttons = [surface_min, surface_max, surface_close];
+        let mut surface_bounds = zeroed();
+        GetWindowRect(surface_root, &mut surface_bounds);
+        let surface_x = surface_bounds.right - 2;
+        let surface_y = surface_bounds.top + (surface_bounds.bottom - surface_bounds.top) / 2;
+        let (surface_hit, surface_hit_result) = hit_test_at(surface_x, surface_y)?;
+        let valid_surface = surface_hit_result == HTRIGHT as LRESULT
+            && is_owned_resize_surface(
+                surface_root,
+                surface_web,
+                surface_descendant,
+                surface_buttons,
+                surface_hit,
+            );
+        if valid_surface {
+            if DestroyWindow(surface_hit) == 0 {
+                deep_hit_failures.push(
+                    "DestroyWindow failed for the exact hit-tested owned resize surface".into(),
+                );
+            } else {
+                let detached = caption::snapshot(surface_root)?.is_none()
+                    && surface_none_events.load(Ordering::SeqCst) == 1
+                    && Arc::strong_count(&surface_capture) == 1
+                    && button_count(surface_root) == 0
+                    && IsWindow(surface_hit) == 0
+                    && IsWindow(surface_root) != 0
+                    && IsWindow(surface_web) != 0
+                    && GetParent(surface_web) == surface_root
+                    && IsWindow(surface_descendant) != 0
+                    && GetParent(surface_descendant) == surface_web;
+                if !detached {
+                    deep_hit_failures.push(
+                        "destroyed resize surface did not detach only its adapter, release its observer, and retain root/content".into(),
+                    );
+                }
+            }
+        } else {
+            deep_hit_failures.push(format!(
+                "resize-surface teardown skipped safely: actual hit recipient {surface_hit:?} returned {surface_hit_result}, not an owned direct child returning HTRIGHT"
+            ));
+        }
+
+        // Reinstall on the same root, then ensure explicit remove destroys
+        // only the newly hit-tested input surface and preserves content.
+        if caption::snapshot(surface_root)?.is_some() {
+            caption::remove(surface_root)?;
+        }
+        caption::install(surface_root, Box::new(|_| {}))?;
+        SetWindowPos(
+            surface_root,
+            HWND_TOP,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
+        );
+        let surface_min = button(surface_root, "Minimize")?;
+        let surface_max = button(surface_root, "Maximize")?;
+        let surface_close = button(surface_root, "Close")?;
+        let mut reinstalled_bounds = zeroed();
+        GetWindowRect(surface_root, &mut reinstalled_bounds);
+        let (reinstalled_hit, reinstalled_result) = hit_test_at(
+            reinstalled_bounds.right - 2,
+            reinstalled_bounds.top + (reinstalled_bounds.bottom - reinstalled_bounds.top) / 2,
+        )?;
+        let reinstalled_valid = reinstalled_result == HTRIGHT as LRESULT
+            && is_owned_resize_surface(
+                surface_root,
+                surface_web,
+                surface_descendant,
+                [surface_min, surface_max, surface_close],
+                reinstalled_hit,
+            );
+        if !reinstalled_valid {
+            deep_hit_failures.push(format!(
+                "reinstalled resize-surface hit mismatch: recipient={reinstalled_hit:?}, result={reinstalled_result}, expected a new owned child returning HTRIGHT"
+            ));
+        }
+        caption::remove(surface_root)?;
+        let reinstalled_surface_survived = reinstalled_valid && IsWindow(reinstalled_hit) != 0;
+        if reinstalled_surface_survived
+            || caption::snapshot(surface_root)?.is_some()
+            || button_count(surface_root) != 0
+            || IsWindow(surface_root) == 0
+            || IsWindow(surface_web) == 0
+            || GetParent(surface_web) != surface_root
+            || IsWindow(surface_descendant) == 0
+            || GetParent(surface_descendant) != surface_web
+        {
+            deep_hit_failures.push(
+                "explicit adapter remove did not destroy only the new resize surface while retaining root/content".into(),
+            );
+        }
+        checks += 1;
+    }
+    if !deep_hit_failures.is_empty() {
+        return Err(deep_hit_failures.join("; "));
     }
     Ok(checks)
 }
