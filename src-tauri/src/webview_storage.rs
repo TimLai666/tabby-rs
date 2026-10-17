@@ -60,3 +60,31 @@ pub(crate) fn install_macos(directory: &Path) -> Result<(), AppError> {
 #[cfg(test)]
 #[path = "webview_storage_tests.rs"]
 mod tests;
+
+#[cfg(any(windows, target_os = "linux", test))]
+pub(crate) fn defer_portable_startup(
+    config: &mut tauri::Config,
+    directory: Option<&Path>,
+) -> Vec<tauri::utils::config::WindowConfig> {
+    let Some(directory) = directory else {
+        return Vec::new();
+    };
+    config
+        .app
+        .windows
+        .iter_mut()
+        .filter_map(|window| {
+            if !window.create {
+                return None;
+            }
+            window.data_directory = Some(directory.to_owned());
+            let configured = window.clone();
+            window.create = false;
+            Some(configured)
+        })
+        .collect()
+}
+
+#[cfg(test)]
+#[path = "webview_storage_startup_tests.rs"]
+mod startup_tests;

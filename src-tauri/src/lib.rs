@@ -333,8 +333,9 @@ pub fn run() {
         webview_storage::install_macos(directory)
             .expect("failed to install portable WebView storage");
     }
-    #[cfg(not(target_os = "macos"))]
-    let _ = storage_directory;
+    #[cfg(any(windows, target_os = "linux"))]
+    let startup_windows =
+        webview_storage::defer_portable_startup(context.config_mut(), storage_directory.as_deref());
 
     let initial_launch = initial_launch_context();
     let (launch_sender, launch_receiver) = std::sync::mpsc::channel::<LaunchContext>();
@@ -418,6 +419,17 @@ pub fn run() {
                 crate::transfer::file_edit::FileEditManager::default(),
             ));
             app.manage(CredentialState::default());
+            #[cfg(any(windows, target_os = "linux"))]
+            if let Some(directory) = storage_directory.as_ref() {
+                for config in &startup_windows {
+                    let window = tauri::WebviewWindowBuilder::from_config(app, config)?
+                        .data_directory(directory.clone())
+                        .build()?;
+                    if window.label() != "main" {
+                        register_desktop_window_events(&window);
+                    }
+                }
+            }
             if let Some(window) = app.get_webview_window("main") {
                 register_desktop_window_events(&window);
             }
