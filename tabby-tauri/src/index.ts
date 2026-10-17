@@ -46,6 +46,7 @@ import {
 import { TauriConfigProvider } from './config'
 import { TauriHotkeyProvider } from './hotkeys'
 import { TauriDesktopIntegrationService } from './services/desktopIntegration.service'
+import { TauriWindowsCaptionService } from './services/windowsCaption.service'
 import { TauriDiagnosticsService } from './services/diagnostics.service'
 import { TauriDockingService } from './services/docking.service'
 import { TauriFileProvider } from './services/fileProvider.service'
@@ -112,6 +113,10 @@ function initializeDesktop (service: TauriDesktopIntegrationService, platform: T
     }
 }
 
+function initializeWindowsCaption (service: TauriWindowsCaptionService): () => Promise<void> {
+    return () => service.initialize()
+}
+
 @NgModule({
     imports: [CommonModule, FormsModule, NgbModule, NgxFilesizeModule, TabbyCoreModule, TabbyTerminalModule, KeyboardInteractiveAuthComponent],
     declarations: [
@@ -149,6 +154,7 @@ function initializeDesktop (service: TauriDesktopIntegrationService, platform: T
         { provide: TabContextMenuItemProvider, useClass: TauriSftpContextMenu, multi: true },
         { provide: FileProvider, useClass: TauriFileProvider, multi: true },
         TauriDesktopIntegrationService,
+        TauriWindowsCaptionService,
         TauriDiagnosticsService,
         { provide: LogService, useClass: TauriLogService },
         { provide: SettingsTabProvider, useClass: TauriDiagnosticsSettingsTabProvider, multi: true },
@@ -185,6 +191,12 @@ function initializeDesktop (service: TauriDesktopIntegrationService, platform: T
             provide: APP_INITIALIZER,
             useFactory: initializeDesktop,
             deps: [TauriDesktopIntegrationService, TauriPlatformService],
+            multi: true,
+        },
+        {
+            provide: APP_INITIALIZER,
+            useFactory: initializeWindowsCaption,
+            deps: [TauriWindowsCaptionService],
             multi: true,
         },
         { provide: ConfigProvider, useClass: TauriConfigProvider, multi: true },

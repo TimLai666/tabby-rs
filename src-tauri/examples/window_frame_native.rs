@@ -1,7 +1,13 @@
 use std::sync::mpsc::sync_channel;
 use std::time::Duration;
 
+#[path = "../src/window_caption.rs"]
+mod caption;
+
 mod desktop {
+    pub use crate::caption::WindowCaptionState;
+    #[cfg(target_os = "windows")]
+    pub use crate::caption::{WindowCaptionButton, WindowCaptionButtonKind};
     #[derive(Clone)]
     pub struct VibrancyOptions {
         pub enabled: bool,

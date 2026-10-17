@@ -70,7 +70,15 @@ pub struct WindowStateSnapshot {
     pub bounds: WindowBounds,
     pub scale_factor: f64,
     pub capabilities: WindowCapabilities,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub caption_controls: Option<WindowCaptionState>,
 }
+
+#[path = "window_caption.rs"]
+mod caption;
+pub use caption::WindowCaptionState;
+#[cfg(target_os = "windows")]
+pub use caption::{WindowCaptionButton, WindowCaptionButtonKind};
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
