@@ -39,7 +39,7 @@ export async function runWindowsFrameRestart (options) {
         await current.page.locator('settings-tab .nav-pills a').filter({ hasText: /^\s*Window\s*$/ }).click({ timeout: timeout(10000) })
         return current.page.locator('window-settings-tab')
     }
-    const configFrame = () => yaml.load(readFileSync(path.join(portableDataRoot, 'config.yaml'), 'utf8'))?.appearance?.frame
+    const configFrame = () => yaml.load(readFileSync(path.join(portableDataRoot, 'config.yaml'), 'utf8'))?.appearance?.frame ?? 'thin'
     const visualState = async () => {
         const native = driver.helper(current.identity, 'Snapshot')
         const dom = await current.page.evaluate(() => ({
