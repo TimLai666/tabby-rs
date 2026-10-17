@@ -917,6 +917,19 @@
   prompts; jump authentication does not share that deadline. Verify slow interactive
   login against upstream before accepting timeout parity.
 
+## Pending — startup and minimum window geometry
+
+- Before accepting window geometry parity, compare isolated primary and secondary
+  windows in Native, Thin, and Full at the same DPI and monitor work area. Record
+  outer/client bounds, saved boundaries, maximized state, and docking; physically
+  verify minimum resizing. Fixed upstream `14e2d60` defaults to 800x600 with a
+  400x300 minimum when saved geometry, maximization, and docking do not override it.
+  Tauri primary configuration and secondary creation use 1100x720 with a 640x480
+  minimum. Trace `app/lib/window.ts`, `src-tauri/tauri.conf.json`, and
+  `src-tauri/src/commands/desktop.rs` before changing either producer. Account for
+  Electron's outer sizing and Tauri's inner sizing; copying the numbers alone
+  does not establish equal desktop bounds.
+
 ## Pending — native window appearance settings acceptance
 
 - Keep opacity and vibrancy visibility separate from window-frame support.
@@ -965,7 +978,12 @@
   pointer-transparent, aria-hidden canvas using the terminal foreground color.
   Keep caption state and events scoped to the owning window. Preserve native
   capture, close confirmation, terminal focus, resize borders, and fullscreen
-  hiding. Retain test:windows-caption and the windows_caption_native example.
+  hiding. Keep the native resize input child above Wry with only the outer border
+  region; exclude content and caption buttons, and hide it when maximized or
+  fullscreen. Validate its subclass through the same per-window ownership registry
+  and preserve foreign bindings during removal. Check actual WindowFromPoint
+  recipients over nested content, not only the root or immediate Wry child.
+  Retain test:windows-caption and the windows_caption_native example.
   Use the Common Controls v6 manifest when running that Windows example; follow
   the PowerShell command in CONTRIBUTING.md and preserve the CI linker flags.
   Compare actual Wry rendering, physical input, restart persistence, secondary
