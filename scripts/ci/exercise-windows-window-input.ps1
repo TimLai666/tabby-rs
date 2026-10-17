@@ -427,7 +427,7 @@ public static class CaptionAutomationProviders {
     return @{ x=$x; y=$y; name=[string]$current.Name; bounds=@{x=$rect.X;y=$rect.Y;width=$rect.Width;height=$rect.Height}; source='UIAutomation'; nativeHitTest=$(if($Index -eq 2){8}elseif($Index -eq 3){9}else{20}) }
 }
 
-$result = [ordered]@{ ok=$false; action=$Action; appProcessId=$AppProcessId; hwnd=$WindowHandle; before=$null; after=$null; inputSent=$false; error=$null }
+$result = [ordered]@{ ok=$false; action=$Action; appProcessId=$AppProcessId; hwnd=$WindowHandle; before=$null; after=$null; inputSent=$false; error=$null; inputTrace=@() }
 $canWrite = $false
 try {
     if (-not [IO.Path]::IsPathRooted($OutputFile)) { throw 'OutputFile must be an absolute path' }
@@ -450,7 +450,7 @@ try {
         if (-not [string]::Equals([IO.Path]::GetDirectoryName($fullJournal),$parent,[StringComparison]::OrdinalIgnoreCase)) { throw 'InputJournal must be in the OutputFile parent directory' }
         Add-Type -TypeDefinition $script -Language CSharp -ErrorAction Stop
         $native = [ExistingWindowInput]::Recover($AppProcessId,$WindowHandle,$InputHelperPid,$fullJournal)
-        foreach ($key in @('ok','before','after','inputSent','error','recoveryButtonWasDown','recoveryButtonStateObserved','recoveryReleaseSent','recovery')) { $result[$key]=$native[$key] }
+        foreach ($key in @('ok','before','after','inputSent','error','inputTrace','recoveryButtonWasDown','recoveryButtonStateObserved','recoveryReleaseSent','recovery')) { $result[$key]=$native[$key] }
     } else {
         if ($PSBoundParameters.ContainsKey('InputJournal') -or $PSBoundParameters.ContainsKey('InputHelperPid')) { throw 'InputJournal and InputHelperPid are recovery-only parameters' }
         if ([string]::IsNullOrWhiteSpace($CreationUtc)) { throw 'CreationUtc is required for normal actions' }
@@ -474,7 +474,7 @@ try {
             $result['captionAccessibility'] = $point
             $native = [ExistingWindowInput]::RunWithCaptionPoint($AppProcessId,$CreationUtc,$WindowHandle,$Action,$PointX,$PointY,$DeltaX,$DeltaY,$journalPath,$point.x,$point.y)
         }
-        foreach ($key in @('ok','before','after','inputSent','error')) { $result[$key]=$native[$key] }
+        foreach ($key in @('ok','before','after','inputSent','error','inputTrace')) { $result[$key]=$native[$key] }
     }
 } catch {
     $result.error = $_.Exception.GetType().Name + ': ' + $_.Exception.Message

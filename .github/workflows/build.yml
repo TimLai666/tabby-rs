@@ -81,9 +81,14 @@ jobs:
           if($declared -cne '1.62.1'){throw 'package.json must declare playwright-core exactly at 1.62.1'}
           $modpath=Join-Path $env:GITHUB_WORKSPACE 'node_modules/playwright-core'; if(Test-Path -LiteralPath $modpath){throw 'Existing checkout Playwright module'}; $nodeModules=Split-Path $modpath -Parent; if(!(Test-Path -LiteralPath $nodeModules)){New-Item -ItemType Directory -Path $nodeModules|Out-Null}
           $rt=Join-Path $root 'playwright-runtime'; New-Item -ItemType Directory -Path $rt|Out-Null
-          npm install --ignore-scripts --no-package-lock --prefix $rt playwright-core@1.62.1; if($LASTEXITCODE){throw 'Isolated npm install failed'}
+          $lock=Get-Content (Join-Path $env:GITHUB_WORKSPACE 'yarn.lock') -Raw
+          if($lock -notmatch '(?m)^js-yaml@\^4\.1\.0:\r?\n  version "4\.3\.0"'){throw 'Locked js-yaml version differs from diagnostic runtime'}
+          npm install --ignore-scripts --no-package-lock --prefix $rt playwright-core@1.62.1 js-yaml@4.3.0; if($LASTEXITCODE){throw 'Isolated npm install failed'}
           $mod=Join-Path $rt 'node_modules/playwright-core'; if((Get-Content (Join-Path $mod 'package.json') -Raw|ConvertFrom-Json).version -cne '1.62.1'){throw 'Playwright version mismatch'}
           New-Item -ItemType Junction -Path $modpath -Target $mod|Out-Null
+          $yamlMod=Join-Path $rt 'node_modules/js-yaml'; $yamlLink=Join-Path $nodeModules 'js-yaml'
+          if((Get-Content (Join-Path $yamlMod 'package.json') -Raw|ConvertFrom-Json).version -cne '4.3.0' -or (Test-Path -LiteralPath $yamlLink)){throw 'Fresh locked YAML module required'}
+          New-Item -ItemType Junction -Path $yamlLink -Target $yamlMod|Out-Null
           $ref=Join-Path $root 'reference-runtime'; New-Item -ItemType Directory -Path $ref|Out-Null
           $zip=Join-Path $ref 'tabby-1.0.235-portable-x64.zip'; $url='https://github.com/Eugeny/tabby/releases/download/v1.0.235/tabby-1.0.235-portable-x64.zip'
           Invoke-WebRequest -Uri $url -OutFile $zip; $hash=(Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -97,6 +102,8 @@ jobs:
       - name: Check capture tool syntax and help
         shell: pwsh
         run: |
+          node --input-type=module -e "await import('./scripts/ci/run-windows-frame-restart.mjs')"
+          if($LASTEXITCODE){throw 'Restart driver dependency import failed before GUI input'}
           node --check scripts/ci/capture-windows-apps.mjs
           if ($LASTEXITCODE -ne 0) { throw 'Capture controller syntax failed' }
           node --check scripts/ci/exercise-windows-frame.mjs
