@@ -7,8 +7,9 @@ use std::{
 use windows_sys::Win32::{
     Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM},
     Graphics::Gdi::{
-        GetMonitorInfoW, GetSysColor, MonitorFromWindow, ScreenToClient, COLOR_WINDOW, MONITORINFO,
-        MONITOR_DEFAULTTONEAREST,
+        CombineRgn, CreateRectRgn, DeleteObject, GetMonitorInfoW, GetSysColor, MonitorFromWindow,
+        ScreenToClient, SetWindowRgn, COLOR_WINDOW, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+        RGN_DIFF,
     },
     System::{LibraryLoader::GetModuleHandleW, Threading::GetCurrentThreadId},
     UI::{
@@ -23,19 +24,20 @@ use windows_sys::Win32::{
             SUBCLASSPROC,
         },
         WindowsAndMessaging::{
-            CreateWindowExW, DestroyWindow, GetClientRect, GetCursorPos, GetParent,
-            GetSystemMetrics, GetWindow, GetWindowLongPtrW, GetWindowRect,
-            GetWindowThreadProcessId, IsChild, IsWindow, IsZoomed, PostMessageW, SendMessageW,
-            SetWindowPos, SetWindowTextW, ShowWindow, SystemParametersInfoW, BM_GETSTATE,
-            BST_PUSHED, BS_NOTIFY, BS_OWNERDRAW, GWL_STYLE, HTBOTTOM, HTBOTTOMLEFT, HTBOTTOMRIGHT,
-            HTCLOSE, HTLEFT, HTMAXBUTTON, HTMINBUTTON, HTRIGHT, HTTOP, HTTOPLEFT, HTTOPRIGHT,
-            HWND_TOP, SM_CXPADDEDBORDER, SM_CXSIZEFRAME, SM_CYSIZEFRAME, SPI_GETHIGHCONTRAST,
-            SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW,
-            SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, WM_CANCELMODE, WM_CAPTURECHANGED, WM_CLOSE,
-            WM_COMMAND, WM_DPICHANGED, WM_DRAWITEM, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
-            WM_NCCALCSIZE, WM_NCDESTROY, WM_NCHITTEST, WM_NCLBUTTONDOWN, WM_NCMOUSELEAVE,
-            WM_NCMOUSEMOVE, WM_SETTINGCHANGE, WM_SIZE, WM_SYSCOLORCHANGE, WM_THEMECHANGED,
-            WS_CHILD, WS_VISIBLE,
+            CreateWindowExW, DefWindowProcW, DestroyWindow, GetClassInfoW, GetClientRect,
+            GetCursorPos, GetParent, GetSystemMetrics, GetWindow, GetWindowLongPtrW, GetWindowRect,
+            GetWindowThreadProcessId, IsChild, IsWindow, IsZoomed, PostMessageW, RegisterClassW,
+            SendMessageW, SetWindowPos, SetWindowTextW, ShowWindow, SystemParametersInfoW,
+            BM_GETSTATE, BST_PUSHED, BS_NOTIFY, BS_OWNERDRAW, CS_DBLCLKS, GWL_STYLE, HTBOTTOM,
+            HTBOTTOMLEFT, HTBOTTOMRIGHT, HTCLOSE, HTLEFT, HTMAXBUTTON, HTMINBUTTON, HTRIGHT, HTTOP,
+            HTTOPLEFT, HTTOPRIGHT, HWND_TOP, SM_CXPADDEDBORDER, SM_CXSIZEFRAME, SM_CYSIZEFRAME,
+            SPI_GETHIGHCONTRAST, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+            SWP_NOZORDER, SWP_SHOWWINDOW, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, WM_CANCELMODE,
+            WM_CAPTURECHANGED, WM_CLOSE, WM_COMMAND, WM_DPICHANGED, WM_DRAWITEM, WM_LBUTTONDOWN,
+            WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCCALCSIZE, WM_NCDESTROY, WM_NCHITTEST,
+            WM_NCLBUTTONDBLCLK, WM_NCLBUTTONDOWN, WM_NCMOUSELEAVE, WM_NCMOUSEMOVE,
+            WM_SETTINGCHANGE, WM_SIZE, WM_SYSCOLORCHANGE, WM_THEMECHANGED, WNDCLASSW, WS_CHILD,
+            WS_EX_NOACTIVATE, WS_VISIBLE,
         },
     },
 };
@@ -43,11 +45,14 @@ use windows_sys::Win32::{
 pub(super) type CaptionObserver = Box<dyn Fn(Option<WindowCaptionState>) + Send>;
 const ROOT_ID: usize = 0x5441_4341;
 const WEBVIEW_ID: usize = 0x5441_4345;
+const RING_ID: usize = 0x5441_4346;
+const RING_CLASS: &str = "TabbyRs.CaptionResizeRing.1";
 const IDS: [usize; 3] = [0x5441_4342, 0x5441_4343, 0x5441_4344];
 thread_local! { static OWNED: RefCell<HashMap<isize, Rc<State>>> = RefCell::new(HashMap::new()); }
 struct State {
     root: HWND,
     webview: HWND,
+    ring: HWND,
     buttons: [HWND; 3],
     observer: CaptionObserver,
     closing: Cell<bool>,
@@ -59,6 +64,8 @@ struct State {
     hovered: Cell<Option<usize>>,
     pressed: Cell<Option<usize>>,
     dying_buttons: Cell<u8>,
+    ring_dying: Cell<bool>,
+    ring_hooked: Cell<bool>,
     hooked_buttons: Cell<u8>,
     relaying: Cell<bool>,
     hover_color: RefCell<String>,
@@ -111,6 +118,8 @@ fn owns_hwnd(state: &State, hwnd: HWND, id: usize) -> bool {
         state.root == hwnd
     } else if id == WEBVIEW_ID {
         state.webview == hwnd
+    } else if id == RING_ID {
+        state.ring == hwnd
     } else {
         IDS.iter()
             .enumerate()
@@ -143,6 +152,29 @@ unsafe fn own(hwnd: HWND, proc: SUBCLASSPROC, id: usize) -> Option<Rc<State>> {
     // Registry is the sole long-lived owner. Treat subclass refdata as an
     // opaque key and only clone the matching registry entry.
     registered_state(hwnd, id, p).filter(|state| !state.closing.get())
+}
+unsafe fn destroy_owned_ring(s: &State, root: HWND, expected: usize) {
+    let ring = s.ring;
+    if s.ring_dying.get() || !live(ring) || GetParent(ring) != root {
+        return;
+    }
+    let mut active = 0;
+    let has_binding = GetWindowSubclass(ring, Some(ring_subclass), RING_ID, &mut active) != 0;
+    let own_binding = has_binding && active == expected && registered(ring, RING_ID, active);
+    let unhooked_partial_child = !s.ring_hooked.get() && !has_binding;
+    if own_binding {
+        if RemoveWindowSubclass(ring, Some(ring_subclass), RING_ID) == 0 {
+            eprintln!("could not remove caption resize ring subclass; preserving ring child");
+            return;
+        }
+    } else if !unhooked_partial_child {
+        eprintln!("caption resize ring binding changed; preserving foreign ring child");
+        return;
+    }
+    if DestroyWindow(ring) == 0 {
+        eprintln!("DestroyWindow failed for owned caption resize ring");
+        ShowWindow(ring, 0);
+    }
 }
 fn snap(s: &State) -> Option<WindowCaptionState> {
     if s.closing.get() || s.fullscreen.get() {
@@ -328,8 +360,20 @@ unsafe fn refresh(s: &State, notify: bool) -> Result<(), String> {
     s.scale.set(scale);
     s.fullscreen
         .set((GetWindowLongPtrW(s.root, GWL_STYLE) as u32 & 0x00C00000) == 0);
+    ShowWindow(s.ring, 0);
+    if SetWindowPos(s.ring, HWND_TOP, 0, 0, c.right, c.bottom, SWP_NOACTIVATE) == 0 {
+        s.updating.set(false);
+        return Err("SetWindowPos failed for caption resize ring".into());
+    }
+    if let Err(error) = ring_region(s, c.right, c.bottom) {
+        s.updating.set(false);
+        return Err(error);
+    }
     for b in s.buttons {
         ShowWindow(b, if s.fullscreen.get() { 0 } else { 5 });
+    }
+    if !max && !s.fullscreen.get() {
+        ShowWindow(s.ring, 5);
     }
     s.updating.set(false);
     if notify && before != snap(s) {
@@ -368,6 +412,193 @@ unsafe fn resize_hit(s: &State, l: LPARAM) -> Option<u32> {
         (_, _, true, _) => Some(HTTOP),
         (_, _, _, true) => Some(HTBOTTOM),
         _ => None,
+    }
+}
+unsafe fn ring_region(s: &State, width: i32, height: i32) -> Result<(), String> {
+    let scale = GetDpiForWindow(s.root).max(96) as f64 / 96.0;
+    let bx = ((GetSystemMetrics(SM_CXSIZEFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER)) as f64
+        * scale)
+        .round() as i32;
+    let by = ((GetSystemMetrics(SM_CYSIZEFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER)) as f64
+        * scale)
+        .round() as i32;
+    let region = CreateRectRgn(0, 0, width, height);
+    if region.is_null() {
+        return Err("CreateRectRgn failed for caption resize ring".into());
+    }
+    let subtract = |left, top, right, bottom| {
+        let exclusion = CreateRectRgn(left, top, right, bottom);
+        if exclusion.is_null() {
+            return Err("CreateRectRgn failed for caption resize ring exclusion".to_string());
+        }
+        let combined = CombineRgn(region, region, exclusion, RGN_DIFF);
+        DeleteObject(exclusion);
+        if combined == 0 {
+            Err("CombineRgn failed for caption resize ring".to_string())
+        } else {
+            Ok(())
+        }
+    };
+    let mut result = subtract(bx, by, width - bx, height - by);
+    if result.is_ok() {
+        for rect in *s.rects.borrow() {
+            result = subtract(rect.left, rect.top, rect.right, rect.bottom);
+            if result.is_err() {
+                break;
+            }
+        }
+    }
+    if let Err(error) = result {
+        DeleteObject(region);
+        return Err(error);
+    }
+    if SetWindowRgn(s.ring, region, 1) == 0 {
+        DeleteObject(region);
+        return Err("SetWindowRgn failed for caption resize ring".into());
+    }
+    Ok(())
+}
+unsafe extern "system" fn ring_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
+    DefWindowProcW(hwnd, msg, w, l)
+}
+unsafe fn ring_subclass_impl(
+    hwnd: HWND,
+    msg: u32,
+    w: WPARAM,
+    l: LPARAM,
+    id: usize,
+    data: usize,
+    dispatch: &mut Dispatch,
+) -> LRESULT {
+    let state = own(hwnd, Some(ring_subclass), RING_ID)
+        .filter(|state| id == RING_ID && Rc::as_ptr(state) as usize == data);
+    let result = if let Some(s) = state.as_ref() {
+        if msg == WM_NCHITTEST {
+            if let Some(hit) = resize_hit(s, l) {
+                dispatch.handled(hit as LRESULT);
+                return hit as LRESULT;
+            }
+        }
+        if matches!(msg, WM_NCLBUTTONDOWN | WM_NCLBUTTONDBLCLK)
+            && matches!(
+                w as u32,
+                HTLEFT
+                    | HTRIGHT
+                    | HTTOP
+                    | HTBOTTOM
+                    | HTTOPLEFT
+                    | HTTOPRIGHT
+                    | HTBOTTOMLEFT
+                    | HTBOTTOMRIGHT
+            )
+        {
+            dispatch.handled(0);
+            let result = SendMessageW(s.root, msg, w, l);
+            return result;
+        }
+        def(hwnd, msg, w, l, dispatch)
+    } else {
+        def(hwnd, msg, w, l, dispatch)
+    };
+    if msg == WM_NCDESTROY {
+        let mut active = 0;
+        if GetWindowSubclass(hwnd, Some(ring_subclass), id, &mut active) != 0
+            && active == data
+            && registered(hwnd, id, active)
+            && RemoveWindowSubclass(hwnd, Some(ring_subclass), id) == 0
+        {
+            eprintln!("could not remove caption resize ring subclass during destruction");
+        }
+        if let Some(s) = state {
+            s.ring_dying.set(true);
+            if let Err(error) = remove(s.root) {
+                eprintln!(
+                    "could not detach caption adapter after resize ring destruction: {error}"
+                );
+            }
+        }
+    }
+    result
+}
+unsafe extern "system" fn ring_subclass(
+    hwnd: HWND,
+    msg: u32,
+    w: WPARAM,
+    l: LPARAM,
+    id: usize,
+    data: usize,
+) -> LRESULT {
+    let mut dispatch = Dispatch::default();
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
+        ring_subclass_impl(hwnd, msg, w, l, id, data, &mut dispatch)
+    })) {
+        Ok(result) => result,
+        Err(_) => {
+            eprintln!("Windows caption resize ring callback panicked for message {msg:#x}");
+            unsafe { panic_fallback(hwnd, msg, w, l, dispatch) }
+        }
+    }
+}
+unsafe fn register_ring_class() -> Result<(), String> {
+    let module = GetModuleHandleW(std::ptr::null());
+    if module.is_null() {
+        return Err("GetModuleHandleW failed for caption resize ring".into());
+    }
+    let name: Vec<u16> = format!("{RING_CLASS}\0").encode_utf16().collect();
+    let class = WNDCLASSW {
+        style: CS_DBLCLKS,
+        lpfnWndProc: Some(ring_proc),
+        cbClsExtra: 0,
+        cbWndExtra: 0,
+        hInstance: module,
+        hIcon: std::ptr::null_mut(),
+        hCursor: std::ptr::null_mut(),
+        hbrBackground: std::ptr::null_mut(),
+        lpszMenuName: std::ptr::null(),
+        lpszClassName: name.as_ptr(),
+    };
+    if RegisterClassW(&class) == 0 {
+        // ERROR_CLASS_ALREADY_EXISTS is safe only for our fixed process-local class.
+        const ERROR_CLASS_ALREADY_EXISTS: u32 = 1410;
+        if windows_sys::Win32::Foundation::GetLastError() != ERROR_CLASS_ALREADY_EXISTS {
+            return Err("RegisterClassW failed for caption resize ring".into());
+        }
+        let mut existing: WNDCLASSW = std::mem::zeroed();
+        if GetClassInfoW(module, name.as_ptr(), &mut existing) == 0
+            || !existing.lpfnWndProc.is_some_and(|proc| {
+                std::ptr::fn_addr_eq(
+                    proc,
+                    ring_proc as unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT,
+                )
+            })
+        {
+            return Err("caption resize ring class name is owned by another window class".into());
+        }
+    }
+    Ok(())
+}
+unsafe fn make_ring(root: HWND) -> Result<HWND, String> {
+    register_ring_class()?;
+    let module = GetModuleHandleW(std::ptr::null());
+    let name: Vec<u16> = format!("{RING_CLASS}\0").encode_utf16().collect();
+    let ring = CreateWindowExW(
+        WS_EX_NOACTIVATE,
+        name.as_ptr(),
+        std::ptr::null(),
+        WS_CHILD,
+        0,
+        0,
+        1,
+        1,
+        root,
+        std::ptr::null_mut(),
+        module,
+        std::ptr::null(),
+    );
+    if ring.is_null() {
+        Err("CreateWindowExW failed for caption resize ring".into())
+    } else {
+        Ok(ring)
     }
 }
 unsafe fn button_proc_impl(
@@ -581,6 +812,7 @@ unsafe fn root_proc_impl(
                 }
             }
         }
+        destroy_owned_ring(&s, hwnd, data);
         let mut child_data = 0;
         if live(s.webview)
             && GetWindowSubclass(s.webview, Some(webview_proc), WEBVIEW_ID, &mut child_data) != 0
@@ -898,9 +1130,21 @@ pub(super) fn install(hwnd: HWND, observer: CaptionObserver) -> Result<(), Strin
                 }
             }
         }
+        let ring = match make_ring(hwnd) {
+            Ok(ring) => ring,
+            Err(error) => {
+                for button in bs {
+                    if !button.is_null() {
+                        DestroyWindow(button);
+                    }
+                }
+                return Err(error);
+            }
+        };
         let s = Rc::new(State {
             root: hwnd,
             webview: web,
+            ring,
             buttons: bs,
             observer,
             closing: Cell::new(false),
@@ -912,6 +1156,8 @@ pub(super) fn install(hwnd: HWND, observer: CaptionObserver) -> Result<(), Strin
             hovered: Cell::new(None),
             pressed: Cell::new(None),
             dying_buttons: Cell::new(0),
+            ring_dying: Cell::new(false),
+            ring_hooked: Cell::new(false),
             hooked_buttons: Cell::new(0),
             relaying: Cell::new(false),
             hover_color: RefCell::new(apps_hover()),
@@ -940,6 +1186,13 @@ pub(super) fn install(hwnd: HWND, observer: CaptionObserver) -> Result<(), Strin
                 "owned Wry child subclass installation failed; own hooks rolled back".into(),
             );
         }
+        if SetWindowSubclass(ring, Some(ring_subclass), RING_ID, p) == 0 {
+            let _ = remove(hwnd);
+            return Err(
+                "caption resize ring subclass installation failed; owned hooks rolled back".into(),
+            );
+        }
+        s.ring_hooked.set(true);
         if let Err(e) = refresh(&s, false) {
             let _ = remove(hwnd);
             return Err(e);
@@ -1044,6 +1297,7 @@ pub(super) fn remove(hwnd: HWND) -> Result<(), String> {
                 eprintln!("could not remove Wry child subclass");
             }
         }
+        destroy_owned_ring(&s, hwnd, expected);
         OWNED.with(|m| {
             m.borrow_mut().remove(&(hwnd as isize));
         });
