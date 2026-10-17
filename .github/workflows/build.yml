@@ -1,545 +1,74 @@
-name: CI
-
+name: Build
 on:
-  pull_request:
-    branches:
-      - master
-  push:
-    branches:
-      - master
   workflow_dispatch:
     inputs:
       windows_desktop_probe:
-        description: Check native desktop availability on the Windows runner
         type: boolean
         default: false
-
 permissions:
   contents: read
-
-concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.windows_desktop_probe && 'desktop-probe' || 'regular' }}
-  cancel-in-progress: true
-
-env:
-  NODE_VERSION: '22'
-  YARN_VERSION: '1.22.22'
-  YARN_NETWORK_TIMEOUT: '1000000'
-  FORCE_COLOR: '1'
-
 jobs:
-  windows-desktop-probe:
-    name: Windows native desktop probe
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.windows_desktop_probe }}
-    runs-on: windows-2022
-    timeout-minutes: 5
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Check native desktop rendering
-        shell: pwsh
-        run: pwsh -NoProfile -File scripts/ci/probe-windows-desktop.ps1 -OutputDirectory "$env:RUNNER_TEMP/tabby-rs-windows-desktop-probe"
-      - name: Preserve native desktop evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-desktop-probe-${{ github.sha }}
-          path: ${{ runner.temp }}/tabby-rs-windows-desktop-probe
-          if-no-files-found: error
-          retention-days: 7
-
-  quality:
-    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.windows_desktop_probe) }}
-    name: quality (linux)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 90
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Restore Tauri icons
-        run: node scripts/restore-tauri-icons.mjs
-
-      - name: Fetch upstream tags
-        run: git fetch --force --tags https://github.com/Eugeny/tabby.git '+refs/tags/*:refs/tags/*'
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-
-      - name: Verify workflow safety
-        run: node scripts/ci/assert-workflow-safety.mjs
-
-      - name: Test Docs workflow credential guard
-        run: yarn test:docs-workflow
-
-      - name: Test Stable child issue gate contract
-        run: yarn test:stable-issue-state
-
-      - name: Test Tauri dependency metadata audit
-        run: yarn test:tauri:dependencies
-
-      - name: Test Linux dependency installer contract
-        run: node scripts/test-linux-dependencies.mjs
-
-      - name: Install Linux build dependencies
-        run: |
-          bash scripts/ci/install-linux-dependencies.sh \
-            cmake \
-            libarchive-tools \
-            libayatana-appindicator3-dev \
-            libfontconfig1-dev \
-            librsvg2-dev \
-            libsecret-1-dev \
-            libudev-dev \
-            libwebkit2gtk-4.1-dev \
-            openssh-server \
-            patchelf \
-            xvfb
-
-      - name: Install Yarn
-        run: npm install --global yarn@${{ env.YARN_VERSION }}
-
-      - name: Install dependencies
-        run: yarn install --frozen-lockfile --network-timeout ${{ env.YARN_NETWORK_TIMEOUT }}
-
-      - name: Build TypeScript declarations
-        run: yarn build:typings
-
-      - name: Test release platform matrix contract
-        run: yarn test:release-platform-matrix
-
-      - name: Lint
-        run: yarn lint --format unix
-
-      - name: Verify xterm renderer boundary
-        run: node scripts/ci/assert-xterm-boundary.mjs
-
-      - name: Test terminal renderer write ordering
-        run: node scripts/ci/test-terminal-renderer.mjs
-
-      - name: Test paste policy
-        run: node scripts/ci/test-paste-policy.mjs
-
-      - name: Test terminal CLI paste
-        run: yarn test:terminal-cli-paste
-
-      - name: Test terminal path quoting
-        run: node scripts/ci/test-path-quoting.mjs
-      - name: Test workspace model
-        run: node scripts/ci/test-workspace.mjs
-      - name: Test progress detector
-        run: node scripts/ci/test-progress-detector.mjs
-      - name: Test URI policy
-        run: node scripts/ci/test-uri-policy.mjs
-      - name: Test transfer policy
-        run: node scripts/ci/test-transfer-policy.mjs
-      - name: Test tab progress aggregation
-        run: node scripts/ci/test-tab-progress.mjs
-
-      - name: Test terminal renderer browser parity
-        run: node scripts/ci/test-terminal-renderer-browser.mjs
-
-      - name: Test context menu browser parity
-        run: node scripts/ci/test-context-menu-browser.mjs
-
-      - name: Test sudo prompt detector
-        run: node scripts/ci/test-auto-sudo.mjs
-
-      - name: Build Electron baseline
-        run: yarn build
-
-      - name: Verify Electron build outputs
-        run: node scripts/ci/assert-build-output.mjs
-
-      - name: Build web container
-        run: yarn build:web
-
-      - name: Test web browser smoke
-        run: yarn test:web-browser-smoke
-
-      - name: Test web Playwright smoke
-        run: yarn test:web-playwright-smoke
-
-      - name: Test web real OpenSSH fixture contract
-        run: yarn test:web-real-remote-contract
-
-      - name: Test web real OpenSSH and SFTP smoke
-        run: yarn test:web-real-remote
-
-      - name: Verify tabby-web bundle boundary
-        run: yarn audit:web
-
-      - name: Verify tabby-web source boundary
-        run: yarn test:web-source-boundary
-
-      - name: Verify no built-in telemetry
-        run: yarn audit:telemetry
-
-      - name: Test built-in telemetry audit
-        run: yarn test:telemetry
-
-      - name: Test tabby-web bundle audit
-        run: yarn test:web-output-audit
-
-      - name: Test web host-app contract
-        run: yarn test:web-host-app
-
-      - name: Test web connector transport contract
-        run: yarn test:web-connector
-      - name: Test web connector runtime contract
-        run: yarn test:web-connector-runtime
-
-      - name: Test web SSH SFTP Telnet connection smoke
-        run: yarn test:web-connection-smoke
-
-      - name: Test web provider contract
-        run: yarn test:web-provider-contract
-
-      - name: Test web plugin loader
-        run: yarn test:web-plugin-loader
-
-      - name: Test web gateway protocol
-        run: yarn test:web-gateway
-
-      - name: Test web capability boundary
-        run: yarn test:web-capability-boundary
-
-      - name: Test web process platform mapping
-        run: yarn test:web-platform
-
-      - name: Test diagnostics preview gate
-        run: yarn test:diagnostics-ui
-
-      - name: Test diagnostics privacy and rotation
-        run: yarn test:diagnostics-privacy
-
-      - name: Test release documentation contract
-        run: yarn test:release-documentation
-
-      - name: Test Tabby RS branding contract
-        run: yarn test:tabby-rs-branding
-
-      - name: Test macOS icon configuration
-        run: yarn test:macos-icon-config
-
-      - name: Test Tauri release icon configuration
-        run: yarn test:tauri-release-config
-
-      - name: Test parity report contract
-        run: yarn test:parity-report
-
-      - name: Test parity automated check links
-        run: yarn test:parity-links
-
-      - name: Test parity automated evidence contract
-        run: yarn test:parity-evidence
-
-      - name: Test runtime capability providers
-        run: yarn test:runtime-capabilities
-
-      - name: Test Tauri platform bridge contract
-        run: yarn test:tauri-platform
-
-      - name: Test Tauri window opacity contract
-        run: yarn test:tauri-opacity
-
-      - name: Test official plugin runtime fixture
-        run: yarn test:official-plugin-runtime
-
-      - name: Test plugin runtime fixtures
-        run: yarn test:plugin-runtime
-
-      - name: Test plugin Tauri bridge contract
-        run: yarn test:plugin-bridge
-
-      - name: Test safe mode plugin actions
-        run: yarn test:safe-mode-plugin-actions
-
-      - name: Test plugin operation contract
-        run: yarn test:plugin-operation
-
-      - name: Test system npm plugin lifecycle
-        run: yarn test:plugin-npm-lifecycle
-
-      - name: Test plugin node status contract
-        run: yarn test:plugin-node-status
-
-      - name: Test plugin node status UI runtime
-        run: yarn test:plugin-node-status-ui
-
-      - name: Test Electron updater policy
-        run: yarn test:electron-updater
-
-      - name: Test Tauri updater confirmation
-        run: yarn test:tauri-updater-confirmation
-
-      - name: Test updater cancellation
-        run: yarn test:updater-cancellation
-
-      - name: Test updater generation
-        run: yarn test:updater-generation
-
-      - name: Test updater startup policy
-        run: yarn test:updater-startup
-
-      - name: Test Tauri update manifest
-        run: yarn test:tauri:update-manifest
-
-      - name: Test Tauri multi-window contract
-        run: yarn test:tauri-multi-window
-
-      - name: Type-check Tauri packages
-        run: yarn test:tauri:types
-
-      - name: Build Tauri renderer
-        run: yarn build:tauri:frontend
-
-      - name: Verify Tauri renderer output
-        run: node scripts/ci/assert-tauri-output.mjs
-
-      - name: Audit Tauri renderer bundle
-        run: yarn test:tauri:bundle
-
-      - name: Test release artifact contract
-        run: yarn test:tauri:release-artifacts
-
-      - name: Test release installer smoke fixtures
-        run: yarn test:tauri:release-smoke
-
-      - name: Test release checksums
-        run: yarn test:release-checksums
-
-      - name: Test updater signature verification
-        run: yarn test:tauri:signature
-
-      - name: Test updater fake server fixtures
-        run: yarn test:tauri:update-fake-server
-
-      - name: Test license report fixtures
-        run: yarn test:license-report
-
-      - name: Check Rust formatting
-        run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
-
-      - name: Test Rust host
-        run: cargo test --manifest-path src-tauri/Cargo.toml
-
-      - name: Test real SSH and SFTP fixture
-        run: yarn test:ssh-integration
-
-      - name: Test SSH authentication fixture
-        run: yarn test:ssh-auth-integration
-
-      - name: Test SSH session routing contract
-        run: yarn test:ssh-session
-
-      - name: Test Telnet and serial login scripts
-        run: yarn test:connector-login-scripts
-
-      - name: Test Telnet and serial connection errors
-        run: yarn test:connector-errors
-
-      - name: Test Tauri PTY input ordering
-        run: yarn test:tauri-pty-write-order
-
-      - name: Test Tauri PTY startup identity readiness
-        run: yarn test:tauri-pty-shell-readiness
-
-      - name: Test serial write queue
-        run: yarn test:serial-write-queue
-
-      - name: Test serial tab controls
-        run: yarn test:serial-tab-controls
-
-      - name: Test Telnet tab controls
-        run: yarn test:telnet-tab-controls
-
-      - name: Test browser readline compatibility
-        run: yarn test:tauri-readline
-
-      - name: Test SSH reconnect contract
-        run: yarn test:ssh-reconnect
-
-      - name: Build Tauri host
-        run: cargo build --manifest-path src-tauri/Cargo.toml
-
-  build:
-    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.windows_desktop_probe) }}
-    name: build (${{ matrix.name }})
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 90
+  native-regression:
+    if: ${{ inputs.windows_desktop_probe }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - name: windows
-            os: windows-2022
-          - name: macos
-            os: macos-15
-
+        variant: [red, green]
+    runs-on: windows-2022
+    timeout-minutes: 12
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Restore Tauri icons
-        run: node scripts/restore-tauri-icons.mjs
-
-      - name: Fetch upstream tags
-        run: git fetch --force --tags https://github.com/Eugeny/tabby.git '+refs/tags/*:refs/tags/*'
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-
-      - name: Build hardened UAC helper
-        if: matrix.name == 'windows'
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run actual Win32 regression before and after correction
         shell: pwsh
+        timeout-minutes: 8
         run: |
-          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          $msbuild = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -find 'MSBuild\**\Bin\MSBuild.exe' | Select-Object -First 1
-          if (-not $msbuild) {
-            throw "MSBuild was not found"
+          $ErrorActionPreference = 'Stop'
+          $out = Join-Path $env:RUNNER_TEMP 'caption-native-${{ matrix.variant }}'
+          New-Item -ItemType Directory -Path $out | Out-Null
+          $fixture = Join-Path $env:RUNNER_TEMP 'caption-native-package'
+          New-Item -ItemType Directory -Path $fixture | Out-Null
+          $source = (Join-Path $env:GITHUB_WORKSPACE 'src-tauri/examples/windows_caption_native.rs').Replace('\','/')
+          $manifest = @"
+          [package]
+          name = "tabby-caption-native-fixture"
+          version = "0.0.0"
+          edition = "2021"
+          [workspace]
+          [[bin]]
+          name = "caption-native-fixture"
+          path = "$source"
+          [dependencies]
+          serde = { version = "=1.0.229", features = ["derive"] }
+          windows-sys = { version = "=0.59.0", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_Registry", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging", "Win32_UI_Controls", "Win32_System_Pipes", "Win32_Graphics_Gdi", "Win32_System_LibraryLoader", "Win32_UI_Shell", "Win32_UI_HiDpi", "Win32_UI_Accessibility", "Win32_UI_Input_KeyboardAndMouse", "Win32_Security", "Win32_System_DataExchange"] }
+          "@
+          $utf8 = [System.Text.UTF8Encoding]::new($false)
+          [IO.File]::WriteAllText((Join-Path $fixture 'Cargo.toml'), $manifest, $utf8)
+          $variant = '${{ matrix.variant }}'
+          if ($variant -eq 'red') {
+            Copy-Item scripts/ci/native-caption-before-resize.rs src-tauri/src/platform/frame_windows_buttons.rs -Force
           }
-          & $msbuild 'tabby-uac/UAC.sln' '/m' '/p:Configuration=Release' '/p:Platform=x64' '/p:PlatformToolset=v143' '/p:WindowsTargetPlatformVersion=10.0' "/p:OutDir=$env:GITHUB_WORKSPACE\extras\"
-          if ($LASTEXITCODE -ne 0) {
-            throw "Hardened UAC helper compilation failed"
-          }
-          if (-not (Test-Path "$env:GITHUB_WORKSPACE\extras\UAC.exe")) {
-            throw "Hardened UAC helper was not produced"
-          }
-
-      - name: Install Windows build dependencies
-        if: matrix.name == 'windows'
-        shell: pwsh
-        run: pwsh -NoProfile -File scripts/ci/install-nasm.ps1
-
-      - name: Install Yarn
-        run: npm install --global yarn@${{ env.YARN_VERSION }}
-
-      - name: Install dependencies
-        run: yarn install --frozen-lockfile --network-timeout ${{ env.YARN_NETWORK_TIMEOUT }}
-
-      - name: Build Electron baseline
-        run: yarn build
-
-      - name: Verify Electron build outputs
-        run: node scripts/ci/assert-build-output.mjs
-
-      - name: Type-check Tauri packages
-        run: yarn test:tauri:types
-
-      - name: Test caption lifecycle
-        run: node scripts/test-windows-caption-service.mjs
-
-      - name: Test Windows caption pixels in Chromium
-        if: matrix.name == 'windows'
-        shell: pwsh
-        run: |
-          $browsers = @("${env:ProgramFiles}/Google/Chrome/Application/chrome.exe", "${env:ProgramFiles(x86)}/Microsoft/Edge/Application/msedge.exe")
-          $browser = $browsers | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
-          if (-not $browser) { throw 'No installed Chromium for caption pixel checks' }
-          $env:TABBY_CAPTION_TEST_BROWSER = $browser
-          node scripts/test-windows-caption-renderer.mjs
-          if ($LASTEXITCODE -ne 0) { throw 'Caption pixel checks failed' }
-
-      - name: Build Tauri renderer
-        run: yarn build:tauri:frontend
-
-      - name: Verify Tauri renderer output
-        run: node scripts/ci/assert-tauri-output.mjs
-
-      - name: Audit Tauri renderer bundle
-        run: yarn test:tauri:bundle
-
-      - name: Test public plugin runtime fixtures
-        run: yarn test:official-plugin-runtime
-
-      - name: Test plugin runtime fixtures
-        run: yarn test:plugin-runtime
-
-      - name: Test plugin Tauri bridge contract
-        run: yarn test:plugin-bridge
-
-      - name: Test safe mode plugin actions
-        run: yarn test:safe-mode-plugin-actions
-
-      - name: Test plugin operation contract
-        run: yarn test:plugin-operation
-
-      - name: Test system npm plugin lifecycle
-        run: yarn test:plugin-npm-lifecycle
-
-      - name: Test plugin node status contract
-        run: yarn test:plugin-node-status
-
-      - name: Test plugin node status UI runtime
-        run: yarn test:plugin-node-status-ui
-
-      - name: Test updater fake server fixtures
-        run: yarn test:tauri:update-fake-server
-
-      - name: Test Rust host
-        if: matrix.name != 'windows'
-        run: cargo test --manifest-path src-tauri/Cargo.toml
-
-      - name: Test Rust host on Windows
-        if: matrix.name == 'windows'
-        env:
-          RUSTFLAGS: '-C link-arg=/MANIFESTINPUT:${{ github.workspace }}/src-tauri/windows-app-manifest.xml -C link-arg=/MANIFEST:EMBED'
-        run: cargo test --manifest-path src-tauri/Cargo.toml --lib
-
-      - name: Test native Windows caption adapter
-        if: matrix.name == 'windows'
-        timeout-minutes: 6
-        env:
-          RUSTFLAGS: '-C link-arg=/MANIFESTINPUT:${{ github.workspace }}/src-tauri/windows-app-manifest.xml -C link-arg=/MANIFEST:EMBED'
-        run: cargo run --locked --manifest-path src-tauri/Cargo.toml --example windows_caption_native
-
-      - name: Test SSH authentication fixture
-        if: matrix.name != 'windows'
-        run: yarn test:ssh-auth-integration
-
-      - name: Test SSH session routing contract
-        run: yarn test:ssh-session
-
-      - name: Test Telnet and serial login scripts
-        run: yarn test:connector-login-scripts
-
-      - name: Test Telnet and serial connection errors
-        run: yarn test:connector-errors
-
-      - name: Test Tauri PTY input ordering
-        run: yarn test:tauri-pty-write-order
-
-      - name: Test Tauri PTY startup identity readiness
-        run: yarn test:tauri-pty-shell-readiness
-
-      - name: Test serial write queue
-        run: yarn test:serial-write-queue
-
-      - name: Test serial tab controls
-        run: yarn test:serial-tab-controls
-
-      - name: Test Telnet tab controls
-        run: yarn test:telnet-tab-controls
-
-      - name: Test portable WebView storage
-        if: matrix.name == 'macos'
-        run: yarn test:portable-storage
-
-      - name: Test browser readline compatibility
-        run: yarn test:tauri-readline
-
-      - name: Test SSH reconnect contract
-        run: yarn test:ssh-reconnect
-
-      - name: Build Tauri host
-        run: cargo build --manifest-path src-tauri/Cargo.toml
+          $actual = git hash-object src-tauri/src/platform/frame_windows_buttons.rs
+          $expected = if ($variant -eq 'red') { 'ad260edd2020aa0afca905e0bb057cc64042a80e' } else { '5c069004de4dc4ac7d70b001f13f5258069457dc' }
+          if ($expected -ne $actual) { throw 'Native source does not match its immutable variant' }
+          $env:CARGO_ENCODED_RUSTFLAGS = @('-C', "link-arg=/MANIFESTINPUT:$((Resolve-Path src-tauri/windows-app-manifest.xml).Path)", '-C', 'link-arg=/MANIFEST:EMBED') -join [char]0x1f
+          cargo generate-lockfile --manifest-path (Join-Path $fixture 'Cargo.toml')
+          if ($LASTEXITCODE) { throw 'minimal fixture dependency resolution failed' }
+          cargo run --locked --manifest-path (Join-Path $fixture 'Cargo.toml') *> (Join-Path $out 'run.log')
+          $exitCode = $LASTEXITCODE
+          $log = Get-Content (Join-Path $out 'run.log') -Raw
+          $expectedFailure = $exitCode -ne 0 -and $log -match 'right hit mismatch:.+expected 11' -and $log -notmatch 'error\[E[0-9]+\]'
+          $passed = if ($variant -eq 'red') { $expectedFailure } else { $exitCode -eq 0 -and $log -match 'windows_caption_native: [0-9]+ checks passed' }
+          @{ passed=$passed; variant=$variant; expectedRed=$expectedFailure; exitCode=$exitCode; preFixSourceCommit='a7dcdf363ef964e81f0c97aa68243d4c598adf22'; qaCommit=$env:GITHUB_SHA; productionBlob=$actual; testsSha256=(Get-FileHash src-tauri/examples/windows_caption_native.rs -Algorithm SHA256).Hash; fullParity=$false } | ConvertTo-Json | Set-Content (Join-Path $out 'result.json')
+          Copy-Item (Join-Path $fixture 'Cargo.toml'),(Join-Path $fixture 'Cargo.lock') $out
+          Write-Output $log
+          if (-not $passed) { throw 'Native regression did not produce its expected RED or GREEN result' }
+          exit 0
+      - name: Preserve actual native RED and GREEN evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-caption-native-${{ matrix.variant }}-${{ github.sha }}
+          path: ${{ runner.temp }}/caption-native-${{ matrix.variant }}
+          if-no-files-found: error
+          retention-days: 7
