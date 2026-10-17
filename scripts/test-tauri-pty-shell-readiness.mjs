@@ -78,13 +78,23 @@ function bridgeFor (id) {
     const startup = deferred();
     const children = [];
     const cwds = [];
+    const listeners = new Map();
     const bridge = {
         id,
         calls,
         startup,
         children,
         cwds,
-        async listen () { return () => {} },
+        listeners,
+        async listen (event, handler) {
+            const handlers = listeners.get(event) ?? new Set();
+            handlers.add(handler);
+            listeners.set(event, handlers);
+            return () => handlers.delete(handler);
+        },
+        emit (event, payload) {
+            for (const handler of listeners.get(event) ?? []) handler(payload);
+        },
         invoke (command, payload) {
             calls.push({ command, payload });
             if (command === 'pty.attach') return Promise.resolve();
@@ -132,6 +142,29 @@ async function releaseReads (bridge) {
     for (const pending of bridge.children) pending.resolve([]);
     for (const pending of bridge.cwds) pending.resolve('C:/work');
     await flushMicrotasks();
+}
+
+function trackResult (promise) {
+    const tracked = { settled: false };
+    tracked.promise = promise.then(
+        value => { tracked.settled = true; return { value }; },
+        error => { tracked.settled = true; return { error }; },
+    );
+    return tracked;
+}
+
+async function releaseFixture (fixture) {
+    if (!fixture.bridge.calls.some(call => call.command === 'pty.getTruePid')) fixture.timer.callback();
+    fixture.bridge.startup.resolve(fixture.pid);
+    await flushMicrotasks();
+    await releaseReads(fixture.bridge);
+}
+
+function assertEmptyArrayOutcome (outcome) {
+    assert.equal(Object.hasOwn(outcome, 'value'), true);
+    assert.equal(Object.hasOwn(outcome, 'error'), false);
+    assert.equal(Array.isArray(outcome.value), true);
+    assert.deepEqual(Array.from(outcome.value), []);
 }
 
 test('child and working-directory native reads wait until the existing startup identity is acknowledged', async () => {
@@ -250,4 +283,120 @@ test('a rejected startup resolver falls back to getPID, releases both reads, and
         await releaseReads(waiting.bridge);
         await waitingResult;
     }
+});
+
+test('matching exit before a child request returns immediately while startup is still gated', async () => {
+    const fixture = await createProxy('exit-before-child-request');
+    fixture.bridge.emit('pty:exit', { id: fixture.bridge.id, exitCode: 0, signal: null });
+    const result = trackResult(fixture.proxy.getChildProcesses());
+    let settledBeforeStartupRelease = false;
+    try {
+        await flushMicrotasks();
+        settledBeforeStartupRelease = result.settled;
+    } finally {
+        await releaseFixture(fixture);
+    }
+    assert.equal(settledBeforeStartupRelease, true);
+    assertEmptyArrayOutcome(await result.promise);
+    assert.equal(fixture.bridge.calls.filter(call => call.command === 'pty.getChildren').length, 0);
+});
+
+test('matching exit during startup wait returns empty after readiness without a child read', async () => {
+    const fixture = await createProxy('exit-during-startup-wait');
+    const result = trackResult(fixture.proxy.getChildProcesses());
+    let settledAfterStartupRelease = false;
+    try {
+        await flushMicrotasks();
+        fixture.timer.callback();
+        await flushMicrotasks();
+        assert.equal(fixture.bridge.calls.filter(call => call.command === 'pty.getTruePid').length, 1);
+        assert.equal(fixture.bridge.calls.filter(call => call.command === 'pty.getChildren').length, 0);
+        fixture.bridge.emit('pty:exit', { id: fixture.bridge.id, exitCode: 0, signal: null });
+        fixture.bridge.startup.resolve(fixture.pid);
+        await flushMicrotasks();
+        settledAfterStartupRelease = result.settled;
+    } finally {
+        await releaseFixture(fixture);
+    }
+    assert.equal(settledAfterStartupRelease, true);
+    assertEmptyArrayOutcome(await result.promise);
+    assert.equal(fixture.bridge.calls.filter(call => call.command === 'pty.getChildren').length, 0);
+});
+
+test('matching exit during a pending native read suppresses its later successful children', async () => {
+    const fixture = await createProxy('exit-during-native-success');
+    await completeStartup(fixture);
+    const result = trackResult(fixture.proxy.getChildProcesses());
+    let outcome;
+    try {
+        await flushMicrotasks();
+        assert.equal(fixture.bridge.children.length, 1);
+        fixture.bridge.emit('pty:exit', { id: fixture.bridge.id, exitCode: 0, signal: null });
+        fixture.bridge.children[0].resolve([{ pid: 911 }]);
+        outcome = await result.promise;
+    } finally {
+        await releaseFixture(fixture);
+    }
+    assertEmptyArrayOutcome(outcome);
+});
+
+test('matching exit during a pending native rejection resolves to empty children', async () => {
+    const fixture = await createProxy('exit-during-native-rejection');
+    await completeStartup(fixture);
+    const nativeError = new Error('native child read rejected after exit');
+    const result = trackResult(fixture.proxy.getChildProcesses());
+    let outcome;
+    try {
+        await flushMicrotasks();
+        assert.equal(fixture.bridge.children.length, 1);
+        fixture.bridge.emit('pty:exit', { id: fixture.bridge.id, exitCode: 0, signal: null });
+        fixture.bridge.children[0].reject(nativeError);
+        outcome = await result.promise;
+    } finally {
+        await releaseFixture(fixture);
+    }
+    assertEmptyArrayOutcome(outcome);
+});
+
+test('foreign owner exit preserves active native results and errors', async () => {
+    const fixture = await createProxy('foreign-exit-does-not-mask-active-reads');
+    await completeStartup(fixture);
+    const successful = trackResult(fixture.proxy.getChildProcesses());
+    const rejected = trackResult(fixture.proxy.getChildProcesses());
+    const nativeError = new Error('active owner native read failure');
+    let successOutcome;
+    let errorOutcome;
+    try {
+        await flushMicrotasks();
+        assert.equal(fixture.bridge.children.length, 2);
+        fixture.bridge.emit('pty:exit', { id: 'different-pty-owner', exitCode: 0, signal: null });
+        fixture.bridge.children[0].resolve([{ pid: 912 }]);
+        fixture.bridge.children[1].reject(nativeError);
+        [successOutcome, errorOutcome] = await Promise.all([successful.promise, rejected.promise]);
+    } finally {
+        await releaseFixture(fixture);
+    }
+    assert.deepEqual(successOutcome, { value: [{ pid: 912 }] });
+    assert.equal(errorOutcome?.error, nativeError);
+});
+
+test('an ended owner does not prevent another proxy from reading children normally', async () => {
+    const ended = await createProxy('ended-owner');
+    const active = await createProxy('independent-active-owner');
+    const endedPayload = { id: ended.bridge.id, exitCode: 0, signal: null };
+    ended.bridge.emit('pty:exit', endedPayload);
+    await completeStartup(active);
+    const activeResult = trackResult(active.proxy.getChildProcesses());
+    let activeOutcome;
+    try {
+        await flushMicrotasks();
+        assert.equal(active.bridge.calls.filter(call => call.command === 'pty.getChildren').length, 1);
+        active.bridge.emit('pty:exit', endedPayload);
+        active.bridge.children[0].resolve([{ pid: 913 }]);
+        activeOutcome = await activeResult.promise;
+    } finally {
+        await releaseFixture(ended);
+        await releaseFixture(active);
+    }
+    assert.deepEqual(activeOutcome, { value: [{ pid: 913 }] });
 });
