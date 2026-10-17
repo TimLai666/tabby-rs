@@ -161,6 +161,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Actual process exit race regression failed' }
           pwsh -NoProfile -File scripts/ci/modal-observer-fixture.ps1 -HelperPath "$env:GITHUB_WORKSPACE/scripts/ci/press-windows-app-dialog.ps1" -OutputDirectory "$toolRoot/modal-observer"
           if ($LASTEXITCODE -ne 0) { throw 'Actual native dialog observer regression failed' }
+      - name: Verify actual pointer and native resize control
+        timeout-minutes: 3
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File scripts/ci/test-windows-pointer-coordinates.ps1 -HelperPath "$env:GITHUB_WORKSPACE/scripts/ci/exercise-windows-window-input.ps1" -OutputDirectory "$env:RUNNER_TEMP/tabby-rs-windows-desktop-compare/pointer-control"
+          if($LASTEXITCODE){throw 'Actual pointer/resize control failed'}
       - name: Verify restart process origin and finalization guards
         timeout-minutes: 5
         shell: pwsh
@@ -172,12 +178,6 @@ jobs:
           }
           node scripts/ci/test-windows-restart-observer.mjs --output "$env:RUNNER_TEMP/tabby-rs-windows-desktop-compare/restart-origin-fixture" --powershell (Get-Command pwsh).Source
           if($LASTEXITCODE){throw 'Actual process-start observer regression failed'}
-      - name: Verify actual pointer and native resize control
-        timeout-minutes: 3
-        shell: pwsh
-        run: |
-          pwsh -NoProfile -File scripts/ci/test-windows-pointer-coordinates.ps1 -HelperPath "$env:GITHUB_WORKSPACE/scripts/ci/exercise-windows-window-input.ps1" -OutputDirectory "$env:RUNNER_TEMP/tabby-rs-windows-desktop-compare/pointer-control"
-          if($LASTEXITCODE){throw 'Actual pointer/resize control failed'}
       - name: Require default browser profile selection
         shell: pwsh
         run: |
@@ -216,6 +216,17 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-caption-restart-${{ github.sha }}
-          path: ${{ runner.temp }}/tabby-rs-windows-desktop-compare
+          path: |
+            ${{ runner.temp }}/tabby-rs-windows-desktop-compare/run-metadata.json
+            ${{ runner.temp }}/tabby-rs-windows-desktop-compare/artifact-metadata.json
+            ${{ runner.temp }}/tabby-rs-windows-desktop-compare/verified-host.json
+            ${{ runner.temp }}/tabby-rs-windows-desktop-compare/reference-runtime/reference-metadata.json
+            ${{ runner.temp }}/tabby-rs-windows-desktop-compare/preflight/**
+            ${{ runner.temp }}/tabby-rs-windows-desktop-compare/webview2-runtime.json
+            ${{ runner.temp }}/tabby-rs-windows-desktop-compare/tool-checks/**
+            ${{ runner.temp }}/tabby-rs-windows-desktop-compare/restart-origin-fixture/**
+            ${{ runner.temp }}/tabby-rs-windows-desktop-compare/pointer-control/**
+            ${{ runner.temp }}/tabby-rs-windows-desktop-compare/cdp-occupied/**
+            ${{ runner.temp }}/tabby-rs-windows-desktop-compare/capture/**
           if-no-files-found: error
           retention-days: 7
