@@ -20,9 +20,10 @@ async function exercise (after, oldWindows = [{ hwnd: 1, class: 'AppWindow' }, {
     const run = { page }
     const identity = { pid: root.pid, creationUtc: root.creationTimeUTC, hwnd: 1 }
     const info = { pid: root.pid, rootIdentity: root, executableSha256: 'same', initialProcessTree: before }
-    let snapshots = 0
+    let snapshots = 0, observations = 0, now = Date.now()
     const restart = vm.runInNewContext(source.slice(first, last) + '; restartCapturedApp', {
-        Date, Buffer, Number, JSON, Map, Error,
+        Date: class extends Date { static now () { return now } }, Buffer, Number, JSON, Map, Error,
+        delay: async ms => { calls.push('wait'); now += ms },
         mkdirSync: () => {}, writeFileSync: () => {},
         path: { join: (...parts) => parts.join('/') },
         verifyCdpOwnership: () => {}, sha256File: async () => 'same',
@@ -31,10 +32,14 @@ async function exercise (after, oldWindows = [{ hwnd: 1, class: 'AppWindow' }, {
             calls.push('observer-ready')
             return { descriptor: {}, trace: () => ({}), close: async () => { calls.push('observer-close') } }
         },
-        runPowerShell: () => ({ ok: true, stdout: JSON.stringify({
-            candidates: [{ pid: 210, parentPid: 120, creationTimeUTC: '2026-10-17T00:00:00.000Z', handles: windows.map(w => w.hwnd), windows }],
-            oldWindows: [], sessionsRemaining: [], trackedRemaining: [], oldProcessGone: true,
-        }) }),
+        runPowerShell: () => {
+            calls.push('query')
+            const visible = typeof windows === 'function' ? windows(observations++) : windows
+            return { ok: true, stdout: JSON.stringify({
+                candidates: [{ pid: 210, parentPid: 120, creationTimeUTC: '2026-10-17T00:00:00.000Z', handles: visible.map(w => w.hwnd), windows: visible }],
+                oldWindows: [], sessionsRemaining: [], trackedRemaining: [], oldProcessGone: true,
+            }) }
+        },
         proveRestartOrigin: input => { proofs.push(input); throw halt },
         message: error => String(error),
     })
@@ -91,13 +96,26 @@ test('replacement maps the observed application class while preserving auxiliary
     assert.deepEqual(Array.from(r.proofs[0].candidate.handles), [5])
     assert.deepEqual(r.proofs[0].candidate.windows, windows)
 })
-for (const [name, windows] of [
-    ['two application windows', [{ hwnd: 5, class: 'AppWindow' }, { hwnd: 6, class: 'AppWindow' }]],
-    ['only auxiliary windows', [{ hwnd: 5, class: 'TaoEvent' }]],
-]) test('replacement rejects ' + name + ' before claiming process ownership', async () => {
-    const r = await exercise(before, undefined, windows)
+test('replacement rejects two application windows before claiming process ownership', async () => {
+    const r = await exercise(before, undefined, [{ hwnd: 5, class: 'AppWindow' }, { hwnd: 6, class: 'AppWindow' }])
     assert.match(String(r.failure), /ambiguous/)
     assert.equal(r.proofs.length, 0)
+})
+test('only auxiliary windows never reach ownership before the bounded observation expires', async () => {
+    const r = await exercise(before, undefined, [{ hwnd: 5, class: 'TaoEvent' }])
+    assert.match(String(r.failure), /UI restart did not prove replacement/)
+    assert.equal(r.proofs.length, 0)
+    assert.ok(r.calls.filter(x => x === 'wait').length > 1)
+    assert.equal(r.calls.filter(x => x === 'click').length, 1)
+    assert.equal(r.calls.filter(x => x === 'observer-close').length, 1)
+})
+test('a later primary window is checked for origin after waiting past auxiliary-only startup', async () => {
+    const r = await exercise(before, undefined, index => index === 0 ? [{ hwnd: 6, class: 'TaoEvent' }] : [{ hwnd: 6, class: 'TaoEvent' }, { hwnd: 5, class: 'AppWindow' }])
+    assert.equal(r.failure, r.halt)
+    assert.equal(r.proofs.length, 1)
+    assert.deepEqual(Array.from(r.proofs[0].candidate.handles), [5])
+    assert.equal(r.calls.filter(x => x === 'wait').length, 1)
+    assert.equal(r.calls.filter(x => x === 'click').length, 1)
 })
 test('missing observed primary class rejects before GUI input', async () => {
     const r = await exercise(before, [{ hwnd: 1 }, { hwnd: 2 }])
