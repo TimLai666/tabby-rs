@@ -129,6 +129,16 @@ function heldPowerShellScript (metadataPath, stopPath) {
         `$self = Get-CimInstance -ClassName Win32_Process -Filter (\"ProcessId = $PID\") -ErrorAction Stop\n` +
         `if (-not $self) { throw 'CIM did not return this fixture process' }\n` +
         `$identity = @{ pid = [int]$self.ProcessId; parentPid = [int]$self.ParentProcessId; creationTimeUTC = $self.CreationDate.ToUniversalTime().ToString('o') }\n` +
+        `Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public static class FixtureNativeBirth{[DllImport("kernel32.dll",SetLastError=true)]public static extern bool GetProcessTimes(IntPtr handle,out long created,out long exited,out long kernel,out long user);}' -ErrorAction Stop\n` +
+        `$retained = [Diagnostics.Process]::GetCurrentProcess()\n` +
+        `try {\n` +
+        `    [long]$created=0;[long]$exited=0;[long]$kernel=0;[long]$user=0\n` +
+        `    if (-not [FixtureNativeBirth]::GetProcessTimes($retained.Handle,[ref]$created,[ref]$exited,[ref]$kernel,[ref]$user)) { throw 'Retained-handle GetProcessTimes failed' }\n` +
+        `    $identity.nativeCreationFileTime=$created.ToString([Globalization.CultureInfo]::InvariantCulture)\n` +
+        `    $identity.nativeCreationUTC=[DateTime]::FromFileTimeUtc($created).ToString('o')\n` +
+        `    $identity.nativeObservedUTC=[DateTime]::UtcNow.ToString('o')\n` +
+        `    $identity.cimCreationFileTime=$self.CreationDate.ToUniversalTime().ToFileTimeUtc().ToString([Globalization.CultureInfo]::InvariantCulture)\n` +
+        `} finally { $retained.Dispose() }\n` +
         `[IO.File]::WriteAllText($metadataPath, (ConvertTo-Json -InputObject $identity -Compress), [Text.UTF8Encoding]::new($false))\n` +
         `$until = [DateTime]::UtcNow.AddMinutes(2)\n` +
         `while (-not (Test-Path -LiteralPath $stopPath -PathType Leaf)) {\n` +
