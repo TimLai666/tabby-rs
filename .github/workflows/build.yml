@@ -122,7 +122,7 @@ jobs:
           if ($LASTEXITCODE) { throw 'Restore exact-bound settling controlled checks failed' }
           pwsh -NoProfile -File scripts/ci/test-windows-input-caption-fallback.ps1
           if ($LASTEXITCODE) { throw 'Caption fallback controlled checks failed' }
-          foreach ($script in @('exercise-windows-window-input.ps1', 'capture-windows-app-window.ps1', 'press-windows-app-dialog.ps1', 'modal-observer-fixture.ps1','probe-windows-caption-color.ps1','invoke-windows-caption.ps1','observe-windows-restart.ps1','test-windows-input-caption-fallback.ps1')) {
+          foreach ($script in @('exercise-windows-window-input.ps1', 'capture-windows-app-window.ps1', 'press-windows-app-dialog.ps1', 'modal-observer-fixture.ps1','probe-windows-caption-color.ps1','invoke-windows-caption.ps1','observe-windows-restart.ps1','test-windows-input-caption-fallback.ps1','test-windows-restart-identity.ps1')) {
             $tokens = $null; $errors = $null
             $path = Join-Path $env:GITHUB_WORKSPACE "scripts/ci/$script"
             [System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors) | Out-Null
@@ -189,6 +189,29 @@ jobs:
           }
           node scripts/ci/test-windows-restart-observer.mjs --output "$env:RUNNER_TEMP/tabby-rs-windows-desktop-compare/restart-origin-fixture" --powershell (Get-Command pwsh).Source
           if($LASTEXITCODE){throw 'Actual process-start observer regression failed'}
+      - name: Verify restart timestamps and delayed primary-window readiness
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $proof=Join-Path $env:RUNNER_TEMP 'tabby-rs-windows-desktop-compare/tool-checks/restart-readiness'
+          New-Item -ItemType Directory -Path $proof | Out-Null
+          $old=Join-Path $proof 'old-controller.mjs'
+          & git show 704663c6329d9ad8507ff90eae5e5f695aecdd6b:scripts/ci/capture-windows-apps.mjs | Set-Content -LiteralPath $old -Encoding utf8
+          if($LASTEXITCODE){throw 'Exact old controller cannot be read'}
+          $oldPreference=$PSNativeCommandUseErrorActionPreference
+          try {
+            $PSNativeCommandUseErrorActionPreference=$false
+            $red=@(& node scripts/ci/test-restart-primary-window-ready.mjs $old 2>&1); $redCode=$LASTEXITCODE
+            $red | Out-String | Set-Content (Join-Path $proof 'primary-ready-red.log')
+            if($redCode -ne 1 -or ($red -join "`n") -notmatch 'background-only replacement should remain pending'){throw 'Old primary readiness did not fail for the known background-window bug'}
+            $red=@(& pwsh -NoProfile -File scripts/ci/test-windows-restart-identity.ps1 -SourcePath $old 2>&1); $redCode=$LASTEXITCODE
+            $red | Out-String | Set-Content (Join-Path $proof 'identity-red.log')
+            if($redCode -ne 1 -or ($red -join "`n") -notmatch 'Restart identity mismatch: live;'){throw 'Old timestamp comparison did not fail for the known live-process bug'}
+          } finally { $PSNativeCommandUseErrorActionPreference=$oldPreference }
+          node scripts/ci/test-restart-primary-window-ready.mjs
+          if($LASTEXITCODE){throw 'Fixed primary readiness failed'}
+          pwsh -NoProfile -File scripts/ci/test-windows-restart-identity.ps1
+          if($LASTEXITCODE){throw 'Fixed restart identity filters failed'}
       - name: Require default browser profile selection
         shell: pwsh
         run: |
