@@ -67,7 +67,7 @@ fn run_checks() -> Result<usize, String> {
         }
     }
     static CLOSE_PROP: &[u16] = &[67, 108, 111, 115, 101, 82, 101, 113, 117, 101, 115, 116, 0];
-    unsafe fn make_root() -> Result<(HWND, HWND), String> {
+    unsafe fn make_root() -> Result<(HWND, HWND, HWND), String> {
         let instance = GetModuleHandleW(ptr::null());
         let wc = WNDCLASSW {
             style: 0,
@@ -120,7 +120,31 @@ fn run_checks() -> Result<usize, String> {
             DestroyWindow(root);
             return Err("CreateWindowExW STATIC child failed".into());
         }
-        Ok((root, child))
+        // A custom-class descendant behaves like an opaque nested content
+        // surface: unlike the STATIC placeholder above, it does not forward
+        // nonclient hit testing to the root.
+        let descendant = CreateWindowExW(
+            0,
+            CLASS.as_ptr(),
+            [
+                79, 112, 97, 113, 117, 101, 32, 100, 101, 115, 99, 101, 110, 100, 97, 110, 116, 0,
+            ]
+            .as_ptr(),
+            WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
+            0,
+            0,
+            640,
+            390,
+            child,
+            ptr::null_mut(),
+            instance,
+            ptr::null(),
+        );
+        if descendant.is_null() {
+            DestroyWindow(root);
+            return Err("CreateWindowExW nested opaque child failed".into());
+        }
+        Ok((root, child, descendant))
     }
     unsafe fn pump_until(mut pred: impl FnMut() -> bool) -> Result<(), String> {
         let start = std::time::Instant::now();
@@ -176,16 +200,28 @@ fn run_checks() -> Result<usize, String> {
         SendMessageW(b, BM_CLICK, 0, 0);
         Ok(())
     }
+    unsafe fn hit_test_at(x: i32, y: i32) -> Result<(HWND, LRESULT), String> {
+        let point = windows_sys::Win32::Foundation::POINT { x, y };
+        let recipient = WindowFromPoint(point);
+        if recipient.is_null() {
+            return Err(format!("WindowFromPoint returned null at ({x}, {y})"));
+        }
+        let packed = (((y as u16) as isize) << 16) | ((x as u16) as isize);
+        Ok((recipient, SendMessageW(recipient, WM_NCHITTEST, 0, packed)))
+    }
     let mut checks = 0usize;
+    let mut deep_hit_failures = Vec::new();
     unsafe {
-        let (root, web) = make_root()?;
+        let (root, web, opaque_descendant) = make_root()?;
         let _root_guard = RootGuard(root);
         let outer_before = {
             let mut r = zeroed();
             GetWindowRect(root, &mut r);
             r
         };
-        let child_ok = GetParent(web) == root;
+        let child_ok = GetParent(web) == root
+            && GetParent(opaque_descendant) == web
+            && IsWindow(opaque_descendant) != 0;
         if !child_ok {
             DestroyWindow(root);
             return Err("STATIC child is not owned by root".into());
@@ -284,8 +320,43 @@ fn run_checks() -> Result<usize, String> {
         }
         checks += 1;
 
+        // Check hit testing on the actual HWND returned by WindowFromPoint,
+        // not only the immediate Wry placeholder. The nested custom-class
+        // child keeps the deepest content opaque just like a web renderer.
+        let mut content_rect = zeroed();
+        GetWindowRect(opaque_descendant, &mut content_rect);
+        let center_x = content_rect.left + (content_rect.right - content_rect.left) / 2;
+        let center_y = content_rect.top + (content_rect.bottom - content_rect.top) / 2;
+        let (center_recipient, center_result) = hit_test_at(center_x, center_y)?;
+        if center_recipient != opaque_descendant || center_result != HTCLIENT {
+            deep_hit_failures.push(format!(
+                "opaque descendant center hit mismatch: recipient={center_recipient:?}, expected={opaque_descendant:?}, result={center_result}, expected HTCLIENT"
+            ));
+        }
+        let hit_x = content_rect.right - 1;
+        let hit_y = content_rect.top + (content_rect.bottom - content_rect.top) / 2;
+        let (hit_recipient, hit_result) = hit_test_at(hit_x, hit_y)?;
+        if hit_result != HTRIGHT {
+            deep_hit_failures.push(format!(
+                "opaque descendant right-edge recipient {hit_recipient:?} returned {hit_result}, expected HTRIGHT"
+            ));
+        }
+        for expected_button in [min, max, close] {
+            let mut button_rect = zeroed();
+            GetWindowRect(expected_button, &mut button_rect);
+            let x = button_rect.left + (button_rect.right - button_rect.left) / 2;
+            let y = button_rect.top + (button_rect.bottom - button_rect.top) / 2;
+            let (recipient, result) = hit_test_at(x, y)?;
+            if recipient != expected_button || result != HTCLIENT {
+                deep_hit_failures.push(format!(
+                    "caption button center hit mismatch: recipient={recipient:?}, expected={expected_button:?}, result={result}, expected HTCLIENT"
+                ));
+            }
+        }
+        checks += 1;
+
         // Operations target only the HWND whose native child was activated.
-        let (other, _) = make_root()?;
+        let (other, _, _) = make_root()?;
         let _other_guard = RootGuard(other);
         caption::install(other, Box::new(|_| {}))?;
         click(root, "Maximize")?;
@@ -544,7 +615,7 @@ fn run_checks() -> Result<usize, String> {
             return Err("remove leaked captured observer reference".into());
         }
         checks += 1;
-        let (destroy_root, _) = make_root()?;
+        let (destroy_root, _, _) = make_root()?;
         let _destroy_guard = RootGuard(destroy_root);
         let destroy_sentinel = Arc::new(());
         let destroy_capture = destroy_sentinel.clone();
@@ -595,6 +666,9 @@ fn run_checks() -> Result<usize, String> {
         caption::remove(root)?;
         DestroyWindow(root);
         let _ = GetCurrentThreadId();
+    }
+    if !deep_hit_failures.is_empty() {
+        return Err(deep_hit_failures.join("; "));
     }
     Ok(checks)
 }
