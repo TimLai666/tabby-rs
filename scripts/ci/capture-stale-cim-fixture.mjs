@@ -161,6 +161,7 @@ function loadController (sourcePath, outputDirectory, injection, postTeardownPro
     assert.equal(source.split(RUNNER_NEEDLE).length - 1, 1, 'actual PowerShell runner boundary must occur exactly once')
     const runnerReplacement = `const injectedScript = script.includes('$entries = @([Text.Encoding]') ? ${JSON.stringify(injection)} + "\\n" + script + "\\n" + ${JSON.stringify(postTeardownProbe)} : script\n    const result = spawnSync(powerShell, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', injectedScript], {`
     const loadedSource = `${source.slice(0, boundary)}\nexport { snapshotProcessTree, teardownApp, runPowerShell };\n`
+        .replace(/(from\s+)(['"])(\.\/[^'"]+)\2/g, (_match, prefix, _quote, relative) => prefix + JSON.stringify(pathToFileURL(path.resolve(path.dirname(sourcePath), relative)).href))
         .replace(RUNNER_NEEDLE, runnerReplacement)
     const loadedPath = path.join(outputDirectory, 'actual-controller-functions.mjs')
     writeFileSync(loadedPath, loadedSource, { flag: 'wx', encoding: 'utf8' })

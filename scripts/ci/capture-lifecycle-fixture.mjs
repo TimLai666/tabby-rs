@@ -11,6 +11,7 @@ const source = readFileSync(sourcePath, 'utf8')
 const boundary = source.lastIndexOf('\nlet exitCode = 1\n')
 assert.ok(boundary > 0, 'actual controller entry boundary must exist')
 const loadedSource = `${source.slice(0, boundary)}\nexport { snapshotProcessTree, teardownApp, runPowerShell };\n`
+        .replace(/(from\s+)(['"])(\.\/[^'"]+)\2/g, (_match, prefix, _quote, relative) => prefix + JSON.stringify(pathToFileURL(path.resolve(path.dirname(sourcePath), relative)).href))
 const loadedPath = path.join(output, 'actual-controller-functions.mjs')
 writeFileSync(loadedPath, loadedSource, { flag: 'wx' })
 const { snapshotProcessTree, teardownApp, runPowerShell } = await import(pathToFileURL(loadedPath))
