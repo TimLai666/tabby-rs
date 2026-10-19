@@ -31,6 +31,14 @@ fn io_error(error: impl std::fmt::Display) -> AppError {
     AppError::Io(error.to_string())
 }
 
+fn set_bounds_size(window: &tauri::WebviewWindow, size: PhysicalSize<u32>) -> Result<(), AppError> {
+    #[cfg(target_os = "windows")]
+    return crate::platform::set_window_outer_size(window, size);
+
+    #[cfg(not(target_os = "windows"))]
+    window.set_size(size).map_err(io_error)
+}
+
 fn window_state(window: &tauri::WebviewWindow) -> Result<WindowStateSnapshot, AppError> {
     let position = window.outer_position().map_err(io_error)?;
     let size = window.outer_size().map_err(io_error)?;
@@ -130,9 +138,7 @@ pub fn window_apply_state(
         }
     }
     if let Some(bounds) = request.bounds {
-        window
-            .set_size(PhysicalSize::new(bounds.width, bounds.height))
-            .map_err(io_error)?;
+        set_bounds_size(&window, PhysicalSize::new(bounds.width, bounds.height))?;
         if capabilities().absolute_positioning {
             window
                 .set_position(PhysicalPosition::new(bounds.x, bounds.y))
@@ -277,9 +283,7 @@ pub fn window_set_docking(
         .ok_or_else(|| AppError::NotFound("display".into()))?;
     let bounds = docked_bounds(&request, selected.work_area)?;
 
-    window
-        .set_size(PhysicalSize::new(bounds.width, bounds.height))
-        .map_err(io_error)?;
+    set_bounds_size(&window, PhysicalSize::new(bounds.width, bounds.height))?;
     window
         .set_position(PhysicalPosition::new(bounds.x, bounds.y))
         .map_err(io_error)?;

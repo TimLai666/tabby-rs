@@ -3,6 +3,11 @@ use crate::{desktop::VibrancyOptions, error::AppError};
 mod frame;
 pub use frame::{set_window_frame, window_caption_controls};
 
+#[cfg(target_os = "windows")]
+mod window_size;
+#[cfg(target_os = "windows")]
+pub use window_size::set_window_outer_size;
+
 #[cfg(target_os = "macos")]
 pub(crate) mod macos_quit;
 
