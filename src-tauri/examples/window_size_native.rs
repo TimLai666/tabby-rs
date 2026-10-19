@@ -37,17 +37,24 @@ mod error {
 #[path = "../src/platform/mod.rs"]
 mod platform;
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 fn main() {
-    eprintln!("window_size_native: Windows-only real Tauri/Wry sizing fixture; this is not full desktop parity; skipped on this platform");
+    eprintln!("window_size_native: Windows/macOS real Tauri/Wry sizing fixture; this is not full desktop parity; skipped on this platform");
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(target_os = "macos")]
+#[path = "window_size_native/macos.rs"]
+mod macos_checks;
+
+#[cfg(target_os = "macos")]
+use macos_checks::{run_checks, CHECKS};
+
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 fn main() {
     use tauri::WebviewUrl;
     let args: Vec<_> = std::env::args().skip(1).collect();
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        println!("Usage: cargo run --locked --manifest-path src-tauri/Cargo.toml --example window_size_native\nRuns a real Windows Tauri/Wry native outer-size fixture for native, thin, and full frames using two WebviewWindows. This is not full desktop parity coverage.");
+        println!("Usage: cargo run --locked --manifest-path src-tauri/Cargo.toml --example window_size_native\nRuns the real Tauri/Wry outer-size fixture for native, thin, and full frames using two WebviewWindows on Windows or macOS. This is not full desktop parity coverage.");
         return;
     }
     if !args.is_empty() {
@@ -56,7 +63,7 @@ fn main() {
             args.join(" ")
         ));
     }
-    println!("window_size_native: running real Tauri/Wry sizing checks for native/thin/full frames and two windows; not full desktop parity coverage");
+    println!("window_size_native: running real Tauri/Wry outer-size checks for native/thin/full frames and two windows; not full desktop parity coverage");
     let isolated = tempfile::tempdir()
         .unwrap_or_else(|error| fail(format!("temporary data directory: {error}")));
     let timeout_path = isolated.path().to_path_buf();
@@ -77,7 +84,7 @@ fn main() {
     let app_result = tauri::Builder::default()
         .setup(move |app| {
             let blank = WebviewUrl::External("about:blank".parse()?);
-            let make = |label: &str, x: i32| {
+            let make = |label: &str, x: i32, data_dir: &std::path::Path| {
                 let mut config = base.clone();
                 config.label = label.into();
                 config.url = blank.clone();
@@ -87,11 +94,21 @@ fn main() {
                 config.y = Some(120.0);
                 tauri::WebviewWindowBuilder::from_config(app, &config)?
                     .incognito(true)
-                    .data_directory(isolated.path().to_path_buf())
+                    .data_directory(data_dir.to_path_buf())
                     .build()
             };
-            let first = make("sizeFirst", 80)?;
-            let second = make("sizeSecond", 1120)?;
+            #[cfg(target_os = "windows")]
+            let (first_dir, second_dir) = (isolated.path(), isolated.path());
+            #[cfg(target_os = "macos")]
+            let (first_dir, second_dir) = {
+                let first_dir = isolated.path().join("sizeFirst");
+                let second_dir = isolated.path().join("sizeSecond");
+                std::fs::create_dir_all(&first_dir)?;
+                std::fs::create_dir_all(&second_dir)?;
+                (first_dir, second_dir)
+            };
+            let first = make("sizeFirst", 80, first_dir.as_ref())?;
+            let second = make("sizeSecond", 1120, second_dir.as_ref())?;
             let handle = app.handle().clone();
             let owned_temp = isolated;
             std::thread::spawn(move || {
@@ -114,7 +131,7 @@ fn main() {
             Ok(())
         })
         .build(context);
-    let mut app = app_result.unwrap_or_else(|error| fail(format!("startup: {error}")));
+    let app = app_result.unwrap_or_else(|error| fail(format!("startup: {error}")));
     app.run_return(|_, _| {});
     let (mut exit_code, owned_temp) = match done_rx.recv_timeout(Duration::from_secs(10)) {
         Ok(result) => result,
@@ -131,13 +148,13 @@ fn main() {
     std::process::exit(exit_code);
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 fn fail(message: String) -> ! {
     eprintln!("window_size_native error: {message}");
     std::process::exit(1)
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 fn remove_temp_with_retry(path: &std::path::Path, timeout: Duration) -> Result<(), String> {
     let deadline = Instant::now() + timeout;
     loop {

@@ -32,10 +32,10 @@ fn io_error(error: impl std::fmt::Display) -> AppError {
 }
 
 fn set_bounds_size(window: &tauri::WebviewWindow, size: PhysicalSize<u32>) -> Result<(), AppError> {
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
     return crate::platform::set_window_outer_size(window, size);
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     window.set_size(size).map_err(io_error)
 }
 
