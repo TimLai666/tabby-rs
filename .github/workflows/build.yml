@@ -496,6 +496,11 @@ jobs:
           RUSTFLAGS: '-C link-arg=/MANIFESTINPUT:${{ github.workspace }}/src-tauri/windows-app-manifest.xml -C link-arg=/MANIFEST:EMBED'
         run: cargo test --manifest-path src-tauri/Cargo.toml --lib
 
+      - name: Test native macOS outer window size
+        if: matrix.name == 'macos'
+        timeout-minutes: 6
+        run: cargo run --locked --manifest-path src-tauri/Cargo.toml --example window_size_native
+
       - name: Test native Windows caption adapter
         if: matrix.name == 'windows'
         timeout-minutes: 6

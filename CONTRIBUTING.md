@@ -34,6 +34,19 @@ These examples exercise actual Win32 controls and Wry window bounds; full applic
 desktop interaction requires separate acceptance. [GetWindowSubclass requires Common
 Controls v6](https://learn.microsoft.com/en-us/windows/win32/api/commctrl/nf-commctrl-getwindowsubclass).
 
+On macOS, run the outer-size example without Windows linker flags:
+
+```text
+cargo run --locked --manifest-path src-tauri/Cargo.toml --example window_size_native
+```
+
+It uses two hidden Wry windows to check Native, Thin, and Full outer bounds,
+repeated writes, getter round-trips, per-window isolation, native errors,
+fractional-point alignment against an independent AppKit control, ready-frame
+handoff, and combined maximize/unmaximize plus size after queued work completes.
+Its AppKit checks do not accept startup defaults, minimum resizing gestures,
+composited desktop interaction, or full platform parity.
+
 The release gate needs real bundle, installer, benchmark, license, and platform evidence. Do not change a parity manifest from `pending` to `passed` to make a local build green.
 
 ## Change boundaries
