@@ -929,6 +929,23 @@
   `src-tauri/src/commands/desktop.rs` before changing either producer. Account for
   Electron's outer sizing and Tauri's inner sizing; copying the numbers alone
   does not establish equal desktop bounds.
+- Keep Windows apply-state and docking sizes in physical outer pixels through
+  `src-tauri/src/platform/window_size.rs`. Preserve Tao's unmaximize behavior and
+  the existing position, activation, and Z order. Include `window_size_native`
+  when changing this boundary; its two real Wry windows cover Native, Thin, Full,
+  repeated sizing, snapshot round-trips, and maximized resize.
+- Verify macOS/Linux outer-size writes separately; they still use the Tauri
+  inner-size setter. RS does not yet persist or restore `windowBoundaries`.
+  Before accepting combined bounds and maximized patches, check their order:
+  applying size after maximization currently restores the window.
+
+## Pending — Windows WebView caption destruction
+
+- Investigate the `could not detach caption adapter after resize ring destruction:
+  SetWindowPos failed while restoring the native frame` diagnostic in actual Wry
+  run `39264462239` before accepting native WebView destruction cleanup. Inspect
+  `src-tauri/src/platform/frame_windows_buttons.rs` and the actual HWND lifecycle.
+  The diagnostic alone does not establish dangling callbacks or a window leak.
 
 ## Pending — native window appearance settings acceptance
 

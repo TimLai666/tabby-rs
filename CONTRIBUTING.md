@@ -21,16 +21,17 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib
 cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
 ```
 
-On Windows, the caption adapter example requires the existing Common Controls v6
-manifest, as does the Windows library-test CI step. In PowerShell:
+On Windows, the caption and outer-size adapter examples require the existing
+Common Controls v6 manifest, as does the Windows library-test CI step. In PowerShell:
 
 ```powershell
 $env:CARGO_ENCODED_RUSTFLAGS = @('-C', "link-arg=/MANIFESTINPUT:$((Resolve-Path src-tauri/windows-app-manifest.xml).Path)", '-C', 'link-arg=/MANIFEST:EMBED') -join [char]0x1f
 cargo run --locked --manifest-path src-tauri/Cargo.toml --example windows_caption_native
+cargo run --locked --manifest-path src-tauri/Cargo.toml --example window_size_native
 ```
 
-The example exercises actual Win32 controls; full WebView rendering and desktop
-interaction require separate acceptance. [GetWindowSubclass requires Common
+These examples exercise actual Win32 controls and Wry window bounds; full application
+desktop interaction requires separate acceptance. [GetWindowSubclass requires Common
 Controls v6](https://learn.microsoft.com/en-us/windows/win32/api/commctrl/nf-commctrl-getwindowsubclass).
 
 The release gate needs real bundle, installer, benchmark, license, and platform evidence. Do not change a parity manifest from `pending` to `passed` to make a local build green.

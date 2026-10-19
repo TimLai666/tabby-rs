@@ -503,6 +503,13 @@ jobs:
           RUSTFLAGS: '-C link-arg=/MANIFESTINPUT:${{ github.workspace }}/src-tauri/windows-app-manifest.xml -C link-arg=/MANIFEST:EMBED'
         run: cargo run --locked --manifest-path src-tauri/Cargo.toml --example windows_caption_native
 
+      - name: Test native Windows outer window size
+        if: matrix.name == 'windows'
+        timeout-minutes: 6
+        env:
+          RUSTFLAGS: '-C link-arg=/MANIFESTINPUT:${{ github.workspace }}/src-tauri/windows-app-manifest.xml -C link-arg=/MANIFEST:EMBED'
+        run: cargo run --locked --manifest-path src-tauri/Cargo.toml --example window_size_native
+
       - name: Test SSH authentication fixture
         if: matrix.name != 'windows'
         run: yarn test:ssh-auth-integration
