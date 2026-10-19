@@ -5,7 +5,10 @@ pub use frame::{set_window_frame, window_caption_controls};
 
 #[cfg(target_os = "windows")]
 mod window_size;
-#[cfg(target_os = "windows")]
+#[cfg(target_os = "macos")]
+#[path = "window_size_macos.rs"]
+mod window_size;
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 pub use window_size::set_window_outer_size;
 
 #[cfg(target_os = "macos")]

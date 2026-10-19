@@ -73,6 +73,7 @@ windows-sys = { version = "0.59", features = ["Win32_Graphics_Gdi", "Win32_Secur
 
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "=3.6.3", default-features = false, features = ["apple-native"] }
+dispatch2 = "=0.3.1"
 objc2 = "0.6"
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSLocale", "NSEnumerator"] }
 block2 = "0.6"
