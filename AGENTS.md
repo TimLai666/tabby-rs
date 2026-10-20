@@ -939,12 +939,16 @@
   scale and queue native outer-frame writes on the main GCD queue after Tao's
   queued maximize/unmaximize operations. Read the live handle, scale, and style
   when the queued write runs, preserving the current top-left corner.
+  Clamp finite undersized requests to the live NSWindow outer minimum in points
+  before validating the content area, and re-read that minimum with the scale
+  when the queued write executes.
   Retain AppKit's native point alignment for fractional-point requests.
   Surface preflight native-handle and dispatch errors; dispatch success does not
   confirm that the asynchronous native resize has completed.
   Include `window_size_native` for both supported adapters. Its two hidden macOS
   Wry windows cover Native, Thin, Full, repeated sizing, getter round-trips,
-  top-left/appearance/responder preservation, per-window isolation, overflow and
+  top-left/appearance/responder preservation, per-window isolation, independent
+  per-axis minimum clamping from main and worker calls, overflow and
   destruction errors, fractional-point alignment against an independent AppKit
   control, ready-frame handoff, and combined maximize/unmaximize plus size after
   a main GCD FIFO barrier. Property checks do not accept desktop input, composited

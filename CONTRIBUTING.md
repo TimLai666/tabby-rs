@@ -41,7 +41,8 @@ cargo run --locked --manifest-path src-tauri/Cargo.toml --example window_size_na
 ```
 
 It uses two hidden Wry windows to check Native, Thin, and Full outer bounds,
-repeated writes, getter round-trips, per-window isolation, native errors,
+repeated writes, getter round-trips, per-window isolation, finite undersized
+requests clamped to the live native outer minimum, native errors,
 fractional-point alignment against an independent AppKit control, ready-frame
 handoff, and combined maximize/unmaximize plus size after queued work completes.
 Its AppKit checks do not accept startup defaults, minimum resizing gestures,

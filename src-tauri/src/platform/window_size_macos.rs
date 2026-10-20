@@ -14,9 +14,10 @@ fn target_outer_frame(
     }
 
     let mut frame = native_window.frame();
-    let height = size.height as f64 / scale;
+    let minimum = native_window.minSize();
+    let height = (size.height as f64 / scale).max(minimum.height);
     frame.origin.y += frame.size.height - height;
-    frame.size.width = size.width as f64 / scale;
+    frame.size.width = (size.width as f64 / scale).max(minimum.width);
     frame.size.height = height;
     let content = native_window.contentRectForFrameRect(frame);
     if content.size.width < 0.0 || content.size.height < 0.0 {
