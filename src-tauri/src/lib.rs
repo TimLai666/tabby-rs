@@ -21,6 +21,7 @@ mod telnet;
 mod transfer;
 pub mod update;
 mod webview_storage;
+mod window_geometry;
 mod windows_integration;
 mod winscp;
 
@@ -325,6 +326,7 @@ pub fn run() {
     let portable_root = identity::portable_root_for_executable(&executable)
         .expect("failed to detect portable storage");
     let mut context = tauri::generate_context!();
+    window_geometry::prepare_startup(context.config_mut());
     let storage_directory =
         webview_storage::prepare(context.config_mut(), portable_root.as_deref())
             .expect("failed to prepare portable WebView storage");
