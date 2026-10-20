@@ -371,6 +371,7 @@ fn run_checks(first: &tauri::WebviewWindow, second: &tauri::WebviewWindow) -> Ve
                 },
             );
             for (requested, expected) in [
+                (tauri::PhysicalSize::new(0, 0), expected_minimum),
                 (tauri::PhysicalSize::new(1, 1), expected_minimum),
                 (
                     tauri::PhysicalSize::new(1, 650),

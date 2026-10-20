@@ -963,7 +963,10 @@
   platforms, and installers remain pending.
 - Keep Windows apply-state and docking sizes in physical outer pixels through
   `src-tauri/src/platform/window_size.rs`. Preserve Tao's unmaximize behavior and
-  the existing position, activation, and Z order. Include `window_size_native`
+  the existing position, activation, and Z order. Read WM_GETMINMAXINFO on the
+  owning UI thread after unmaximizing, then clamp each requested outer dimension
+  to its live minimum before SetWindowPos. Include zero and undersized requests
+  in every frame and both Wry windows. Include `window_size_native`
   when changing this boundary; its two real Wry windows cover Native, Thin, Full,
   repeated sizing, snapshot round-trips, and maximized resize.
 - Keep macOS apply-state and docking sizes in physical outer pixels through

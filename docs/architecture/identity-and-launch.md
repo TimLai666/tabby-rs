@@ -200,6 +200,10 @@ uses the owning HWND's live DPI and preserves its chosen position, visibility,
 activation, and maximized state. An independent, stateless window subclass applies
 the 400×300 outer logical minimum after the existing native minimum calculation;
 it preserves other constraints and survives Native/Thin/Full frame changes.
+Apply-state and docking also read the live outer minimum after unmaximizing and
+clamp each requested dimension before setting the outer frame. Tao consumes
+`WM_WINDOWPOSCHANGING` without Win32's default size validation, so a direct
+`SetWindowPos` otherwise accepts a size below that minimum.
 Successful initialization is idempotent. Foreign subclass bindings are preserved,
 and failed initialization prevents bootstrap rather than exposing a partly sized
 window. Custom main-window geometry and construction policies are retained.
