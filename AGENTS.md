@@ -947,7 +947,10 @@
   Include the initialization registry tests, native Win32 geometry tests,
   test-windows-window-bootstrap.mjs, and the real Wry stock-geometry negative
   control plus corrected run. Linux retains 1100x720 with a 640x480 inner
-  minimum and needs separate correction.
+  minimum and needs separate correction. Keep Windows Win32/Wry property checks
+  and simulated bootstrap/presentation fixtures separate from full-application
+  command ordering, concurrent launch/destruction, physical resizing, DPI
+  transitions, original desktop comparison, and installer acceptance.
   Trace `app/lib/window.ts`, `src-tauri/tauri.conf.json`,
   `src-tauri/src/window_geometry.rs`, and `src-tauri/src/commands/desktop.rs`
   before changing either producer. Include `window_geometry::` host tests and
