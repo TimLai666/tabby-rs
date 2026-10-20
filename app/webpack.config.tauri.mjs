@@ -51,6 +51,7 @@ export default () => ({
     },
     resolve: {
         alias: {
+            '../bell.ogg$': path.resolve(__dirname, 'src/shims/terminal-bell.cjs'),
             '@ngx-translate/core': path.join(appNodeModules, '@ngx-translate/core'),
             'fs$': fsShim,
             'fs/promises$': fsShim,
@@ -144,7 +145,7 @@ export default () => ({
                 type: 'asset/resource',
             },
             { test: /\.svg$/, use: ['svg-inline-loader'], exclude: /logo\.svg$/ },
-            { test: /\.ogg$/, type: 'asset/resource' },
+            { test: /\.(ogg|wav)$/, type: 'asset/resource' },
             {
                 test: /\.(eot|otf|woff|woff2)(\?v=[0-9]\.[0-9]\.[0-9])?$/,
                 type: 'asset',

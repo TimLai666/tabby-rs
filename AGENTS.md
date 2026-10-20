@@ -1321,13 +1321,18 @@
   records the WebView refusing `data:audio/ogg` because the configured
   `default-src 'self'` also applies to media. The ASCII and Chinese input checks
   pass; that run does not establish audible bell behavior.
-- Keep the original bell bytes and shared terminal audio producer. The Tauri
-  renderer must emit Ogg audio as a same-origin resource instead of an inline
-  data URL. Preserve the current content policy unless a separate policy change
-  is authorized. Include `yarn test:terminal-bell` when changing audio packaging;
-  it compiles the actual renderer rule and compares emitted bytes with `14e2d60`.
-- An isolated macOS 27 WKWebView using the native content policy plays the same-origin
-  bell through `playing` and `ended`; the data-URL control is rejected. This checks
+- Keep the original bell bytes and shared terminal audio producer. The Tauri-only
+  `app/src/shims/terminal-bell.cjs` import adapter selects the original Ogg when
+  the WebView reports Vorbis support, otherwise the PCM WAV documented in
+  `app/assets/bell.NOTICE.md`. Preserve its complete decoded signal and provenance.
+  Both formats must be same-origin resources. Preserve the current content policy
+  unless a separate policy change is authorized. Include `yarn test:terminal-bell`
+  when changing audio packaging or selection; it compiles the actual native
+  rules and alias and checks supported/unsupported capabilities, original bytes,
+  PCM data, and the content policy.
+- An isolated macOS 27 WKWebView using the native content policy plays both the
+  same-origin Ogg and PCM WAV through `playing` and `ended`; the data-URL control
+  is rejected. This checks
   WebView playback, not the terminal's audible-bell setting, original desktop
   comparison, older WebKit codecs, or supported-platform desktop acceptance.
   Verify those separately before accepting terminal sound parity.

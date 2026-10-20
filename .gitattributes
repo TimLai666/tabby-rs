@@ -12,3 +12,4 @@
 *.png binary
 *.ttf binary
 *.wasm binary
+*.wav binary
