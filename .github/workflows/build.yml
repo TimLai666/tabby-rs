@@ -511,6 +511,13 @@ jobs:
           RUSTFLAGS: '-C link-arg=/MANIFESTINPUT:${{ github.workspace }}/src-tauri/windows-app-manifest.xml -C link-arg=/MANIFEST:EMBED'
         run: cargo run --locked --manifest-path src-tauri/Cargo.toml --example windows_caption_native
 
+      - name: Reproduce uncorrected Windows startup geometry
+        if: matrix.name == 'windows'
+        timeout-minutes: 6
+        env:
+          RUSTFLAGS: '-C link-arg=/MANIFESTINPUT:${{ github.workspace }}/src-tauri/windows-app-manifest.xml -C link-arg=/MANIFEST:EMBED'
+        run: node scripts/test-windows-startup-geometry-control.mjs
+
       - name: Test native Windows outer window size
         if: matrix.name == 'windows'
         timeout-minutes: 6

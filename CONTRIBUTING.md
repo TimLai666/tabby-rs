@@ -28,7 +28,13 @@ Common Controls v6 manifest, as does the Windows library-test CI step. In PowerS
 $env:CARGO_ENCODED_RUSTFLAGS = @('-C', "link-arg=/MANIFESTINPUT:$((Resolve-Path src-tauri/windows-app-manifest.xml).Path)", '-C', 'link-arg=/MANIFEST:EMBED') -join [char]0x1f
 cargo run --locked --manifest-path src-tauri/Cargo.toml --example windows_caption_native
 cargo run --locked --manifest-path src-tauri/Cargo.toml --example window_size_native
+node scripts/test-windows-startup-geometry-control.mjs
 ```
+
+The Windows outer-size example also checks stock startup dimensions and outer
+minimums across all three frames. The negative control deliberately retains the
+uncorrected bundled geometry and requires those specific mismatches; unrelated
+failures reject the control. Both commands must pass before accepting this change.
 
 These examples exercise actual Win32 controls and Wry window bounds; full application
 desktop interaction requires separate acceptance. [GetWindowSubclass requires Common

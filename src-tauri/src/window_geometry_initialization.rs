@@ -88,3 +88,7 @@ impl PendingInitialization {
         });
     }
 }
+
+#[cfg(test)]
+#[path = "window_geometry_initialization_tests.rs"]
+mod tests;

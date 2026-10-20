@@ -163,3 +163,7 @@ unsafe extern "system" fn minimum_proc(
     }
     result
 }
+
+#[cfg(test)]
+#[path = "window_geometry_windows_tests.rs"]
+mod tests;
