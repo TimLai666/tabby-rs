@@ -128,6 +128,9 @@ jobs:
       - name: Test terminal CLI paste
         run: yarn test:terminal-cli-paste
 
+      - name: Test terminal bell resource
+        run: yarn test:terminal-bell
+
       - name: Test terminal path quoting
         run: node scripts/ci/test-path-quoting.mjs
       - name: Test workspace model

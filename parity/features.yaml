@@ -92,7 +92,7 @@ features:
     issues: [1, 10]
     platforms: [windows, macos, linux]
     tests:
-      automated: [paste-policy, uri-policy, tauri-platform, context-menu-browser]
+      automated: [paste-policy, uri-policy, tauri-platform, context-menu-browser, terminal-bell]
       manual: [terminal-workspace-interactions]
     status: pending
     evidence: []

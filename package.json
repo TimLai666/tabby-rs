@@ -143,6 +143,7 @@
     "test:terminal-renderer": "node scripts/ci/test-terminal-renderer.mjs",
     "test:terminal-renderer-browser": "node scripts/ci/test-terminal-renderer-browser.mjs",
     "test:context-menu-browser": "node scripts/ci/test-context-menu-browser.mjs",
+    "test:terminal-bell": "node scripts/test-terminal-bell.mjs",
     "test:terminal-color": "node scripts/test-terminal-color-contract.mjs",
     "test:paste-policy": "node scripts/ci/test-paste-policy.mjs",
     "test:terminal-cli-paste": "node scripts/test-terminal-cli-paste.mjs",
