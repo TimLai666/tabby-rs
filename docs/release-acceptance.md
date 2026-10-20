@@ -277,6 +277,32 @@ the exact artifact under test:
 - `side-by-side`: run original Tabby and Tabby RS simultaneously, verify
   independent windows, config paths, plugins, and uninstall isolation.
 
+### WinSCP feature acceptance
+
+Record the `ssh-winscp` manual flow under `features` with ID `ssh.winscp`.
+Compare both SSH-tab entry points with the fixed original on the same Windows
+host, using isolated test profiles, credentials, and application copies:
+
+- Launch from live and ended SSH tabs, then after successful, failed, and
+  cancelled reconnects. Verify the selected host, port, resolved username,
+  current-directory option where supplied, and the last authenticated identity.
+- Verify password and private-key sessions, saved and prompted passphrases with
+  Remember checked and unchecked, and jump-host connection options. Include
+  sessions with no configured private keys and preserve the original behavior.
+- Start a new WinSCP process and hand a session to an already running instance.
+  Verify the actual selected connection and continued usability, plus diagnostics
+  when the executable is unavailable or key conversion or launch fails.
+- Inspect owned source-key stages and converted keys after normal WinSCP exit,
+  application quit during conversion or launch, and isolated crash recovery.
+  Require cleanup of abandoned keys while preserving keys still used by another
+  process or active WinSCP session. Keep this acceptance pending until the
+  existing temporary-key cleanup gap has been resolved and verified.
+
+The service and session fixtures substitute process/IPC boundaries. Passing
+`tauri-platform`, `ssh-reconnect`, or Rust tests does not replace these desktop,
+WinSCP-process, and key-file lifecycle checks. Keep `ssh.winscp` pending until
+its complete scope has evidence for the exact release revision and artifact.
+
 ## macOS Intel and Apple Silicon
 
 Run the same checklist independently on `macos-x64` and `macos-arm64`:

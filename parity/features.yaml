@@ -176,6 +176,15 @@ features:
       manual: [ssh-sftp]
     status: pending
     evidence: []
+  - id: ssh.winscp
+    title: WinSCP launch, SSH identity and key reuse, jump tunnels, and temporary-key cleanup
+    issues: [15, 17]
+    platforms: [windows]
+    tests:
+      automated: [tauri-platform, ssh-reconnect, rust-host]
+      manual: [ssh-winscp]
+    status: pending
+    evidence: []
   - id: serial.profile-and-session
     title: Serial profiles, connection lifecycle, readline, hexdump, and newline conversion
     issues: [18]
