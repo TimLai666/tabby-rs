@@ -32,6 +32,7 @@ struct TauriState {
 struct NativeState {
     frame: (f64, f64, f64, f64),
     scale: f64,
+    minimum: (f64, f64),
     responder: usize,
     alpha: f64,
     opaque: bool,
@@ -76,6 +77,7 @@ fn snapshot(window: &tauri::WebviewWindow) -> Result<Snapshot, String> {
             .map_err(|error| error.to_string())?;
         let native: &NSWindow = unsafe { &*raw.cast() };
         let frame = native.frame();
+        let minimum = native.minSize();
         let responder: *mut AnyObject = unsafe { objc2::msg_send![native, firstResponder] };
         Ok::<_, String>(NativeState {
             frame: (
@@ -85,6 +87,7 @@ fn snapshot(window: &tauri::WebviewWindow) -> Result<Snapshot, String> {
                 frame.size.height,
             ),
             scale: native.backingScaleFactor(),
+            minimum: (minimum.width, minimum.height),
             responder: responder as usize,
             alpha: native.alphaValue(),
             opaque: native.isOpaque(),
@@ -214,6 +217,8 @@ fn same_native_state(a: &NativeState, b: &NativeState) -> bool {
         .zip([b.frame.0, b.frame.1, b.frame.2, b.frame.3])
         .all(|(left, right)| (left - right).abs() <= 0.01)
         && (a.scale - b.scale).abs() <= 0.001
+        && (a.minimum.0 - b.minimum.0).abs() <= 0.01
+        && (a.minimum.1 - b.minimum.1).abs() <= 0.01
         && a.responder == b.responder
         && (a.alpha - b.alpha).abs() <= 0.001
         && a.opaque == b.opaque
@@ -312,6 +317,179 @@ fn wait_for_main_gcd_queue() -> Result<(), String> {
     receiver
         .recv_timeout(CALL_TIMEOUT)
         .map_err(|error| format!("main GCD FIFO barrier timed out: {error}"))
+}
+
+fn check_minimum_clamping(
+    active: &tauri::WebviewWindow,
+    other: &tauri::WebviewWindow,
+    frame_name: &str,
+    baseline: &Snapshot,
+    failures: &mut Vec<String>,
+) {
+    let scale = baseline.native.scale;
+    let minimum = tauri::PhysicalSize::new(
+        (baseline.native.minimum.0 * scale).round() as u32,
+        (baseline.native.minimum.1 * scale).round() as u32,
+    );
+    let requests = [
+        (
+            "width-only-far-below-minimum",
+            tauri::PhysicalSize::new(1, baseline.tauri.size.height.max(minimum.height)),
+        ),
+        (
+            "height-only-far-below-minimum",
+            tauri::PhysicalSize::new(baseline.tauri.size.width.max(minimum.width), 1),
+        ),
+        (
+            "both-axes-far-below-minimum",
+            tauri::PhysicalSize::new(1, 1),
+        ),
+        ("small-height-1000x1", tauri::PhysicalSize::new(1000, 1)),
+        (
+            "width-only-one-pixel-below-minimum",
+            tauri::PhysicalSize::new(minimum.width.saturating_sub(1), baseline.tauri.size.height),
+        ),
+        (
+            "height-only-one-pixel-below-minimum",
+            tauri::PhysicalSize::new(baseline.tauri.size.width, minimum.height.saturating_sub(1)),
+        ),
+        (
+            "both-axes-one-pixel-below-minimum",
+            tauri::PhysicalSize::new(
+                minimum.width.saturating_sub(1),
+                minimum.height.saturating_sub(1),
+            ),
+        ),
+        ("exact-minimum", minimum),
+        (
+            "above-minimum",
+            tauri::PhysicalSize::new(
+                minimum.width.saturating_add(64),
+                minimum.height.saturating_add(64),
+            ),
+        ),
+    ];
+
+    for (index, (case, requested)) in requests.into_iter().enumerate() {
+        let label = format!("{} {frame_name} minimum clamp {case}", active.label());
+        let before = snapshot(active);
+        let peer_before = snapshot(other);
+        let operation_window = active.clone();
+        let result = if index % 2 == 0 {
+            on_main(active, move || {
+                crate::platform::set_window_outer_size(&operation_window, requested)
+                    .map_err(|error| format!("AppError: {error:?}"))
+            })
+            .and_then(|result| result)
+        } else {
+            issue(move || crate::platform::set_window_outer_size(&operation_window, requested))
+                .and_then(|result| result.map_err(|error| format!("AppError: {error:?}")))
+        };
+        let settled = result.and_then(|()| wait_for_main_gcd_queue());
+        check(
+            failures,
+            format!("{label} request succeeds and GCD barrier settles"),
+            settled,
+        );
+
+        match (before, snapshot(active)) {
+            (Ok(before), Ok(after)) => {
+                let expected = tauri::PhysicalSize::new(
+                    requested.width.max(minimum.width),
+                    requested.height.max(minimum.height),
+                );
+                let expected_native = (f64::from(expected.width), f64::from(expected.height));
+                let actual_native = (
+                    after.native.frame.2 * after.native.scale,
+                    after.native.frame.3 * after.native.scale,
+                );
+                check(
+                    failures,
+                    format!("{label} outer dimensions clamp independently"),
+                    if after.tauri.size == expected
+                        && (actual_native.0 - expected_native.0).abs() <= 1.0
+                        && (actual_native.1 - expected_native.1).abs() <= 1.0
+                    {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "requested={requested:?} expected={expected:?} after={after:?}"
+                        ))
+                    },
+                );
+                let top_left_before = (
+                    before.native.frame.0,
+                    before.native.frame.1 + before.native.frame.3,
+                );
+                let top_left_after = (
+                    after.native.frame.0,
+                    after.native.frame.1 + after.native.frame.3,
+                );
+                check(
+                    failures,
+                    format!("{label} preserves top-left and window properties"),
+                    if before.tauri.position == after.tauri.position
+                        && before.tauri.visible == after.tauri.visible
+                        && (top_left_before.0 - top_left_after.0).abs() <= 0.5
+                        && (top_left_before.1 - top_left_after.1).abs() <= 0.5
+                        && before.native.responder == after.native.responder
+                        && (before.native.alpha - after.native.alpha).abs() <= 0.001
+                        && before.native.opaque == after.native.opaque
+                        && (before.native.scale - after.native.scale).abs() <= 0.001
+                        && (before.native.minimum.0 - after.native.minimum.0).abs() <= 0.01
+                        && (before.native.minimum.1 - after.native.minimum.1).abs() <= 0.01
+                    {
+                        Ok(())
+                    } else {
+                        Err(format!("before={before:?} after={after:?}"))
+                    },
+                );
+            }
+            (Err(error), _) => check(failures, format!("{label} pre-snapshot"), Err(error)),
+            (_, Err(error)) => check(failures, format!("{label} settled snapshot"), Err(error)),
+        }
+        match (peer_before, snapshot(other)) {
+            (Ok(before), Ok(after)) => check(
+                failures,
+                format!("{label} preserves peer state"),
+                if before.tauri == after.tauri && same_native_state(&before.native, &after.native) {
+                    Ok(())
+                } else {
+                    Err(format!("before={before:?} after={after:?}"))
+                },
+            ),
+            (Err(error), _) => check(failures, format!("{label} peer pre-snapshot"), Err(error)),
+            (_, Err(error)) => check(failures, format!("{label} peer post-snapshot"), Err(error)),
+        }
+    }
+
+    let baseline_size = baseline.tauri.size;
+    let restore_window = active.clone();
+    let restore =
+        issue(move || crate::platform::set_window_outer_size(&restore_window, baseline_size))
+            .and_then(|result| {
+                result.map_err(|error| format!("AppError restoring baseline: {error:?}"))
+            })
+            .and_then(|()| wait_for_main_gcd_queue())
+            .and_then(|()| {
+                let restored = snapshot(active)?;
+                if restored.tauri.size == baseline_size {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "expected restored baseline={baseline_size:?}, actual={:?}",
+                        restored.tauri.size
+                    ))
+                }
+            });
+    check(
+        failures,
+        format!(
+            "{} {frame_name} restores baseline outer size",
+            active.label()
+        ),
+        restore,
+    );
 }
 
 fn wait_maximized(window: &tauri::WebviewWindow, expected: bool) -> Result<(), String> {
@@ -446,78 +624,8 @@ pub fn run_checks(first: &tauri::WebviewWindow, second: &tauri::WebviewWindow) -
                 if !native_titlebar_verified {
                     break;
                 }
-                let active_before = snapshot(active);
-                let peer_before = snapshot(other);
-                let invalid = tauri::PhysicalSize::new(1000, 1);
-                let invalid_window = active.clone();
-                let result =
-                    issue(move || crate::platform::set_window_outer_size(&invalid_window, invalid));
-                check(
-                    &mut failures,
-                    format!(
-                        "native {} negative content height returns InvalidArgument",
-                        active.label()
-                    ),
-                    match result {
-                        Ok(Err(crate::error::AppError::InvalidArgument(_))) => Ok(()),
-                        other => Err(format!(
-                            "expected AppError::InvalidArgument, actual={other:?}"
-                        )),
-                    },
-                );
-                match (active_before, snapshot(active)) {
-                    (Ok(before), Ok(after)) => check(
-                        &mut failures,
-                        format!(
-                            "native {} negative content height preserves window state",
-                            active.label()
-                        ),
-                        if before.tauri == after.tauri
-                            && same_native_state(&before.native, &after.native)
-                        {
-                            Ok(())
-                        } else {
-                            Err(format!("before={before:?} after={after:?}"))
-                        },
-                    ),
-                    (Err(error), _) => check(
-                        &mut failures,
-                        "native invalid-height pre-state read",
-                        Err(error),
-                    ),
-                    (_, Err(error)) => check(
-                        &mut failures,
-                        "native invalid-height post-state read",
-                        Err(error),
-                    ),
-                }
-                match (peer_before, snapshot(other)) {
-                    (Ok(before), Ok(after)) => check(
-                        &mut failures,
-                        format!(
-                            "native {} negative content height preserves peer state",
-                            active.label()
-                        ),
-                        if before.tauri == after.tauri
-                            && same_native_state(&before.native, &after.native)
-                        {
-                            Ok(())
-                        } else {
-                            Err(format!("before={before:?} after={after:?}"))
-                        },
-                    ),
-                    (Err(error), _) => check(
-                        &mut failures,
-                        "native invalid-height peer pre-state read",
-                        Err(error),
-                    ),
-                    (_, Err(error)) => check(
-                        &mut failures,
-                        "native invalid-height peer post-state read",
-                        Err(error),
-                    ),
-                }
             }
+            check_minimum_clamping(active, other, frame_name, &baseline, &mut failures);
             eprintln!(
                 "window_size_native: label={} frame={} backingScaleFactor={}",
                 active.label(),
