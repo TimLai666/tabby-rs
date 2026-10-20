@@ -1315,13 +1315,19 @@
 - Resolve the existing diagnostics before introducing a strict Clippy CI gate.
   Passing Rust tests and builds do not establish a strict Clippy pass.
 
-## P2 — Terminal audio blocked by the native content policy
+## Pending — terminal bell desktop acceptance
 
 - Windows source-built PTY input run `38974773909`, on product `19094916`,
   records the WebView refusing `data:audio/ogg` because the configured
   `default-src 'self'` also applies to media. The ASCII and Chinese input checks
   pass; that run does not establish audible bell behavior.
-- Before accepting terminal sound parity, locate the existing audio producer
-  and prefer a bundled same-origin media asset. Preserve the current content
-  policy unless a separate policy change is authorized. Verify actual playback
-  and compare with the fixed original on supported desktops.
+- Keep the original bell bytes and shared terminal audio producer. The Tauri
+  renderer must emit Ogg audio as a same-origin resource instead of an inline
+  data URL. Preserve the current content policy unless a separate policy change
+  is authorized. Include `yarn test:terminal-bell` when changing audio packaging;
+  it compiles the actual renderer rule and compares emitted bytes with `14e2d60`.
+- An isolated macOS 27 WKWebView using the native content policy plays the same-origin
+  bell through `playing` and `ended`; the data-URL control is rejected. This checks
+  WebView playback, not the terminal's audible-bell setting, original desktop
+  comparison, older WebKit codecs, or supported-platform desktop acceptance.
+  Verify those separately before accepting terminal sound parity.
