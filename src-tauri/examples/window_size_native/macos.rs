@@ -567,6 +567,28 @@ pub fn run_checks(first: &tauri::WebviewWindow, second: &tauri::WebviewWindow) -
     use objc2_app_kit::NSWindow;
 
     let mut failures = Vec::new();
+    for window in [first, second] {
+        let observed = snapshot(window);
+        eprintln!("startup geometry {}: {observed:?}", window.label());
+        let result = observed.and_then(|value| {
+            if value.native.frame.2 == 800.0
+                && value.native.frame.3 == 600.0
+                && value.native.minimum == (400.0, 300.0)
+            {
+                Ok(())
+            } else {
+                Err(format!(
+                    "expected original 800x600 outer and 400x300 minimum, got {:?}",
+                    value.native
+                ))
+            }
+        });
+        check(
+            &mut failures,
+            format!("startup outer/default minimum {}", window.label()),
+            result,
+        );
+    }
     let started = Instant::now();
     for (active, other) in [(first, second), (second, first)] {
         for frame_name in ["native", "thin", "full"] {
@@ -591,6 +613,18 @@ pub fn run_checks(first: &tauri::WebviewWindow, second: &tauri::WebviewWindow) -
                     continue;
                 }
             };
+            check(
+                &mut failures,
+                format!("{} {frame_name} original outer minimum", active.label()),
+                if baseline.native.minimum == (400.0, 300.0) {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "expected 400x300, got {:?}",
+                        baseline.native.minimum
+                    ))
+                },
+            );
             if frame_name == "native" {
                 let window = active.clone();
                 let delta = on_main(active, move || {

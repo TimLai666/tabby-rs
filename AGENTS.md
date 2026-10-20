@@ -925,11 +925,24 @@
   outer/client bounds, saved boundaries, maximized state, and docking; physically
   verify minimum resizing. Fixed upstream `14e2d60` defaults to 800x600 with a
   400x300 minimum when saved geometry, maximization, and docking do not override it.
-  Tauri primary configuration and secondary creation use 1100x720 with a 640x480
-  minimum. Trace `app/lib/window.ts`, `src-tauri/tauri.conf.json`, and
-  `src-tauri/src/commands/desktop.rs` before changing either producer. Account for
-  Electron's outer sizing and Tauri's inner sizing; copying the numbers alone
-  does not establish equal desktop bounds.
+  macOS stock primary and secondary windows use 800x600 with a 400x300 minimum.
+  Keep `window_geometry::prepare_startup` before primary construction and use its
+  shared defaults in secondary creation. Only the stock main Overlay geometry
+  tuple is adapted; preserve custom geometry, extra windows, creation policies,
+  and every other configuration field. The initial Overlay makes inner and outer
+  dimensions equal; ready frame changes preserve the outer frame and minimum.
+  Do not initialize bounds during bootstrap, docking, or ready. Windows and Linux
+  retain 1100x720 with a 640x480 inner minimum and need separate correction.
+  Trace `app/lib/window.ts`, `src-tauri/tauri.conf.json`,
+  `src-tauri/src/window_geometry.rs`, and `src-tauri/src/commands/desktop.rs`
+  before changing either producer. Include `window_geometry::` host tests and
+  `window_size_native` for stock defaults, custom-config preservation, and
+  Native/Thin/Full minimum constraints. Full macOS arm64 application checks
+  with isolated portable data verify a rendered primary and an actual CLI-created
+  secondary at 800x600 in each frame mode, followed by normal application-menu
+  Quit. Native property checks verify the 400x300 minimum; physical minimum
+  resizing, saved geometry, fixed-original desktop comparison, other supported
+  platforms, and installers remain pending.
 - Keep Windows apply-state and docking sizes in physical outer pixels through
   `src-tauri/src/platform/window_size.rs`. Preserve Tao's unmaximize behavior and
   the existing position, activation, and Z order. Include `window_size_native`

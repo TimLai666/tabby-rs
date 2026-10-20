@@ -184,6 +184,16 @@ On macOS, AppKit's `applicationShouldTerminate:` cancels native termination and 
 
 `scripts/test-macos-native-quit.mjs` drives real Cocoa termination in separate helper processes, loading the production adapter and replacing only the AppHandle exit boundary with a recorder. It verifies repeated requests, original delegate identity, inherited callbacks/ivars, and installation errors. Both a complete evidence marker and normal process exit are required. The focused Cocoa probe explicitly skips other platforms; existing application-event and renderer fixtures cover forced exit, restart, zero windows, and confirmation decisions separately.
 
+On macOS, stock primary and secondary windows start at 800×600 with a
+400×300 outer minimum, matching the fixed upstream. The native geometry adapter
+prepares the stock main window configuration before construction; secondary
+creation uses the same defaults. Both initially use Overlay, where content and
+outer dimensions coincide. Ready frame selection preserves that outer frame and
+minimum. Explicit custom geometry, additional configured windows, creation
+policies, and other window fields are preserved. Bootstrap, docking, reload,
+and ready do not reinitialize default bounds. Saved window boundaries and other
+platforms retain their separate pending acceptance requirements.
+
 macOS and Windows frame selection is captured from the first raw bootstrap configuration and retained for every window in that process. Native uses the system title bar. On macOS, Thin and Full use hidden native chrome with the shared renderer layout. Missing or unknown raw selections, including encrypted wrappers without an appearance field, use Thin. The renderer receives the snapshot through bootstrap data and applies it before showing its owning window.
 
 On Windows, Thin and Full keep the decorated native host and expand its client area. Standard native BUTTON controls own caption input, accessibility, capture, and window actions. A single pointer-transparent canvas in the owning WebView paints the glyphs in the configured terminal foreground, with the pinned Electron/Chromium geometry and hover animation. The native adapter publishes physical button bounds, display scale, hover, pressed, and maximized state through the scoped caption event and window snapshot. Native mode and fullscreen clear the renderer overlay. The adapter retains the existing close-request confirmation path and the previous WebView focus.

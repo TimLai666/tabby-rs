@@ -82,8 +82,14 @@ pub(crate) fn create_window(
     let builder =
         tauri::WebviewWindowBuilder::new(app, &label, tauri::WebviewUrl::App("index.html".into()))
             .title("Tabby RS")
-            .inner_size(1100.0, 720.0)
-            .min_inner_size(640.0, 480.0)
+            .inner_size(
+                crate::window_geometry::DEFAULT_WINDOW_SIZE.0,
+                crate::window_geometry::DEFAULT_WINDOW_SIZE.1,
+            )
+            .min_inner_size(
+                crate::window_geometry::MIN_WINDOW_SIZE.0,
+                crate::window_geometry::MIN_WINDOW_SIZE.1,
+            )
             .transparent(true)
             .visible(false);
     let builder = if let Some(directory) = crate::webview_storage::data_directory(

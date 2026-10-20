@@ -37,6 +37,9 @@ mod error {
 #[path = "../src/platform/mod.rs"]
 mod platform;
 
+#[path = "../src/window_geometry.rs"]
+mod window_geometry;
+
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
 fn main() {
     eprintln!("window_size_native: Windows/macOS real Tauri/Wry sizing fixture; this is not full desktop parity; skipped on this platform");
@@ -74,6 +77,7 @@ fn main() {
         std::process::exit(1);
     });
     let mut context = tauri::generate_context!();
+    window_geometry::prepare_startup(context.config_mut());
     let Some(base) = context.config().app.windows.first().cloned() else {
         fail("generated config has no primary window".into())
     };
