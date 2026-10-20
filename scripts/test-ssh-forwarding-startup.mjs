@@ -13,8 +13,8 @@ import ts from 'typescript'
 // Remote forward must not destroy the authenticated session, emit destroyed, or
 // re-authenticate. It emits a service message carrying the exact upstream forward
 // description (ForwardedPort.toString) and the failure reason. This file asserts failure
-// isolation and diagnostic contracts only; it does not establish full forwarding startup
-// or timing parity.
+// isolation, diagnostic contracts, and the approved empty-bind loopback exception.
+// It does not establish full forwarding startup or timing parity.
 //
 // The real TauriSshSession.start/startForwardings and the real BaseSession lifecycle run
 // here; only Angular UI, the native bridge, and auth preparation are replaced. The
@@ -211,8 +211,8 @@ function makeTransport (failures = new Map()) {
     const attempted = []
     const reasonFor = port => failures.has(port) ? Promise.reject(new Error(failures.get(port))) : Promise.resolve()
     return { attempted,
-        startLocalListener: fw => { attempted.push({ type: fw.type, port: fw.port }); return reasonFor(fw.port) },
-        forwardTCPPort: (host, port) => { attempted.push({ type: 'Remote', port }); return reasonFor(port) } }
+        startLocalListener: fw => { attempted.push({ type: fw.type, host: fw.host, port: fw.port }); return reasonFor(fw.port) },
+        forwardTCPPort: (host, port) => { attempted.push({ type: 'Remote', host, port }); return reasonFor(port) } }
 }
 
 async function run (createSession, forwardedPorts, failures = new Map()) {
@@ -265,6 +265,16 @@ async function runReference () {
         assert.equal(assigned.port, null, 'reference: an explicit null port is retained')
         assert.equal(assigned.targetAddress, null, 'reference: an explicit null targetAddress is retained')
         assert.equal(assigned.targetPort, null, 'reference: an explicit null targetPort is retained')
+    })
+    await check('explicit-empty-bind-host-is-preserved', async () => {
+        for (const forwarding of forwards) {
+            const fw = { ...forwarding, host: '' }
+            const result = await run((profile, _bridge, failures) => new ReferenceSshSession(profile, makeTransport(failures)), [fw])
+            try {
+                assert.equal(result.session.transport.attempted[0].host, '', 'upstream passes an explicit empty host to its listener or Remote request')
+                assert.ok(result.messages[0].includes(descriptionOf(fw)), 'upstream diagnostic retains the configured empty host')
+            } finally { await result.session.destroy() }
+        }
     })
     const cases = [
         ...[local, dynamic, remote, ...omittedTargetForwards].map(fw => ({ name: `${fw.type.toLowerCase()}-forwarding-rejected${omittedTargetForwards.includes(fw) ? '-omitted-target' : ''}`, pf: [fw], failed: fw, reason: 'boom' })),
@@ -328,6 +338,34 @@ async function runCurrent () {
             assert.equal(result.bridge.forwardStarts.length, 0, 'empty: nothing forwarded')
         })
     })
+
+    // Approved exception: startup and interactive additions use loopback for an
+    // empty/missing bind host. Explicit hosts and configured descriptions stay intact.
+    for (const entryPoint of ['startup', 'interactive']) {
+        for (const forwarding of forwards) {
+            await check(`${entryPoint}-${forwarding.type.toLowerCase()}-bind-host-policy`, async () => {
+                for (const [host, expected] of [
+                    ['', '127.0.0.1'], [undefined, '127.0.0.1'], [null, '127.0.0.1'],
+                    ['127.0.0.1', '127.0.0.1'], ['::1', '::1'], ['0.0.0.0', '0.0.0.0'],
+                    ['::', '::'], ['fixture.example', 'fixture.example'],
+                ]) {
+                    const fw = { ...forwarding, host }
+                    if (host === undefined) { delete fw.host }
+                    const before = { ...fw }
+                    const failures = new Map()
+                    const result = await run(create, entryPoint === 'startup' ? [fw] : [], failures)
+                    await guarded(result, failures, async () => {
+                        if (entryPoint === 'interactive') { await result.session.addPortForward(fw) }
+                        checkLive(`${entryPoint} bind host`, result)
+                        assert.equal(result.bridge.forwardStarts.length, 1, 'exactly one forwarding request')
+                        assert.equal(result.bridge.forwardStarts[0].bindHost, expected, 'empty/missing hosts use IPv4 loopback; explicit hosts are unchanged')
+                        assert.deepEqual(fw, before, 'the configured host must not be rewritten')
+                        assert.deepEqual(result.messages, [colors.bgGreen.black(fw.type === 'Remote' ? ' <- ' : ' -> ') + ` Forwarded ${descriptionOf(fw)}`], 'diagnostic retains the configured host like upstream')
+                    })
+                }
+            })
+        }
+    }
 
     for (const fw of [local, dynamic, remote, ...omittedTargetForwards]) {
         await check(`${fw.type.toLowerCase()}-forwarding-rejected${omittedTargetForwards.includes(fw) ? '-omitted-target' : ''}`, async () => {
@@ -555,5 +593,5 @@ const reference = await runReference()
 assert.deepEqual(reference, [], `reference control must pass:\n${reference.join('\n')}`)
 console.log('current (tabby-tauri/src/ssh/session.ts):')
 const current = await runCurrent()
-assert.deepEqual(current, [], `forwarding startup must match upstream:\n${current.join('\n')}`)
-console.log('ssh forwarding failure isolation and diagnostics match upstream')
+assert.deepEqual(current, [], `forwarding contracts failed:\n${current.join('\n')}`)
+console.log('ssh forwarding failure isolation, diagnostics, and approved bind-host exception passed')

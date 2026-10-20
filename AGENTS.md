@@ -382,12 +382,13 @@
   The rejection test verifies retained SSH input/output and no registered route.
   All three tests and the full macOS suite pass. Platform-specific error strings
   and their rendered diagnostics still need desktop acceptance.
-- Explicit empty bind hosts are replaced with `127.0.0.1` by the renderer,
-  while diagnostics retain the configured empty value. The fixed upstream passes
-  the empty value to its listener or remote forwarding request. A real Node 22
-  probe binds `::`; RFC 4254 section 7.1 gives empty remote bind addresses all
-  supported protocol families. Resolve this behavior and message mismatch with
-  an explicit security decision before accepting parity; no exception is approved.
+- Empty bind hosts use the approved `ssh.empty-bind-loopback` exception in
+  `docs/release-acceptance.md`: request `127.0.0.1` for Local, Dynamic, and Remote,
+  preserve explicit hosts, and retain configured values in diagnostics. Include
+  `scripts/test-ssh-forwarding-startup.mjs` for profile startup and interactive
+  additions, IPv4/IPv6/hostname preservation, and teardown. Its IPC boundary is
+  simulated; verify native listeners, Remote server policy, and supported desktops
+  separately before accepting forwarding parity.
 - Startup still awaits each forwarding request; the fixed upstream starts them
   without waiting. Buffered early output is drained after forwarding setup.
   A real loopback probe executes the exact upstream start, addPortForward, and
