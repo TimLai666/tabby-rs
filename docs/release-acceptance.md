@@ -134,6 +134,50 @@ forwarding, jump hosts, platform behavior, and the remaining manual checks keep
 their existing acceptance requirements. Keep their feature manifest entries
 pending until the complete feature scope has been verified.
 
+## Approved empty SSH bind-host safety exception
+
+For Local, Dynamic, and Remote forwarding, Tabby RS substitutes `127.0.0.1`
+when the configured bind host is empty or missing. For Local and Dynamic,
+this limits the requested listener to the local computer. For Remote, it
+requests a loopback listener on the SSH server; the server controls whether
+and where that listener is actually bound. Explicit hosts, including
+`0.0.0.0` and `::`, are passed through unchanged. Profile settings are not
+rewritten, and diagnostics retain the configured host like the fixed upstream.
+
+The fixed `14e2d60` `addPortForward` and `ForwardedPort` methods pass an
+explicit empty host through to the local listener or Remote request. That
+can request a wildcard listener. The user approved retaining the native
+loopback default as a narrow exception to complete parity. The timestamp
+records this approval when entered in the release contract:
+
+```json
+{
+  "id": "ssh.empty-bind-loopback",
+  "baseline": "14e2d60b9b6dee84a53c37f05eefeb803787de04",
+  "approval": {
+    "decision": "accepted-difference",
+    "approver": "user",
+    "approvedAt": "2026-10-20T16:07:19Z"
+  }
+}
+```
+
+`TauriSshSession.addPortForward` in `tabby-tauri/src/ssh/session.ts` applies
+this default to both profile startup and interactive additions. Run:
+
+```text
+node scripts/test-ssh-forwarding-startup.mjs
+```
+
+This fixture executes the actual session methods with simulated native IPC.
+It verifies Local, Dynamic, and Remote requests through both entry points,
+empty/missing defaults, unchanged explicit IPv4/IPv6/hostname values,
+unchanged configuration and diagnostics, and forwarding teardown. Its fixed
+upstream control verifies that an explicit empty host is passed through.
+It does not prove native listener exposure or server policy. Keep native
+network checks, supported-desktop acceptance, startup ordering, and all
+other forwarding requirements pending until separately verified.
+
 ## Approved SFTP overwrite safety exception
 
 Tabby RS refuses to replace an existing destination when the SFTP server does
