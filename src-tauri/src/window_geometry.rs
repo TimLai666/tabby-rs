@@ -35,3 +35,7 @@ pub(crate) fn prepare_startup(config: &mut Config) {
     #[cfg(not(target_os = "macos"))]
     let _ = config;
 }
+
+#[cfg(test)]
+#[path = "window_geometry_tests.rs"]
+mod tests;
