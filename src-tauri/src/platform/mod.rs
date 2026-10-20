@@ -4,6 +4,11 @@ mod frame;
 pub use frame::{set_window_frame, window_caption_controls};
 
 #[cfg(target_os = "windows")]
+mod window_geometry_windows;
+#[cfg(target_os = "windows")]
+pub(crate) use window_geometry_windows::initialize as initialize_window_geometry;
+
+#[cfg(target_os = "windows")]
 mod window_size;
 #[cfg(target_os = "macos")]
 #[path = "window_size_macos.rs"]

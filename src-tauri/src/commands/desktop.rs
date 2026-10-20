@@ -76,6 +76,10 @@ pub(crate) fn create_window(
     request: NewWindowRequest,
 ) -> Result<tauri::WebviewWindow, AppError> {
     let label = format!("window-{}", state.next_window_id());
+    #[cfg(windows)]
+    let geometry = app.state::<crate::window_geometry::initialization::Initializations>();
+    #[cfg(windows)]
+    let pending_geometry = geometry.begin(&label).map_err(AppError::Io)?;
     if let Some(context) = request.launch {
         state.launches().push(&label, context.for_new_window());
     }
@@ -104,10 +108,29 @@ pub(crate) fn create_window(
         .title_bar_style(tauri::TitleBarStyle::Overlay)
         .hidden_title(true);
     let window = builder.build().map_err(|error| {
+        #[cfg(windows)]
+        {
+            pending_geometry.complete(Err(error.to_string()));
+            geometry.remove(&label);
+        }
         state.launches().remove(&label);
         io_error(error)
     })?;
     crate::register_desktop_window_events(&window);
+    #[cfg(windows)]
+    {
+        let result = crate::platform::initialize_window_geometry(&window);
+        pending_geometry.complete(result.as_ref().map(|_| ()).map_err(ToString::to_string));
+        if let Err(error) = result {
+            state.launches().set_closing(&label, true);
+            return match window.destroy() {
+                Ok(()) => Err(error),
+                Err(cleanup) => Err(io_error(format!(
+                    "{error}; failed to destroy the uninitialized window: {cleanup}"
+                ))),
+            };
+        }
+    }
     Ok(window)
 }
 

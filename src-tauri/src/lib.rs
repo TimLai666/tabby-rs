@@ -151,6 +151,13 @@ fn dispatch_launch(app: &tauri::AppHandle, context: LaunchContext) {
             windows.retain(|window| !state.launches().is_closing(window.label()));
             windows.sort_by_key(|window| launch::window_creation_order(window.label()));
             for window in &windows {
+                #[cfg(windows)]
+                if !handle
+                    .state::<window_geometry::initialization::Initializations>()
+                    .can_present(window.label())
+                {
+                    continue;
+                }
                 let _ = window.unminimize();
                 let _ = window.show();
                 let _ = window.set_focus();
@@ -210,6 +217,12 @@ pub(crate) fn register_desktop_window_events(window: &tauri::WebviewWindow) {
             let _ = emitter.emit_to(emitter.label(), "desktop:windowCloseRequested", ());
         }
         tauri::WindowEvent::Destroyed => {
+            #[cfg(windows)]
+            if let Some(initializations) =
+                emitter.try_state::<window_geometry::initialization::Initializations>()
+            {
+                initializations.remove(emitter.label());
+            }
             emitter
                 .state::<AppState>()
                 .launches()
@@ -326,7 +339,17 @@ pub fn run() {
     let portable_root = identity::portable_root_for_executable(&executable)
         .expect("failed to detect portable storage");
     let mut context = tauri::generate_context!();
-    window_geometry::prepare_startup(context.config_mut());
+    let initialize_primary_geometry = window_geometry::prepare_startup(context.config_mut());
+    #[cfg(not(windows))]
+    let _ = initialize_primary_geometry;
+    #[cfg(windows)]
+    let geometry_initializations = window_geometry::initialization::Initializations::default();
+    #[cfg(windows)]
+    let primary_geometry = initialize_primary_geometry.then(|| {
+        geometry_initializations
+            .begin("main")
+            .expect("unique primary window geometry")
+    });
     let storage_directory =
         webview_storage::prepare(context.config_mut(), portable_root.as_deref())
             .expect("failed to prepare portable WebView storage");
@@ -348,6 +371,10 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init());
+    #[cfg(windows)]
+    {
+        builder = builder.manage(geometry_initializations);
+    }
     builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
 
     #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
@@ -434,6 +461,12 @@ pub fn run() {
             }
             if let Some(window) = app.get_webview_window("main") {
                 register_desktop_window_events(&window);
+                #[cfg(windows)]
+                if let Some(pending) = primary_geometry.as_ref() {
+                    let result = platform::initialize_window_geometry(&window);
+                    pending.complete(result.as_ref().map(|_| ()).map_err(ToString::to_string));
+                    result?;
+                }
             }
             let launch_app = app.handle().clone();
             tauri::async_runtime::spawn_blocking(move || {
