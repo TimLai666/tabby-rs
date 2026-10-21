@@ -67,6 +67,7 @@ mod tauri {
 }
 ${body}
 #[cfg(test)] mod tests { use super::*; #[test] fn drag_payloads_are_owned_and_drop_is_emitted_once(){ let calls=Arc::new(Mutex::new(Vec::new())); let window=tauri::WebviewWindow::new("sftp-window",calls.clone()); register_desktop_window_events(&window); let got=calls.lock().unwrap().clone(); assert_eq!(got.iter().map(|e|e.1.as_str()).collect::<Vec<_>>(),vec!["desktop:fileDrag","desktop:fileDrag","desktop:fileDrag","desktop:fileDrag","desktop:fileDrop"]); assert!(got.iter().all(|e|e.0=="sftp-window")); assert_eq!(got[0].2,Value::Text("point:4.5:9.25".into())); assert_eq!(got[1].2,Value::Text("point:7.0:11.5".into())); assert_eq!(got[2].2,Value::Null); assert_eq!(got[3].2,Value::Null); assert_eq!(got[4].2,Value::FileDrop(vec!["/tmp/a.bin".into()],10.0,20.0)); }
+#[test] fn destruction_releases_only_the_owning_geometry_and_launch_state(){ let calls=Arc::new(Mutex::new(Vec::new())); let first=tauri::WebviewWindow::new("first",calls.clone()).for_destruction(true); let other=tauri::WebviewWindow::new("other",calls.clone()).for_destruction(false); register_desktop_window_events(&first); assert_eq!(first.cleanup_log(),vec!["geometry:first","launch:first"]); assert!(other.cleanup_log().is_empty()); register_desktop_window_events(&other); assert_eq!(other.cleanup_log(),vec!["launch:other"]); assert!(calls.lock().unwrap().is_empty()); }
 }
 `
         const file = path.join(tmp, 'harness.rs'), binary = path.join(tmp, process.platform === 'win32' ? 'harness.exe' : 'harness')
@@ -76,7 +77,7 @@ ${body}
         assert.ok(fs.existsSync(binary), `compiled callback test executable must exist: ${binary}`)
         const result = spawnSync(binary, [], { encoding: 'utf8', timeout: 30000 })
         assert.equal(result.status, 0, `callback test executable ${binary}: ${result.error ?? ''}; signal=${result.signal ?? 'none'}\n${result.stdout ?? ''}${result.stderr ?? ''}`)
-        assert.match(result.stdout, /1 passed/)
+        assert.match(result.stdout, /2 passed/)
     } finally { fs.rmSync(tmp, { recursive: true, force: true }) }
 })
 
