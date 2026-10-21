@@ -988,8 +988,26 @@
   control, ready-frame handoff, and combined maximize/unmaximize plus size after
   a main GCD FIFO barrier. Property checks do not accept desktop input, composited
   pixels, default/minimum geometry, saved boundaries, fullscreen, or installers.
-- Verify Linux outer-size writes separately; they still use the Tauri inner-size
-  setter. RS does not yet persist or restore `windowBoundaries`.
+- Linux bounds sizes use GTK content dimensions in physical pixels. The fixed
+  Electron 38.8.6 / Glasstron 0.1.1 X11 constructor control reports client sizes
+  even with native WM decorations; an independent X11 query confirms the client
+  dimensions and separate frame extents. Preserve the existing content-size
+  setter. Read GTK `size()` and its live scale on the UI thread, including before
+  first display and after hidden resizing. Tao 0.35.3 initializes its hidden
+  outer-size cache from position and retains stale dimensions after hidden
+  resizing. Include the real `window_content_size_linux` example, its failing
+  `--stock-control`, and scale-one/two runs when changing this boundary.
+  Its isolated Wry property checks do not accept rendered application behavior,
+  the full original desktop, all window managers, or supported-platform parity.
+- Linux positions need a separate correction. In the X11 Wry fixture, NorthWest
+  gravity uses frame coordinates; Static gravity gives mapped client coordinates,
+  but GTK `position()` returns the original request after hiding. Hidden moves
+  update the GTK requested position, then remapping restores the prior position.
+  The fixed Electron constructor control preserves hidden client moves. Do not
+  substitute GTK `position()` or Static gravity without covering those cases.
+  Wayland global positions, startup/minimum geometry, saved boundaries, frame
+  modes, and docking remain pending. RS does not yet persist or restore
+  `windowBoundaries`.
   Before accepting combined bounds and maximized patches, check their order:
   applying size after maximization currently restores the window on Windows.
 

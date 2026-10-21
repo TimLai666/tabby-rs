@@ -41,6 +41,9 @@ fn set_bounds_size(window: &tauri::WebviewWindow, size: PhysicalSize<u32>) -> Re
 
 fn window_state(window: &tauri::WebviewWindow) -> Result<WindowStateSnapshot, AppError> {
     let position = window.outer_position().map_err(io_error)?;
+    #[cfg(target_os = "linux")]
+    let size = crate::platform::window_content_size(window)?;
+    #[cfg(not(target_os = "linux"))]
     let size = window.outer_size().map_err(io_error)?;
     Ok(WindowStateSnapshot {
         visible: window.is_visible().map_err(io_error)?,
