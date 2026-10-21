@@ -332,6 +332,27 @@ jobs:
       - name: Test Rust host
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
+      - name: Test Linux content-size reads on real Wry windows
+        timeout-minutes: 6
+        env:
+          GDK_BACKEND: x11
+        run: |
+          for scale in 1 2; do
+            GDK_SCALE="$scale" xvfb-run -a cargo run --locked --manifest-path src-tauri/Cargo.toml --example window_content_size_linux
+          done
+          output=$(mktemp)
+          trap 'rm -f "$output"' EXIT
+          if xvfb-run -a cargo run --locked --manifest-path src-tauri/Cargo.toml --example window_content_size_linux -- --stock-control >"$output" 2>&1; then
+            cat "$output"
+            echo 'Expected the original content-size getter to fail'
+            exit 1
+          else
+            result=$?
+            cat "$output"
+            test "$result" -eq 1
+          fi
+          grep -Eq 'window_content_size_linux completed: checks=18 failures=[1-9][0-9]*' "$output"
+
       - name: Test real SSH and SFTP fixture
         run: yarn test:ssh-integration
 
