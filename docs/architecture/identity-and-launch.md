@@ -208,7 +208,17 @@ Successful initialization is idempotent. Foreign subclass bindings are preserved
 and failed initialization prevents bootstrap rather than exposing a partly sized
 window. Custom main-window geometry and construction policies are retained.
 
-The Windows bootstrap command waits asynchronously for the specific window's
+On Linux, stock primary and secondary windows start at 800×600 client logical
+pixels with a 400×300 content minimum. The stock primary configuration is prepared
+before construction; custom declarations retain their geometry and creation policy.
+Native initialization constrains the existing GTK content container, because GTK
+window-level minimum hints can include Wayland client-side decorations. It preserves
+position, size, visibility, and frame selection, and repeated initialization keeps
+user bounds. The isolated Wry regression checks freshly constructed Native and
+frameless windows on X11 and Wayland at scales one and two. It does not accept
+physical resizing, full application behavior, original desktop comparison, or installers.
+
+The Windows and Linux bootstrap command waits asynchronously for the specific window's
 construction result, then runs the existing config/plugin transaction on the UI
 thread. Primary readiness is registered before Tauri construction and secondary
 readiness before its builder runs. Destruction cancels pending initialization;
