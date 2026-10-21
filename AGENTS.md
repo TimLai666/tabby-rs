@@ -931,8 +931,26 @@
   tuple is adapted; preserve custom geometry, extra windows, creation policies,
   and every other configuration field. The initial Overlay makes inner and outer
   dimensions equal; ready frame changes preserve the outer frame and minimum.
-  Do not initialize bounds during bootstrap, docking, or ready. Windows and Linux
-  retain 1100x720 with a 640x480 inner minimum and need separate correction.
+  Do not initialize bounds during bootstrap, docking, or ready. On Windows,
+  initialize stock primary and secondary HWNDs to 800x600 outer logical pixels
+  at live DPI before bootstrap can show them. Preserve native position,
+  visibility, activation, and maximized state. Keep the independent stateless
+  400x300 outer minimum subclass through Native/Thin/Full frame changes;
+  preserve other constraints and foreign subclass bindings. Only a completed
+  initialization may suppress later default sizing. Register the primary
+  readiness gate before construction and secondary gates before builder calls.
+  Await readiness asynchronously, then retain the bootstrap transaction on the
+  UI thread. Destruction cancels pending gates; stale completion cannot resolve
+  a replacement registration. Skip native CLI presentation for pending or failed
+  initialization while retaining launch queuing. Preserve custom declarations and
+  creation policies.
+  Include the initialization registry tests, native Win32 geometry tests,
+  test-windows-window-bootstrap.mjs, and the real Wry stock-geometry negative
+  control plus corrected run. Linux retains 1100x720 with a 640x480 inner
+  minimum and needs separate correction. Keep Windows Win32/Wry property checks
+  and simulated bootstrap/presentation fixtures separate from full-application
+  command ordering, concurrent launch/destruction, physical resizing, DPI
+  transitions, original desktop comparison, and installer acceptance.
   Trace `app/lib/window.ts`, `src-tauri/tauri.conf.json`,
   `src-tauri/src/window_geometry.rs`, and `src-tauri/src/commands/desktop.rs`
   before changing either producer. Include `window_geometry::` host tests and
@@ -945,7 +963,10 @@
   platforms, and installers remain pending.
 - Keep Windows apply-state and docking sizes in physical outer pixels through
   `src-tauri/src/platform/window_size.rs`. Preserve Tao's unmaximize behavior and
-  the existing position, activation, and Z order. Include `window_size_native`
+  the existing position, activation, and Z order. Read WM_GETMINMAXINFO on the
+  owning UI thread after unmaximizing, then clamp each requested outer dimension
+  to its live minimum before SetWindowPos. Include zero and undersized requests
+  in every frame and both Wry windows. Include `window_size_native`
   when changing this boundary; its two real Wry windows cover Native, Thin, Full,
   repeated sizing, snapshot round-trips, and maximized resize.
 - Keep macOS apply-state and docking sizes in physical outer pixels through

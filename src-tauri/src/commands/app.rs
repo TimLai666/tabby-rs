@@ -279,8 +279,52 @@ pub(crate) fn safe_mode_suspected_plugins(previous: &TabbyRsState) -> Vec<String
     suspected
 }
 
+#[cfg(not(windows))]
 #[tauri::command]
 pub fn app_bootstrap(
+    window: WebviewWindow,
+    request: EmptyRequest,
+    state: State<'_, AppState>,
+) -> Result<BootstrapData, AppError> {
+    bootstrap_data(window, request, state)
+}
+
+#[cfg(windows)]
+#[tauri::command]
+pub async fn app_bootstrap(
+    window: WebviewWindow,
+    request: EmptyRequest,
+    _state: State<'_, AppState>,
+) -> Result<BootstrapData, AppError> {
+    use tauri::Manager;
+    if let Some(initializations) =
+        window.try_state::<crate::window_geometry::initialization::Initializations>()
+    {
+        initializations
+            .wait(window.label())
+            .await
+            .map_err(AppError::Io)?;
+    }
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    let dispatch = window.clone();
+    let app = window.app_handle().clone();
+    dispatch
+        .run_on_main_thread(move || {
+            // Keep the original bootstrap transaction on the event thread after
+            // waiting, including its config/plugin state ordering.
+            let result = window
+                .is_visible()
+                .map_err(|error| AppError::Io(error.to_string()))
+                .and_then(|_| bootstrap_data(window, request, app.state::<AppState>()));
+            let _ = sender.send(result);
+        })
+        .map_err(|error| AppError::Io(error.to_string()))?;
+    receiver
+        .await
+        .map_err(|error| AppError::Io(error.to_string()))?
+}
+
+fn bootstrap_data(
     window: WebviewWindow,
     request: EmptyRequest,
     state: State<'_, AppState>,

@@ -57,10 +57,11 @@ fn main() {
     use tauri::WebviewUrl;
     let args: Vec<_> = std::env::args().skip(1).collect();
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        println!("Usage: cargo run --locked --manifest-path src-tauri/Cargo.toml --example window_size_native\nRuns the real Tauri/Wry outer-size fixture for native, thin, and full frames using two WebviewWindows on Windows or macOS. This is not full desktop parity coverage.");
+        println!("Usage: cargo run --locked --manifest-path src-tauri/Cargo.toml --example window_size_native\nRuns the real Tauri/Wry outer-size fixture for native, thin, and full frames using two WebviewWindows on Windows or macOS. This is not full desktop parity coverage.\nWindows-only --stock-geometry-control retains the uncorrected bundled geometry and must fail the original-size assertions.");
         return;
     }
-    if !args.is_empty() {
+    let stock_control = cfg!(windows) && args == ["--stock-geometry-control"];
+    if !args.is_empty() && !stock_control {
         fail(format!(
             "unknown arguments: {} (use --help)",
             args.join(" ")
@@ -77,7 +78,9 @@ fn main() {
         std::process::exit(1);
     });
     let mut context = tauri::generate_context!();
-    window_geometry::prepare_startup(context.config_mut());
+    if !stock_control {
+        window_geometry::prepare_startup(context.config_mut());
+    }
     let Some(base) = context.config().app.windows.first().cloned() else {
         fail("generated config has no primary window".into())
     };
@@ -113,6 +116,13 @@ fn main() {
             };
             let first = make("sizeFirst", 80, first_dir.as_ref())?;
             let second = make("sizeSecond", 1120, second_dir.as_ref())?;
+            #[cfg(windows)]
+            if !stock_control {
+                for window in [&first, &second] {
+                    platform::initialize_window_geometry(window)
+                        .map_err(|error| std::io::Error::other(error.to_string()))?;
+                }
+            }
             let handle = app.handle().clone();
             let owned_temp = isolated;
             std::thread::spawn(move || {
@@ -257,6 +267,33 @@ fn run_checks(first: &tauri::WebviewWindow, second: &tauri::WebviewWindow) -> Ve
         }
     }
     let mut failures = Vec::new();
+    for window in [first, second] {
+        let result = (|| {
+            let hwnd = window.hwnd().map_err(|error| error.to_string())?;
+            let dpi = unsafe { GetDpiForWindow(hwnd.0) };
+            if dpi == 0 {
+                return Err("GetDpiForWindow returned zero".into());
+            }
+            let expected = tauri::PhysicalSize::new(
+                (800.0 * dpi as f64 / 96.0).round() as u32,
+                (600.0 * dpi as f64 / 96.0).round() as u32,
+            );
+            let observed = state(window)?;
+            eprintln!(
+                "startup geometry {}: dpi={dpi} actual={observed:?} expected={expected:?}",
+                window.label()
+            );
+            if observed.size != expected {
+                return Err(format!("actual={observed:?} expected={expected:?}"));
+            }
+            Ok(())
+        })();
+        check(
+            &mut failures,
+            &format!("startup original outer {}", window.label()),
+            result,
+        );
+    }
     for w in [first, second] {
         if let Err(e) = w.show() {
             failures.push(format!("show {}: {e}", w.label()));
@@ -293,10 +330,82 @@ fn run_checks(first: &tauri::WebviewWindow, second: &tauri::WebviewWindow) -> Ve
                 &format!("set frame {} {frame}", active.label()),
                 platform::set_window_frame(&fw, &f).map_err(|e| format!("AppError: {e}")),
             );
-            for expected in [
-                tauri::PhysicalSize::new(900, 650),
-                tauri::PhysicalSize::new(1000, 700),
+            let hwnd = match active.hwnd() {
+                Ok(hwnd) => hwnd,
+                Err(error) => {
+                    check(
+                        &mut failures,
+                        &format!("minimum handle {} {frame}", active.label()),
+                        Err(error.to_string()),
+                    );
+                    continue;
+                }
+            };
+            let dpi = unsafe { GetDpiForWindow(hwnd.0) };
+            let expected_minimum = tauri::PhysicalSize::new(
+                (400.0 * dpi as f64 / 96.0).round() as u32,
+                (300.0 * dpi as f64 / 96.0).round() as u32,
+            );
+            let mut constraints: MINMAXINFO = unsafe { std::mem::zeroed() };
+            unsafe {
+                SendMessageW(
+                    hwnd.0,
+                    WM_GETMINMAXINFO,
+                    0,
+                    &mut constraints as *mut _ as LPARAM,
+                )
+            };
+            check(
+                &mut failures,
+                &format!("original outer minimum {} {frame}", active.label()),
+                if dpi != 0
+                    && constraints.ptMinTrackSize.x == expected_minimum.width as i32
+                    && constraints.ptMinTrackSize.y == expected_minimum.height as i32
+                {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "dpi={dpi} actual=({}, {}) expected={expected_minimum:?}",
+                        constraints.ptMinTrackSize.x, constraints.ptMinTrackSize.y
+                    ))
+                },
+            );
+            for (requested, expected) in [
+                (tauri::PhysicalSize::new(0, 0), expected_minimum),
+                (tauri::PhysicalSize::new(1, 1), expected_minimum),
+                (
+                    tauri::PhysicalSize::new(1, 650),
+                    tauri::PhysicalSize::new(
+                        expected_minimum.width,
+                        expected_minimum.height.max(650),
+                    ),
+                ),
+                (
+                    tauri::PhysicalSize::new(900, 1),
+                    tauri::PhysicalSize::new(
+                        expected_minimum.width.max(900),
+                        expected_minimum.height,
+                    ),
+                ),
             ] {
+                check(
+                    &mut failures,
+                    &format!("minimum resize {} {frame} {requested:?}", active.label()),
+                    outer(active, requested).and_then(|_| {
+                        wait_size(active, expected, active.label(), frame, QUICK_WAIT).map(|_| ())
+                    }),
+                );
+            }
+            // Ordinary resize cases stay above the live minimum, including the
+            // stock-geometry negative control at higher DPI. Tiny cases above
+            // still compare against the fixed-original minimum independently.
+            let above_minimum = |width: u32, height: u32| {
+                tauri::PhysicalSize::new(
+                    width.max(constraints.ptMinTrackSize.x.max(0) as u32),
+                    height.max(constraints.ptMinTrackSize.y.max(0) as u32),
+                )
+            };
+            for expected in [above_minimum(900, 650), above_minimum(1000, 700)] {
                 let before_other = state(other);
                 if let Err(error) = &before_other {
                     check(
@@ -410,7 +519,7 @@ fn run_checks(first: &tauri::WebviewWindow, second: &tauri::WebviewWindow) -> Ve
                 ));
                 continue;
             }
-            let expected = tauri::PhysicalSize::new(900, 650);
+            let expected = above_minimum(900, 650);
             check(
                 &mut failures,
                 &format!(

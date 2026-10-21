@@ -33,7 +33,8 @@ function extractFunction (source, signature) {
 }
 
 await check('production native window callback sends ordered hover and one unchanged drop to its own window', async () => {
-    const body = extractFunction(read('src-tauri/src/lib.rs'), /pub\(crate\)\s+fn\s+register_desktop_window_events\s*\(window:\s*&tauri::WebviewWindow\)\s*\{/)
+    const body = extractFunction(read('src-tauri/src/lib.rs'), /pub\(crate\)\s+fn\s+register_desktop_window_events\s*\(window:\s*&tauri::WebviewWindow\)\s*\{/).replace(/#\[cfg\(windows\)\]\s*/g, '')
+    // Exercise Windows destruction cleanup on every host with framework fakes.
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sftp-drag-native-'))
     try {
         const rust = String.raw`
@@ -47,20 +48,27 @@ impl IntoValue for &str { fn into_value(self)->Value {Value::Text(self.into())} 
 impl IntoValue for () { fn into_value(self)->Value {Value::Null} }
 #[macro_export] macro_rules! json { (null) => { Value::Null }; ({ "paths": $paths:expr, "x": $x:expr, "y": $y:expr $(,)? }) => { Value::FileDrop($paths, $x as f64, $y as f64) }; ({ "x": $x:expr, "y": $y:expr $(,)? }) => { Value::Text(format!("point:{:?}:{:?}",$x,$y)) }; ({ "width": $w:expr, "height": $h:expr $(,)? }) => { Value::Text(format!("size:{:?}:{:?}",$w,$h)) }; }
 mod serde_json { pub use crate::json; pub use crate::Value; }
-#[derive(Clone)] struct AppState;
-struct Launches; impl Launches { fn remove(&self,_:&str){} }
-impl AppState { fn launches(&self)->Launches {Launches} }
+mod window_geometry { pub mod initialization {
+    #[derive(Clone)] pub struct Initializations(pub std::sync::Arc<std::sync::Mutex<Vec<String>>>);
+    impl Initializations { pub fn remove(&self,label:&str) { self.0.lock().unwrap().push(format!("geometry:{}",label)); } }
+} }
+#[derive(Clone)] struct AppState { cleanup: Arc<Mutex<Vec<String>>> }
+struct Launches { cleanup: Arc<Mutex<Vec<String>>> }
+impl Launches { fn remove(&self,label:&str){ self.cleanup.lock().unwrap().push(format!("launch:{}",label)); } }
+impl AppState { fn launches(&self)->Launches {Launches { cleanup:self.cleanup.clone() }} }
 mod tauri {
- use super::{Arc,Mutex,Value,IntoValue,AppState}; use std::path::PathBuf;
- #[derive(Clone)] pub struct WebviewWindow { label:String, events:Arc<Mutex<Vec<(String,String,Value)>>> }
- impl WebviewWindow { pub fn new(label:&str, events:Arc<Mutex<Vec<(String,String,Value)>>>) -> Self {Self{label:label.into(),events}} pub fn label(&self)->&str{&self.label} pub fn emit_to<T:IntoValue>(&self,label:&str,event:&str,payload:T)->Result<(),()> { self.events.lock().unwrap().push((label.into(),event.into(),payload.into_value())); Ok(()) } pub fn on_window_event<F:Fn(&WindowEvent)+'static>(&self,f:F){ f(&WindowEvent::DragDrop(DragDropEvent::Enter{paths:vec![PathBuf::from("/tmp/a.bin")],position:Position{x:4.5,y:9.25}})); f(&WindowEvent::DragDrop(DragDropEvent::Over{position:Position{x:7.0,y:11.5}})); f(&WindowEvent::DragDrop(DragDropEvent::Leave)); f(&WindowEvent::DragDrop(DragDropEvent::Drop{paths:vec![PathBuf::from("/tmp/a.bin")],position:Position{x:10.0,y:20.0}})); } pub fn state<T>(&self)->AppState {AppState} }
+ use super::{Arc,Mutex,Value,IntoValue,AppState,window_geometry::initialization::Initializations}; use std::{any::Any,path::PathBuf};
+ #[derive(Clone)] pub struct WebviewWindow { label:String, events:Arc<Mutex<Vec<(String,String,Value)>>>, cleanup:Arc<Mutex<Vec<String>>>, geometry:Option<Initializations>, destroy_only:bool }
+ impl WebviewWindow { pub fn new(label:&str, events:Arc<Mutex<Vec<(String,String,Value)>>>) -> Self { let cleanup=Arc::new(Mutex::new(Vec::new())); Self{label:label.into(),events,geometry:Some(Initializations(cleanup.clone())),cleanup,destroy_only:false} } pub fn label(&self)->&str{&self.label} pub fn for_destruction(mut self,geometry:bool)->Self{self.destroy_only=true;if !geometry {self.geometry=None;}self} pub fn cleanup_log(&self)->Vec<String>{self.cleanup.lock().unwrap().clone()} pub fn try_state<T:Any>(&self)->Option<&T>{self.geometry.as_ref().and_then(|state|(state as &dyn Any).downcast_ref::<T>())} pub fn emit_to<T:IntoValue>(&self,label:&str,event:&str,payload:T)->Result<(),()> { self.events.lock().unwrap().push((label.into(),event.into(),payload.into_value())); Ok(()) } pub fn on_window_event<F:Fn(&WindowEvent)+'static>(&self,f:F){ if self.destroy_only { f(&WindowEvent::Destroyed); return; } f(&WindowEvent::DragDrop(DragDropEvent::Enter{paths:vec![PathBuf::from("/tmp/a.bin")],position:Position{x:4.5,y:9.25}})); f(&WindowEvent::DragDrop(DragDropEvent::Over{position:Position{x:7.0,y:11.5}})); f(&WindowEvent::DragDrop(DragDropEvent::Leave)); f(&WindowEvent::DragDrop(DragDropEvent::Drop{paths:vec![PathBuf::from("/tmp/a.bin")],position:Position{x:10.0,y:20.0}})); } pub fn state<T>(&self)->AppState {AppState {cleanup:self.cleanup.clone()}} }
  #[derive(Clone)] pub struct Position{pub x:f64,pub y:f64} pub struct Size{pub width:u32,pub height:u32}
  pub enum DragDropEvent{Enter{paths:Vec<PathBuf>,position:Position},Over{position:Position},Leave,Drop{paths:Vec<PathBuf>,position:Position}}
  pub enum Theme{Dark,Light,Other} pub enum WindowEvent{Focused(bool),Moved(Position),Resized(Size),CloseRequested{api:CloseApi},Destroyed,DragDrop(DragDropEvent),ThemeChanged(Theme),ScaleFactorChanged{scale_factor:f64}}
  pub struct CloseApi; impl CloseApi{pub fn prevent_close(&self){}}
 }
 ${body}
-#[cfg(test)] mod tests { use super::*; #[test] fn drag_payloads_are_owned_and_drop_is_emitted_once(){ let calls=Arc::new(Mutex::new(Vec::new())); let window=tauri::WebviewWindow::new("sftp-window",calls.clone()); register_desktop_window_events(&window); let got=calls.lock().unwrap().clone(); assert_eq!(got.iter().map(|e|e.1.as_str()).collect::<Vec<_>>(),vec!["desktop:fileDrag","desktop:fileDrag","desktop:fileDrag","desktop:fileDrag","desktop:fileDrop"]); assert!(got.iter().all(|e|e.0=="sftp-window")); assert_eq!(got[0].2,Value::Text("point:4.5:9.25".into())); assert_eq!(got[1].2,Value::Text("point:7.0:11.5".into())); assert_eq!(got[2].2,Value::Null); assert_eq!(got[3].2,Value::Null); assert_eq!(got[4].2,Value::FileDrop(vec!["/tmp/a.bin".into()],10.0,20.0)); } }
+#[cfg(test)] mod tests { use super::*; #[test] fn drag_payloads_are_owned_and_drop_is_emitted_once(){ let calls=Arc::new(Mutex::new(Vec::new())); let window=tauri::WebviewWindow::new("sftp-window",calls.clone()); register_desktop_window_events(&window); let got=calls.lock().unwrap().clone(); assert_eq!(got.iter().map(|e|e.1.as_str()).collect::<Vec<_>>(),vec!["desktop:fileDrag","desktop:fileDrag","desktop:fileDrag","desktop:fileDrag","desktop:fileDrop"]); assert!(got.iter().all(|e|e.0=="sftp-window")); assert_eq!(got[0].2,Value::Text("point:4.5:9.25".into())); assert_eq!(got[1].2,Value::Text("point:7.0:11.5".into())); assert_eq!(got[2].2,Value::Null); assert_eq!(got[3].2,Value::Null); assert_eq!(got[4].2,Value::FileDrop(vec!["/tmp/a.bin".into()],10.0,20.0)); }
+#[test] fn destruction_releases_only_the_owning_geometry_and_launch_state(){ let calls=Arc::new(Mutex::new(Vec::new())); let first=tauri::WebviewWindow::new("first",calls.clone()).for_destruction(true); let other=tauri::WebviewWindow::new("other",calls.clone()).for_destruction(false); register_desktop_window_events(&first); assert_eq!(first.cleanup_log(),vec!["geometry:first","launch:first"]); assert!(other.cleanup_log().is_empty()); register_desktop_window_events(&other); assert_eq!(other.cleanup_log(),vec!["launch:other"]); assert!(calls.lock().unwrap().is_empty()); }
+}
 `
         const file = path.join(tmp, 'harness.rs'), binary = path.join(tmp, process.platform === 'win32' ? 'harness.exe' : 'harness')
         fs.writeFileSync(file, rust)
@@ -69,7 +77,7 @@ ${body}
         assert.ok(fs.existsSync(binary), `compiled callback test executable must exist: ${binary}`)
         const result = spawnSync(binary, [], { encoding: 'utf8', timeout: 30000 })
         assert.equal(result.status, 0, `callback test executable ${binary}: ${result.error ?? ''}; signal=${result.signal ?? 'none'}\n${result.stdout ?? ''}${result.stderr ?? ''}`)
-        assert.match(result.stdout, /1 passed/)
+        assert.match(result.stdout, /2 passed/)
     } finally { fs.rmSync(tmp, { recursive: true, force: true }) }
 })
 

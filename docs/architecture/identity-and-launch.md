@@ -194,6 +194,31 @@ policies, and other window fields are preserved. Bootstrap, docking, reload,
 and ready do not reinitialize default bounds. Saved window boundaries and other
 platforms retain their separate pending acceptance requirements.
 
+On Windows, stock primary and secondary windows are initialized to 800×600
+outer logical pixels before renderer bootstrap can show them. Native initialization
+uses the owning HWND's live DPI and preserves its chosen position, visibility,
+activation, and maximized state. An independent, stateless window subclass applies
+the 400×300 outer logical minimum after the existing native minimum calculation;
+it preserves other constraints and survives Native/Thin/Full frame changes.
+Apply-state and docking also read the live outer minimum after unmaximizing and
+clamp each requested dimension before setting the outer frame. Tao consumes
+`WM_WINDOWPOSCHANGING` without Win32's default size validation, so a direct
+`SetWindowPos` otherwise accepts a size below that minimum.
+Successful initialization is idempotent. Foreign subclass bindings are preserved,
+and failed initialization prevents bootstrap rather than exposing a partly sized
+window. Custom main-window geometry and construction policies are retained.
+
+The Windows bootstrap command waits asynchronously for the specific window's
+construction result, then runs the existing config/plugin transaction on the UI
+thread. Primary readiness is registered before Tauri construction and secondary
+readiness before its builder runs. Destruction cancels pending initialization;
+late completion cannot resolve a replacement window's registration. Bootstrap,
+docking, reload, and ready wait for construction without resetting user bounds.
+Concurrent CLI launch presentation also skips pending or failed initialization;
+its queued launch delivery retains the existing ordering.
+Real Win32 and Wry checks, fixed-original desktop comparisons, supported display
+configurations, persistence, and installers retain their separate acceptance gates.
+
 macOS and Windows frame selection is captured from the first raw bootstrap configuration and retained for every window in that process. Native uses the system title bar. On macOS, Thin and Full use hidden native chrome with the shared renderer layout. Missing or unknown raw selections, including encrypted wrappers without an appearance field, use Thin. The renderer receives the snapshot through bootstrap data and applies it before showing its owning window.
 
 On Windows, Thin and Full keep the decorated native host and expand its client area. Standard native BUTTON controls own caption input, accessibility, capture, and window actions. A single pointer-transparent canvas in the owning WebView paints the glyphs in the configured terminal foreground, with the pinned Electron/Chromium geometry and hover animation. The native adapter publishes physical button bounds, display scale, hover, pressed, and maximized state through the scoped caption event and window snapshot. Native mode and fullscreen clear the renderer overlay. The adapter retains the existing close-request confirmation path and the previous WebView focus.
