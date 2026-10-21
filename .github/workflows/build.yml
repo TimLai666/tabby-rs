@@ -359,11 +359,11 @@ jobs:
           GDK_BACKEND: x11
         run: |
           for scale in 1 2; do
-            GDK_SCALE="$scale" xvfb-run -a cargo run --locked --manifest-path src-tauri/Cargo.toml --example window_geometry_linux
+            GDK_SCALE="$scale" xvfb-run -a -s "-screen 0 3200x2400x24" cargo run --locked --manifest-path src-tauri/Cargo.toml --example window_geometry_linux
           done
           output=$(mktemp)
           trap 'rm -f "$output"' EXIT
-          if xvfb-run -a cargo run --locked --manifest-path src-tauri/Cargo.toml --example window_geometry_linux -- --stock-control >"$output" 2>&1; then
+          if xvfb-run -a -s "-screen 0 3200x2400x24" cargo run --locked --manifest-path src-tauri/Cargo.toml --example window_geometry_linux -- --stock-control >"$output" 2>&1; then
             cat "$output"
             echo 'Expected the original Linux startup geometry to fail'
             exit 1
