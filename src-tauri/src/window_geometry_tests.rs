@@ -10,7 +10,7 @@ fn stock_config() -> Config {
 fn stock_primary_geometry_is_prepared_before_construction() {
     let mut config = stock_config();
     let expected = to_value(&config).unwrap();
-    #[cfg(any(target_os = "macos", windows))]
+    #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
     let expected = {
         let mut expected = expected;
         assert_eq!(DEFAULT_WINDOW_SIZE, (800.0, 600.0));
@@ -21,7 +21,7 @@ fn stock_primary_geometry_is_prepared_before_construction() {
         expected["app"]["windows"][0]["minHeight"] = json!(300.0);
         expected
     };
-    #[cfg(not(any(target_os = "macos", windows)))]
+    #[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
     {
         assert_eq!(DEFAULT_WINDOW_SIZE, (1100.0, 720.0));
         assert_eq!(MIN_WINDOW_SIZE, (640.0, 480.0));
@@ -87,14 +87,14 @@ fn absent_primary_window_does_not_create_or_relabel_windows() {
 }
 
 #[test]
-fn windows_stock_primary_prepares_original_construction_geometry() {
+fn windows_and_linux_stock_primary_prepares_original_construction_geometry() {
     let mut config = stock_config();
     let mut expected = to_value(&config).unwrap();
     expected["app"]["windows"][0]["width"] = json!(800.0);
     expected["app"]["windows"][0]["height"] = json!(600.0);
     expected["app"]["windows"][0]["minWidth"] = json!(400.0);
     expected["app"]["windows"][0]["minHeight"] = json!(300.0);
-    let prepared = super::prepare_windows_startup(&mut config);
+    let prepared = super::prepare_stock_startup(&mut config);
     assert_eq!(
         (
             config.app.windows[0].width,
@@ -106,12 +106,12 @@ fn windows_stock_primary_prepares_original_construction_geometry() {
     );
     assert!(prepared);
     assert_eq!(to_value(&config).unwrap(), expected);
-    assert!(!super::prepare_windows_startup(&mut config));
+    assert!(!super::prepare_stock_startup(&mut config));
     assert_eq!(to_value(config).unwrap(), expected);
 }
 
 #[test]
-fn windows_custom_primary_geometry_and_creation_state_are_preserved() {
+fn windows_and_linux_custom_primary_geometry_and_creation_state_are_preserved() {
     for (field, value) in [
         ("width", json!(900.0)),
         ("height", json!(700.0)),
@@ -132,10 +132,7 @@ fn windows_custom_primary_geometry_and_creation_state_are_preserved() {
         declared["app"]["windows"][0][field] = value;
         let mut config: Config = serde_json::from_value(declared).unwrap();
         let expected = to_value(&config).unwrap();
-        assert!(
-            !super::prepare_windows_startup(&mut config),
-            "custom {field}"
-        );
+        assert!(!super::prepare_stock_startup(&mut config), "custom {field}");
         assert_eq!(to_value(config).unwrap(), expected, "custom {field}");
     }
 }

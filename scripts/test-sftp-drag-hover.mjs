@@ -33,8 +33,8 @@ function extractFunction (source, signature) {
 }
 
 await check('production native window callback sends ordered hover and one unchanged drop to its own window', async () => {
-    const body = extractFunction(read('src-tauri/src/lib.rs'), /pub\(crate\)\s+fn\s+register_desktop_window_events\s*\(window:\s*&tauri::WebviewWindow\)\s*\{/).replace(/#\[cfg\(windows\)\]\s*/g, '')
-    // Exercise Windows destruction cleanup on every host with framework fakes.
+    const body = extractFunction(read('src-tauri/src/lib.rs'), /pub\(crate\)\s+fn\s+register_desktop_window_events\s*\(window:\s*&tauri::WebviewWindow\)\s*\{/).replace(/#\[cfg\((?:windows|any\(windows, target_os = "linux"\))\)\]\s*/g, '')
+    // Exercise Windows/Linux destruction cleanup on every host with framework fakes.
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sftp-drag-native-'))
     try {
         const rust = String.raw`

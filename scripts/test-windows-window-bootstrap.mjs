@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 if (process.argv.includes('--help')) {
-    console.log('Usage: node scripts/test-windows-window-bootstrap.mjs\nCompile and test the real Windows async bootstrap command and initialization registry. Uses a temporary Rust crate with the locked Tokio version; Tauri event dispatch and state are simulated. Requires Cargo and network or cached dependencies. Removes owned temporary files.')
+    console.log('Usage: node scripts/test-windows-window-bootstrap.mjs\nCompile and test the real Windows/Linux async bootstrap command and initialization registry. Uses a temporary Rust crate with the locked Tokio version; Tauri event dispatch and state are simulated. Requires Cargo and network or cached dependencies. Removes owned temporary files.')
     process.exit(0)
 }
 assert.equal(process.argv.length, 2, 'no arguments supported; use --help')
@@ -48,8 +48,8 @@ const lib = fs.readFileSync(libPath, 'utf8')
 const presentationStart = lib.indexOf('            for window in &windows {')
 const presentationEnd = lib.indexOf('            let mut delivered = false;', presentationStart)
 assert.ok(presentationStart >= 0 && presentationEnd > presentationStart, 'real launch presentation loop')
-// Compile the Windows arm even when this fixture runs on another host.
-const presentation = lib.slice(presentationStart, presentationEnd).replace(/#\[cfg\(windows\)\]\s*/g, '')
+// Compile the Windows/Linux arm even when this fixture runs on another host.
+const presentation = lib.slice(presentationStart, presentationEnd).replace(/#\[cfg\((?:windows|any\(windows, target_os = "linux"\))\)\]\s*/g, '')
 const lock = fs.readFileSync(path.join(root, 'src-tauri/Cargo.lock'), 'utf8')
 const tokio = lock.match(/\[\[package\]\]\r?\nname = "tokio"\r?\nversion = "([^"]+)"/)
 assert.ok(tokio, 'locked Tokio version')
