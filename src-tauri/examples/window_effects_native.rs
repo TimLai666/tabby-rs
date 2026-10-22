@@ -37,6 +37,10 @@ mod error {
 #[path = "../src/platform/mod.rs"]
 mod platform;
 
+#[cfg(target_os = "linux")]
+#[path = "../src/window_geometry.rs"]
+mod window_geometry;
+
 #[cfg(not(target_os = "macos"))]
 fn main() {
     eprintln!("window_effects_native: AppKit checks require macOS; no native checks ran");

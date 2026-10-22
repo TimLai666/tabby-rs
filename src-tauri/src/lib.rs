@@ -151,7 +151,7 @@ fn dispatch_launch(app: &tauri::AppHandle, context: LaunchContext) {
             windows.retain(|window| !state.launches().is_closing(window.label()));
             windows.sort_by_key(|window| launch::window_creation_order(window.label()));
             for window in &windows {
-                #[cfg(windows)]
+                #[cfg(any(windows, target_os = "linux"))]
                 if !handle
                     .state::<window_geometry::initialization::Initializations>()
                     .can_present(window.label())
@@ -217,7 +217,7 @@ pub(crate) fn register_desktop_window_events(window: &tauri::WebviewWindow) {
             let _ = emitter.emit_to(emitter.label(), "desktop:windowCloseRequested", ());
         }
         tauri::WindowEvent::Destroyed => {
-            #[cfg(windows)]
+            #[cfg(any(windows, target_os = "linux"))]
             if let Some(initializations) =
                 emitter.try_state::<window_geometry::initialization::Initializations>()
             {
@@ -340,11 +340,11 @@ pub fn run() {
         .expect("failed to detect portable storage");
     let mut context = tauri::generate_context!();
     let initialize_primary_geometry = window_geometry::prepare_startup(context.config_mut());
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "linux")))]
     let _ = initialize_primary_geometry;
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     let geometry_initializations = window_geometry::initialization::Initializations::default();
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     let primary_geometry = initialize_primary_geometry.then(|| {
         geometry_initializations
             .begin("main")
@@ -371,7 +371,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init());
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     {
         builder = builder.manage(geometry_initializations);
     }
@@ -461,7 +461,7 @@ pub fn run() {
             }
             if let Some(window) = app.get_webview_window("main") {
                 register_desktop_window_events(&window);
-                #[cfg(windows)]
+                #[cfg(any(windows, target_os = "linux"))]
                 if let Some(pending) = primary_geometry.as_ref() {
                     let result = platform::initialize_window_geometry(&window);
                     pending.complete(result.as_ref().map(|_| ()).map_err(ToString::to_string));

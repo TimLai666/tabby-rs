@@ -279,7 +279,7 @@ pub(crate) fn safe_mode_suspected_plugins(previous: &TabbyRsState) -> Vec<String
     suspected
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 #[tauri::command]
 pub fn app_bootstrap(
     window: WebviewWindow,
@@ -289,7 +289,7 @@ pub fn app_bootstrap(
     bootstrap_data(window, request, state)
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 #[tauri::command]
 pub async fn app_bootstrap(
     window: WebviewWindow,

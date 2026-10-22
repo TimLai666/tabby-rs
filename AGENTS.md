@@ -946,8 +946,20 @@
   creation policies.
   Include the initialization registry tests, native Win32 geometry tests,
   test-windows-window-bootstrap.mjs, and the real Wry stock-geometry negative
-  control plus corrected run. Linux retains 1100x720 with a 640x480 inner
-  minimum and needs separate correction. Keep Windows Win32/Wry property checks
+  control plus corrected run. Linux stock primary and secondary windows use
+  800x600 client logical pixels with a 400x300 content minimum. Keep its GTK
+  content-container constraint before renderer bootstrap and CLI presentation;
+  window-level hints alone include Wayland client-side decorations. Reuse the
+  initialization registry and preserve custom primary declarations. Include
+  `window_geometry_linux`, its failing `--stock-control`, and scale-one/two runs.
+  Fresh Native and frameless Wry windows pass these property checks on X11 and
+  Wayland. The fixed upstream frame settings request restart and select the frame
+  during construction; compare fresh windows for that workflow.
+  A separate low-level Wayland probe shows size drift when one mapped Wry window
+  changes decorations and size together. Deferred GLib resizing does not resolve
+  both directions. Verify that interaction before implementing live Linux frame
+  changes; it is not an approved parity exception.
+  Keep Windows Win32/Wry property checks
   and simulated bootstrap/presentation fixtures separate from full-application
   command ordering, concurrent launch/destruction, physical resizing, DPI
   transitions, original desktop comparison, and installer acceptance.
@@ -1005,8 +1017,8 @@
   update the GTK requested position, then remapping restores the prior position.
   The fixed Electron constructor control preserves hidden client moves. Do not
   substitute GTK `position()` or Static gravity without covering those cases.
-  Wayland global positions, startup/minimum geometry, saved boundaries, frame
-  modes, and docking remain pending. RS does not yet persist or restore
+  Wayland global positions, rendered startup/minimum geometry, saved boundaries,
+  frame modes, and docking remain pending. RS does not yet persist or restore
   `windowBoundaries`.
   Before accepting combined bounds and maximized patches, check their order:
   applying size after maximization currently restores the window on Windows.

@@ -8,6 +8,11 @@ mod window_content_size_linux;
 #[cfg(target_os = "linux")]
 pub(crate) use window_content_size_linux::window_content_size;
 
+#[cfg(target_os = "linux")]
+mod window_geometry_linux;
+#[cfg(target_os = "linux")]
+pub(crate) use window_geometry_linux::initialize as initialize_window_geometry;
+
 #[cfg(target_os = "windows")]
 mod window_geometry_windows;
 #[cfg(target_os = "windows")]

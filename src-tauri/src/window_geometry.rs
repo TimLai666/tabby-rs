@@ -1,21 +1,21 @@
 use tauri::utils::config::Config;
 
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 pub(crate) const DEFAULT_WINDOW_SIZE: (f64, f64) = (800.0, 600.0);
-#[cfg(not(any(target_os = "macos", windows)))]
+#[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
 pub(crate) const DEFAULT_WINDOW_SIZE: (f64, f64) = (1100.0, 720.0);
 
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 pub(crate) const MIN_WINDOW_SIZE: (f64, f64) = (400.0, 300.0);
-#[cfg(not(any(target_os = "macos", windows)))]
+#[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
 pub(crate) const MIN_WINDOW_SIZE: (f64, f64) = (640.0, 480.0);
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 pub(crate) fn prepare_startup(config: &mut Config) -> bool {
-    prepare_windows_startup(config)
+    prepare_stock_startup(config)
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub(crate) fn prepare_startup(config: &mut Config) -> bool {
     #[cfg(target_os = "macos")]
     if let Some(window) = config
@@ -44,8 +44,8 @@ pub(crate) fn prepare_startup(config: &mut Config) -> bool {
     false
 }
 
-#[cfg(any(windows, test))]
-fn prepare_windows_startup(config: &mut Config) -> bool {
+#[cfg(any(windows, target_os = "linux", test))]
+fn prepare_stock_startup(config: &mut Config) -> bool {
     let Some(window) = config
         .app
         .windows
@@ -76,7 +76,7 @@ fn prepare_windows_startup(config: &mut Config) -> bool {
     true
 }
 
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", test))]
 #[path = "window_geometry_initialization.rs"]
 pub(crate) mod initialization;
 
