@@ -19,6 +19,10 @@ fn stock_primary_geometry_is_prepared_before_construction() {
         expected["app"]["windows"][0]["height"] = json!(600.0);
         expected["app"]["windows"][0]["minWidth"] = json!(400.0);
         expected["app"]["windows"][0]["minHeight"] = json!(300.0);
+        #[cfg(target_os = "linux")]
+        if config.app.windows[0].x.is_none() && config.app.windows[0].y.is_none() {
+            expected["app"]["windows"][0]["center"] = json!(true);
+        }
         expected
     };
     #[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
@@ -94,6 +98,10 @@ fn windows_and_linux_stock_primary_prepares_original_construction_geometry() {
     expected["app"]["windows"][0]["height"] = json!(600.0);
     expected["app"]["windows"][0]["minWidth"] = json!(400.0);
     expected["app"]["windows"][0]["minHeight"] = json!(300.0);
+    #[cfg(target_os = "linux")]
+    {
+        expected["app"]["windows"][0]["center"] = json!(true);
+    }
     let prepared = super::prepare_stock_startup(&mut config);
     assert_eq!(
         (
@@ -108,6 +116,39 @@ fn windows_and_linux_stock_primary_prepares_original_construction_geometry() {
     assert_eq!(to_value(&config).unwrap(), expected);
     assert!(!super::prepare_stock_startup(&mut config));
     assert_eq!(to_value(config).unwrap(), expected);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_stock_centering_requires_both_coordinates_to_be_absent() {
+    for (x, y) in [
+        (Some(0.0), None),
+        (None, Some(0.0)),
+        (Some(-12.0), None),
+        (None, Some(-7.0)),
+    ] {
+        let mut config = stock_config();
+        let window = &mut config.app.windows[0];
+        window.x = x;
+        window.y = y;
+        let before = to_value(&config).unwrap();
+        assert!(super::prepare_stock_startup(&mut config));
+        let after = to_value(&config).unwrap();
+        assert_eq!(
+            after["app"]["windows"][0]["x"],
+            before["app"]["windows"][0]["x"]
+        );
+        assert_eq!(
+            after["app"]["windows"][0]["y"],
+            before["app"]["windows"][0]["y"]
+        );
+        assert_eq!(
+            after["app"]["windows"][0]["center"],
+            before["app"]["windows"][0]["center"]
+        );
+        assert!(!super::prepare_stock_startup(&mut config));
+        assert_eq!(to_value(config).unwrap(), after);
+    }
 }
 
 #[test]

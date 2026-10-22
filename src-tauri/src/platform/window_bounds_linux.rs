@@ -178,3 +178,7 @@ fn normalize_bounds(
         tauri::LogicalSize::new(right - left, bottom - top).to_physical(scale),
     )
 }
+
+#[cfg(test)]
+#[path = "window_bounds_linux_tests.rs"]
+mod tests;

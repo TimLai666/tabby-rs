@@ -15,8 +15,8 @@ mod error {
 }
 
 #[cfg(target_os = "linux")]
-#[path = "../src/platform/window_content_size_linux.rs"]
-mod content_size;
+#[path = "../src/platform/window_bounds_linux.rs"]
+mod bounds;
 
 #[cfg(not(target_os = "linux"))]
 fn main() {
@@ -58,7 +58,7 @@ fn main() {
         }
         let read = move |window: &tauri::WebviewWindow| -> Result<tauri::PhysicalSize<u32>, String> {
             if control { window.outer_size().map_err(|e| e.to_string()) }
-            else { content_size::window_content_size(window).map_err(|e| e.to_string()) }
+            else { bounds::window_bounds(window).map(|(_, size)| size).map_err(|e| e.to_string()) }
         };
         let verify = move |phase: &str, window: &tauri::WebviewWindow, width: u32, height: u32| {
             let scale = window.gtk_window().unwrap().scale_factor() as u32;

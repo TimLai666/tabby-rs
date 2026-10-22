@@ -15,8 +15,8 @@ mod error {
 }
 
 #[cfg(target_os = "linux")]
-#[path = "../src/platform/window_content_size_linux.rs"]
-mod content_size;
+#[path = "../src/platform/window_bounds_linux.rs"]
+mod bounds;
 #[cfg(target_os = "linux")]
 #[path = "../src/platform/window_geometry_linux.rs"]
 mod geometry;
@@ -87,6 +87,10 @@ fn main() {
             window.height = 600.0;
             window.min_width = Some(400.0);
             window.min_height = Some(300.0);
+            #[cfg(target_os = "linux")]
+            if window.x.is_none() && window.y.is_none() {
+                window.center = true;
+            }
         }
     }
     let expected_config_value =
@@ -146,7 +150,7 @@ fn main() {
             let checks = Arc::new(AtomicUsize::new(checks));
             let failures = Arc::new(AtomicUsize::new(initial_failures));
             let read_size = move |window: &tauri::WebviewWindow| -> Result<tauri::PhysicalSize<u32>, String> {
-                content_size::window_content_size(window).map_err(|e| e.to_string())
+                bounds::window_bounds(window).map(|(_, size)| size).map_err(|e| e.to_string())
             };
             let verify_size = {
                 let checks = checks.clone();

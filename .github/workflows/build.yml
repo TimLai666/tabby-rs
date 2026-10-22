@@ -98,7 +98,9 @@ jobs:
             libudev-dev \
             libwebkit2gtk-4.1-dev \
             openssh-server \
+            openbox \
             patchelf \
+            x11-utils \
             xvfb
 
       - name: Install Yarn
@@ -373,6 +375,56 @@ jobs:
             test "$result" -eq 1
           fi
           grep -Eq 'window_geometry_linux completed: checks=24 failures=[1-9][0-9]*' "$output"
+
+      - name: Test Linux client positions on real Wry windows
+        timeout-minutes: 6
+        env:
+          GDK_BACKEND: x11
+          XDG_SESSION_TYPE: wayland
+        run: |
+          probe() {
+            local scale=$1
+            shift
+            GDK_SCALE="$scale" xvfb-run -a -s "-screen 0 3200x2400x24" bash -c '
+              set -eu
+              wm_log=$(mktemp)
+              openbox --sm-disable >"$wm_log" 2>&1 &
+              wm=$!
+              cleanup() {
+                kill "$wm" 2>/dev/null || true
+                wait "$wm" 2>/dev/null || true
+                rm -f "$wm_log"
+              }
+              trap cleanup EXIT
+              ready=0
+              for attempt in $(seq 1 100); do
+                if xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null | grep -q "window id"; then
+                  ready=1
+                  break
+                fi
+                sleep 0.05
+              done
+              test "$ready" -eq 1 || { cat "$wm_log" >&2; exit 4; }
+              cargo run --locked --manifest-path src-tauri/Cargo.toml --example window_position_linux -- "$@"
+            ' -- "$@"
+          }
+          output=$(mktemp)
+          trap 'rm -f "$output"' EXIT
+          for scale in 1 2; do
+            probe "$scale" >"$output" 2>&1
+            cat "$output"
+            grep -Fq 'window_position_linux completed: checks=21 failures=0' "$output"
+          done
+          if probe 1 --stock-control >"$output" 2>&1; then
+            cat "$output"
+            echo 'Expected the original Linux position behavior to fail'
+            exit 1
+          else
+            result=$?
+            cat "$output"
+            test "$result" -eq 1
+          fi
+          grep -Eq 'window_position_linux completed: checks=19 failures=[1-9][0-9]*' "$output"
 
       - name: Test real SSH and SFTP fixture
         run: yarn test:ssh-integration
