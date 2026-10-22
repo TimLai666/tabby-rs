@@ -1004,19 +1004,32 @@
   Electron 38.8.6 / Glasstron 0.1.1 X11 constructor control reports client sizes
   even with native WM decorations; an independent X11 query confirms the client
   dimensions and separate frame extents. Preserve the existing content-size
-  setter. Read GTK `size()` and its live scale on the UI thread, including before
-  first display and after hidden resizing. Tao 0.35.3 initializes its hidden
+  setter. Read `window_bounds_linux` on the UI thread: mapped X11 dimensions
+  come from the native client; hidden and unrealized dimensions use GTK `size()`
+  and its live scale. Tao 0.35.3 initializes its hidden
   outer-size cache from position and retains stale dimensions after hidden
   resizing. Include the real `window_content_size_linux` example, its failing
   `--stock-control`, and scale-one/two runs when changing this boundary.
   Its isolated Wry property checks do not accept rendered application behavior,
   the full original desktop, all window managers, or supported-platform parity.
-- Linux positions need a separate correction. In the X11 Wry fixture, NorthWest
-  gravity uses frame coordinates; Static gravity gives mapped client coordinates,
-  but GTK `position()` returns the original request after hiding. Hidden moves
-  update the GTK requested position, then remapping restores the prior position.
-  The fixed Electron constructor control preserves hidden client moves. Do not
-  substitute GTK `position()` or Static gravity without covering those cases.
+- Keep Linux X11 positions in client coordinates through `window_bounds_linux`.
+  Select Static gravity before display and before position writes, including
+  custom windows that skip stock initialization. Center stock windows only when both
+  coordinates are absent, and preserve explicit zero/negative coordinates.
+  Read the live native X client origin under GDK's error trap; GTK `position()`
+  can revert to the original request after hiding. Hidden moves update GTK's
+  request and the existing unmapped surface. Round the physical origin down and
+  far edge up in logical pixels, adding in floating point before division to
+  avoid fractional-scale artifacts and integer overflow. Read the actual owning
+  GTK backend for positioning/docking capabilities, including misleading session
+  environment variables. Movement events use the same owning client boundary
+  and omit failed reads. Include the 21-case `window_position_linux` scale-one/two
+  X11 runs, failing 19-case `--stock-control`, pure normalization tests, and
+  `test-sftp-drag-hover.mjs` event coverage. Preserve the existing 18-case size and
+  28-case startup examples on X11 and Wayland. The separate three-case Wayland
+  position probe checks retained behavior and capability gating, not global
+  position support. Constructor/API controls and blank Wry fixtures do not
+  establish full application or original desktop acceptance.
   Wayland global positions, rendered startup/minimum geometry, saved boundaries,
   frame modes, and docking remain pending. RS does not yet persist or restore
   `windowBoundaries`.

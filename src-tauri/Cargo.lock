@@ -5381,6 +5381,7 @@ dependencies = [
  "chrono",
  "dispatch2",
  "font-kit",
+ "gdkx11",
  "gtk",
  "hex",
  "keyring",
@@ -5420,6 +5421,7 @@ dependencies = [
  "url",
  "window-vibrancy",
  "windows-sys 0.59.0",
+ "x11",
  "zeroize",
 ]
 

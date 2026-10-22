@@ -198,7 +198,13 @@ pub(crate) fn register_desktop_window_events(window: &tauri::WebviewWindow) {
         tauri::WindowEvent::Focused(focused) => {
             let _ = emitter.emit_to(emitter.label(), "desktop:windowFocused", *focused);
         }
-        tauri::WindowEvent::Moved(position) => {
+        tauri::WindowEvent::Moved(_position) => {
+            #[cfg(target_os = "linux")]
+            let Ok((position, _)) = crate::platform::window_bounds(&emitter) else {
+                return;
+            };
+            #[cfg(not(target_os = "linux"))]
+            let position = _position;
             let _ = emitter.emit_to(
                 emitter.label(),
                 "desktop:windowMoved",

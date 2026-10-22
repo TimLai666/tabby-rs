@@ -73,6 +73,10 @@ fn prepare_stock_startup(config: &mut Config) -> bool {
     window.height = 600.0;
     window.min_width = Some(400.0);
     window.min_height = Some(300.0);
+    #[cfg(target_os = "linux")]
+    if window.x.is_none() && window.y.is_none() {
+        window.center = true;
+    }
     true
 }
 

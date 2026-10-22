@@ -82,6 +82,8 @@ window-vibrancy = "=0.6.0"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"
+gdkx11 = "=0.18.2"
+x11 = { version = "=2.21.0", features = ["xlib"] }
 keyring = { version = "=3.6.3", default-features = false, features = ["sync-secret-service", "crypto-rust"] }
 
 [dev-dependencies]

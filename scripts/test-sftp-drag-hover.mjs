@@ -34,7 +34,10 @@ function extractFunction (source, signature) {
 
 await check('production native window callback sends ordered hover and one unchanged drop to its own window', async () => {
     const body = extractFunction(read('src-tauri/src/lib.rs'), /pub\(crate\)\s+fn\s+register_desktop_window_events\s*\(window:\s*&tauri::WebviewWindow\)\s*\{/).replace(/#\[cfg\((?:windows|any\(windows, target_os = "linux"\))\)\]\s*/g, '')
-    // Exercise Windows/Linux destruction cleanup on every host with framework fakes.
+    // Exercise Linux client-position events and shared destruction cleanup on every host.
+    const linuxBody = body
+        .replaceAll('#[cfg(target_os = "linux")]', '#[cfg(callback_linux)]')
+        .replaceAll('#[cfg(not(target_os = "linux"))]', '#[cfg(not(callback_linux))]')
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sftp-drag-native-'))
     try {
         const rust = String.raw`
@@ -58,26 +61,40 @@ impl Launches { fn remove(&self,label:&str){ self.cleanup.lock().unwrap().push(f
 impl AppState { fn launches(&self)->Launches {Launches { cleanup:self.cleanup.clone() }} }
 mod tauri {
  use super::{Arc,Mutex,Value,IntoValue,AppState,window_geometry::initialization::Initializations}; use std::{any::Any,path::PathBuf};
- #[derive(Clone)] pub struct WebviewWindow { label:String, events:Arc<Mutex<Vec<(String,String,Value)>>>, cleanup:Arc<Mutex<Vec<String>>>, geometry:Option<Initializations>, destroy_only:bool }
- impl WebviewWindow { pub fn new(label:&str, events:Arc<Mutex<Vec<(String,String,Value)>>>) -> Self { let cleanup=Arc::new(Mutex::new(Vec::new())); Self{label:label.into(),events,geometry:Some(Initializations(cleanup.clone())),cleanup,destroy_only:false} } pub fn label(&self)->&str{&self.label} pub fn for_destruction(mut self,geometry:bool)->Self{self.destroy_only=true;if !geometry {self.geometry=None;}self} pub fn cleanup_log(&self)->Vec<String>{self.cleanup.lock().unwrap().clone()} pub fn try_state<T:Any>(&self)->Option<&T>{self.geometry.as_ref().and_then(|state|(state as &dyn Any).downcast_ref::<T>())} pub fn emit_to<T:IntoValue>(&self,label:&str,event:&str,payload:T)->Result<(),()> { self.events.lock().unwrap().push((label.into(),event.into(),payload.into_value())); Ok(()) } pub fn on_window_event<F:Fn(&WindowEvent)+'static>(&self,f:F){ if self.destroy_only { f(&WindowEvent::Destroyed); return; } f(&WindowEvent::DragDrop(DragDropEvent::Enter{paths:vec![PathBuf::from("/tmp/a.bin")],position:Position{x:4.5,y:9.25}})); f(&WindowEvent::DragDrop(DragDropEvent::Over{position:Position{x:7.0,y:11.5}})); f(&WindowEvent::DragDrop(DragDropEvent::Leave)); f(&WindowEvent::DragDrop(DragDropEvent::Drop{paths:vec![PathBuf::from("/tmp/a.bin")],position:Position{x:10.0,y:20.0}})); } pub fn state<T>(&self)->AppState {AppState {cleanup:self.cleanup.clone()}} }
+ #[derive(Clone)] pub struct WebviewWindow { label:String, events:Arc<Mutex<Vec<(String,String,Value)>>>, cleanup:Arc<Mutex<Vec<String>>>, geometry:Option<Initializations>, destroy_only:bool, move_only:bool }
+ impl WebviewWindow { pub fn new(label:&str, events:Arc<Mutex<Vec<(String,String,Value)>>>) -> Self { let cleanup=Arc::new(Mutex::new(Vec::new())); Self{label:label.into(),events,geometry:Some(Initializations(cleanup.clone())),cleanup,destroy_only:false,move_only:false} } pub fn label(&self)->&str{&self.label} pub fn for_destruction(mut self,geometry:bool)->Self{self.destroy_only=true;if !geometry {self.geometry=None;}self} pub fn for_move(mut self)->Self{self.move_only=true;self} pub fn cleanup_log(&self)->Vec<String>{self.cleanup.lock().unwrap().clone()} pub fn try_state<T:Any>(&self)->Option<&T>{self.geometry.as_ref().and_then(|state|(state as &dyn Any).downcast_ref::<T>())} pub fn emit_to<T:IntoValue>(&self,label:&str,event:&str,payload:T)->Result<(),()> { self.events.lock().unwrap().push((label.into(),event.into(),payload.into_value())); Ok(()) } pub fn on_window_event<F:Fn(&WindowEvent)+'static>(&self,f:F){ if self.destroy_only { f(&WindowEvent::Destroyed); return; } if self.move_only { f(&WindowEvent::Moved(Position{x:999.0,y:888.0})); return; } f(&WindowEvent::DragDrop(DragDropEvent::Enter{paths:vec![PathBuf::from("/tmp/a.bin")],position:Position{x:4.5,y:9.25}})); f(&WindowEvent::DragDrop(DragDropEvent::Over{position:Position{x:7.0,y:11.5}})); f(&WindowEvent::DragDrop(DragDropEvent::Leave)); f(&WindowEvent::DragDrop(DragDropEvent::Drop{paths:vec![PathBuf::from("/tmp/a.bin")],position:Position{x:10.0,y:20.0}})); } pub fn state<T>(&self)->AppState {AppState {cleanup:self.cleanup.clone()}} }
  #[derive(Clone)] pub struct Position{pub x:f64,pub y:f64} pub struct Size{pub width:u32,pub height:u32}
  pub enum DragDropEvent{Enter{paths:Vec<PathBuf>,position:Position},Over{position:Position},Leave,Drop{paths:Vec<PathBuf>,position:Position}}
  pub enum Theme{Dark,Light,Other} pub enum WindowEvent{Focused(bool),Moved(Position),Resized(Size),CloseRequested{api:CloseApi},Destroyed,DragDrop(DragDropEvent),ThemeChanged(Theme),ScaleFactorChanged{scale_factor:f64}}
  pub struct CloseApi; impl CloseApi{pub fn prevent_close(&self){}}
 }
-${body}
+mod platform {
+ pub fn window_bounds(window:&crate::tauri::WebviewWindow)->Result<(crate::tauri::Position,crate::tauri::Size),String>{
+  let (x,y)=match window.label(){"left"=>(-2.0,180.0),"right"=>(73.0,91.0),_=>return Err("owned native window no longer exists".into())};
+  Ok((crate::tauri::Position{x,y},crate::tauri::Size{width:1622,height:1222}))
+ }
+}
+${linuxBody}
 #[cfg(test)] mod tests { use super::*; #[test] fn drag_payloads_are_owned_and_drop_is_emitted_once(){ let calls=Arc::new(Mutex::new(Vec::new())); let window=tauri::WebviewWindow::new("sftp-window",calls.clone()); register_desktop_window_events(&window); let got=calls.lock().unwrap().clone(); assert_eq!(got.iter().map(|e|e.1.as_str()).collect::<Vec<_>>(),vec!["desktop:fileDrag","desktop:fileDrag","desktop:fileDrag","desktop:fileDrag","desktop:fileDrop"]); assert!(got.iter().all(|e|e.0=="sftp-window")); assert_eq!(got[0].2,Value::Text("point:4.5:9.25".into())); assert_eq!(got[1].2,Value::Text("point:7.0:11.5".into())); assert_eq!(got[2].2,Value::Null); assert_eq!(got[3].2,Value::Null); assert_eq!(got[4].2,Value::FileDrop(vec!["/tmp/a.bin".into()],10.0,20.0)); }
 #[test] fn destruction_releases_only_the_owning_geometry_and_launch_state(){ let calls=Arc::new(Mutex::new(Vec::new())); let first=tauri::WebviewWindow::new("first",calls.clone()).for_destruction(true); let other=tauri::WebviewWindow::new("other",calls.clone()).for_destruction(false); register_desktop_window_events(&first); assert_eq!(first.cleanup_log(),vec!["geometry:first","launch:first"]); assert!(other.cleanup_log().is_empty()); register_desktop_window_events(&other); assert_eq!(other.cleanup_log(),vec!["launch:other"]); assert!(calls.lock().unwrap().is_empty()); }
+#[test] fn linux_move_payload_uses_the_owning_live_client_bounds_and_skips_failed_reads(){
+ let calls=Arc::new(Mutex::new(Vec::new()));
+ for label in ["left","right","failed"] { register_desktop_window_events(&tauri::WebviewWindow::new(label,calls.clone()).for_move()); }
+ assert_eq!(*calls.lock().unwrap(),vec![
+  ("left".into(),"desktop:windowMoved".into(),Value::Text("point:-2.0:180.0".into())),
+  ("right".into(),"desktop:windowMoved".into(),Value::Text("point:73.0:91.0".into()))
+ ]);
+}
 }
 `
         const file = path.join(tmp, 'harness.rs'), binary = path.join(tmp, process.platform === 'win32' ? 'harness.exe' : 'harness')
         fs.writeFileSync(file, rust)
-        const built = spawnSync(process.env.RUSTC || 'rustc', ['--test', file, '-o', binary], { encoding: 'utf8', timeout: 30000 })
+        const built = spawnSync(process.env.RUSTC || 'rustc', ['--test', '--cfg', 'callback_linux', file, '-o', binary], { encoding: 'utf8', timeout: 30000 })
         assert.equal(built.status, 0, `extracted production callback must compile against framework boundary fakes:\n${built.error ?? ''}\n${built.stdout ?? ''}${built.stderr ?? ''}`)
         assert.ok(fs.existsSync(binary), `compiled callback test executable must exist: ${binary}`)
         const result = spawnSync(binary, [], { encoding: 'utf8', timeout: 30000 })
         assert.equal(result.status, 0, `callback test executable ${binary}: ${result.error ?? ''}; signal=${result.signal ?? 'none'}\n${result.stdout ?? ''}${result.stderr ?? ''}`)
-        assert.match(result.stdout, /2 passed/)
+        assert.match(result.stdout, /3 passed/)
     } finally { fs.rmSync(tmp, { recursive: true, force: true }) }
 })
 
