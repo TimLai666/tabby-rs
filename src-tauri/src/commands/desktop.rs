@@ -39,12 +39,43 @@ fn set_bounds_size(window: &tauri::WebviewWindow, size: PhysicalSize<u32>) -> Re
     window.set_size(size).map_err(io_error)
 }
 
-fn window_state(window: &tauri::WebviewWindow) -> Result<WindowStateSnapshot, AppError> {
-    let position = window.outer_position().map_err(io_error)?;
+fn set_bounds_position(
+    window: &tauri::WebviewWindow,
+    position: PhysicalPosition<i32>,
+) -> Result<(), AppError> {
     #[cfg(target_os = "linux")]
-    let size = crate::platform::window_content_size(window)?;
+    return crate::platform::set_window_position(window, position);
+
     #[cfg(not(target_os = "linux"))]
-    let size = window.outer_size().map_err(io_error)?;
+    window.set_position(position).map_err(io_error)
+}
+
+fn window_capabilities(
+    window: &tauri::WebviewWindow,
+) -> Result<crate::desktop::WindowCapabilities, AppError> {
+    #[cfg(target_os = "linux")]
+    {
+        let mut capabilities = capabilities();
+        let positioning = crate::platform::supports_absolute_positioning(window)?;
+        capabilities.absolute_positioning = positioning;
+        capabilities.docking = positioning;
+        Ok(capabilities)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = window;
+        Ok(capabilities())
+    }
+}
+
+fn window_state(window: &tauri::WebviewWindow) -> Result<WindowStateSnapshot, AppError> {
+    #[cfg(target_os = "linux")]
+    let (position, size) = crate::platform::window_bounds(window)?;
+    #[cfg(not(target_os = "linux"))]
+    let (position, size) = (
+        window.outer_position().map_err(io_error)?,
+        window.outer_size().map_err(io_error)?,
+    );
     Ok(WindowStateSnapshot {
         visible: window.is_visible().map_err(io_error)?,
         always_on_top: window.is_always_on_top().map_err(io_error)?,
@@ -59,7 +90,7 @@ fn window_state(window: &tauri::WebviewWindow) -> Result<WindowStateSnapshot, Ap
             height: size.height,
         },
         scale_factor: window.scale_factor().map_err(io_error)?,
-        capabilities: capabilities(),
+        capabilities: window_capabilities(window)?,
         caption_controls: crate::platform::window_caption_controls(window)?,
     })
 }
@@ -106,6 +137,8 @@ pub(crate) fn create_window(
     } else {
         builder
     };
+    #[cfg(target_os = "linux")]
+    let builder = builder.center();
     #[cfg(target_os = "macos")]
     let builder = builder
         .title_bar_style(tauri::TitleBarStyle::Overlay)
@@ -171,10 +204,8 @@ pub fn window_apply_state(
     }
     if let Some(bounds) = request.bounds {
         set_bounds_size(&window, PhysicalSize::new(bounds.width, bounds.height))?;
-        if capabilities().absolute_positioning {
-            window
-                .set_position(PhysicalPosition::new(bounds.x, bounds.y))
-                .map_err(io_error)?;
+        if window_capabilities(&window)?.absolute_positioning {
+            set_bounds_position(&window, PhysicalPosition::new(bounds.x, bounds.y))?;
         }
     }
     if let Some(value) = request.progress {
@@ -298,7 +329,7 @@ pub fn window_set_docking(
         window.set_always_on_top(false).map_err(io_error)?;
         return window_state(&window);
     }
-    if !capabilities().docking {
+    if !window_capabilities(&window)?.docking {
         return Err(AppError::Unsupported(
             "absolute window docking is unavailable in this display session".into(),
         ));
@@ -316,9 +347,7 @@ pub fn window_set_docking(
     let bounds = docked_bounds(&request, selected.work_area)?;
 
     set_bounds_size(&window, PhysicalSize::new(bounds.width, bounds.height))?;
-    window
-        .set_position(PhysicalPosition::new(bounds.x, bounds.y))
-        .map_err(io_error)?;
+    set_bounds_position(&window, PhysicalPosition::new(bounds.x, bounds.y))?;
     window
         .set_always_on_top(request.always_on_top)
         .map_err(io_error)?;

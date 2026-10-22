@@ -167,7 +167,7 @@ The alias status and conflict path are exposed in the **Settings → Tabby RS** 
 
 The Rust host owns the desktop window lifecycle. `--new-window` is transported through the launch contract, while the Tauri `window.new` command creates an additional renderer window with the same application entry point. Window state commands and desktop events are scoped to the invoking window, so moving or closing one window cannot mutate another window.
 
-After focus, movement, or resizing, the renderer reads the full native window state. Only the latest requested state read can replace its cached snapshot. Bounds come from that snapshot's outer window dimensions; resize event payloads describe the client area. `scripts/test-tauri-host-window-state.mjs` exercises the actual renderer service with simulated IPC, including delayed replies, failures, and independent windows. These checks do not establish native desktop acceptance.
+After focus, movement, or resizing, the renderer reads the full native window state. Only the latest requested state read can replace its cached snapshot. Bounds use outer window dimensions on macOS and Windows and client bounds on Linux. Linux movement events read the owning window's client origin rather than Tao's frame-position payload; resize events trigger a full snapshot refresh. `scripts/test-tauri-host-window-state.mjs` exercises the actual renderer service with simulated IPC, including delayed replies, failures, and independent windows. These checks do not establish native desktop acceptance.
 
 The renderer returns a launch context to the native host when it requests a new
 window. An omitted legacy command array decodes as an empty array, matching the
@@ -211,12 +211,23 @@ window. Custom main-window geometry and construction policies are retained.
 On Linux, stock primary and secondary windows start at 800×600 client logical
 pixels with a 400×300 content minimum. The stock primary configuration is prepared
 before construction; custom declarations retain their geometry and creation policy.
-Native initialization constrains the existing GTK content container, because GTK
-window-level minimum hints can include Wayland client-side decorations. It preserves
-position, size, visibility, and frame selection, and repeated initialization keeps
-user bounds. The isolated Wry regression checks freshly constructed Native and
-frameless windows on X11 and Wayland at scales one and two. It does not accept
-physical resizing, full application behavior, original desktop comparison, or installers.
+Stock windows are centered only when neither primary coordinate is configured;
+explicit coordinates and custom declarations are retained. Native initialization
+constrains the existing GTK content container, because GTK window-level minimum
+hints can include Wayland client-side decorations. It selects Static gravity on
+X11 and preserves size, visibility, frame selection, and subsequent user bounds.
+The client-bounds adapter reads the owning GTK display rather than session
+environment variables. On X11, native client coordinates and mapped dimensions
+come from the live X window; hidden dimensions come from GTK's requested size.
+Logical bounds enclose the physical rectangle, rounding the origin down and the
+far edge up before returning the existing physical bridge values. Hidden position
+writes update both GTK's request and its existing unmapped surface. Wayland keeps
+the existing getter/setter behavior without advertising global positioning or
+docking. The isolated Wry regressions check freshly constructed Native and
+frameless windows on X11 and Wayland at scales one and two, including centering,
+hidden moves/resizes, native client coordinates, and independent windows. These
+checks do not accept physical resizing, full application behavior, original desktop
+comparison, or installers.
 
 The Windows and Linux bootstrap command waits asynchronously for the specific window's
 construction result, then runs the existing config/plugin transaction on the UI
