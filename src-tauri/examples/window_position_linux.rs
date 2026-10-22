@@ -43,7 +43,8 @@ fn main() {
 
     let args: Vec<_> = std::env::args().skip(1).collect();
     if args == ["--help"] || args == ["-h"] {
-        println!("Usage: window_position_linux [--stock-control]
+        println!(
+            "Usage: window_position_linux [--stock-control]
 \
 Checks isolated Native, frameless, and custom Linux Wry client bounds.
 \
@@ -57,7 +58,8 @@ X11 requires xwininfo, an EWMH window manager, and GTK scale 1 or 2.
 \
 Wayland runs compatibility checks only; it does not accept global positions.
 \
-Example: GDK_SCALE=2 cargo run --locked --example window_position_linux");
+Example: GDK_SCALE=2 cargo run --locked --example window_position_linux"
+        );
         return;
     }
     let stock = args == ["--stock-control"];
