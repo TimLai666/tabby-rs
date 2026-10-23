@@ -21,7 +21,17 @@ mod telnet;
 mod transfer;
 pub mod update;
 mod webview_storage;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+mod window_close;
 mod window_geometry;
+#[cfg(target_os = "linux")]
+mod window_persistence_linux;
+#[cfg(target_os = "macos")]
+mod window_persistence_macos;
+#[cfg(target_os = "linux")]
+mod window_presentation_linux;
+#[cfg(target_os = "macos")]
+mod window_presentation_macos;
 mod windows_integration;
 mod winscp;
 
@@ -151,7 +161,7 @@ fn dispatch_launch(app: &tauri::AppHandle, context: LaunchContext) {
             windows.retain(|window| !state.launches().is_closing(window.label()));
             windows.sort_by_key(|window| launch::window_creation_order(window.label()));
             for window in &windows {
-                #[cfg(any(windows, target_os = "linux"))]
+                #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
                 if !handle
                     .state::<window_geometry::initialization::Initializations>()
                     .can_present(window.label())
@@ -192,6 +202,45 @@ fn dispatch_launch(app: &tauri::AppHandle, context: LaunchContext) {
     }
 }
 
+#[cfg(target_os = "macos")]
+pub(crate) fn complete_window_restore(
+    window: &tauri::WebviewWindow,
+    pending: Arc<window_geometry::initialization::PendingInitialization>,
+) {
+    let window = window.clone();
+    tauri::async_runtime::spawn(async move {
+        let state = window.state::<AppState>();
+        let result = window_persistence_macos::enable_capture(&window, &state).await;
+        if let Err(error) = &result {
+            eprintln!(
+                "failed to finish window restoration for {}: {error}",
+                window.label()
+            );
+        }
+        pending.complete(result.map_err(|error| error.to_string()));
+    });
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn complete_window_restore_linux(
+    window: &tauri::WebviewWindow,
+    pending: Arc<window_geometry::initialization::PendingInitialization>,
+    constructor: window_geometry::persistence::LogicalBounds,
+) {
+    let window = window.clone();
+    tauri::async_runtime::spawn(async move {
+        let state = window.state::<AppState>();
+        let result = window_persistence_linux::enable_capture(&window, &state, constructor).await;
+        if let Err(error) = &result {
+            eprintln!(
+                "failed to finish window restoration for {}: {error}",
+                window.label()
+            );
+        }
+        pending.complete(result.map_err(|error| error.to_string()));
+    });
+}
+
 pub(crate) fn register_desktop_window_events(window: &tauri::WebviewWindow) {
     let emitter = window.clone();
     window.clone().on_window_event(move |event| match event {
@@ -199,6 +248,18 @@ pub(crate) fn register_desktop_window_events(window: &tauri::WebviewWindow) {
             let _ = emitter.emit_to(emitter.label(), "desktop:windowFocused", *focused);
         }
         tauri::WindowEvent::Moved(_position) => {
+            #[cfg(target_os = "linux")]
+            if let Err(error) =
+                window_persistence_linux::capture_window(&emitter, &emitter.state::<AppState>())
+            {
+                eprintln!("failed to record window position: {error}");
+            }
+            #[cfg(target_os = "macos")]
+            if let Err(error) =
+                window_persistence_macos::capture_window(&emitter, &emitter.state::<AppState>())
+            {
+                eprintln!("failed to record window position: {error}");
+            }
             #[cfg(target_os = "linux")]
             let Ok((position, _)) = crate::platform::window_bounds(&emitter) else {
                 return;
@@ -212,6 +273,18 @@ pub(crate) fn register_desktop_window_events(window: &tauri::WebviewWindow) {
             );
         }
         tauri::WindowEvent::Resized(size) => {
+            #[cfg(target_os = "linux")]
+            if let Err(error) =
+                window_persistence_linux::capture_window(&emitter, &emitter.state::<AppState>())
+            {
+                eprintln!("failed to record window size: {error}");
+            }
+            #[cfg(target_os = "macos")]
+            if let Err(error) =
+                window_persistence_macos::capture_window(&emitter, &emitter.state::<AppState>())
+            {
+                eprintln!("failed to record window size: {error}");
+            }
             let _ = emitter.emit_to(
                 emitter.label(),
                 "desktop:windowResized",
@@ -223,7 +296,11 @@ pub(crate) fn register_desktop_window_events(window: &tauri::WebviewWindow) {
             let _ = emitter.emit_to(emitter.label(), "desktop:windowCloseRequested", ());
         }
         tauri::WindowEvent::Destroyed => {
-            #[cfg(any(windows, target_os = "linux"))]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            emitter
+                .state::<AppState>()
+                .remove_window_state(emitter.label());
+            #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
             if let Some(initializations) =
                 emitter.try_state::<window_geometry::initialization::Initializations>()
             {
@@ -348,9 +425,37 @@ pub fn run() {
     let initialize_primary_geometry = window_geometry::prepare_startup(context.config_mut());
     #[cfg(not(any(windows, target_os = "linux")))]
     let _ = initialize_primary_geometry;
-    #[cfg(any(windows, target_os = "linux"))]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     let geometry_initializations = window_geometry::initialization::Initializations::default();
-    #[cfg(any(windows, target_os = "linux"))]
+    #[cfg(target_os = "macos")]
+    let startup_geometry = context
+        .config()
+        .app
+        .windows
+        .iter()
+        .filter(|window| window.create)
+        .map(|window| {
+            let pending = geometry_initializations
+                .begin(&window.label)
+                .expect("unique configured window geometry");
+            (window.label.clone(), pending)
+        })
+        .collect::<Vec<_>>();
+    #[cfg(target_os = "linux")]
+    let startup_geometry = context
+        .config()
+        .app
+        .windows
+        .iter()
+        .filter(|window| window.create)
+        .map(|window| {
+            let pending = geometry_initializations
+                .begin(&window.label)
+                .expect("unique configured window geometry");
+            (window.clone(), pending)
+        })
+        .collect::<Vec<_>>();
+    #[cfg(windows)]
     let primary_geometry = initialize_primary_geometry.then(|| {
         geometry_initializations
             .begin("main")
@@ -377,7 +482,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init());
-    #[cfg(any(windows, target_os = "linux"))]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     {
         builder = builder.manage(geometry_initializations);
     }
@@ -404,6 +509,42 @@ pub fn run() {
         }
     }
 
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        builder = builder.on_page_load(|webview, payload| {
+            if payload.event() != tauri::webview::PageLoadEvent::Finished {
+                return;
+            }
+            let Some(window) = webview.app_handle().get_webview_window(webview.label()) else {
+                return;
+            };
+            let initializations =
+                webview.state::<window_geometry::initialization::Initializations>();
+            let Some(pending) = initializations.first_page_load(webview.label()) else {
+                return;
+            };
+            tauri::async_runtime::spawn(async move {
+                if let Err(error) = pending.wait().await {
+                    eprintln!(
+                        "cannot present uninitialized window {}: {error}",
+                        window.label()
+                    );
+                    return;
+                }
+                #[cfg(target_os = "macos")]
+                let result =
+                    window_presentation_macos::present_window(&window, &window.state::<AppState>())
+                        .await;
+                #[cfg(target_os = "linux")]
+                let result =
+                    window_presentation_linux::present_window(&window, &window.state::<AppState>())
+                        .await;
+                if let Err(error) = result {
+                    eprintln!("failed to present window {}: {error}", window.label());
+                }
+            });
+        });
+    }
     builder = builder.plugin(tauri_plugin_deep_link::init());
 
     builder
@@ -460,11 +601,64 @@ pub fn run() {
                     let window = tauri::WebviewWindowBuilder::from_config(app, config)?
                         .data_directory(directory.clone())
                         .build()?;
+                    #[cfg(windows)]
                     if window.label() != "main" {
                         register_desktop_window_events(&window);
                     }
+                    #[cfg(target_os = "linux")]
+                    let _ = window;
                 }
             }
+            #[cfg(target_os = "macos")]
+            for (label, pending) in &startup_geometry {
+                let window = app.get_webview_window(label).ok_or_else(|| {
+                    crate::error::AppError::Io(format!(
+                        "configured startup window is missing: {label}"
+                    ))
+                })?;
+                register_desktop_window_events(&window);
+                let result =
+                    window_presentation_macos::prepare_window(&window, &app.state::<AppState>());
+                if let Err(error) = &result {
+                    pending.complete(Err(error.to_string()));
+                }
+                result?;
+                complete_window_restore(&window, pending.clone());
+            }
+            #[cfg(target_os = "linux")]
+            for (config, pending) in &startup_geometry {
+                let window = app.get_webview_window(&config.label).ok_or_else(|| {
+                    crate::error::AppError::Io(format!(
+                        "configured startup window is missing: {}",
+                        config.label
+                    ))
+                })?;
+                register_desktop_window_events(&window);
+                let initial_origin = if config.x.is_some() || config.y.is_some() {
+                    Some((
+                        config.x.unwrap_or(0.0) as i32,
+                        config.y.unwrap_or(0.0) as i32,
+                    ))
+                } else {
+                    None
+                };
+                let result = (|| {
+                    if initialize_primary_geometry && window.label() == "main" {
+                        platform::initialize_window_geometry(&window)?;
+                    }
+                    window_persistence_linux::restore_window(
+                        &window,
+                        &app.state::<AppState>(),
+                        initial_origin,
+                    )
+                })();
+                if let Err(error) = &result {
+                    pending.complete(Err(error.to_string()));
+                }
+                let constructor = result?;
+                complete_window_restore_linux(&window, pending.clone(), constructor);
+            }
+            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
             if let Some(window) = app.get_webview_window("main") {
                 register_desktop_window_events(&window);
                 #[cfg(any(windows, target_os = "linux"))]

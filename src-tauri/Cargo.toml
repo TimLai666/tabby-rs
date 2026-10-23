@@ -94,3 +94,4 @@ russh = { path = "vendor/russh" }
 russh-sftp = { path = "vendor/russh-sftp" }
 portable-pty = { path = "vendor/portable-pty" }
 tauri-plugin-single-instance = { path = "vendor/tauri-plugin-single-instance" }
+tao = { path = "vendor/tao" }

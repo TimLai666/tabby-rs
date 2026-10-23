@@ -35,7 +35,10 @@ fn set_bounds_size(window: &tauri::WebviewWindow, size: PhysicalSize<u32>) -> Re
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     return crate::platform::set_window_outer_size(window, size);
 
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    #[cfg(target_os = "linux")]
+    return crate::platform::window_completion_linux::set_size(window, size);
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
     window.set_size(size).map_err(io_error)
 }
 
@@ -78,9 +81,9 @@ fn window_state(window: &tauri::WebviewWindow) -> Result<WindowStateSnapshot, Ap
     );
     Ok(WindowStateSnapshot {
         visible: window.is_visible().map_err(io_error)?,
-        always_on_top: window.is_always_on_top().map_err(io_error)?,
+        always_on_top: crate::platform::window_is_always_on_top(window)?,
         fullscreen: window.is_fullscreen().map_err(io_error)?,
-        maximized: window.is_maximized().map_err(io_error)?,
+        maximized: crate::platform::window_is_maximized(window)?,
         minimized: window.is_minimized().map_err(io_error)?,
         focused: window.is_focused().map_err(io_error)?,
         bounds: WindowBounds {
@@ -110,9 +113,9 @@ pub(crate) fn create_window(
     request: NewWindowRequest,
 ) -> Result<tauri::WebviewWindow, AppError> {
     let label = format!("window-{}", state.next_window_id());
-    #[cfg(any(windows, target_os = "linux"))]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     let geometry = app.state::<crate::window_geometry::initialization::Initializations>();
-    #[cfg(any(windows, target_os = "linux"))]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     let pending_geometry = geometry.begin(&label).map_err(AppError::Io)?;
     if let Some(context) = request.launch {
         state.launches().push(&label, context.for_new_window());
@@ -144,7 +147,7 @@ pub(crate) fn create_window(
         .title_bar_style(tauri::TitleBarStyle::Overlay)
         .hidden_title(true);
     let window = builder.build().map_err(|error| {
-        #[cfg(any(windows, target_os = "linux"))]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             pending_geometry.complete(Err(error.to_string()));
             geometry.remove(&label);
@@ -153,7 +156,42 @@ pub(crate) fn create_window(
         io_error(error)
     })?;
     crate::register_desktop_window_events(&window);
-    #[cfg(any(windows, target_os = "linux"))]
+    #[cfg(target_os = "macos")]
+    {
+        let result = crate::window_presentation_macos::prepare_window(&window, state);
+        if let Err(error) = result {
+            pending_geometry.complete(Err(error.to_string()));
+            state.launches().set_closing(&label, true);
+            return match window.destroy() {
+                Ok(()) => Err(error),
+                Err(cleanup) => Err(io_error(format!(
+                    "{error}; failed to destroy the uninitialized window: {cleanup}"
+                ))),
+            };
+        }
+        crate::complete_window_restore(&window, pending_geometry);
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let result = crate::platform::initialize_window_geometry(&window)
+            .and_then(|()| crate::window_persistence_linux::restore_window(&window, state, None));
+        match result {
+            Ok(constructor) => {
+                crate::complete_window_restore_linux(&window, pending_geometry, constructor);
+            }
+            Err(error) => {
+                pending_geometry.complete(Err(error.to_string()));
+                state.launches().set_closing(&label, true);
+                return match window.destroy() {
+                    Ok(()) => Err(error),
+                    Err(cleanup) => Err(io_error(format!(
+                        "{error}; failed to destroy the uninitialized window: {cleanup}"
+                    ))),
+                };
+            }
+        }
+    }
+    #[cfg(windows)]
     {
         let result = crate::platform::initialize_window_geometry(&window);
         pending_geometry.complete(result.as_ref().map(|_| ()).map_err(ToString::to_string));
@@ -179,10 +217,19 @@ pub fn window_get_state(
 }
 
 #[tauri::command]
-pub fn window_apply_state(
+pub async fn window_apply_state(
     window: tauri::WebviewWindow,
     request: WindowStatePatch,
 ) -> Result<(), AppError> {
+    let state = window.state::<AppState>();
+    let _operations = state.lock_window_operations().await;
+    let bounds = request.bounds;
+    let maximized = request.maximized;
+
+    if bounds.is_some() || maximized.is_some() || request.visible == Some(true) {
+        crate::platform::wait_for_window_operations(&window).await?;
+    }
+
     if let Some(frame) = request.frame.as_deref() {
         crate::platform::set_window_frame(&window, frame)?;
     }
@@ -190,24 +237,72 @@ pub fn window_apply_state(
         window.set_title(title).map_err(io_error)?;
     }
     if let Some(value) = request.always_on_top {
-        window.set_always_on_top(value).map_err(io_error)?;
+        crate::platform::set_window_always_on_top(&window, value)?;
     }
     if let Some(value) = request.fullscreen {
         window.set_fullscreen(value).map_err(io_error)?;
+        #[cfg(target_os = "linux")]
+        crate::platform::window_completion_linux::wait_for_fullscreen(&window, value).await?;
     }
-    if let Some(value) = request.maximized {
-        if value {
-            window.maximize().map_err(io_error)?;
-        } else {
-            window.unmaximize().map_err(io_error)?;
-        }
+
+    if bounds.is_some() && maximized.is_some() {
+        window.unmaximize().map_err(io_error)?;
+        crate::platform::wait_for_window_operations(&window).await?;
+        #[cfg(target_os = "linux")]
+        crate::platform::window_completion_linux::wait_for_maximized(&window, false).await?;
     }
-    if let Some(bounds) = request.bounds {
-        set_bounds_size(&window, PhysicalSize::new(bounds.width, bounds.height))?;
+
+    #[cfg(target_os = "linux")]
+    let bounds = if bounds.is_some()
+        && !crate::platform::window_completion_linux::accepts_bounds(&window)?
+    {
+        None
+    } else {
+        bounds
+    };
+
+    if let Some(bounds) = bounds {
+        let size = PhysicalSize::new(bounds.width, bounds.height);
+        #[cfg(target_os = "macos")]
+        crate::platform::set_window_outer_size_async(&window, size).await?;
+        #[cfg(not(target_os = "macos"))]
+        set_bounds_size(&window, size)?;
+
         if window_capabilities(&window)?.absolute_positioning {
+            #[cfg(target_os = "linux")]
+            crate::platform::window_completion_linux::wait_for_size(&window, size).await?;
             set_bounds_position(&window, PhysicalPosition::new(bounds.x, bounds.y))?;
         }
+        crate::platform::wait_for_window_operations(&window).await?;
+        #[cfg(target_os = "linux")]
+        crate::platform::window_completion_linux::wait_for_bounds(&window, bounds).await?;
+        #[cfg(target_os = "linux")]
+        {
+            let capture_window = window.clone();
+            window
+                .run_on_main_thread(move || {
+                    let state = capture_window.state::<AppState>();
+                    if let Err(error) =
+                        crate::window_persistence_linux::capture_window(&capture_window, &state)
+                    {
+                        eprintln!("failed to record applied window bounds: {error}");
+                    }
+                })
+                .map_err(io_error)?;
+            crate::platform::wait_for_window_operations(&window).await?;
+        }
     }
+    if let Some(maximized) = maximized {
+        if maximized {
+            window.maximize().map_err(io_error)?;
+        } else if request.bounds.is_none() {
+            window.unmaximize().map_err(io_error)?;
+        }
+        crate::platform::wait_for_window_operations(&window).await?;
+        #[cfg(target_os = "linux")]
+        crate::platform::window_completion_linux::wait_for_maximized(&window, maximized).await?;
+    }
+
     if let Some(value) = request.progress {
         let state = match value {
             Some(value) => ProgressBarState {
@@ -263,17 +358,35 @@ pub fn window_minimize(
 }
 
 #[tauri::command]
-pub fn window_toggle_maximize(
+pub async fn window_toggle_maximize(
     window: tauri::WebviewWindow,
     _request: serde_json::Value,
 ) -> Result<(), AppError> {
-    if window.is_maximized().map_err(io_error)? {
-        window.unmaximize().map_err(io_error)
+    let state = window.state::<AppState>();
+    let _operations = state.lock_window_operations().await;
+    crate::platform::wait_for_window_operations(&window).await?;
+    let maximize = !crate::platform::window_is_maximized(&window)?;
+    if maximize {
+        window.maximize().map_err(io_error)?;
     } else {
-        window.maximize().map_err(io_error)
+        window.unmaximize().map_err(io_error)?;
     }
+    #[cfg(target_os = "linux")]
+    crate::platform::window_completion_linux::wait_for_maximized(&window, maximize).await?;
+    crate::platform::wait_for_window_operations(&window).await
 }
 
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[tauri::command]
+pub async fn window_close(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, AppState>,
+    _request: serde_json::Value,
+) -> Result<(), AppError> {
+    crate::window_close::close_window(&window, &state).await
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 #[tauri::command]
 pub fn window_close(
     window: tauri::WebviewWindow,
@@ -321,11 +434,21 @@ pub fn window_list_screens(
 }
 
 #[tauri::command]
-pub fn window_set_docking(
+pub async fn window_set_docking(
     window: tauri::WebviewWindow,
     request: DockingOptions,
 ) -> Result<WindowStateSnapshot, AppError> {
     if request.side == "off" {
+        #[cfg(target_os = "linux")]
+        window_apply_state(
+            window.clone(),
+            WindowStatePatch {
+                always_on_top: Some(false),
+                ..Default::default()
+            },
+        )
+        .await?;
+        #[cfg(not(target_os = "linux"))]
         window.set_always_on_top(false).map_err(io_error)?;
         return window_state(&window);
     }
@@ -346,11 +469,24 @@ pub fn window_set_docking(
         .ok_or_else(|| AppError::NotFound("display".into()))?;
     let bounds = docked_bounds(&request, selected.work_area)?;
 
-    set_bounds_size(&window, PhysicalSize::new(bounds.width, bounds.height))?;
-    set_bounds_position(&window, PhysicalPosition::new(bounds.x, bounds.y))?;
-    window
-        .set_always_on_top(request.always_on_top)
-        .map_err(io_error)?;
+    #[cfg(target_os = "linux")]
+    window_apply_state(
+        window.clone(),
+        WindowStatePatch {
+            bounds: Some(bounds),
+            always_on_top: Some(request.always_on_top),
+            ..Default::default()
+        },
+    )
+    .await?;
+    #[cfg(not(target_os = "linux"))]
+    {
+        set_bounds_size(&window, PhysicalSize::new(bounds.width, bounds.height))?;
+        set_bounds_position(&window, PhysicalPosition::new(bounds.x, bounds.y))?;
+        window
+            .set_always_on_top(request.always_on_top)
+            .map_err(io_error)?;
+    }
     window_state(&window)
 }
 

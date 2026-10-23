@@ -1,7 +1,21 @@
 use crate::{desktop::VibrancyOptions, error::AppError};
 
 mod frame;
+mod window_maximized;
+pub(crate) use window_maximized::read as window_is_maximized;
+mod window_topmost;
+pub(crate) use window_topmost::{read as window_is_always_on_top, set as set_window_always_on_top};
+#[cfg(target_os = "linux")]
+pub(crate) mod window_completion_linux;
+#[cfg(target_os = "linux")]
+mod window_topmost_linux;
+
+#[cfg(target_os = "macos")]
+pub(crate) mod window_state_macos;
 pub use frame::{set_window_frame, window_caption_controls};
+
+#[cfg(target_os = "linux")]
+pub(crate) mod window_state_linux;
 
 #[cfg(target_os = "linux")]
 mod window_bounds_linux;
@@ -27,6 +41,20 @@ mod window_size;
 mod window_size;
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 pub use window_size::set_window_outer_size;
+#[cfg(target_os = "macos")]
+pub use window_size::{set_window_outer_size_async, wait_for_window_operations};
+#[cfg(not(target_os = "macos"))]
+pub async fn wait_for_window_operations(window: &tauri::WebviewWindow) -> Result<(), AppError> {
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    window
+        .run_on_main_thread(move || {
+            let _ = sender.send(());
+        })
+        .map_err(|error| AppError::Io(error.to_string()))?;
+    receiver
+        .await
+        .map_err(|error| AppError::Io(error.to_string()))
+}
 
 #[cfg(target_os = "macos")]
 pub(crate) mod macos_quit;

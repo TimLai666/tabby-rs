@@ -29,7 +29,7 @@ fn main() {
     use std::{sync::mpsc, time::Duration};
     let args: Vec<_> = std::env::args().skip(1).collect();
     if args == ["--help"] || args == ["-h"] {
-        println!("Usage: cargo run --locked --manifest-path src-tauri/Cargo.toml --example window_content_size_linux [--stock-control]\nChecks real hidden/mapped Linux Tauri/Wry windows, hidden resizing, frame modes, scale conversion, worker reads, and destruction errors. --stock-control reads the original outer-size getter and must fail. This is not full desktop acceptance.");
+        println!("Usage: cargo run --locked --manifest-path src-tauri/Cargo.toml --example window_content_size_linux [--stock-control]\nChecks real hidden/mapped Linux Tauri/Wry windows, hidden resizing, frame modes, scale conversion, worker reads, and destruction errors. --stock-control reads the original outer-size getter and must fail. This is not full desktop acceptance.\nMapped X11 checks require xwininfo and at least 1920x1080 logical desktop pixels (for example 3840x2160 physical pixels at scale 2).");
         return;
     }
     let control = args == ["--stock-control"];
@@ -61,10 +61,11 @@ fn main() {
             else { bounds::window_bounds(window).map(|(_, size)| size).map_err(|e| e.to_string()) }
         };
         let verify = move |phase: &str, window: &tauri::WebviewWindow, width: u32, height: u32| {
-            let scale = window.gtk_window().unwrap().scale_factor() as u32;
-            let expected = tauri::PhysicalSize::new(width * scale, height * scale);
+            let expected = expected_size(window, width, height);
             let actual = read(window);
-            let passed = actual.as_ref().is_ok_and(|size| *size == expected);
+            let passed = expected
+                .as_ref()
+                .is_ok_and(|expected| actual.as_ref().is_ok_and(|size| size == expected));
             println!("content-size {} {phase} {} actual={actual:?} expected={expected:?}", if passed { "PASS" } else { "FAIL" }, window.label());
             passed
         };
@@ -90,9 +91,14 @@ fn main() {
                 }
                 6 => {
                     while let Ok((label, result)) = rx.try_recv() {
-                        let scale = windows.iter().find(|w| w.label() == label).unwrap().gtk_window().unwrap().scale_factor() as u32;
-                        let expected = tauri::PhysicalSize::new(810 * scale, 610 * scale);
-                        if !result.as_ref().is_ok_and(|size| *size == expected) { failures += 1; }
+                        let window = windows.iter().find(|w| w.label() == label).unwrap();
+                        let expected = expected_size(window, 810, 610);
+                        if !expected
+                            .as_ref()
+                            .is_ok_and(|expected| result.as_ref().is_ok_and(|size| size == expected))
+                        {
+                            failures += 1;
+                        }
                         println!("content-size worker {label} actual={result:?} expected={expected:?}");
                         workers += 1;
                     }
@@ -121,4 +127,94 @@ fn main() {
     let code = outcome.load(std::sync::atomic::Ordering::SeqCst);
     drop(owned);
     std::process::exit(code);
+}
+
+#[cfg(target_os = "linux")]
+fn expected_size(
+    window: &tauri::WebviewWindow,
+    width: u32,
+    height: u32,
+) -> Result<tauri::PhysicalSize<u32>, String> {
+    use gtk::prelude::*;
+    use std::process::Command;
+    let gtk_window = window.gtk_window().map_err(|error| error.to_string())?;
+    let scale = gtk_window.scale_factor().max(1) as i64;
+    let requested = tauri::PhysicalSize::new(
+        width
+            .checked_mul(scale as u32)
+            .ok_or_else(|| "requested width overflow".to_owned())?,
+        height
+            .checked_mul(scale as u32)
+            .ok_or_else(|| "requested height overflow".to_owned())?,
+    );
+    if !gtk_window.is_mapped() {
+        return Ok(requested);
+    }
+    let Some(gdk_window) = gtk_window.window() else {
+        return Ok(requested);
+    };
+    let Ok(x11_window) = gdk_window.downcast::<gdkx11::X11Window>() else {
+        return Ok(requested);
+    };
+
+    let id = x11_window.xid();
+    let output = Command::new("xwininfo")
+        .args(["-id", &format!("{id:#x}")])
+        .output()
+        .map_err(|error| format!("run xwininfo for X11 window {id:#x}: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "xwininfo failed for X11 window {id:#x}: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let x = parse_xwininfo_signed(&text, "Absolute upper-left X:")? as i64;
+    let y = parse_xwininfo_signed(&text, "Absolute upper-left Y:")? as i64;
+    let native_width = parse_xwininfo(&text, "Width:")?;
+    let native_height = parse_xwininfo(&text, "Height:")?;
+    if native_width != requested.width || native_height != requested.height {
+        return Err(format!(
+            "X11 client size {native_width}x{native_height} does not match requested physical size {}x{}",
+            requested.width, requested.height
+        ));
+    }
+
+    let logical_left = x.div_euclid(scale);
+    let logical_top = y.div_euclid(scale);
+    let right = x + i64::from(native_width);
+    let bottom = y + i64::from(native_height);
+    let logical_right = right.div_euclid(scale) + i64::from(right.rem_euclid(scale) != 0);
+    let logical_bottom = bottom.div_euclid(scale) + i64::from(bottom.rem_euclid(scale) != 0);
+    let physical_width = (logical_right - logical_left)
+        .checked_mul(scale)
+        .and_then(|value| u32::try_from(value).ok())
+        .ok_or_else(|| "expected physical width overflow".to_owned())?;
+    let physical_height = (logical_bottom - logical_top)
+        .checked_mul(scale)
+        .and_then(|value| u32::try_from(value).ok())
+        .ok_or_else(|| "expected physical height overflow".to_owned())?;
+    Ok(tauri::PhysicalSize::new(physical_width, physical_height))
+}
+
+#[cfg(target_os = "linux")]
+fn parse_xwininfo(text: &str, key: &str) -> Result<u32, String> {
+    text.lines()
+        .find_map(|line| {
+            line.trim()
+                .strip_prefix(key)
+                .and_then(|value| value.trim().parse().ok())
+        })
+        .ok_or_else(|| format!("missing or invalid {key} in xwininfo output: {text}"))
+}
+
+#[cfg(target_os = "linux")]
+fn parse_xwininfo_signed(text: &str, key: &str) -> Result<i32, String> {
+    text.lines()
+        .find_map(|line| {
+            line.trim()
+                .strip_prefix(key)
+                .and_then(|value| value.trim().parse().ok())
+        })
+        .ok_or_else(|| format!("missing or invalid {key} in xwininfo output: {text}"))
 }

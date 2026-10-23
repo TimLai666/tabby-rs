@@ -88,6 +88,8 @@ pub struct TabbyRsState {
     pub safe_mode: SafeModeState,
     pub diagnostics: DiagnosticsState,
     pub pending_plugins: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) window_state: Option<crate::window_geometry::persistence::SavedWindowState>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, serde_json::Value>,
 }
@@ -103,6 +105,7 @@ impl Default for TabbyRsState {
             safe_mode: SafeModeState::default(),
             diagnostics: DiagnosticsState::default(),
             pending_plugins: Vec::new(),
+            window_state: None,
             extra: BTreeMap::new(),
         }
     }
@@ -186,3 +189,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "window_state_tests.rs"]
+mod window_state_tests;

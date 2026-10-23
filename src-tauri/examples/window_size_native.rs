@@ -50,6 +50,53 @@ fn main() {
 mod macos_checks;
 
 #[cfg(target_os = "macos")]
+#[path = "window_size_native/macos_completion.rs"]
+mod macos_completion;
+
+#[cfg(target_os = "macos")]
+#[path = "window_size_native/macos_saved.rs"]
+mod macos_saved;
+
+#[cfg(target_os = "macos")]
+#[path = "window_size_native/macos_startup.rs"]
+mod macos_startup;
+
+#[cfg(target_os = "macos")]
+#[path = "window_size_native/macos_capture.rs"]
+mod macos_capture;
+
+#[cfg(target_os = "macos")]
+#[path = "window_size_native/macos_presentation.rs"]
+mod macos_presentation;
+
+#[cfg(target_os = "macos")]
+mod state {
+    pub(crate) use crate::macos_capture::CaptureState as AppState;
+}
+
+#[cfg(target_os = "macos")]
+mod commands {
+    pub(crate) mod app {
+        use crate::{error::AppError, state::AppState};
+        use std::collections::BTreeMap;
+
+        pub(crate) fn startup_window_config(
+            state: &AppState,
+        ) -> Result<BTreeMap<String, serde_json::Value>, AppError> {
+            state.startup_window_config()
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[path = "../src/window_persistence_macos.rs"]
+mod window_persistence_macos;
+
+#[cfg(target_os = "macos")]
+#[path = "../src/window_presentation_macos.rs"]
+mod window_presentation_macos;
+
+#[cfg(target_os = "macos")]
 use macos_checks::{run_checks, CHECKS};
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
@@ -126,7 +173,24 @@ fn main() {
             let handle = app.handle().clone();
             let owned_temp = isolated;
             std::thread::spawn(move || {
+                #[cfg(target_os = "windows")]
                 let failures = run_checks(&first, &second);
+                #[cfg(target_os = "macos")]
+                let failures = {
+                    let mut failures = macos_startup::run_checks(&first, &second);
+                    failures.extend(macos_capture::run_checks(&first, &second));
+                    failures.extend(macos_presentation::run_checks(&first, &second));
+                    failures.extend(macos_saved::run_checks(&first, &second));
+                    failures.extend(macos_completion::run_checks(&first, &second));
+                    failures.extend(run_checks(&first, &second));
+                    if let Err(error) = macos_completion::check_destroyed(&second) {
+                        failures.push(error);
+                    }
+                    if let Err(error) = macos_saved::check_destroyed(&second) {
+                        failures.push(error);
+                    }
+                    failures
+                };
                 for window in [&first, &second] {
                     let _ = window.destroy();
                 }
@@ -136,7 +200,25 @@ fn main() {
                 let code = i32::from(!failures.is_empty());
                 eprintln!(
                     "window_size_native completed: checks={} failures={}",
-                    CHECKS.load(std::sync::atomic::Ordering::Relaxed),
+                    {
+                        let count = CHECKS.load(std::sync::atomic::Ordering::Relaxed);
+                        #[cfg(target_os = "macos")]
+                        let count = count
+                            + macos_completion::CHECKS.load(std::sync::atomic::Ordering::Relaxed);
+                        #[cfg(target_os = "macos")]
+                        let count =
+                            count + macos_saved::CHECKS.load(std::sync::atomic::Ordering::Relaxed);
+                        #[cfg(target_os = "macos")]
+                        let count = count
+                            + macos_startup::CHECKS.load(std::sync::atomic::Ordering::Relaxed);
+                        #[cfg(target_os = "macos")]
+                        let count = count
+                            + macos_capture::CHECKS.load(std::sync::atomic::Ordering::Relaxed);
+                        #[cfg(target_os = "macos")]
+                        let count = count
+                            + macos_presentation::CHECKS.load(std::sync::atomic::Ordering::Relaxed);
+                        count
+                    },
                     failures.len()
                 );
                 let _ = done_tx.send((code, owned_temp));

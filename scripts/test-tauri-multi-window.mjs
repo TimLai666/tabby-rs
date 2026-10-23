@@ -80,7 +80,7 @@ assert.match(lib, /window\.emit_to\(window\.label\(\), "app:launch", \(\)\)/)
 assert.doesNotMatch(lib, /app\.emit\("app:launch"/)
 assert.doesNotMatch(desktop, /fn main_window\(/)
 assert.match(desktop, /pub fn window_get_state\(\s*window: tauri::WebviewWindow/)
-assert.match(desktop, /pub fn window_apply_state\(\s*window: tauri::WebviewWindow/)
+assert.match(desktop, /pub async fn window_apply_state\(\s*window: tauri::WebviewWindow/)
 assert.match(lib, /pub\(crate\) fn register_desktop_window_events\(window: &tauri::WebviewWindow\)/)
 for (const event of windowEvents) {
     assert.match(lib, new RegExp(`emitter\\.emit_to\\(\\s*emitter\\.label\\(\\),\\s*"${event}"`))

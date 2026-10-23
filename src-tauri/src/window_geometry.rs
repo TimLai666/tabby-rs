@@ -1,3 +1,14 @@
+#[path = "window_geometry_persistence.rs"]
+pub(crate) mod persistence;
+
+#[cfg(any(target_os = "linux", test))]
+#[path = "window_geometry_linux_coordinates.rs"]
+pub(crate) mod linux_coordinates;
+
+#[cfg(any(windows, test))]
+#[path = "window_geometry_windows_coordinates.rs"]
+pub(crate) mod windows_coordinates;
+
 use tauri::utils::config::Config;
 
 #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
@@ -80,7 +91,7 @@ fn prepare_stock_startup(config: &mut Config) -> bool {
     true
 }
 
-#[cfg(any(windows, target_os = "linux", test))]
+#[cfg(any(windows, target_os = "linux", target_os = "macos", test))]
 #[path = "window_geometry_initialization.rs"]
 pub(crate) mod initialization;
 

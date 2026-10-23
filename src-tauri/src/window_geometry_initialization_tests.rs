@@ -86,3 +86,59 @@ async fn pending_bootstrap_can_execute_on_a_runtime_task() {
     pending.complete(Ok(()));
     assert!(task.await.unwrap().is_ok());
 }
+
+#[tokio::test]
+async fn first_finished_page_claims_one_ticket_before_initialization_completes() {
+    let registry = Initializations::default();
+    let ticket = registry.begin("main").unwrap();
+    let claimed = registry
+        .first_page_load("main")
+        .expect("registered first page");
+    assert!(Arc::ptr_eq(&ticket, &claimed));
+    assert!(registry.first_page_load("main").is_none());
+    assert!(!registry.can_present("main"));
+    let mut waiting = Box::pin(claimed.wait());
+    pending(waiting.as_mut());
+    ticket.complete(Ok(()));
+    assert!(waiting.await.is_ok());
+    assert!(
+        registry.first_page_load("main").is_none(),
+        "reload must not replay startup presentation"
+    );
+}
+
+#[test]
+fn unknown_pages_and_duplicate_registration_do_not_consume_another_window() {
+    let registry = Initializations::default();
+    assert!(registry.first_page_load("main").is_none());
+    registry.begin("main").unwrap();
+    registry.begin("peer").unwrap();
+    assert!(registry.first_page_load("main").is_some());
+    assert!(registry.begin("main").is_err());
+    assert!(registry.first_page_load("main").is_none());
+    assert!(registry.first_page_load("peer").is_some());
+}
+
+#[tokio::test]
+async fn removed_page_ticket_cannot_resolve_a_replacement_or_erase_its_first_load() {
+    let registry = Initializations::default();
+    let old = registry.begin("main").unwrap();
+    let claimed = registry.first_page_load("main").unwrap();
+    let mut waiting = Box::pin(claimed.wait());
+    pending(waiting.as_mut());
+    registry.remove("main");
+    assert!(waiting.await.is_err());
+    assert!(registry.first_page_load("main").is_none());
+    let replacement = registry.begin("main").unwrap();
+    let replacement_page = registry.first_page_load("main").unwrap();
+    assert!(!Arc::ptr_eq(&claimed, &replacement_page));
+    let mut replacement_wait = Box::pin(replacement_page.wait());
+    old.complete(Ok(()));
+    pending(replacement_wait.as_mut());
+    replacement.complete(Err("owned initialization failure".into()));
+    assert_eq!(
+        replacement_wait.await.unwrap_err(),
+        "owned initialization failure"
+    );
+    assert!(registry.first_page_load("main").is_none());
+}

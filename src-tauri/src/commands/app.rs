@@ -21,6 +21,10 @@ use crate::{
 
 const INITIAL_CONFIG_YAML: &str = "version: 1\n";
 
+#[cfg(test)]
+#[path = "app_startup_window_tests.rs"]
+mod startup_window_tests;
+
 #[derive(Debug, Default, serde::Deserialize)]
 pub struct EmptyRequest {}
 
@@ -216,6 +220,14 @@ fn bootstrap_config(state: &AppState) -> Result<BTreeMap<String, serde_json::Val
     parse_bootstrap_config(&ensure_config_file(paths.config_file())?)
 }
 
+/// Read appearance input without creating or rewriting configuration.
+pub(crate) fn startup_window_config(
+    state: &AppState,
+) -> Result<BTreeMap<String, serde_json::Value>, AppError> {
+    let paths = StoragePaths::from_app_paths(state.paths());
+    parse_bootstrap_config(&read_config(paths.config_file())?.yaml)
+}
+
 fn ensure_config_file(path: &Path) -> Result<String, AppError> {
     let config = read_config(path)?;
     if config.revision.is_some() {
@@ -279,7 +291,7 @@ pub(crate) fn safe_mode_suspected_plugins(previous: &TabbyRsState) -> Vec<String
     suspected
 }
 
-#[cfg(not(any(windows, target_os = "linux")))]
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 #[tauri::command]
 pub fn app_bootstrap(
     window: WebviewWindow,
@@ -289,7 +301,7 @@ pub fn app_bootstrap(
     bootstrap_data(window, request, state)
 }
 
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 #[tauri::command]
 pub async fn app_bootstrap(
     window: WebviewWindow,

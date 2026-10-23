@@ -62,12 +62,14 @@ export class TauriHostAppService extends HostAppService {
     }
 
     emitReady (): void {
-        const state = this.platform === Platform.macOS || this.platform === Platform.Windows
-            ? { frame: this.startupWindowFrame, visible: true }
-            : { visible: true }
-        void this.bridge.invoke('window.applyState', state).catch(error => {
-            this.logger.warn('Failed to show ready window:', error)
-        })
+        if (this.platform !== Platform.macOS && this.platform !== Platform.Linux) {
+            const state = this.platform === Platform.Windows
+                ? { frame: this.startupWindowFrame, visible: true }
+                : { visible: true }
+            void this.bridge.invoke('window.applyState', state).catch(error => {
+                this.logger.warn('Failed to show ready window:', error)
+            })
+        }
         this.ready = true
         const pending = this.pendingLaunches.splice(0)
         for (const context of pending) {

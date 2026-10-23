@@ -17,6 +17,8 @@ pub(crate) fn initialize(window: &tauri::WebviewWindow) -> Result<(), AppError> 
                         .is_some()
                     {
                         native.set_gravity(gtk::gdk::Gravity::Static);
+                    } else {
+                        initialize_wayland_decoration(&native)?;
                     }
                     main_window
                         .default_vbox()
@@ -34,4 +36,25 @@ pub(crate) fn initialize(window: &tauri::WebviewWindow) -> Result<(), AppError> 
     receiver
         .recv()
         .map_err(|error| AppError::Io(error.to_string()))?
+}
+
+/// Keep native decoration changes from altering an acknowledged content resize.
+/// Preserve theme styles, global animation preferences, and unrelated windows.
+fn initialize_wayland_decoration(window: &gtk::ApplicationWindow) -> Result<(), AppError> {
+    let provider = gtk::CssProvider::new();
+    // GTK adds the currently animated shadow extents to resize requests. An
+    // unmaximize frame can therefore acknowledge normal state while a later
+    // decoration frame changes the requested content dimensions. Keep the
+    // theme's final decoration style without that geometry-changing transition.
+    provider
+        .load_from_data(b"decoration { transition: none; }")
+        .map_err(|error| {
+            AppError::Io(format!(
+                "could not initialize Wayland window geometry: {error}"
+            ))
+        })?;
+    window
+        .style_context()
+        .add_provider(&provider, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION);
+    Ok(())
 }

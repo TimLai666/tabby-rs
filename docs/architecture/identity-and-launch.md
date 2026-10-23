@@ -169,6 +169,18 @@ The Rust host owns the desktop window lifecycle. `--new-window` is transported t
 
 After focus, movement, or resizing, the renderer reads the full native window state. Only the latest requested state read can replace its cached snapshot. Bounds use outer window dimensions on macOS and Windows and client bounds on Linux. Linux movement events read the owning window's client origin rather than Tao's frame-position payload; resize events trigger a full snapshot refresh. `scripts/test-tauri-host-window-state.mjs` exercises the actual renderer service with simulated IPC, including delayed replies, failures, and independent windows. These checks do not establish native desktop acceptance.
 
+Complete `window.applyState` patches are serialized by the host operation lock.
+Frame, title, topmost, and fullscreen fields retain their order before bounds.
+When bounds and an explicit maximized state arrive together, the host first
+unmaximizes, applies the requested bounds, and then applies the requested final
+maximized state before showing the window. On macOS, the asynchronous outer-size
+helper reports the actual queued native result; the synchronous docking helper
+retains its preflight-and-dispatch contract. Completion waits pass through the
+Tauri event thread and, on macOS, its main GCD queue. Geometry and show requests
+also drain earlier queued operations before starting, including work left by a
+cancelled command. These dispatch checks do not establish compositor, fullscreen,
+or supported-desktop acceptance.
+
 The renderer returns a launch context to the native host when it requests a new
 window. An omitted legacy command array decodes as an empty array, matching the
 serialized form for profile, working-directory, and plain new-window requests.
@@ -177,6 +189,16 @@ Nonempty command arguments retain their separate array items.
 When a launch request creates a window, its new-window flags and second-instance marker are consumed before that window reads the request. The initial main window also consumes those flags. The remaining arguments, working directory, and parse errors are preserved. A manual new window receives no copy of the original process arguments. Failed window creation and window destruction remove that window's pending requests. Window creation runs outside synchronous commands and native event handlers to avoid the documented WebView2 deadlock.
 
 An approved window close marks its label as closing before requesting native destruction. Routing excludes it immediately, including the interval before the operating system reports `Destroyed`. If destruction fails, the label becomes eligible again and its renderer is notified to resume pending launches.
+
+On macOS, the close controller claims that label before waiting for the shared
+geometry lock and native operation barrier. It saves the cached normal bounds
+with the live maximized flag, then destroys the window. Repeated pending requests
+return without another save or destroy. A cancelled wait or failed destruction
+releases the claim and wakes that label's queued launches. State read/write errors
+are logged while approved destruction continues. The renderer's confirmation
+path remains responsible for approval; a cancelled confirmation never invokes
+this controller. The controller fixture simulates OS and state I/O, so complete
+application/desktop close acceptance remains separate.
 
 Normal application exit requests (`None` or exit code `0`) prevent exit while windows remain and request each window's existing close confirmation. A cancelled window retains its tabs; approved windows close through the same scoped renderer flow. With no windows, exit proceeds. Platform-level quit during startup sends the optional `force: true` request and exits without renderer confirmation, preserving the encrypted-configuration cancellation path. Restart and nonzero exit codes retain their original behavior. The host clears the crash marker only when the event loop actually exits.
 
@@ -188,7 +210,7 @@ On macOS, stock primary and secondary windows start at 800×600 with a
 400×300 outer minimum, matching the fixed upstream. The native geometry adapter
 prepares the stock main window configuration before construction; secondary
 creation uses the same defaults. Both initially use Overlay, where content and
-outer dimensions coincide. Ready frame selection preserves that outer frame and
+outer dimensions coincide. Startup frame selection preserves that outer frame and
 minimum. Explicit custom geometry, additional configured windows, creation
 policies, and other window fields are preserved. Bootstrap, docking, reload,
 and ready do not reinitialize default bounds. Saved window boundaries and other
@@ -240,7 +262,53 @@ its queued launch delivery retains the existing ordering.
 Real Win32 and Wry checks, fixed-original desktop comparisons, supported display
 configurations, persistence, and installers retain their separate acceptance gates.
 
-macOS and Windows frame selection is captured from the first raw bootstrap configuration and retained for every window in that process. Native uses the system title bar. On macOS, Thin and Full use hidden native chrome with the shared renderer layout. Missing or unknown raw selections, including encrypted wrappers without an appearance field, use Thin. The renderer receives the snapshot through bootstrap data and applies it before showing its owning window.
+macOS and Linux use that registry for saved-frame restoration. Configured automatic
+windows register before construction; requested windows register before their
+builder runs. After restoring the frame, native move/resize events drain through
+the operation barrier before capture is enabled and the ticket completes.
+Bootstrap and concurrent launch presentation wait for that completion. The
+native capture fixture exercises the actual restore/capture methods and tracker
+with real Wry events; the AppState boundary is substituted. Full application
+persistence and original desktop comparison remain pending.
+
+Linux keeps the original automatic-window configuration before portable deferral,
+restores each created window, then arms X11 first-event capture or Wayland
+unchanged-startup suppression before completing its ticket. It preserves custom
+minimums and explicit origins and does not create manual windows. Its first-page
+hook follows the same claim/wait/close guards, without macOS appearance operations.
+Linux emitReady only releases queued launches. Blank-page production application
+and IPC probes verify hidden resize and combined unmaximize/resize/hide followed
+by reload and approved-close saving on X11 and Wayland at scales one and two.
+Full rendered desktop persistence and original desktop comparison remain pending.
+
+macOS captures frame selection from the first successful raw construction-time
+config read, before restoring saved bounds. Windows captures it from the first raw
+bootstrap configuration. Both retain that snapshot for every window in the process.
+Native uses the system title bar; macOS Thin and Full use hidden native chrome with
+the shared renderer layout. Missing or unknown raw selections, including encrypted
+wrappers without an appearance field, use Thin. Bootstrap returns the snapshot;
+Windows applies it when its renderer is ready.
+
+On macOS, the global finished-page hook claims one initialization ticket and keeps
+its owning window before waiting. After restoration completes, presentation applies
+raw vibrancy and colorSchemeMode, then shows and focuses the window, first maximizing
+when its construction-time saved flag is true. Initial main-window hidden startup
+suppresses maximization, showing, and focus even after its CLI request is consumed.
+Other windows do not inherit that startup flag. Page reloads do not repeat these
+operations. Renderer readiness releases queued launch requests without showing the
+window. An approved close claimed during awaited appearance or zoom suppresses
+subsequent showing and focus. Controller and filesystem checks cover these
+boundaries separately. The owned blank Wry fixture executes the actual native
+prepare/present methods for two windows with hidden startup and saved maximization
+on/off, including normal bounds after unmaximizing. Its AppState/config I/O boundary
+is substituted. An owned ad-hoc signed full application with a freshly compiled
+renderer and isolated data also verifies a 700×450 saved normal window, saved
+maximization, native unmaximize/remaximize, and ordinary Cmd+Q persistence of the
+normal bounds and live maximized flag. These visible cases use an incognito
+primary WebView and a welcome tab without a PTY. Hidden-startup UI and normal
+quit acceptance, secondary windows, reload timing, original desktop comparison,
+and installer acceptance remain pending. A UI observation timeout does not accept
+hidden visibility.
 
 On Windows, Thin and Full keep the decorated native host and expand its client area. Standard native BUTTON controls own caption input, accessibility, capture, and window actions. A single pointer-transparent canvas in the owning WebView paints the glyphs in the configured terminal foreground, with the pinned Electron/Chromium geometry and hover animation. The native adapter publishes physical button bounds, display scale, hover, pressed, and maximized state through the scoped caption event and window snapshot. Native mode and fullscreen clear the renderer overlay. The adapter retains the existing close-request confirmation path and the previous WebView focus.
 

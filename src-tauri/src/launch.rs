@@ -97,6 +97,15 @@ impl LaunchQueue {
         true
     }
 
+    /// Atomically claim one renderer-approved close for this label.
+    pub fn begin_close(&self, label: &str) -> bool {
+        self.0
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .closing
+            .insert(label.to_owned())
+    }
+
     pub fn set_closing(&self, label: &str, closing: bool) {
         let mut state = self.0.lock().unwrap_or_else(|error| error.into_inner());
         if closing {

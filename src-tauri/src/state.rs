@@ -1,4 +1,10 @@
+mod backup;
 mod window_frame;
+mod window_state;
+
+#[cfg(test)]
+#[path = "state/persistence_tests.rs"]
+mod persistence_tests;
 
 use std::{
     collections::BTreeMap,
@@ -18,13 +24,17 @@ use crate::{
         state_file::{save_state, TabbyRsState},
     },
     update::service::UpdateManager,
+    window_geometry::persistence::WindowStates,
 };
 
 pub struct AppState {
     next_window_id: AtomicU64,
     force_quit_requested: AtomicBool,
     launches: LaunchQueue,
+    initial_window_hidden: bool,
     storage_lock: Mutex<()>,
+    window_operations: tokio::sync::Mutex<()>,
+    window_states: Mutex<WindowStates>,
     plugin_operations: OperationManager,
     paths: AppPaths,
     persisted_state: Mutex<TabbyRsState>,
@@ -38,13 +48,17 @@ impl AppState {
         initial_launch: LaunchContext,
         persisted_state: TabbyRsState,
     ) -> Self {
+        let initial_window_hidden = initial_launch.request.argv.hidden;
         let launches = LaunchQueue::default();
         launches.push("main", initial_launch.for_new_window());
         Self {
             next_window_id: AtomicU64::new(0),
             force_quit_requested: AtomicBool::new(false),
             launches,
+            initial_window_hidden,
             storage_lock: Mutex::new(()),
+            window_operations: tokio::sync::Mutex::new(()),
+            window_states: Mutex::new(WindowStates::default()),
             plugin_operations: OperationManager::default(),
             paths,
             persisted_state: Mutex::new(persisted_state),
@@ -79,6 +93,10 @@ impl AppState {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
+    pub(crate) async fn lock_window_operations(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.window_operations.lock().await
+    }
+
     pub fn paths(&self) -> &AppPaths {
         &self.paths
     }
@@ -107,10 +125,12 @@ impl AppState {
             .persisted_state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        update(&mut state);
+        let mut candidate = state.clone();
+        update(&mut candidate);
         let storage_paths = StoragePaths::from_app_paths(&self.paths);
         storage_paths.ensure_layout()?;
-        save_state(storage_paths.state_file(), &state)?;
+        save_state(storage_paths.state_file(), &candidate)?;
+        *state = candidate;
         Ok(state.clone())
     }
 }

@@ -68,8 +68,8 @@ pub(crate) fn portable_instance_id(
 mod portable_instance_tests;
 
 impl AppPaths {
-    pub fn detect(
-        app: &tauri::AppHandle,
+    pub fn detect<R: tauri::Runtime>(
+        app: &tauri::AppHandle<R>,
         executable: PathBuf,
         portable_root: Option<PathBuf>,
     ) -> Result<Self, AppError> {

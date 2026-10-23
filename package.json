@@ -206,7 +206,7 @@
     "test:ssh-integration": "node scripts/test-ssh-integration.mjs",
     "test:electron-updater": "node scripts/test-electron-updater-policy.mjs",
     "test:tauri-updater-confirmation": "node scripts/test-tauri-updater-confirmation.mjs",
-    "test:tauri-multi-window": "node scripts/test-tauri-multi-window.mjs && node scripts/test-tauri-launch-routing.mjs && node scripts/test-tauri-host-window-state.mjs && node scripts/test-windows-window-bootstrap.mjs && node scripts/test-macos-portable-webview-storage.mjs",
+    "test:tauri-multi-window": "node scripts/test-tauri-multi-window.mjs && node scripts/test-tauri-launch-routing.mjs && node scripts/test-tauri-host-window-state.mjs && node scripts/test-macos-window-capture.mjs && node scripts/test-linux-window-capture.mjs && node scripts/test-macos-window-close.mjs && node scripts/test-macos-window-presentation.mjs && node scripts/test-linux-window-presentation.mjs && node scripts/test-window-maximized.mjs && node scripts/test-window-topmost.mjs && node scripts/test-window-apply-geometry.mjs && node scripts/test-linux-window-docking.mjs && node scripts/test-window-operation-completion.mjs && node scripts/test-windows-window-bootstrap.mjs && node scripts/test-windows-window-bootstrap.mjs --macos && node scripts/test-macos-portable-webview-storage.mjs",
     "test:portable-storage": "node scripts/test-macos-portable-webview-storage.mjs",
     "test:updater-cancellation": "node scripts/test-updater-cancellation.mjs",
     "test:updater-generation": "node scripts/test-updater-generation.mjs",

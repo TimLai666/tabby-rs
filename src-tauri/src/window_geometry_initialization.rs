@@ -1,6 +1,9 @@
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
 };
 
 use tokio::sync::watch;
@@ -14,9 +17,23 @@ pub(crate) struct Initializations {
 
 pub(crate) struct PendingInitialization {
     outcome: watch::Sender<Outcome>,
+    page_finished: AtomicBool,
 }
 
 impl Initializations {
+    /// Claim only the first finished page for a registered window.
+    pub(crate) fn first_page_load(&self, label: &str) -> Option<Arc<PendingInitialization>> {
+        let windows = self
+            .windows
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let ticket = windows.get(label)?;
+        if ticket.page_finished.swap(true, Ordering::AcqRel) {
+            return None;
+        }
+        Some(ticket.clone())
+    }
+
     pub(crate) fn begin(&self, label: &str) -> Result<Arc<PendingInitialization>, String> {
         let mut windows = self
             .windows
@@ -26,7 +43,10 @@ impl Initializations {
             return Err(format!("window geometry already registered for {label}"));
         }
         let (outcome, _) = watch::channel(None);
-        let pending = Arc::new(PendingInitialization { outcome });
+        let pending = Arc::new(PendingInitialization {
+            outcome,
+            page_finished: AtomicBool::new(false),
+        });
         windows.insert(label.into(), pending.clone());
         Ok(pending)
     }
@@ -42,7 +62,7 @@ impl Initializations {
     }
 
     pub(crate) async fn wait(&self, label: &str) -> Result<(), String> {
-        let mut outcome = {
+        let pending = {
             let windows = self
                 .windows
                 .lock()
@@ -50,17 +70,9 @@ impl Initializations {
             let Some(pending) = windows.get(label) else {
                 return Ok(());
             };
-            pending.outcome.subscribe()
+            pending.clone()
         };
-        loop {
-            if let Some(result) = outcome.borrow_and_update().clone() {
-                return result;
-            }
-            outcome
-                .changed()
-                .await
-                .map_err(|_| "window geometry initialization was cancelled".to_owned())?;
-        }
+        pending.wait().await
     }
 
     pub(crate) fn remove(&self, label: &str) {
@@ -78,6 +90,20 @@ impl Initializations {
 }
 
 impl PendingInitialization {
+    /// Wait on this ticket even if its label is removed or reused.
+    pub(crate) async fn wait(&self) -> Result<(), String> {
+        let mut outcome = self.outcome.subscribe();
+        loop {
+            if let Some(result) = outcome.borrow_and_update().clone() {
+                return result;
+            }
+            outcome
+                .changed()
+                .await
+                .map_err(|_| "window geometry initialization was cancelled".to_owned())?;
+        }
+    }
+
     pub(crate) fn complete(&self, result: Result<(), String>) {
         self.outcome.send_if_modified(|outcome| {
             if outcome.is_some() {

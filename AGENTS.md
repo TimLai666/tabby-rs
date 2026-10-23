@@ -15,8 +15,14 @@
   its tested SSH/session children. The prompt matches fixed upstream `14e2d60`
   / 1.0.235's observed Cmd+Q warning and cancellation behavior.
   These checks use an ad-hoc signed app, an isolated smoke-test data directory,
-  and an incognito WebView. They do not accept installers, production persistence,
-  zero-window quit, forced startup quit, restart, or other supported platforms.
+  and an incognito WebView. Selecting an application with `cua.getApp` can launch
+  it immediately. Set paired ready-marker/data-directory overrides in the owned
+  executable launcher before selecting it, and verify the emitted identity uses
+  the owned data root. Check runtime process termination after cleanup; an app
+  disappearing from inventory alone is insufficient. A locked Mac blocks UI
+  acceptance and cleanup until manual unlock. The packaged quit checks do not
+  accept installers, production persistence, zero-window quit, forced startup quit,
+  restart, or other supported platforms.
   Compare the remaining desktop cases with upstream before full acceptance.
 - Portable host paths and every WebView use the same startup marker snapshot.
   Keep `data/webview` selected before primary construction and for subsequent
@@ -118,6 +124,11 @@
 - Linux desktop rendering, interaction, packaging, and installation remain pending.
   Verify those independently before accepting Linux parity; compilation and
   native tests do not establish supported-platform runtime acceptance.
+- Include the deep-link registration helpers in Linux runtime/packaging acceptance.
+  The owned minimal Debian app aborts setup when `update-desktop-database` is absent;
+  `tauri-plugin-deep-link` also invokes `xdg-mime`. Installing desktop-file-utils
+  and xdg-utils in a fixture only enables that fixture. Verify package dependencies
+  and the application's behavior when those helpers are unavailable separately.
 
 ## P2 — WinSCP temporary key files are only cleaned up by `TempPath` drop
 
@@ -990,15 +1001,27 @@
   before validating the content area, and re-read that minimum with the scale
   when the queued write executes.
   Retain AppKit's native point alignment for fractional-point requests.
-  Surface preflight native-handle and dispatch errors; dispatch success does not
-  confirm that the asynchronous native resize has completed.
+  The synchronous helper reports preflight native-handle and dispatch errors;
+  dispatch success does not confirm that its queued resize has completed.
+  Use the asynchronous helper for apply-state bounds, including bounds-only
+  requests. It must return the actual queued native result through completion,
+  preserving the synchronous helper's contract for existing docking callers.
+  Keep complete apply-state patches serialized through the dedicated AppState
+  operation lock. Preserve frame/title/top/fullscreen ordering before geometry.
+  For bounds plus explicit maximize state, unmaximize and await completion,
+  apply bounds, then apply the requested maximize state before presentation.
+  Await preceding queued operations before a new geometry or show request so
+  cancellation cannot leave an older Tao zoom overriding the next request.
   Include `window_size_native` for both supported adapters. Its two hidden macOS
   Wry windows cover Native, Thin, Full, repeated sizing, getter round-trips,
   top-left/appearance/responder preservation, per-window isolation, independent
   per-axis minimum clamping from main and worker calls, overflow and
   destruction errors, fractional-point alignment against an independent AppKit
   control, ready-frame handoff, and combined maximize/unmaximize plus size after
-  a main GCD FIFO barrier. Property checks do not accept desktop input, composited
+  a main GCD FIFO barrier. Its asynchronous completion cases also verify immediate
+  size readback, public Tao maximize/unmaximize restoring the requested normal
+  frame in every frame mode and both windows, overflow rejection, and destroyed
+  handles. Property checks do not accept desktop input, composited
   pixels, default/minimum geometry, saved boundaries, fullscreen, or installers.
 - Linux bounds sizes use GTK content dimensions in physical pixels. The fixed
   Electron 38.8.6 / Glasstron 0.1.1 X11 constructor control reports client sizes
@@ -1010,6 +1033,12 @@
   outer-size cache from position and retains stale dimensions after hidden
   resizing. Include the real `window_content_size_linux` example, its failing
   `--stock-control`, and scale-one/two runs when changing this boundary.
+  On mapped X11, check requested client dimensions independently with `xwininfo`,
+  then compare the getter with the enclosing logical rectangle converted back to
+  physical pixels. An odd physical client origin at scale two can add two reported
+  physical pixels without changing the actual client size. Keep both assertions.
+  Use at least 1920x1080 logical desktop pixels for the size fixture; a smaller
+  compositor can constrain its requested size.
   Its isolated Wry property checks do not accept rendered application behavior,
   the full original desktop, all window managers, or supported-platform parity.
 - Keep Linux X11 positions in client coordinates through `window_bounds_linux`.
@@ -1031,8 +1060,276 @@
   position support. Constructor/API controls and blank Wry fixtures do not
   establish full application or original desktop acceptance.
   Wayland global positions, rendered startup/minimum geometry, saved boundaries,
-  frame modes, and docking remain pending. RS does not yet persist or restore
-  `windowBoundaries`.
+  frame modes, and docking remain pending. Keep Linux startup and requested
+  windows on the existing initialization registry, native restore/capture controller,
+  and first-finished-page presentation. Register automatic configured labels before
+  portable startup deferral, retain explicit origins and custom minimums, and leave
+  manual windows manual. Register desktop events once for every created window.
+  Only complete readiness after native work drains and capture is armed. Renderer
+  emitReady must release launches without showing Linux windows. Preserve hidden
+  main startup, per-window saved maximization, first-page ownership, and close/removal
+  guards. Include `test-linux-window-presentation.mjs` alongside the capture/close
+  fixtures. The fixed original's setDarkMode is macOS-only; Linux presentation must
+  not read appearance config or change the native theme.
+  Include `window_saved_linux` when changing
+  the private `platform/window_state_linux` primitives. Preserve the separate
+  constructor sample, independent windows, default-center rounding, saved-max
+  relocation bypass, and destroyed-handle errors. Snapshot maximization excludes
+  ICONIFIED and FULLSCREEN; GTK retains MAXIMIZED with those flags on X11 and
+  Wayland respectively. Compare actual transitions with the fixed original.
+  Keep the public snapshot and maximize-toggle command on
+  `platform::window_is_maximized`. macOS and Linux share their native snapshot
+  predicate; other hosts retain the existing Tauri predicate. Include
+  `scripts/test-window-maximized.mjs` for both commands, error propagation, and
+  single-action toggles. Serialize the toggle with apply, presentation, and close
+  through the existing operation lock. Drain prior native work before reading the
+  predicate and keep the lock through acknowledgement/completion. On Linux, await
+  native maximization and painting before replying; a rapid following unmaximize
+  can otherwise arrive before the maximized surface commit and remain maximized.
+  Keep lock exclusion, both completion errors, cancellation/peer progress, and
+  Linux acknowledgement regressions. The simulated host and Linux-feature fixtures
+  do not replace real platform checks. Include the `window_saved_linux` bridge-getter checks
+  on X11 and Wayland at scales one and two. Simulated command boundaries and
+  native property checks do not accept rendered controls or desktop behavior.
+  Verify the fixed Electron Windows transparent-window work-area heuristic
+  before accepting Windows snapshot/toggle parity; retaining its existing Tauri
+  fallback does not verify that behavior. See the fixed-source links in
+  `docs/architecture/data-storage-and-migration.md`.
+  Wayland minimization/restore remains pending: GTK receives no iconified
+  acknowledgement while the original restores to normal. Do not infer minimized
+  state from focus loss. Before mapping, the invisible WebView does not contribute
+  its minimum to GTK preferred size; Native Wayland can report 348x248 for hidden
+  200x100/1x1 requests. Keep constructor samples raw and read actual GTK size.
+  Verify both zero and small requests map to 400x300 with a content allocation
+  of at least 400x300. Primitive checks do not accept AppState/startup/
+  approved-close wiring, multiple displays, or desktop parity.
+  Include `window_geometry::linux_coordinates` for saved constructor options.
+  Preserve Chromium's containing-monitor priority, Manhattan rectangle distance,
+  first-monitor ties, and zero distance on right/bottom edges. GTK's nearest-monitor
+  helper differs at those edges. Keep strict disjointness, maximized bypass, and
+  origin-free centering; a half-pixel result on either axis uses default centering.
+  Compare native placement before wiring that fallback: fresh Wry odd-size centering,
+  oversize centering, hidden minimum clamping, and post-resize centering differ from
+  the fixed Electron constructor. Read the Linux observations in
+  `docs/architecture/data-storage-and-migration.md` before implementing restoration.
+  Select first-sample policy from the owning GTK backend through
+  `supports_absolute_positioning`, not session environment variables. X11 uses
+  `ready_window_state_with_origin`: retain the seed until an actual event, then
+  record its first normal configure sample even when equal to the constructor.
+  Preserve the optional constructor sampling operation for Wayland's unchanged
+  startup configure events. It must not replace absent or off-screen saved bounds.
+  End startup suppression after a changed normal sample or observed maximization;
+  unmaximizing must record restored bounds even when they match the constructor.
+  Keep ordinary readiness unchanged. Include `window_geometry::persistence`,
+  `state::window_state::sampling_tests`, and `window_capture_wayland` with absent
+  and off-screen seeds plus its failing `--stock-control`. The native fixture's
+  AppState, durable seed, event registration, and main-thread barrier are
+  substituted. It calls the actual Linux restore/capture controller, native
+  adapter, and tracker; it does not accept application startup/event wiring,
+  durable close saving, or rendered application persistence.
+  For mapped normal Wayland windows, omit capture while the native client size
+  differs from the default content allocation. Read eligibility and the frame in
+  one native UI callback. Keep public native reads, hidden metadata, maximized
+  samples, and X11 capture unchanged. The after-default window-state regression
+  must first establish normal 900x650 bounds, observe a genuinely inconsistent
+  unmaximize sample, and verify immediate cache retention. Keep its later 901x651
+  resize, peer, destruction, absent/off-screen seed, and scale-one/two checks.
+  This sampling guard does not accept or resolve the separate after-paint timeout.
+  Keep the real application/IPC blank-page startup probe separate from Angular
+  desktop acceptance. Preserve Linux apply-bounds capture in the same UI callback
+  as its native sample, before final maximization or hiding. Hidden GTK windows can
+  omit configure events: X11 and Wayland real-application checks at scales one and
+  two verify hidden resize, reload, and approved-close persistence after explicit
+  capture. Include `test-window-apply-geometry.mjs` for UI dispatch, capture ordering,
+  read errors, completion-barrier errors, and independent caches. Include the
+  real `window_completion_linux` fixture for Native and frameless windows, hidden
+  minimums without realization, native state acknowledgement, cancellation,
+  bounded failure, destruction, and owned-window cleanup. Keep its GLib idle
+  queue drain and actual after-paint checks separate from a dispatch barrier.
+  Disconnect a frame-clock signal only while that handler remains connected:
+  native window disposal can remove it first. Use fatal criticals on X11 to
+  retain the cleanup regression. The headless Wayland fixture emits existing
+  missing-keyboard-seat diagnostics, separately from completion failures.
+  Wayland initialization applies `decoration { transition: none; }` only to
+  the owning window's GTK style context. GTK decoration transitions can change
+  resize extents after normal state is acknowledged. Preserve the theme's final
+  style and global animation preference. The Native and frameless completion
+  fixture passes 40 checks per X11 scale and 38 per Wayland scale, including
+  the unchanged global preference. A native scale-two decoration render has
+  identical before/after PNG bytes. The real application passes all four mapped
+  maximize -> apply bounds with maximized:false and visible:false -> reload/close
+  cases on X11 and Wayland at scales one and two. Preserve exact dimensions,
+  reload state, and saved-bounds assertions. Compare full rendered Tabby and
+  original desktop behavior separately from these owned blank-page fixtures.
+  Rapid maximize -> unmaximize with the same explicit normal bounds remains
+  pending: one scale-two Wayland application run returned an after-paint timeout
+  and 848x598 logical content for a 900x650 request, then saved that smaller size.
+  Later clean and diagnostic repeats passed; keep the failure as unresolved until
+  its triggering order and cause are established. Do not accept rapid-transition
+  parity from the ordinary startup/hidden/reload cases or subsequent passing loops.
+  Include a separately mapped fullscreen GTK peer in Wayland operation acceptance.
+  The current application times out waiting for after-paint during the initial
+  normal-state preparation, before its 900x650 resize is sent. Destroying that
+  peer permits a retry in the same application window to reach and save 900x650.
+  The fixed-constructor Electron/native-API control completes that request while
+  its fullscreen peer remains mapped; this does not accept the original desktop.
+  Direct native frame-clock observation records a pause of after-paint signals
+  until that peer exits. Completion cannot assume mapping guarantees painting.
+  Resolve this mapped-peer failure separately from the original rapid 848x598
+  case. Retain bounded failure, cancellation, and actual native-size checks.
+  Include `window_completion_occluded_linux` with and without its fullscreen
+  peer at scales one and two. Require initial frame observation and a real
+  paused redraw before the covered case; retain no-op state, size, bounds,
+  content allocation, mapped peer, and cleanup assertions. These are native
+  Wry/GTK checks, not rendered Tabby or original desktop acceptance.
+  Do not substitute `gtk_container_check_resize` plus matching native/content
+  dimensions for style completion. A pending descendant CSS minimum can leave
+  both at 900x650 before normal validation changes them to 1046x650. Explicit
+  invalidation of two widget contexts does not validate the entire CSD/child
+  tree. Preserve maximize/fullscreen surface-commit ordering independently
+  from ordinary size progress; coherent native allocation alone is insufficient.
+  GTK state acknowledgement, CSS-class updates, configure requests, allocation,
+  and frame completion are separate observations. Preserve the original normal
+  bounds; do not mask this with fixed sleeps, requested-size caches, or a relaxed
+  size assertion. Normal startup, native zoom, tab-bar restore, and ordinary Cmd+Q
+  pass in the current isolated macOS app. Full-application hidden-start observation
+  remains pending: the CUA adapter times out on that hidden app while its native
+  event loop is idle and renderer readiness is recorded. Native fixture checks
+  and the visible control do not establish hidden-start desktop acceptance.
+  Route Linux docking and its off action through window_apply_state. Preserve
+  geometry and always-on-top-only patches respectively; do not show, hide, or
+  change maximization. Include test-linux-window-docking.mjs for the actual
+  command/geometry with simulated framework and apply boundaries. Real X11
+  application checks verify all four hidden docking directions, reply geometry,
+  and approved-close saving at scales one and two. Before an absolute move,
+  await effective client size independently of the current origin. Mapped X11
+  reads raw XGetGeometry dimensions under a GDK error trap; GDK geometry reports
+  logical dimensions and can truncate physical pixels at scale two. Keep hidden
+  size observation free of realization and preserve cancellation and bounded
+  errors. The native ordering control reproduces the one-pixel right placement
+  error in 12 immediate-resize/move trials and passes 12 size-before-move trials.
+  The actual application passes all 20 hidden/mapped docking and topmost-disable
+  cases. Preserve exact reply/later-state equality and approved-close saving.
+  Read `src-tauri/vendor/tao/TABBY-RS-PATCHES.md` before updating Tao or changing
+  Linux always-on-top reporting. Preserve its existing per-window configured-level
+  atomic: GDK ABOVE events can be absent for hidden windows and stale for mapped
+  windows whose actual X11 property is already ABOVE. Do not force realization
+  to obtain that property. Include `test-window-topmost.mjs` and the real Wry
+  `window_topmost_linux` example. The example passes 20 checks at each X11 scale,
+  including constructor hints, immediate hidden true/false without realization,
+  independent windows, actual ABOVE, hide/clear, and destroyed-handle/rebuilt-label
+  isolation. The application matrix passes both hidden topmost-disable cases.
+  Keep Wayland compositor support, rendered controls, full original desktop
+  comparison, and installer acceptance separate from these native checks.
+  Compare omitted/stale docking screen IDs separately: the fixed service selects
+  the display nearest the cursor, while the native command falls back to primary.
+  Original full-desktop comparison, multi-monitor selection, and supported-platform
+  acceptance remain pending for docking.
+  Include `test-linux-window-capture.mjs` for restoration rollback, raw constructor
+  samples, barrier failure/cancellation, unchanged startup suppression, latest
+  logical origins, missing bounds, duplicate readiness, and window isolation.
+  Use the optional `windowState` in the existing `tabby-rs.json` for saved logical
+  bounds and maximized state. Keep each window's normal-bounds cache independent;
+  construction and maximized events must not overwrite it. Include
+  `window_geometry::persistence`, `storage::state_file`, and
+  `state::persistence_tests` when changing this contract. Preserve the previous
+  in-memory metadata when a state write is rejected before replacement; verify
+  recovery and retry through the real AppState storage boundary. These model and
+  filesystem checks do not accept native capture, restoration, or desktop parity.
+  `state/window_state.rs` owns the AppState bridge to that per-window cache.
+  Begin each label from the current persisted state, reject duplicate registration,
+  and enable capture only after restoration events drain. Movement samples must not
+  write the state file. Only the approved-close path may save a snapshot with the
+  live maximized flag; unknown/removed labels must leave the state file untouched.
+  Release the tracker lock before acquiring the storage lock. Keep failed saves
+  retryable and preserve unrelated metadata. Include `state::window_state::tests`
+  for real AppState/file-system verification. macOS event and close wiring use
+  that bridge; rendered close and full application persistence acceptance remain
+  pending.
+  Preserve approved native close after a state-write error. The exact fixed
+  upstream close listener still permits destruction when its first config write
+  throws in the owned Electron 38.8.6 probe. Log the failure without inventing a
+  fallback maximized flag. Original desktop and other-platform checks remain pending.
+  Keep macOS presentation owned by the first finished page, matching the fixed
+  `app/lib/window.ts` handler. Claim its initialization ticket once and retain the
+  owning window before awaiting that ticket; reloads must not replay startup.
+  Apply raw vibrancy and colorSchemeMode before presentation: light selects Light,
+  auto follows the system, and other values select Dark. Preserve initial hidden
+  startup only for main after its launch queue entry is consumed. Hidden startup
+  must not maximize, show, or focus. Otherwise apply the label's construction-time
+  saved maximization before showing and focusing. Serialize with geometry and drain
+  dispatched native work. Recheck closing/removal after awaited appearance and zoom
+  work so an approved close cannot be followed by startup showing or focus.
+  Include `test-macos-window-presentation.mjs`; its OS,
+  startup config, and AppState boundaries are simulated. The `window_size_native`
+  example also executes the production prepare/present methods on two owned blank
+  Wry windows with hidden startup and saved maximization on/off, including normal
+  bounds after unmaximizing and independent peer bounds. Its AppState/config I/O
+  boundaries are substituted; it does not exercise the application's finished-page
+  hook. Keep full application and original desktop timing acceptance separate.
+  Keep page-load and renderer-ready timing distinct; macOS emitReady only releases
+  queued launches.
+  Keep backup restoration and state-cache publication under the storage lock.
+  Reload and validate the selected state before publishing it; missing state
+  resets defaults. Treat state validation failure as a failed restore and reload
+  the safety snapshot after rollback. Include `state::persistence_tests` for
+  subsequent state writes, invalid JSON, newer schemas, and absent state files.
+  Prepare the selected backup's validated bytes before creating the safety
+  backup. Keep the existing 20-backup retention policy and verify restoration
+  after that policy prunes the selected source directory. Include the actual
+  AppState retention-limit regression, not only direct storage-helper tests.
+  Keep the private macOS saved-frame adapter aligned with Electron 38.8.6.
+  Read the current outer frame in logical pixels and exclude minimized/fullscreen
+  windows from its maximized predicate. Restoration must honor live outer-size
+  limits without rejecting AppKit's large unlimited maximum. Preserve native
+  screen order, containment, corner-distance ties, and the distinct primary and
+  secondary coordinate conversions. Include `platform::window_state_macos::tests`
+  and the `window_size_native` example. Owned blank Wry checks do not accept
+  durable close saving, full application startup, fullscreen transitions,
+  or original desktop parity.
+  When implementing off-screen startup placement, preserve the fixed constructor's
+  strict disjointness check and origin-free centering formula. Electron 38.8.6
+  accepts the position only when both coordinates are signed integers. A fractional
+  coordinate leaves both at the constructor's default position; the owned blank
+  Electron constructor probe confirms this for either fractional axis.
+  macOS construction calls `window_presentation_macos::prepare_window` for
+  primary, automatic configured, and newly requested windows. Read raw appearance
+  without creating config.yaml and freeze/apply the process frame before restoring
+  saved bounds through `window_persistence_macos::restore_window`. Leave raw-read
+  errors to the existing bootstrap error flow without freezing a fallback frame. Register automatic
+  configured labels before construction and requested labels before their builder
+  runs. Complete the existing initialization ticket only after restoration events
+  drain and capture is enabled, retain
+  failures, and remove it on destruction. Bootstrap must await this ticket before
+  its event-thread transaction; concurrent launch presentation must skip pending
+  and failed windows. Include both modes of `test-windows-window-bootstrap.mjs`,
+  including `--macos`. Its extracted-command fixture simulates Tauri boundaries;
+  the separate blank Wry fixture verifies native startup bounds and capture
+  ordering with the actual restore/capture methods and tracker. Its AppState
+  boundary is substituted. Include `test-macos-window-capture.mjs` for the
+  controller/model readiness, failure, and cancellation checks.
+  The shared macOS/Linux `window_close.rs` must claim its label before the first
+  await, serialize
+  with geometry, drain native work, and save the cached normal bounds with the
+  live maximized flag before destruction. Keep duplicate pending requests inert.
+  Cancellation or failed destruction must release the claim and wake only the
+  owning renderer. Include `test-macos-window-close.mjs` for the real controller
+  and launch queue with simulated OS/state I/O. On Linux, pass the current sampling
+  origin to the native reader; a missing origin must skip sampling and saving
+  while approved destruction continues. Keep application startup/event cache
+  registration and desktop persistence acceptance separate. Include
+  `commands::app::startup_window_tests` for the real AppState/raw-config filesystem
+  boundary and frozen per-window startup flags. Full application hidden startup,
+  saved maximization, first presentation timing, close saving, and original desktop
+  comparison retain their separate acceptance gates.
+  Keep the private Windows coordinate core aligned with Electron 38.8.6 and
+  Chromium 140.0.7339.249. Preserve native monitor enumeration order, display IDs,
+  float32 operation order, end-aligned edges, touching-tree partition order, and
+  overlap removal. Rectangle selection uses the original rotated distance metric,
+  including empty rectangles; point selection has its separate containment rule.
+  Include `window_geometry::windows_coordinates` when changing this contract.
+  Pure coordinate tests do not accept monitor acquisition, native saved-boundary
+  capture, restoration, DPI changes, or Windows desktop behavior.
   Before accepting combined bounds and maximized patches, check their order:
   applying size after maximization currently restores the window on Windows.
 

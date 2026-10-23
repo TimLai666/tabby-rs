@@ -35,7 +35,7 @@ mod error {
 #[path = "../src/platform/mod.rs"]
 mod platform;
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[path = "../src/window_geometry.rs"]
 mod window_geometry;
 

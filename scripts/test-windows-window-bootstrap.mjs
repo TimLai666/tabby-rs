@@ -7,10 +7,11 @@ import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 if (process.argv.includes('--help')) {
-    console.log('Usage: node scripts/test-windows-window-bootstrap.mjs\nCompile and test the real Windows/Linux async bootstrap command and initialization registry. Uses a temporary Rust crate with the locked Tokio version; Tauri event dispatch and state are simulated. Requires Cargo and network or cached dependencies. Removes owned temporary files.')
+    console.log('Usage: node scripts/test-windows-window-bootstrap.mjs [--macos]\nCompile and test the real desktop bootstrap command and initialization registry. Defaults to Windows/Linux; --macos selects the macOS command. Uses a temporary Rust crate with the locked Tokio version; Tauri event dispatch and state are simulated. Requires Cargo and network or cached dependencies. Removes owned temporary files.')
     process.exit(0)
 }
-assert.equal(process.argv.length, 2, 'no arguments supported; use --help')
+const macos = process.argv.length === 3 && process.argv[2] === '--macos'
+assert.ok(process.argv.length === 2 || macos, 'only --macos is supported; use --help')
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const sourcePath = path.join(root, 'src-tauri/src/commands/app.rs')
@@ -20,9 +21,12 @@ const libPath = path.join(root, 'src-tauri/src/lib.rs')
 const files = [sourcePath, registryPath, registryTestsPath, libPath]
 const fingerprints = new Map(files.map(file => [file, crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')]))
 const source = fs.readFileSync(sourcePath, 'utf8')
-const marker = 'pub async fn app_bootstrap('
+const asyncStart = source.indexOf('pub async fn app_bootstrap(')
+assert.ok(asyncStart >= 0, 'async desktop bootstrap command exists')
+const asyncCfg = [...source.slice(0, asyncStart).matchAll(/#\[cfg\(([^\n]+)\)\]/g)].at(-1)?.[1]
+const marker = macos && !asyncCfg?.includes('target_os = "macos"') ? 'pub fn app_bootstrap(' : 'pub async fn app_bootstrap('
 const start = source.indexOf(marker)
-assert.ok(start >= 0 && start === source.lastIndexOf(marker), 'one Windows bootstrap command')
+assert.ok(start >= 0 && start === source.lastIndexOf(marker), 'one selected desktop bootstrap command')
 const body = source.indexOf('{', start)
 let depth = 0
 let quoted = false
@@ -43,13 +47,15 @@ for (let index = body; index < source.length; index++) {
     else if (ch === '}' && --depth === 0) { end = index + 1; break }
 }
 assert.ok(end > body, 'complete Windows bootstrap command')
-const command = source.slice(start, end)
+// Wrapping a synchronous method in a future preserves its original body, so
+// the old macOS command fails readiness assertions rather than compilation.
+const command = source.slice(start, end).replace('pub fn app_bootstrap(', 'pub async fn app_bootstrap(')
 const lib = fs.readFileSync(libPath, 'utf8')
 const presentationStart = lib.indexOf('            for window in &windows {')
 const presentationEnd = lib.indexOf('            let mut delivered = false;', presentationStart)
 assert.ok(presentationStart >= 0 && presentationEnd > presentationStart, 'real launch presentation loop')
 // Compile the Windows/Linux arm even when this fixture runs on another host.
-const presentation = lib.slice(presentationStart, presentationEnd).replace(/#\[cfg\((?:windows|any\(windows, target_os = "linux"\))\)\]\s*/g, '')
+const presentation = lib.slice(presentationStart, presentationEnd).replace(/#\[cfg\([^\n]+\)\]\s*/g, '')
 const lock = fs.readFileSync(path.join(root, 'src-tauri/Cargo.lock'), 'utf8')
 const tokio = lock.match(/\[\[package\]\]\r?\nname = "tokio"\r?\nversion = "([^"]+)"/)
 assert.ok(tokio, 'locked Tokio version')
@@ -239,9 +245,12 @@ mod checks {
     if (result.error) throw result.error
     assert.equal(result.signal, null, result.stderr)
     assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`)
-    assert.match(result.stdout, /test result: ok\. 12 passed; 0 failed/, 'all command and registry checks executed')
-    for (const file of files) assert.equal(crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex'), fingerprints.get(file), 'fixture inputs remained unchanged')
-    console.log('Windows bootstrap command: readiness, event-thread transaction, failure, destruction, and custom-host cases passed; Tauri boundaries simulated')
+    assert.match(result.stdout, /test result: ok\. 15 passed; 0 failed/, 'all command and registry checks executed')
+    console.log(`${macos ? 'macOS' : 'Windows/Linux'} bootstrap command: readiness, event-thread transaction, failure, destruction, and custom-host cases passed; Tauri boundaries simulated`)
 } finally {
-    fs.rmSync(temporary, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
+    try {
+        for (const file of files) assert.equal(crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex'), fingerprints.get(file), 'fixture inputs remained unchanged')
+    } finally {
+        fs.rmSync(temporary, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
+    }
 }

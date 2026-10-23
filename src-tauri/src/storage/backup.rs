@@ -141,7 +141,17 @@ pub fn list_backups(paths: &StoragePaths) -> Result<Vec<BackupManifest>, AppErro
     Ok(manifests)
 }
 
-pub fn restore_backup(paths: &StoragePaths, backup_id: &str) -> Result<RestoreReport, AppError> {
+pub(crate) struct PreparedRestore {
+    backup_id: String,
+    files: Vec<(String, std::path::PathBuf, Vec<u8>)>,
+    removals: Vec<(String, std::path::PathBuf)>,
+}
+
+/// Read and validate the complete selected snapshot before retention can prune it.
+pub(crate) fn prepare_restore(
+    paths: &StoragePaths,
+    backup_id: &str,
+) -> Result<PreparedRestore, AppError> {
     let backup_dir = paths.backup_dir(backup_id)?;
     let manifest_bytes = read_required_regular_file(&backup_dir.join("manifest.json"))?;
     let manifest: BackupManifest = serde_json::from_slice(&manifest_bytes)?;
@@ -151,7 +161,7 @@ pub fn restore_backup(paths: &StoragePaths, backup_id: &str) -> Result<RestoreRe
         ));
     }
 
-    let mut prepared = Vec::new();
+    let mut files = Vec::new();
     for file in &manifest.files {
         let target = target_for_relative(paths, &file.path)?;
         let source = backup_dir.join("files").join(&file.path);
@@ -162,7 +172,7 @@ pub fn restore_backup(paths: &StoragePaths, backup_id: &str) -> Result<RestoreRe
                 file.path
             )));
         }
-        prepared.push((file.path.clone(), target.to_path_buf(), bytes));
+        files.push((file.path.clone(), target.to_path_buf(), bytes));
     }
     let removals = manifest
         .absent
@@ -173,37 +183,51 @@ pub fn restore_backup(paths: &StoragePaths, backup_id: &str) -> Result<RestoreRe
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    let mut restored = Vec::new();
-    for (relative, target, bytes) in prepared {
-        atomic_write(&target, &bytes)?;
-        restored.push(relative);
-    }
-    let mut removed = Vec::new();
-    for (relative, target) in removals {
-        match fs::symlink_metadata(&target) {
-            Ok(metadata) if metadata.file_type().is_symlink() => {
-                return Err(AppError::PermissionDenied(
-                    "refusing to remove a symbolic link during restore".into(),
-                ));
-            }
-            Ok(metadata) if metadata.is_file() => {
-                fs::remove_file(target)?;
-                removed.push(relative);
-            }
-            Ok(_) => {
-                return Err(AppError::InvalidData(
-                    "restore target is not a regular file".into(),
-                ));
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.into()),
-        }
-    }
-    Ok(RestoreReport {
-        backup_id: backup_id.into(),
-        restored,
-        removed,
+    Ok(PreparedRestore {
+        backup_id: manifest.backup_id,
+        files,
+        removals,
     })
+}
+
+impl PreparedRestore {
+    pub(crate) fn apply(self) -> Result<RestoreReport, AppError> {
+        let mut restored = Vec::new();
+        for (relative, target, bytes) in self.files {
+            atomic_write(&target, &bytes)?;
+            restored.push(relative);
+        }
+        let mut removed = Vec::new();
+        for (relative, target) in self.removals {
+            match fs::symlink_metadata(&target) {
+                Ok(metadata) if metadata.file_type().is_symlink() => {
+                    return Err(AppError::PermissionDenied(
+                        "refusing to remove a symbolic link during restore".into(),
+                    ));
+                }
+                Ok(metadata) if metadata.is_file() => {
+                    fs::remove_file(target)?;
+                    removed.push(relative);
+                }
+                Ok(_) => {
+                    return Err(AppError::InvalidData(
+                        "restore target is not a regular file".into(),
+                    ));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        Ok(RestoreReport {
+            backup_id: self.backup_id,
+            restored,
+            removed,
+        })
+    }
+}
+
+pub fn restore_backup(paths: &StoragePaths, backup_id: &str) -> Result<RestoreReport, AppError> {
+    prepare_restore(paths, backup_id)?.apply()
 }
 
 fn target_for_relative<'a>(paths: &'a StoragePaths, relative: &str) -> Result<&'a Path, AppError> {

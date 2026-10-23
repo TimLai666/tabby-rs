@@ -108,8 +108,11 @@ for (const platform of ['macos', 'windows']) {
         await settle()
         assert.equal(host.configReads, 0, 'constructor and emitReady do not read ConfigService')
         const readyCalls = host.calls.filter(call => call.command === 'window.applyState')
-        assert.deepEqual(readyCalls, [{ command: 'window.applyState', request: { frame: expected, visible: true } }],
-            `${platform} uses its constructor-time startup snapshot (${String(saved)}) with visibility`)
+        const expectedCalls = platform === 'macos' ? [] : [
+            { command: 'window.applyState', request: { frame: expected, visible: true } },
+        ]
+        assert.deepEqual(readyCalls, expectedCalls,
+            `${platform} keeps its presentation owner for startup frame ${String(saved)}`)
     }
 }
 
@@ -118,12 +121,14 @@ for (const platform of ['linux', 'web']) {
     host.service.emitReady()
     await settle()
     assert.equal(host.configReads, 0)
-    assert.deepEqual(host.calls.filter(call => call.command === 'window.applyState'), [
+    const expectedCalls = platform === 'linux' ? [] : [
         { command: 'window.applyState', request: { visible: true } },
-    ], `${platform} does not send a frame`)
+    ]
+    assert.deepEqual(host.calls.filter(call => call.command === 'window.applyState'), expectedCalls,
+        `${platform} retains its presentation owner without sending a frame`)
 }
 
-const restartedProcess = await createHost('macos', 'full')
+const restartedProcess = await createHost('windows', 'full')
 restartedProcess.service.emitReady()
 await settle()
 assert.deepEqual(restartedProcess.calls.filter(call => call.command === 'window.applyState'), [
@@ -205,4 +210,15 @@ assert.match(desktop, /pub struct WindowStatePatch\s*\{[\s\S]*?pub frame:\s*Opti
 assert.match(appRegistration, /ExitRequested\s*\{\s*code:\s*None\s*\|\s*Some\(0\)/,
     'ordinary quit confirmation keeps its existing exit-code scope')
 
-console.log('Tauri window frame: startup snapshot, application restart, platform/settings gate, and source wiring passed')
+assert.match(appRegistration, /builder = builder\.on_page_load\(/,
+    'macOS first-load presentation is registered globally before construction')
+assert.match(appRegistration, /PageLoadEvent::Finished/)
+assert.match(appRegistration, /first_page_load\(webview\.label\(\)\)/)
+assert.match(appRegistration, /pending\.wait\(\)\.await/,
+    'the claimed initialization ticket is awaited rather than looking up a replacement label')
+assert.match(appRegistration, /window_presentation_macos::present_window\(\s*&window,\s*&window\.state::<AppState>\(\),?\s*\)/)
+assert.match(appRegistration, /window_presentation_macos::prepare_window\(\s*&window,\s*&app\.state::<AppState>\(\),?\s*\)/)
+const desktopCommands = fs.readFileSync(path.join(root, 'src-tauri/src/commands/desktop.rs'), 'utf8')
+assert.match(desktopCommands, /window_presentation_macos::prepare_window\(&window, state\)/,
+    'new windows share construction-time appearance preparation')
+console.log('Tauri window frame: startup snapshot, first-load presentation wiring, application restart, and platform/settings gate passed')
