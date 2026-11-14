@@ -3041,17 +3041,18 @@ where
         keyboard_interactive: None,
         saved_password: None,
     };
+    // The renderer replies with no response when nothing is stored, and with a
+    // single response (possibly empty) when a password is stored. A stored blank
+    // password is therefore a candidate, distinct from an absent one.
     let mut responses = zeroize::Zeroizing::new(load(prompt).await?);
-    if responses.len() != 1 {
-        return Err(SshError::InvalidRequest(
-            "one stored password response is required".into(),
-        ));
-    }
-    let password = responses.remove(0);
-    let password = if password.is_empty() {
-        None
-    } else {
-        Some(secrecy::SecretString::new(password))
+    let password = match responses.len() {
+        0 => None,
+        1 => Some(secrecy::SecretString::new(responses.remove(0))),
+        _ => {
+            return Err(SshError::InvalidRequest(
+                "zero or one stored password response is allowed".into(),
+            ));
+        }
     };
     Ok(Some(password))
 }
@@ -3107,9 +3108,8 @@ fn resolve_auth_passwords(
                     "ssh-password://vault" | "ssh-password://keychain"
                 ) && prepared_password.is_some();
                 let value = if uses_renderer_snapshot {
-                    prepared_password
-                        .and_then(|password| password.clone())
-                        .filter(|value| !value.expose_secret().is_empty())
+                    // A stored blank password is a candidate; "nothing stored" is None.
+                    prepared_password.and_then(|password| password.clone())
                 } else {
                     match resolve_password_ref(reference, request, username, secrets, credentials) {
                         Ok(value) => value.filter(|value| !value.expose_secret().is_empty()),

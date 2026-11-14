@@ -624,7 +624,8 @@ export class TauriSshSession extends BaseSession {
             }
             const saved = await this.injector.get(TauriPasswordStorageService).loadPassword(profile, target.username)
             if (!this.credentialModals.has(prompt.requestId)) { return }
-            responses = [saved ?? '']
+            // Nothing stored sends no responses; a stored blank password sends one empty response.
+            responses = saved != null ? [saved] : []
         } catch {
             abort = true
         } finally {

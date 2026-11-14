@@ -273,7 +273,7 @@ await check('real Keychain read errors retain the upstream missing-password cont
         f.eventHandlers.get('ssh:authPrompt')(storedPrompt('keychain-unreadable'))
         await waitForResponse(f)
         assert.deepEqual(reads, [{ command: 'keychain.get', request: { service: 'ssh@resolved.test:2202', account: 'resolved-user' } }])
-        assert.deepEqual(f.invocations.filter(call => call.command === 'ssh.authResponse').map(call => call.request), [{ requestId: 'keychain-unreadable', responses: [''] }])
+        assert.deepEqual(f.invocations.filter(call => call.command === 'ssh.authResponse').map(call => call.request), [{ requestId: 'keychain-unreadable', responses: [] }])
         assert.equal(f.uiPrompts(), 0)
     } finally { await f.candidate.destroy() }
 })
@@ -317,13 +317,15 @@ await check('empty stored password is returned as one empty response', async () 
     assert.deepEqual(f.invocations.filter(call => call.command === 'ssh.authResponse').map(call => call.request), [{ requestId: 'empty', responses: [''] }])
     await f.candidate.destroy()
 })
-await check('missing stored password is returned as one empty response', async () => {
+// Upstream 256f09dd: nothing stored and a stored blank password are different
+// answers, so a missing password sends no response at all.
+await check('missing stored password is returned as no responses', async () => {
     const f = await storedPromptFixture()
     f.reads.push({ promise: Promise.resolve(null) })
     try {
         f.eventHandlers.get('ssh:authPrompt')(storedPrompt('missing'))
         await waitForResponse(f)
-        assert.deepEqual(f.invocations.filter(call => call.command === 'ssh.authResponse').map(call => call.request), [{ requestId: 'missing', responses: [''] }])
+        assert.deepEqual(f.invocations.filter(call => call.command === 'ssh.authResponse').map(call => call.request), [{ requestId: 'missing', responses: [] }])
     } finally { await f.candidate.destroy() }
 })
 await check('storage read failure aborts the native waiter', async () => {
