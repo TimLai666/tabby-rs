@@ -8,7 +8,7 @@ import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { SerializeAddon } from '@xterm/addon-serialize'
 import { ImageAddon } from '@xterm/addon-image'
 import { WebLinksAddon } from '@xterm/addon-web-links'
-import { disposeWebglAddon } from '../frontends/webglAddon'
+import { disposeWebglAddon } from './webglAddon'
 
 import type { BaseTerminalProfile, ResizeEvent } from '../api/interfaces'
 import type {
