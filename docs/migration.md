@@ -6,4 +6,4 @@ Before importing, close the source application and keep a backup. Tabby RS shows
 
 The migration copies `config.yaml` byte-for-byte after checking its source revision. If the source changes during the operation, the import fails and the pre-import snapshot is retained for recovery. Plugin executable code and secret values are not copied by this first-run flow.
 
-The detailed storage, journal, backup, conflict, and rollback contract is in [data-storage-and-migration.md](architecture/data-storage-and-migration.md). Vault v1 and operating-system keychain transfer require separate compatibility handling and must not be assumed from a successful configuration import.
+The detailed storage, journal, backup, conflict, and rollback contract is in [data-storage-and-migration.md](../engineering/architecture/data-storage-and-migration.md). Vault v1 and operating-system keychain transfer require separate compatibility handling and must not be assumed from a successful configuration import.
