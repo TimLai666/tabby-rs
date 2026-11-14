@@ -1458,6 +1458,13 @@
   published no GitHub release yet, so the tag format is undecided: `release_version`
   compares the tag's `x.y.z` with the app's base version, and a `v1.0.231-tabbyrs.2`
   style tag would never count as newer; settle the tag scheme before the first release.
+- The first desktop run found that building the fallback's reqwest client panicked a
+  runtime worker: reqwest is compiled with `rustls-no-provider` and nothing had installed
+  a crypto provider yet (tauri-plugin-updater installs ring lazily, only on its own
+  path). `release_page::ensure_crypto_provider` now installs the ring provider before
+  any client is built; `rustls` is a direct dependency with the `ring` feature. Any new
+  reqwest client in this crate must call it first. Unit tests never exercised this
+  because the renderer fixtures simulate IPC.
 - `update()` and `install()` on that info open the release page through `platform.openExternal`.
   `download()` and `cancel()` do nothing for it. The fallback never downloads or executes an artifact.
   Signed-pipeline behavior is unchanged.
@@ -1511,6 +1518,16 @@
   `file`, `javascript` and `data` without a prompt is stricter than upstream,
   which asks for every non-safe scheme; record it as an approved exception in
   docs/release-acceptance.md or relax it before accepting openExternal parity.
+- Linux X11 desktop evidence (`scripts/acceptance/x11-linux-parity.sh hotkey`): with
+  `hotkeys.toggle-window: [Ctrl-Alt-T]` and the window focused, the first press hides
+  the window and the second shows it. An unfocused window is presented first, as
+  upstream's rule says, so a check that presses before focusing sees it stay visible.
+- Wayland desktop evidence (sway sandbox, real app, `appearance.dock: left` in the
+  portable config): the window opens frameless with the rendered title bar and
+  controls, is not docked, and the Window settings page shows 視窗, 分頁, 窗格 and
+  修正 with no Docking block at all; the GPU hack toggle is present under 修正.
+  The capability read arrived before the page was opened, so the brief flash of the
+  Docking block before `window.getState` resolves was not observed here.
 - Unverified: real Wayland hotkey registration on KDE Plasma 6.5, 6.6 and GNOME,
   the `plasmashell --version` probe in a live session, compositor docking and
   always-on-top, the rendered settings rows, the rendered confirm dialog, and the
@@ -1582,9 +1599,13 @@
   a renderer reload does not reopen them and a second instance's `-d` is
   ignored. The argv decision is covered by
   `launch::tests::debug_flags_request_startup_devtools`.
-- Unverified: whether WebKitGTK rendering changes on a real Linux desktop with
-  the GPU variables set, and whether the DevTools window appears on a desktop.
-  Compilation and unit tests do not establish either effect.
+- Linux X11 desktop evidence (Xvfb + openbox in the build container, real app,
+  `scripts/acceptance/x11-linux-parity.sh`): `-d` shows a "Web Inspector" window
+  next to the main window; with `hacks.disableGPU: true` the WebKitWebProcess
+  environment carries both variables and a terminal tab's `/bin/sh` does not.
+  `/proc/<app>/environ` is the exec-time snapshot and does not reflect `set_var`,
+  so check the WebKit child, not the app. Still unverified: whether rendering
+  actually changes with the variables set, and Wayland.
 
 ## Ported — Linux sleep inhibit for file transfers (2026-11-14)
 

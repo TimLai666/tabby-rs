@@ -5399,6 +5399,7 @@ dependencies = [
  "reqwest",
  "russh",
  "russh-sftp",
+ "rustls",
  "secrecy",
  "serde",
  "serde_json",
