@@ -1438,14 +1438,34 @@
   these Linux gaps; none has desktop evidence yet. Treat each as its own slot
   with a test, and record acceptance separately.
 - `window_toggle_quake` has no renderer caller.
-- Updater: the signed pipeline needs `TABBY_RS_UPDATE_*` at build time and has
-  no release-page fallback; Linux deb/rpm installation through the plugin is
-  unverified.
 - Already at parity or recorded elsewhere: hide-on-blur (this file's upstream
   sync section), reveal path through tauri-plugin-opener (Linux D-Bus behavior
   unverified), window placement capture during a WM maximize (startup geometry
   section), Linux shell detection, clipboard text/html, CLI arguments, native
   file drops (drag gestures pending). WSL `homeDirArgs` is Windows-only.
+
+## Ported — Linux updater release-page fallback (2026-11-14)
+
+- Without `TABBY_RS_UPDATE_ENDPOINT_*` or `TABBY_RS_UPDATE_PUBLIC_KEY`, `update.check`
+  returns `unsupported`, and `TauriUpdaterService.check()` calls
+  `update.checkReleasePage` (`update_check_release_page`, `src-tauri/src/update/release_page.rs`).
+  It GETs `releases/latest` for this project (`TimLai666/tabby-rs`) the way upstream's
+  `UPDATES_URL` reads `eugeny/tabby`, with a 15 s timeout and a 1 MiB body cap.
+  It returns `isNewer` when the tag's `x.y.z` is above the base of the app's `-tabbyrs.N` version.
+- `update()` and `install()` on that info open the release page through `platform.openExternal`.
+  `download()` and `cancel()` do nothing for it. The fallback never downloads or executes an artifact.
+  Signed-pipeline behavior is unchanged.
+- Differences from upstream: upstream opens any tag that differs from the app version, while this
+  fallback requires a newer base version. Both channels read the same latest-release endpoint,
+  because upstream does not distinguish channels. The release date comes from `published_at`,
+  where upstream uses the current time.
+- `update.check` marks the update state Failed (configuration) before the fallback runs and
+  the fallback does not reset it, so an `update:state` listener can still see that failure
+  while the release page is offered; decide whether to clear it before accepting updater parity.
+- Deb/rpm installation through the plugin is still unverified, and the fallback does not establish it.
+- Verification: `cargo test --lib update` covers the pure helpers. `test:tauri-platform` runs
+  `scripts/test-tauri-updater-fallback.mjs` with a fake bridge. Neither exercises the network request
+  or a real browser open.
 
 ## Ported — Linux global hotkey, docking capability and external URLs (2026-11-14)
 
@@ -1588,7 +1608,18 @@
   the native call on `spawn_blocking`: the D-Bus call has a 2 s timeout and runs
   under the counter mutex, so a slow logind delays other acquires by up to that
   long but never the main thread. Beyond 1024 outstanding ids the acquire is
-  refused and the transfer runs uninhibited.
+  refused and the transfer runs uninhibited. The native call runs outside the
+  counter lock with an in-flight marker, and a release drops the hold under the
+  lock, so a single-state backend (Windows execution state) never sees a stale
+  release after a newer acquire; a hold that completes after every id was
+  released is dropped at once (`release_during_an_in_flight_acquire_...`).
+  Review notes still open: `dbus` connection setup (`dbus_bus_get_private`)
+  uses libdbus's own timeout, about 25 s, outside the 2 s method timeout;
+  `sleep:idle` in `block` mode may refuse a user-initiated suspend where
+  Chromium's `prevent-app-suspension` only inhibits idle (compare on GNOME and
+  KDE before accepting); ids are not bound to a window, so a window closed or
+  reloaded mid-transfer keeps its inhibit until the process exits, as Electron's
+  main-process blocker does; whether the logind fd carries CLOEXEC was not read.
 - Checks: `cargo test --locked --offline --lib power` (6 tests, counter logic with a
   fake backend), `scripts/test-tauri-power-inhibit.mjs` under `test:tauri-platform`
   (fake bridge, real `tabby-core` transfer base classes). The fixture fails against
@@ -1623,7 +1654,19 @@
 - Ported to the native host with their own tests: SSH ends the shell on a
   remote CHANNEL_CLOSE as well as EOF (`9e7a251b`, `src-tauri/src/ssh/lifecycle.rs`;
   russh reports CLOSE by ending the receiver); blank configured passwords stay
-  candidates (`256f09dd`); agent authentication before disk keys in automatic
+  candidates, and the keychain/Vault half of blank passwords (`256f09dd`) is ported:
+  the renderer replies `responses: []` for nothing stored and `['']` for a stored blank,
+  `prepare_stored_password` maps those to None and Some(""), the profile settings
+  confirm a blank save, and the inline panel prefills on `!= null`
+  (`scripts/test-ssh-stored-password-protocol.mjs`, `scripts/test-ssh-profile-settings-blank-password.mjs`,
+  and `cargo test ssh::credential_loading`). Unverified: desktop Keychain and Vault behavior
+  with a stored blank password, including whether each store accepts an empty value, and
+  the Vault path, which no check exercised. `scripts/test-ssh-credential-loading.mjs` now
+  asserts the `[]` reply for nothing stored. `resolve_password_ref` (legacy requests without
+  `load_stored_password`, explicit `keychain://` and `vault-secret://` references) still treats
+  an empty stored value as none; decide whether that legacy path should follow 256f09dd too.
+  `winscp.service.ts` passes `loadPassword` results through unchanged; its blank-password
+  behavior on Windows is unverified; agent authentication before disk keys in automatic
   mode (`41c242ad`); per-profile SSH TERM with the upstream blank fallback
   (`a8abcc0b`), all covered by `scripts/test-ssh-auth-candidates.mjs` and the
   updated `test-ssh-agent-config.mjs`; serial quick connect `port@baud` /
@@ -1663,12 +1706,7 @@
   `window.canHideOnBlur`.
 - Upstream changes made only in the Electron host or Node back ends still need
   native equivalents, each with its own test: WinSCP accepts `.ppk` keys without
-  conversion (`622c99b2`); the keychain/Vault half of blank passwords
-  (`256f09dd`: native lookup still turns a stored empty password into "none",
-  `mod.rs` around `prepare_stored_password` filters empty values, the profile
-  settings cannot save a blank password, and the inline panel's `saved ?? ''`
-  cannot distinguish "not stored" from "stored blank"; upstream uses `== null`
-  checks and confirms blank saves); forwarding messages moved
+  conversion (`622c99b2`); forwarding messages moved
   off the terminal (`a64ae78b`, decide against the native `ssh:message`
   diagnostics); WSL `--cd ~` and guest cwd resolution (`cdae0b6e`, `508dccc0`,
   the native shell provider does not expose `homeDirArgs`); bundled ConPTY

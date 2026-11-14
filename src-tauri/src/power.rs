@@ -429,10 +429,14 @@ mod tests {
         // Nothing is outstanding any more, so the late hold was dropped at once.
         assert!(!inhibitor.is_holding());
         assert_eq!(inner.releases.load(Ordering::SeqCst), 1);
-        // A new acquire starts a fresh native hold.
+        // A new acquire starts a fresh native hold; let the gate through first
+        // because the backend blocks until it is told to proceed.
+        proceed_tx.send(()).unwrap();
         let third = inhibitor.acquire().unwrap();
-        proceed_tx.send(()).unwrap_or(());
-        let _ = third;
+        assert_eq!(inner.starts.load(Ordering::SeqCst), 2);
+        assert!(inhibitor.is_holding());
+        assert!(inhibitor.release(third));
+        assert_eq!(inner.releases.load(Ordering::SeqCst), 2);
     }
 
     #[test]
