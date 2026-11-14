@@ -482,8 +482,13 @@ pub fn run() {
                 }
             });
 
+            // URL-scheme registration shells out to xdg-utils on Linux; a host
+            // without them must still start (an Xvfb container reproduced the
+            // ENOENT abort).
             #[cfg(any(target_os = "linux", all(debug_assertions, windows)))]
-            app.deep_link().register_all()?;
+            if let Err(error) = app.deep_link().register_all() {
+                eprintln!("could not register the tabby-rs URL scheme: {error}");
+            }
 
             #[cfg(target_os = "macos")]
             {
