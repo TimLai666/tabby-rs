@@ -1522,6 +1522,12 @@
   `hotkeys.toggle-window: [Ctrl-Alt-T]` and the window focused, the first press hides
   the window and the second shows it. An unfocused window is presented first, as
   upstream's rule says, so a check that presses before focusing sees it stay visible.
+- Wayland desktop evidence (sway sandbox, real app, `appearance.dock: left` in the
+  portable config): the window opens frameless with the rendered title bar and
+  controls, is not docked, and the Window settings page shows 視窗, 分頁, 窗格 and
+  修正 with no Docking block at all; the GPU hack toggle is present under 修正.
+  The capability read arrived before the page was opened, so the brief flash of the
+  Docking block before `window.getState` resolves was not observed here.
 - Unverified: real Wayland hotkey registration on KDE Plasma 6.5, 6.6 and GNOME,
   the `plasmashell --version` probe in a live session, compositor docking and
   always-on-top, the rendered settings rows, the rendered confirm dialog, and the
