@@ -2,7 +2,7 @@
 
 ## Pending — application quit acceptance and portable WebView storage
 
-- Read `docs/architecture/identity-and-launch.md` before changing application quit.
+- Read `engineering/architecture/identity-and-launch.md` before changing application quit.
   Keep macOS AppKit termination routed through the normal Tauri exit request.
   Preserve the existing Tao delegate object, layout, and inherited callbacks.
   `test:telnet-tab-controls` includes a real Cocoa probe; its AppHandle boundary
@@ -1292,7 +1292,7 @@
   running. These checks use a freshly built portable app with isolated settings.
   Concurrent startup, cold deep links, Windows WebView2, other supported platforms,
   and cleanup of SSH, Telnet, and serial sessions still need desktop acceptance.
-  See `docs/architecture/identity-and-launch.md` before changing this contract.
+  See `engineering/architecture/identity-and-launch.md` before changing this contract.
 - Verify macOS cold deep-link startup event timing against the original app. If
   `RunEvent::Opened` arrives after setup, a second-instance URL may follow the
   ordinary initial request and cause an extra auto-opened tab. The queued delivery

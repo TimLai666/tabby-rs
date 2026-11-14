@@ -38,7 +38,7 @@ initializing another writer. Receiver teardown precedes mutex release, and
 failed receiver construction retains callback ownership until it is freed.
 
 The application derives the portable override from its configured identifier
-and canonical data directory. See `docs/architecture/identity-and-launch.md`.
+and canonical data directory. See `engineering/architecture/identity-and-launch.md`.
 Before upgrading or removing the patch, run the resolver regressions in
 `src-tauri/src/portable_instance_tests.rs`, the real native transport regressions
 in `src-tauri/src/instance_transport_tests.rs`, the codec checks in
