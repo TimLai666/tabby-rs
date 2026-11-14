@@ -1030,9 +1030,35 @@
   position probe checks retained behavior and capability gating, not global
   position support. Constructor/API controls and blank Wry fixtures do not
   establish full application or original desktop acceptance.
-  Wayland global positions, rendered startup/minimum geometry, saved boundaries,
-  frame modes, and docking remain pending. RS does not yet persist or restore
-  `windowBoundaries`.
+  Wayland global positions, rendered startup/minimum geometry, frame modes,
+  and docking remain pending.
+- Window placement persists like upstream `window.json`: `windowBoundaries`
+  plus `maximized`, written by `window_close` after renderer approval and
+  restored to the hidden window inside the geometry initialization gate
+  (position when absolute positioning exists, then size, so the size lands
+  on the target monitor's DPI). Units are the
+  platform's native placement space: physical pixels on Windows and Linux (one
+  space across mixed-DPI monitors), points on macOS. A saved maximize is
+  deferred to `window.applyState { visible: true }` because Win32 shows a
+  hidden window when it is maximized. Capture inside `Moved`/`Resized` reads
+  live native flags (`IsZoomed`/`IsIconic`, GDK window state) through
+  `platform::live_window_flags` because Tao's cached `is_maximized` lags
+  system-initiated maximizes; fullscreen and minimized windows are skipped.
+  Recorded differences from upstream: off-screen windows center on the
+  nearest monitor's own rectangle, sizes are clamped to that monitor, and a
+  maximized-only file still maximizes. `src-tauri/src/storage/window_state.rs`
+  holds the file format and placement rule; `src-tauri/src/window_persistence.rs`
+  the hooks. Keep `storage::window_state` tests, `state::window_bounds_tests`,
+  and the `window_placement_linux` example (Xvfb with openbox so maximization
+  has a window manager; it exercises the pure rule on a real Wry window, not
+  the production hooks). A sandboxed sway session verified the file write on
+  close; Wayland stores a 0,0 position and restores size only. Still pending:
+  production hook capture during a window-manager maximize (GDK's state can
+  lag a ConfigureNotify like Tao's cache; check openbox and mutter with
+  `wmctrl -b add,maximized_vert,maximized_horz` then inspect window.json),
+  a second-instance presentation during cold start showing the window before
+  the deferred maximize, Windows mixed-DPI restore, original desktop
+  comparison, and macOS restore.
   Before accepting combined bounds and maximized patches, check their order:
   applying size after maximization currently restores the window on Windows.
 

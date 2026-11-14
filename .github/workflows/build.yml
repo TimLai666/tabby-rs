@@ -382,6 +382,13 @@ jobs:
           GDK_BACKEND: x11
         run: xvfb-run -a cargo run --locked --manifest-path src-tauri/Cargo.toml --example window_frame_linux
 
+      - name: Test Linux window placement on real Wry windows
+        timeout-minutes: 6
+        env:
+          GDK_BACKEND: x11
+        # openbox supplies the window manager that maximization needs under Xvfb.
+        run: xvfb-run -a -s "-screen 0 3200x2400x24" sh -c 'openbox & sleep 1; cargo run --locked --manifest-path src-tauri/Cargo.toml --example window_placement_linux'
+
       - name: Test Linux client positions on real Wry windows
         timeout-minutes: 6
         env:

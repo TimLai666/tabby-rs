@@ -50,6 +50,17 @@ fn set_bounds_position(
     window.set_position(position).map_err(io_error)
 }
 
+/// Applies the placement saved in `window.json` to a hidden window.
+pub(crate) fn restore_window_placement(window: &tauri::WebviewWindow) -> Result<(), AppError> {
+    let absolute_positioning = window_capabilities(window)?.absolute_positioning;
+    crate::window_persistence::restore(
+        window,
+        set_bounds_size,
+        set_bounds_position,
+        absolute_positioning,
+    )
+}
+
 fn window_capabilities(
     window: &tauri::WebviewWindow,
 ) -> Result<crate::desktop::WindowCapabilities, AppError> {
@@ -155,7 +166,12 @@ pub(crate) fn create_window(
     crate::register_desktop_window_events(&window);
     #[cfg(any(windows, target_os = "linux"))]
     {
-        let result = crate::platform::initialize_window_geometry(&window);
+        let result = crate::platform::initialize_window_geometry(&window).and_then(|()| {
+            restore_window_placement(&window).unwrap_or_else(|error| {
+                eprintln!("could not restore the saved window placement: {error}")
+            });
+            Ok(())
+        });
         pending_geometry.complete(result.as_ref().map(|_| ()).map_err(ToString::to_string));
         if let Err(error) = result {
             state.launches().set_closing(&label, true);
@@ -166,6 +182,10 @@ pub(crate) fn create_window(
                 ))),
             };
         }
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
+    if let Err(error) = restore_window_placement(&window) {
+        eprintln!("could not restore the saved window placement: {error}");
     }
     Ok(window)
 }
@@ -239,6 +259,7 @@ pub fn window_apply_state(
     if let Some(visible) = request.visible {
         if visible {
             window.show().map_err(io_error)?;
+            crate::window_persistence::apply_pending_maximize(&window)?;
         } else {
             window.hide().map_err(io_error)?;
         }
@@ -290,6 +311,9 @@ pub fn window_close(
 ) -> Result<(), AppError> {
     // The renderer has already confirmed and closed its tabs. Do not request
     // confirmation again through the native CloseRequested handler.
+    if let Err(error) = crate::window_persistence::save_on_close(&window) {
+        eprintln!("could not save the window placement: {error}");
+    }
     state.launches().set_closing(window.label(), true);
     window.destroy().map_err(|error| {
         state.launches().set_closing(window.label(), false);

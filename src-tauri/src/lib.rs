@@ -22,6 +22,7 @@ mod transfer;
 pub mod update;
 mod webview_storage;
 mod window_geometry;
+mod window_persistence;
 mod windows_integration;
 mod winscp;
 
@@ -200,6 +201,7 @@ pub(crate) fn register_desktop_window_events(window: &tauri::WebviewWindow) {
             let _ = emitter.emit_to(emitter.label(), "desktop:windowFocused", *focused);
         }
         tauri::WindowEvent::Moved(_position) => {
+            window_persistence::remember(&emitter);
             #[cfg(target_os = "linux")]
             let Ok((position, _)) = crate::platform::window_bounds(&emitter) else {
                 return;
@@ -213,6 +215,7 @@ pub(crate) fn register_desktop_window_events(window: &tauri::WebviewWindow) {
             );
         }
         tauri::WindowEvent::Resized(size) => {
+            window_persistence::remember(&emitter);
             let _ = emitter.emit_to(
                 emitter.label(),
                 "desktop:windowResized",
@@ -234,6 +237,9 @@ pub(crate) fn register_desktop_window_events(window: &tauri::WebviewWindow) {
                 .state::<AppState>()
                 .launches()
                 .remove(emitter.label());
+            emitter
+                .state::<AppState>()
+                .forget_window_bounds(emitter.label());
         }
         tauri::WindowEvent::DragDrop(
             tauri::DragDropEvent::Enter { position, .. } | tauri::DragDropEvent::Over { position },
@@ -470,9 +476,20 @@ pub fn run() {
                 register_desktop_window_events(&window);
                 #[cfg(any(windows, target_os = "linux"))]
                 if let Some(pending) = primary_geometry.as_ref() {
-                    let result = platform::initialize_window_geometry(&window);
+                    let result = platform::initialize_window_geometry(&window).and_then(|()| {
+                        commands::desktop::restore_window_placement(&window).unwrap_or_else(
+                            |error| {
+                                eprintln!("could not restore the saved window placement: {error}")
+                            },
+                        );
+                        Ok(())
+                    });
                     pending.complete(result.as_ref().map(|_| ()).map_err(ToString::to_string));
                     result?;
+                }
+                #[cfg(not(any(windows, target_os = "linux")))]
+                if let Err(error) = commands::desktop::restore_window_placement(&window) {
+                    eprintln!("could not restore the saved window placement: {error}");
                 }
             }
             let launch_app = app.handle().clone();
