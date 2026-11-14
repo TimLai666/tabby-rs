@@ -33,7 +33,8 @@ pub struct AppState {
     startup_window_frame: window_frame::StartupWindowFrame,
     window_bounds: Mutex<HashMap<String, WindowBoundaries>>,
     pending_maximize: Mutex<std::collections::HashSet<String>>,
-    startup_devtools: AtomicBool,
+    startup_devtools: bool,
+    devtools_windows: Mutex<std::collections::HashSet<String>>,
 }
 
 impl AppState {
@@ -43,7 +44,7 @@ impl AppState {
         persisted_state: TabbyRsState,
     ) -> Self {
         let launches = LaunchQueue::default();
-        let startup_devtools = AtomicBool::new(initial_launch.request.argv.debug);
+        let startup_devtools = initial_launch.request.argv.debug;
         launches.push("main", initial_launch.for_new_window());
         Self {
             next_window_id: AtomicU64::new(0),
@@ -58,6 +59,7 @@ impl AppState {
             window_bounds: Mutex::new(HashMap::new()),
             pending_maximize: Mutex::new(std::collections::HashSet::new()),
             startup_devtools,
+            devtools_windows: Mutex::new(std::collections::HashSet::new()),
         }
     }
 
@@ -115,10 +117,16 @@ impl AppState {
             .remove(label)
     }
 
-    /// Returns true once, for the first window that reads the process's
-    /// startup launch, when that launch was started with `-d`/`--debug`.
-    pub fn take_startup_devtools(&self) -> bool {
-        self.startup_devtools.swap(false, Ordering::AcqRel)
+    /// Returns true once per window label when the process was started with
+    /// `-d`/`--debug`: upstream electron-debug opens DevTools for every window
+    /// as it is created, and a renderer reload must not open them again.
+    pub fn take_startup_devtools(&self, label: &str) -> bool {
+        self.startup_devtools
+            && self
+                .devtools_windows
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .insert(label.to_owned())
     }
 
     pub fn request_forced_quit(&self) {

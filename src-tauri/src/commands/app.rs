@@ -330,12 +330,13 @@ fn bootstrap_data(
     state: State<'_, AppState>,
 ) -> Result<BootstrapData, AppError> {
     let _ = request;
+    // Before anything that can fail: a broken config is when `-d` matters most.
+    if state.take_startup_devtools(window.label()) {
+        window.open_devtools();
+    }
     fs::create_dir_all(state.paths().plugins_dir())?;
     let config = bootstrap_config(&state)?;
     let window_frame = state.startup_window_frame(&config).to_owned();
-    if window.label() == "main" && state.take_startup_devtools() {
-        window.open_devtools();
-    }
 
     let previous = state.persisted_state();
     let discovered = if previous.safe_mode.attempt_id.is_some() {

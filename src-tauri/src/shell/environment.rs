@@ -59,6 +59,9 @@ pub fn merge_environment(
         validate_environment_entry(&key, &value)?;
         insert_environment(&mut merged, key, value);
     }
+    // GPU workaround variables this process exported for its own WebView must
+    // not reach the shell (upstream's disableHardwareAcceleration never does).
+    crate::gpu::strip_owned_variables(&mut merged);
 
     for (key, value) in profile.into_iter().chain(runtime) {
         validate_environment_entry(&key, &value)?;
