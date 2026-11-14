@@ -138,7 +138,18 @@ pub fn append_bounded(buffer: &mut Vec<u8>, chunk: &[u8], limit: usize) -> Resul
 }
 
 // Performs only a GET of the release metadata. It never downloads or executes an artifact.
+/// reqwest is built with `rustls-no-provider` (as tauri-plugin-updater uses it),
+/// so a process-wide crypto provider must exist before any client is built or
+/// `Client::build` panics on a runtime worker. The updater plugin installs the
+/// ring provider lazily when it runs; this path can run before it does.
+pub(crate) fn ensure_crypto_provider() {
+    if rustls::crypto::CryptoProvider::get_default().is_none() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    }
+}
+
 pub async fn fetch_latest_release() -> Result<GithubRelease, AppError> {
+    ensure_crypto_provider();
     let client = configure_updater_client(reqwest::Client::builder())
         .timeout(RELEASE_TIMEOUT)
         .user_agent(USER_AGENT)
@@ -174,9 +185,21 @@ pub async fn fetch_latest_release() -> Result<GithubRelease, AppError> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn crypto_provider_lets_a_reqwest_client_build() {
+        // Without a provider reqwest 0.13 (rustls-no-provider) panics in build().
+        ensure_crypto_provider();
+        ensure_crypto_provider();
+        assert!(rustls::crypto::CryptoProvider::get_default().is_some());
+        configure_updater_client(reqwest::Client::builder())
+            .build()
+            .expect("client builds once a provider is installed");
+    }
+
     use super::{
-        append_bounded, is_newer_release, parse_latest_release, release_page_info, release_version,
-        GithubRelease, ReleasePageInfo, MAX_RELEASE_BODY_BYTES,
+        append_bounded, configure_updater_client, ensure_crypto_provider, is_newer_release,
+        parse_latest_release, release_page_info, release_version, GithubRelease, ReleasePageInfo,
+        MAX_RELEASE_BODY_BYTES,
     };
 
     fn release(tag: &str, url: &str, body: Option<&str>, published: Option<&str>) -> GithubRelease {
