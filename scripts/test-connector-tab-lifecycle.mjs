@@ -176,7 +176,7 @@ function buildShared ({ base, connectable }) {
     vm.runInNewContext(ts.transpileModule(code, { compilerOptions: {
         target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS,
     } }).outputText, {
-        module: sharedModule, exports: sharedModule.exports, first, _: text => text,
+        module: sharedModule, exports: sharedModule.exports, first, ProfilesService: class {}, _: text => text,
         setTimeout, clearTimeout, Promise, console,
     })
     return sharedModule.exports
@@ -294,6 +294,9 @@ function configure (tab, { behavior, frontend, manual, recentInputs = '' }) {
     tab.frontend = frontend
         ? { input$, resetTerminalModes () {}, clear () {} }
         : null
+    // Upstream 81cf01f0 refreshes the profile's config proxy on reconnect; a
+    // pass-through keeps the current-vs-upstream transcript comparison valid.
+    tab.injector = { get: () => ({ refreshConfigProxyForProfile: profile => profile }) }
     tab.isDisconnectedByHand = manual
     return input$
 }

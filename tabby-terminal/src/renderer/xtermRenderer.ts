@@ -7,8 +7,8 @@ import { WebglAddon } from '@xterm/addon-webgl'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { SerializeAddon } from '@xterm/addon-serialize'
 import { ImageAddon } from '@xterm/addon-image'
-import { CanvasAddon } from '@xterm/addon-canvas'
 import { WebLinksAddon } from '@xterm/addon-web-links'
+import { disposeWebglAddon } from './webglAddon'
 
 import type { BaseTerminalProfile, ResizeEvent } from '../api/interfaces'
 import type {
@@ -43,7 +43,6 @@ export class XtermRenderer extends TerminalRenderer {
     private serializeAddon = new SerializeAddon()
     private ligaturesAddon?: LigaturesAddon
     private webGLAddon?: WebglAddon
-    private canvasAddon?: CanvasAddon
     private linkAddons = new Set<WebLinksAddon>()
     private searchState: SearchState = { resultCount: 0 }
     private opened = false
@@ -79,7 +78,7 @@ export class XtermRenderer extends TerminalRenderer {
         this.terminal = new Terminal({
             allowTransparency: true,
             allowProposedApi: true,
-            overviewRulerWidth: 8,
+            overviewRuler: { width: 8 },
             windowsPty: construction.windowsPty as any,
         })
         this.core = this.terminal['_core']
@@ -106,6 +105,23 @@ export class XtermRenderer extends TerminalRenderer {
 
         this.core._scrollToBottom = this.core.scrollToBottom.bind(this.core)
         this.core.scrollToBottom = () => null
+
+        // xterm.js#6054 does this in _keyDown itself. Keep the workaround at
+        // that boundary so Shift cannot overwrite a previous keydown's state.
+        const oldKeyDown = this.core._keyDown.bind(this.core)
+        this.core._keyDown = (event: KeyboardEvent) => {
+            if (this.platform !== 'windows' || event.key !== 'Shift' && event.keyCode !== 16) {
+                return oldKeyDown(event)
+            }
+
+            // Sogou can commit preedit text when Shift switches to English.
+            // Preserve the existing value so Shift itself does not arm
+            // xterm's input fallback guard.
+            const keyDownSeen = this.core._keyDownSeen
+            const result = oldKeyDown(event)
+            this.core._keyDownSeen = keyDownSeen
+            return result
+        }
     }
 
     get element (): HTMLElement | null | undefined {
@@ -129,8 +145,6 @@ export class XtermRenderer extends TerminalRenderer {
 
         if (this.construction.webgl) {
             this.attachWebGLAddon()
-        } else {
-            this.ensureCanvasFallback()
         }
 
         if (!this.searchLoaded) {
@@ -158,7 +172,8 @@ export class XtermRenderer extends TerminalRenderer {
         }
 
         this.fitAddon.fit()
-        this.core.viewport?._refresh()
+        // xterm only re-syncs the scroll area when cols/rows change, not cell size
+        this.core._viewport?.queueSync()
 
         if (viewport.pinnedToBottom) {
             this.core._scrollToBottom()
@@ -236,9 +251,14 @@ export class XtermRenderer extends TerminalRenderer {
     setOptions (patch: Partial<TerminalRendererOptions>, _profile?: BaseTerminalProfile): void {
         if (patch.platform) {
             this.platform = patch.platform
-            this.core.browser.isWindows = patch.platform === 'windows'
-            this.core.browser.isLinux = patch.platform === 'linux'
-            this.core.browser.isMac = patch.platform === 'macos'
+            // xterm 6 exposes its platform flags as getters, so replace the
+            // object like upstream instead of assigning the fields.
+            this.core.browser = {
+                ...this.core.browser,
+                isWindows: patch.platform === 'windows',
+                isLinux: patch.platform === 'linux',
+                isMac: patch.platform === 'macos',
+            }
         }
 
         const font = patch.font
@@ -285,6 +305,7 @@ export class XtermRenderer extends TerminalRenderer {
 
     setLinkHandler (handler: TerminalLinkHandler | null): void {
         this.terminal.options.linkHandler = handler ? {
+            allowNonHttpProtocols: handler.allowNonHttpProtocols ?? false,
             activate: (event, uri) => {
                 void handler.activate(event, uri)
             },
@@ -363,11 +384,10 @@ export class XtermRenderer extends TerminalRenderer {
 
     clearTextureAtlas (): void {
         this.webGLAddon?.clearTextureAtlas()
-        this.canvasAddon?.clearTextureAtlas()
     }
 
     reactivate (): void {
-        if (this.pendingRendererRecovery || this.construction.webgl && !this.webGLAddon && !this.canvasAddon) {
+        if (this.pendingRendererRecovery || this.construction.webgl && !this.webGLAddon) {
             this.pendingRendererRecovery = true
             this.recoverRenderer()
         } else {
@@ -394,18 +414,20 @@ export class XtermRenderer extends TerminalRenderer {
     }
 
     dispose (): void {
-        // xterm 5.4 queues viewport synchronization without cancelling it on disposal.
+        // xterm queues viewport synchronization without cancelling it on disposal.
         // A tab closed immediately after opening must not read the disposed renderer.
-        if (this.core.viewport) {
-            this.core.viewport.syncScrollArea = () => undefined
+        const viewport = this.core._viewport ?? this.core.viewport
+        if (viewport) {
+            viewport.syncScrollArea = () => undefined
+            viewport.queueSync = () => undefined
         }
         this.writeQueue.dispose()
         for (const addon of this.linkAddons) {
             addon.dispose()
         }
         this.linkAddons.clear()
-        this.webGLAddon?.dispose()
-        this.canvasAddon?.dispose()
+        disposeWebglAddon(this.webGLAddon)
+        this.webGLAddon = undefined
         this.ligaturesAddon?.dispose()
         this.searchAddon.dispose()
         this.serializeAddon.dispose()
@@ -434,6 +456,7 @@ export class XtermRenderer extends TerminalRenderer {
             cursor: theme.cursor,
             cursorAccent: theme.cursorAccent,
             extendedAnsi: theme.extendedAnsi,
+            overviewRulerBorder: '#00000000',
         }
         for (let i = 0; i < COLOR_NAMES.length && i < theme.colors.length; i++) {
             mapped[COLOR_NAMES[i]] = theme.colors[i]
@@ -471,12 +494,11 @@ export class XtermRenderer extends TerminalRenderer {
             this.webGLAddon = addon
         } catch {
             this.webGLAddon = undefined
-            this.ensureCanvasFallback()
         }
     }
 
     private onWebGLContextLoss (): void {
-        this.webGLAddon?.dispose()
+        disposeWebglAddon(this.webGLAddon)
         this.webGLAddon = undefined
         this.pendingRendererRecovery = true
         this.recoverRenderer()
@@ -490,23 +512,9 @@ export class XtermRenderer extends TerminalRenderer {
         if (this.rendererRecoveryAttempts < MAX_WEBGL_RECOVERY_ATTEMPTS) {
             this.rendererRecoveryAttempts++
             this.attachWebGLAddon()
-        } else {
-            this.ensureCanvasFallback()
         }
+        // Otherwise xterm 6 keeps rendering with its built-in DOM renderer.
         this.redraw()
-    }
-
-    private ensureCanvasFallback (): void {
-        if (this.canvasAddon) {
-            return
-        }
-        try {
-            const addon = new CanvasAddon()
-            this.terminal.loadAddon(addon)
-            this.canvasAddon = addon
-        } catch {
-            this.canvasAddon = undefined
-        }
     }
 
     private canRecoverRenderer (): boolean {

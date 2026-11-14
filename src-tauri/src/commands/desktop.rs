@@ -632,6 +632,27 @@ pub fn desktop_reveal_path(app: tauri::AppHandle, request: PathRequest) -> Resul
         .map_err(io_error)
 }
 
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PathKindResponse {
+    /// `"directory"`, `"file"`, or `null` when the path does not exist or is unreadable.
+    pub kind: Option<&'static str>,
+}
+
+/// Renderer-side directory checks (session working directory, CLI arguments)
+/// cannot touch the filesystem directly in the WebView.
+#[tauri::command]
+pub fn desktop_path_kind(request: PathRequest) -> Result<PathKindResponse, AppError> {
+    let kind = std::fs::metadata(&request.path).ok().map(|metadata| {
+        if metadata.is_dir() {
+            "directory"
+        } else {
+            "file"
+        }
+    });
+    Ok(PathKindResponse { kind })
+}
+
 #[tauri::command]
 pub fn desktop_open_path(app: tauri::AppHandle, request: PathRequest) -> Result<(), AppError> {
     app.opener()

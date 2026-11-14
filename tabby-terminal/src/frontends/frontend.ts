@@ -16,6 +16,8 @@ export interface SearchState {
 
 export interface TerminalLinkHandler {
     activate: (event: MouseEvent, uri: string) => void | Promise<void>
+    /** Also detect non-http(s) URLs such as `file:` links (xterm's `allowNonHttpProtocols`). */
+    allowNonHttpProtocols?: boolean
 }
 
 export interface TerminalLinkProvider extends TerminalLinkHandler {

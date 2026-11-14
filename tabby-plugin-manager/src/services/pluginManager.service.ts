@@ -263,6 +263,12 @@ export class PluginManagerService {
     }
 
     async installPlugin (plugin: PluginInfo): Promise<void> {
+        if (!/^(tabby|terminus)-[a-zA-Z0-9._-]+$/.test(plugin.packageName) || PLUGIN_BLACKLIST.includes(plugin.packageName)) {
+            throw new Error(`Refusing to install disallowed package: ${plugin.packageName}`)
+        }
+        if (!semverValid(plugin.version)) {
+            throw new Error(`Refusing to install package with invalid version: ${plugin.version}`)
+        }
         try {
             await this.platform.installPlugin(plugin.packageName, plugin.version)
             if (!await this.refreshInstalledPlugins()) {

@@ -37,7 +37,12 @@ export abstract class BaseTabComponent extends BaseComponent {
     /**
      * User-defined title override
      */
-    customTitle: string
+    customTitle = ''
+
+    /**
+     * Whether the user-defined title is shown inside a split pane
+     */
+    customTitleVisible = true
 
     /**
      * Last tab activity state
@@ -154,6 +159,25 @@ export abstract class BaseTabComponent extends BaseComponent {
             state: state.state,
             source: state.source,
         })
+    }
+
+    get displayTitle (): string {
+        return this.customTitle ? this.customTitle : this.title
+    }
+
+    setCustomTitle (title: string): void {
+        const hadCustomTitle = !!this.customTitle
+        this.customTitle = title
+        if (!hadCustomTitle && title) {
+            this.customTitleVisible = true
+        }
+        this.titleChange.next(this.displayTitle)
+        this.recoveryStateChangedHint.next()
+    }
+
+    setCustomTitleVisible (visible: boolean): void {
+        this.customTitleVisible = visible
+        this.recoveryStateChangedHint.next()
     }
 
     /**

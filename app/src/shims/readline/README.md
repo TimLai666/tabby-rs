@@ -4,15 +4,16 @@
 and ANSI cursor functions. Tauri runs them in a WebView without Node built-ins.
 The parent `readline.cjs` exports the APIs used by these consumers.
 
-The four editing modules and ANSI pattern come from Node 22.22.0 embedded in
-Electron 38.8.6. `provenance.json` records the original source hashes. Each copied
+The four editing modules and ANSI pattern come from Node 24.21.0 embedded in
+Electron 43.7.0. `provenance.json` records the original source hashes. Each copied
 module includes Node's MIT notice, also available in `LICENSE`. The source
 transformation changes imports and supplies browser timers and helper functions.
 The line editing algorithms remain unchanged.
 
-`runtime.cjs` adapts the required internal helpers. `widths.json` contains all
-non-default Unicode scalar widths from the reference runtime's ICU 74.2, Unicode
-15.1. Using these ranges avoids relying on the WebView's Unicode version for
+`runtime.cjs` adapts the required internal helpers, including an in-memory
+`ReplHistory` (Node 24 moved history handling there; file persistence is omitted). `widths.json` contains all
+non-default Unicode scalar widths from the reference runtime's ICU 78.2, Unicode
+17.0. Using these ranges avoids relying on the WebView's Unicode version for
 cursor placement. Width calculation preserves Node's ASCII prefix and NFC rules.
 The derived ICU/Unicode data retains the Unicode License V3 in `UNICODE-LICENSE`
 and in the runtime module's bundled notice.

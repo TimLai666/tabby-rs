@@ -132,7 +132,7 @@ function assemble (variantName, timers, state) {
         `class ${v.className} extends ConnectableTerminalTabComponent {`,
         '  constructor () {',
         '    super()',
-        '    this.frontend = null; this.profile = { options: {} }; this.recentInputs = ""; this.translate = { instant: t => t }',
+        '    this.frontend = null; this.profile = { options: {} }; this.injector = { get: () => ({ refreshConfigProxyForProfile: profile => profile }) }; this.recentInputs = ""; this.translate = { instant: t => t }',
         '    this.isDisconnectedByHand = false; this.reconnectOffered = false',
         '    this.reconnectAttempts = 0; this.reconnectTimer = null',
         '    this.activeKIPrompt = null; this.activeKIProfile = null; this.activeKIRequestId = null; this.sshSession = null',
@@ -146,7 +146,7 @@ function assemble (variantName, timers, state) {
     vm.runInNewContext(ts.transpileModule(code, { compilerOptions: {
         target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS, esModuleInterop: true,
     } }).outputText, {
-        module: mod, exports: mod.exports, Promise, console, first, colors, state, _: text => text,
+        module: mod, exports: mod.exports, Promise, console, first, colors, ProfilesService: class {}, state, _: text => text,
         setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout,
     })
     return mod.exports.Tab

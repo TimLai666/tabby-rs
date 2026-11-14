@@ -1057,6 +1057,10 @@ export interface HostRequestMap {
         request: { path: string }
         response: null
     }
+    'desktop.pathKind': {
+        request: { path: string }
+        response: { kind: 'directory' | 'file' | null }
+    }
     'desktop.openPath': {
         request: { path: string }
         response: null

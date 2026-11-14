@@ -1,5 +1,4 @@
 import { Terminal } from '@xterm/xterm'
-import { CanvasAddon } from '@xterm/addon-canvas'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { XtermRenderer } from '../../../tabby-terminal/src/renderer/xtermRenderer'
 
@@ -40,7 +39,7 @@ function terminalOptions () {
     return {
         allowTransparency: true,
         allowProposedApi: true,
-        overviewRulerWidth: 8,
+        overviewRuler: { width: 8 },
         cols: 80,
         rows: 12,
         scrollback: 1000,
@@ -139,6 +138,14 @@ function hashBytes (bytes: Uint8ClampedArray): number {
     return hash >>> 0
 }
 
+// xterm 6 dropped the Canvas addon; its built-in DOM renderer draws rows as
+// elements, so visual parity compares the rendered row markup instead.
+function domRowsSnapshot (container: HTMLElement): string[] {
+    const rows = container.querySelector('.xterm-rows')
+    assert(rows, 'DOM renderer did not create .xterm-rows')
+    return [...rows.children].map(row => row.innerHTML)
+}
+
 function canvasSnapshot (container: HTMLElement): { width: number; height: number; hash: number }[] {
     return [...container.querySelectorAll('canvas')].map(canvas => {
         const context = canvas.getContext('2d')
@@ -162,7 +169,6 @@ async function run (): Promise<ParityResult> {
     const baseline = new Terminal(options)
     baseline.loadAddon(new Unicode11Addon())
     baseline.unicode.activeVersion = '11'
-    baseline.loadAddon(new CanvasAddon())
     baseline.open(baselineHost)
 
     const adapter = new XtermRenderer({ webgl: false, sixel: false })
@@ -260,11 +266,16 @@ async function run (): Promise<ParityResult> {
     checks.push('scroll-event')
 
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
-    const baselineCanvas = canvasSnapshot(baselineHost)
-    const adapterCanvas = canvasSnapshot(adapterHost)
-    assert(baselineCanvas.length > 0, 'Raw xterm did not render Canvas layers')
-    assert(JSON.stringify(adapterCanvas) === JSON.stringify(baselineCanvas), 'Canvas pixel snapshot differs from raw xterm baseline')
-    checks.push('canvas-visual-parity')
+    const baselineRows = domRowsSnapshot(baselineHost)
+    const adapterRows = domRowsSnapshot(adapterHost)
+    // The scroll fixture above already pushed the color lines out of view; the
+    // parity claim is that both terminals render identical row markup.
+    assert(baselineRows.length > 0 && baselineRows.some(row => row.replace(/<[^>]+>/g, '').trim()), 'Raw xterm did not render DOM rows')
+    assert(JSON.stringify(adapterRows) === JSON.stringify(baselineRows), 'DOM row snapshot differs from raw xterm baseline')
+    // Both terminals may still own helper canvases (overview ruler, images);
+    // they must at least match in number.
+    assert(canvasSnapshot(adapterHost).length === canvasSnapshot(baselineHost).length, 'Canvas layer count differs from raw xterm baseline')
+    checks.push('dom-visual-parity')
 
     const fallbackHost = document.querySelector<HTMLElement>('#fallback')
     assert(fallbackHost, 'Fallback host is missing')
@@ -295,8 +306,12 @@ async function run (): Promise<ParityResult> {
     fallbackInternals.pendingRendererRecovery = true
     Object.defineProperty(document, 'hasFocus', { configurable: true, value: () => true })
     fallbackInternals.recoverRenderer()
-    assert(fallbackInternals.canvasAddon, 'WebGL recovery did not fall back to Canvas after bounded retries')
-    checks.push('webgl-canvas-fallback')
+    assert(!fallbackInternals.webGLAddon, 'WebGL recovery must stop retrying after the bounded attempts')
+    assert(!fallbackInternals.pendingRendererRecovery, 'WebGL recovery did not settle after bounded retries')
+    await fallback.write('fallback-dom-ok')
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+    assert(domRowsSnapshot(fallbackHost).some(row => row.includes('fallback-dom-ok')), 'DOM renderer did not take over after WebGL recovery gave up')
+    checks.push('webgl-dom-fallback')
 
     const unregister = adapter.registerLinkProvider({
         regex: /https?:\/\/[^\s]+/,

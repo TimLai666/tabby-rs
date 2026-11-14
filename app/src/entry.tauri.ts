@@ -161,12 +161,12 @@ async function main (): Promise<void> {
             : () => bridge.invoke('plugins.discover', {}),
         readEntry: packageName => bridge.invoke('plugins.readEntry', { packageName }),
     }, createPluginRegistry(), bootstrapData.safeMode ? [] : pluginBlacklist(bootstrapData.config), {
-        pluginStarted: plugin => bridge.invoke('plugins.bootstrapPluginStarted', {
-            packageName: plugin.packageName,
-        }),
-        pluginCompleted: plugin => bridge.invoke('plugins.bootstrapPluginCompleted', {
-            packageName: plugin.packageName,
-        }),
+        pluginStarted: async plugin => {
+            await bridge.invoke('plugins.bootstrapPluginStarted', { packageName: plugin.packageName })
+        },
+        pluginCompleted: async plugin => {
+            await bridge.invoke('plugins.bootstrapPluginCompleted', { packageName: plugin.packageName })
+        },
     })
     ;(window as any).pluginLoadFailures = pluginResult.failures
     const discoveryFailure = pluginResult.failures.find(failure => failure.phase === 'discover')

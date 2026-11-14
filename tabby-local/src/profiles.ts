@@ -16,6 +16,7 @@ export class LocalProfilesService extends ProfileProvider<LocalProfile> {
             restoreFromPTYID: null,
             command: '',
             args: [],
+            homeDirArgs: [],
             cwd: null,
             env: {
                 __nonStructural: true,
@@ -27,6 +28,7 @@ export class LocalProfilesService extends ProfileProvider<LocalProfile> {
             runAsAdministrator: false,
             autoSudoPassword: false,
             sudoSecretRef: null,
+            fsBase: null,
         },
     }
 
@@ -50,7 +52,7 @@ export class LocalProfilesService extends ProfileProvider<LocalProfile> {
     }
 
     async getNewTabParameters (profile: LocalProfile): Promise<NewTabParameters<TerminalTabComponent>> {
-        profile = deepClone(profile)
+        profile = deepClone({ ...profile })
 
         if (!profile.options.cwd) {
             if (this.app.activeTab instanceof TerminalTabComponent && this.app.activeTab.session) {
@@ -83,9 +85,11 @@ export class LocalProfilesService extends ProfileProvider<LocalProfile> {
             ...this.configDefaults.options,
             command: shell.command,
             args: shell.args ?? [],
+            homeDirArgs: shell.homeDirArgs ?? [],
             env: shell.env,
             cwd: shell.cwd ?? null,
             shellType: shell.shellType ?? null,
+            fsBase: shell.fsBase ?? null,
         }
     }
 

@@ -20,8 +20,10 @@ import { TauriSftpSession } from './sftp'
 import { TauriPasswordStorageService } from '../services/passwordStorage.service'
 
 export class TauriSshSession extends BaseSession {
+    /** Native-session teardown started; distinct from BaseSession.destroying, which guards destroy() re-entry. */
+    private nativeDestroying = false
+
     private id: string|null = null
-    private destroying = false
     private listenersEnded = false
     private connecting = false
     authUsername: string|null = null
@@ -55,7 +57,7 @@ export class TauriSshSession extends BaseSession {
             })
             // The owner can close while the start reply is still in flight. In that
             // case the returned id must be stopped immediately without a visible row.
-            if (this.destroying) {
+            if (this.nativeDestroying) {
                 void this.bridge.invoke('ssh.forwardingStop', { id: info.id }).catch(error => {
                     this.logger.debug('SSH forwarding close failed after session end', error)
                 })
@@ -98,7 +100,7 @@ export class TauriSshSession extends BaseSession {
     }
 
     get isClosing (): boolean {
-        return this.destroying
+        return this.nativeDestroying
     }
 
     get serviceMessage$ (): Observable<string> {
@@ -119,18 +121,18 @@ export class TauriSshSession extends BaseSession {
     }
 
     async start (): Promise<void> {
-        if (this.open || this.destroying || this.listenersEnded) {
+        if (this.open || this.nativeDestroying || this.listenersEnded) {
             return
         }
         try {
             await Promise.all([
                 this.bridge.listen('ssh:message', event => {
-                    if (event.connectionId === this.connectionId && !this.destroying && !this.listenersEnded) {
+                    if (event.connectionId === this.connectionId && !this.nativeDestroying && !this.listenersEnded) {
                         this.serviceMessage.next(event.message)
                     }
                 }),
                 this.bridge.listen('ssh:output', event => {
-                    if (event.connectionId === this.connectionId && !this.destroying && !this.listenersEnded) {
+                    if (event.connectionId === this.connectionId && !this.nativeDestroying && !this.listenersEnded) {
                         if (!this.id) {
                             this.pendingOutput.push({ data: event.data, extended: event.extended })
                             return
@@ -139,7 +141,7 @@ export class TauriSshSession extends BaseSession {
                     }
                 }),
                 this.bridge.listen('ssh:exit', event => {
-                    if (!this.destroying && !this.listenersEnded && event.connectionId === this.connectionId) {
+                    if (!this.nativeDestroying && !this.listenersEnded && event.connectionId === this.connectionId) {
                         if (!this.id) {
                             this.pendingExit = event
                         } else if (this.open) {
@@ -149,12 +151,12 @@ export class TauriSshSession extends BaseSession {
                     }
                 }),
                 this.bridge.listen('ssh:hostKeyPrompt', prompt => {
-                    if (!this.destroying && !this.listenersEnded && prompt.connectionId === this.connectionId) {
+                    if (!this.nativeDestroying && !this.listenersEnded && prompt.connectionId === this.connectionId) {
                         void this.handleHostKeyPrompt(prompt)
                     }
                 }),
                 this.bridge.listen('ssh:authPrompt', prompt => {
-                    if (!this.destroying && !this.listenersEnded && prompt.connectionId === this.connectionId) {
+                    if (!this.nativeDestroying && !this.listenersEnded && prompt.connectionId === this.connectionId) {
                         if (prompt.storedPassword) {
                             void this.handleStoredPasswordPrompt(prompt)
                         } else if (prompt.username === true || Boolean(prompt.password ?? prompt.privateKeyHash)) {
@@ -165,18 +167,18 @@ export class TauriSshSession extends BaseSession {
                     }
                 }),
                 this.bridge.listen('ssh:passwordAccepted', event => {
-                    if (!this.destroying && !this.listenersEnded && event.connectionId === this.connectionId) {
+                    if (!this.nativeDestroying && !this.listenersEnded && event.connectionId === this.connectionId) {
                         void this.saveAcceptedPassword(event.requestId)
                     }
                 }),
                 this.bridge.listen('ssh:privateKeyUnlocked', event => {
-                    if (!this.destroying && !this.listenersEnded && event.connectionId === this.connectionId) {
+                    if (!this.nativeDestroying && !this.listenersEnded && event.connectionId === this.connectionId) {
                         void this.saveUnlockedPassphrase(event.requestId)
                     }
                 }),
             ].map(async registration => {
                 const unlisten = await registration
-                if (this.destroying || this.listenersEnded) {
+                if (this.nativeDestroying || this.listenersEnded) {
                     unlisten()
                 } else {
                     this.unlisteners.push(unlisten)
@@ -185,7 +187,7 @@ export class TauriSshSession extends BaseSession {
         } catch (error) {
             // Preserve startup errors for the tab; explicit cancellation stays separate.
             // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-            if (!this.destroying) {
+            if (!this.nativeDestroying) {
                 try {
                     this.endListening()
                     await super.destroy()
@@ -196,20 +198,20 @@ export class TauriSshSession extends BaseSession {
             throw error
         }
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-        if (this.destroying) {
+        if (this.nativeDestroying) {
             return
         }
 
         const request = await this.connectRequest()
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-        if (this.destroying) { return }
+        if (this.nativeDestroying) { return }
         const unlistenConnecting = await this.bridge.listen('ssh:connecting', event => {
-            if (event.connectionId === this.connectionId && this.destroying) {
+            if (event.connectionId === this.connectionId && this.nativeDestroying) {
                 void this.cancelPendingConnection()
             }
         })
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-        if (this.destroying) {
+        if (this.nativeDestroying) {
             unlistenConnecting()
             return
         }
@@ -225,7 +227,7 @@ export class TauriSshSession extends BaseSession {
         })
         // The session can be destroyed while the bridge connection is still opening.
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-        if (this.destroying) {
+        if (this.nativeDestroying) {
             await this.bridge.invoke('ssh.close', { id: info.id }).catch(error => {
                 this.logger.debug('SSH close failed after cancelled start', error)
             })
@@ -276,10 +278,10 @@ export class TauriSshSession extends BaseSession {
     }
 
     async destroy (): Promise<void> {
-        if (this.destroying) {
+        if (this.nativeDestroying) {
             return
         }
-        this.destroying = true
+        this.nativeDestroying = true
         // End the logical session without waiting for background transport cleanup.
         this.clearCredentialPrompts()
         for (const modal of this.hostKeyModals) { modal.dismiss() }
@@ -541,7 +543,7 @@ export class TauriSshSession extends BaseSession {
 
     private async handleCredentialPrompt (prompt: SshAuthPrompt): Promise<void> {
         const hasTarget = prompt.username === true || Boolean(prompt.password ?? prompt.privateKeyHash)
-        if (!hasTarget || this.destroying || this.credentialModals.has(prompt.requestId)) {
+        if (!hasTarget || this.nativeDestroying || this.credentialModals.has(prompt.requestId)) {
             return
         }
         this.credentialModals.set(prompt.requestId, null)
@@ -601,7 +603,7 @@ export class TauriSshSession extends BaseSession {
 
     private async handleStoredPasswordPrompt (prompt: SshAuthPrompt): Promise<void> {
         const target = prompt.storedPassword
-        if (!target || !prompt.requestId || this.destroying || this.credentialModals.has(prompt.requestId)) {
+        if (!target || !prompt.requestId || this.nativeDestroying || this.credentialModals.has(prompt.requestId)) {
             return
         }
         this.credentialModals.set(prompt.requestId, null)
@@ -629,7 +631,7 @@ export class TauriSshSession extends BaseSession {
     private async removeRejectedPassword (error: unknown): Promise<void> {
         const rejected = error as Partial<SshConnectError>|null
         const target = rejected?.passwordDeletionTarget
-        if (this.destroying || rejected?.code !== 'permissionDenied' || !target ||
+        if (this.nativeDestroying || rejected?.code !== 'permissionDenied' || !target ||
             typeof target.host !== 'string' || !target.host ||
             typeof target.username !== 'string' || !target.username ||
             !Number.isInteger(target.port) || target.port < 1 || target.port > 65535) {
@@ -679,7 +681,7 @@ export class TauriSshSession extends BaseSession {
     }
 
     private async handleHostKeyPrompt (prompt: SshHostKeyPrompt): Promise<void> {
-        if (this.destroying) { return }
+        if (this.nativeDestroying) { return }
         const modal = this.modals.open(TauriSshHostKeyPromptModalComponent)
         this.hostKeyModals.add(modal)
         modal.componentInstance.prompt = prompt
