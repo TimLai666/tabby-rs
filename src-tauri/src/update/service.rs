@@ -22,7 +22,7 @@ use super::{
 
 const UPDATE_TIMEOUT: Duration = Duration::from_secs(30);
 
-fn configure_updater_client(client: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
+pub(crate) fn configure_updater_client(client: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
     client.redirect(reqwest::redirect::Policy::none())
 }
 

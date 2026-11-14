@@ -93,8 +93,8 @@ use commands::{
         transfer_write,
     },
     update::{
-        update_cancel, update_check, update_download, update_get_channel, update_install,
-        update_set_channel,
+        update_cancel, update_check, update_check_release_page, update_download,
+        update_get_channel, update_install, update_set_channel,
     },
     vault::{
         vault_get_file, vault_get_secret, vault_lock, vault_put_file, vault_put_secret,
@@ -662,6 +662,7 @@ pub fn run() {
             transfer_list_directory,
             terminal_export,
             update_check,
+            update_check_release_page,
             update_download,
             update_install,
             update_cancel,
