@@ -35,8 +35,10 @@ class TelnetEncodingMiddleware extends SessionMiddleware {
 }
 
 export class TauriTelnetSession extends BaseSession {
+    /** Native-session teardown started; distinct from BaseSession.destroying, which guards destroy() re-entry. */
+    private nativeDestroying = false
+
     private id: string|null = null
-    private destroying = false
     private readonly connectionId = window.crypto.randomUUID()
     private pendingOutput: number[][] = []
     private pendingExit: string|null = null
@@ -60,13 +62,13 @@ export class TauriTelnetSession extends BaseSession {
     }
 
     async start (): Promise<void> {
-        if (this.open || this.destroying) {
+        if (this.open || this.nativeDestroying) {
             return
         }
         try {
             await Promise.all([
                 this.bridge.listen('telnet:output', event => {
-                    if (this.destroying || event.connectionId !== this.connectionId) {
+                    if (this.nativeDestroying || event.connectionId !== this.connectionId) {
                         return
                     }
                     if (!this.id) {
@@ -76,17 +78,17 @@ export class TauriTelnetSession extends BaseSession {
                     }
                 }),
                 this.bridge.listen('telnet:message', event => {
-                    if (event.connectionId === this.connectionId && !this.destroying) {
+                    if (event.connectionId === this.connectionId && !this.nativeDestroying) {
                         this.serviceMessage.next(event.message)
                     }
                 }),
                 this.bridge.listen('telnet:echo', event => {
-                    if (event.connectionId === this.connectionId && !this.destroying) {
+                    if (event.connectionId === this.connectionId && !this.nativeDestroying) {
                         this.handleEcho(event)
                     }
                 }),
                 this.bridge.listen('telnet:exit', event => {
-                    if (this.destroying || event.connectionId !== this.connectionId) {
+                    if (this.nativeDestroying || event.connectionId !== this.connectionId) {
                         return
                     }
                     if (!this.id) {
@@ -98,7 +100,7 @@ export class TauriTelnetSession extends BaseSession {
                 }),
             ].map(async registration => {
                 const unlisten = await registration
-                if (this.destroying) {
+                if (this.nativeDestroying) {
                     unlisten()
                 } else {
                     this.unlisteners.push(unlisten)
@@ -111,7 +113,7 @@ export class TauriTelnetSession extends BaseSession {
             throw error
         }
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-        if (this.destroying) {
+        if (this.nativeDestroying) {
             return
         }
 
@@ -130,7 +132,7 @@ export class TauriTelnetSession extends BaseSession {
             } : null,
         } satisfies TelnetConnectRequest)
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-        if (this.destroying) {
+        if (this.nativeDestroying) {
             await this.bridge.invoke('telnet.close', { id: info.id }).catch(error => this.logger.debug('Telnet close failed after cancelled start', error))
             return
         }
@@ -164,10 +166,10 @@ export class TauriTelnetSession extends BaseSession {
     kill (_signal?: string): void { void this.destroy() }
 
     async destroy (): Promise<void> {
-        if (this.destroying) {
+        if (this.nativeDestroying) {
             return
         }
-        this.destroying = true
+        this.nativeDestroying = true
         const id = this.id
         this.id = null
         for (const unlisten of this.unlisteners.splice(0)) {

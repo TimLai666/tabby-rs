@@ -116,6 +116,12 @@ export class AppRootComponent {
                 if (hotkey === 'previous-tab') {
                     this.app.previousTab()
                 }
+                if (hotkey === 'next-mru-tab') {
+                    this.app.nextMRUTab()
+                }
+                if (hotkey === 'previous-mru-tab') {
+                    this.app.previousMRUTab()
+                }
                 if (hotkey === 'move-tab-left') {
                     this.app.moveSelectedTabLeft()
                 }
@@ -143,6 +149,19 @@ export class AppRootComponent {
             }
             if (hotkey === 'toggle-fullscreen') {
                 hostWindow.toggleFullscreen()
+            }
+        })
+
+        // Commit any in-progress MRU traversal when the user releases a modifier key.
+        // This mirrors the way Alt+Tab works in desktop window managers: you cycle while
+        // holding the modifier and the selection is confirmed when you let go.
+        this.hotkeys.keyEvent$.subscribe(event => {
+            // keyEvent$ also carries wheel and mouse events
+            if (!(event instanceof KeyboardEvent) || event.type !== 'keyup') {
+                return
+            }
+            if (['Control', 'Meta', 'Alt', 'Shift'].includes(event.key)) {
+                this.app.commitMRUTraversal()
             }
         })
 

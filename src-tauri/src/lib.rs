@@ -38,7 +38,8 @@ use commands::{
     config::{config_read, config_write},
     desktop::{
         clipboard_read_text, clipboard_write_text, desktop_exec, desktop_open_external,
-        desktop_open_path, desktop_read_file, desktop_reveal_path, dialog_open, dialog_save,
+        desktop_open_path, desktop_path_kind, desktop_read_file, desktop_reveal_path, dialog_open,
+        dialog_save,
         hotkey_replace, notification_show, window_apply_state, window_bring_to_front, window_close,
         window_get_state, window_list_screens, window_minimize, window_new, window_open_devtools,
         window_reload, window_set_docking, window_toggle_maximize, window_toggle_quake,
@@ -528,6 +529,7 @@ pub fn run() {
             font_refresh,
             desktop_read_file,
             desktop_reveal_path,
+            desktop_path_kind,
             dialog_open,
             dialog_save,
             dialog_message,

@@ -54,10 +54,14 @@ const primordials = { Symbol, SymbolAsyncIterator: Symbol.asyncIterator, DateNow
     MathMax: Math.max, MathMaxApply: values => Math.max(...values),
     SafeStringIterator: class { constructor (s) { return s[Symbol.iterator]() } },
     ArrayPrototypeToSorted: array => [...array].sort(),
+    ObjectDefineProperties: Object.defineProperties,
+    SymbolDispose: Symbol.dispose || Symbol.for('nodejs.dispose'),
+    RegExpPrototypeSymbolSplit: uncurry(RegExp.prototype[Symbol.split]),
+    ArrayPrototypePushApply: (array, items) => Array.prototype.push.apply(array, items),
 }
 for (const [name, constructor, methods] of [
     ['Array', Array, ['filter', 'indexOf', 'join', 'map', 'pop', 'push', 'reverse', 'shift', 'splice', 'unshift']],
-    ['String', String, ['charCodeAt', 'codePointAt', 'endsWith', 'repeat', 'slice', 'startsWith', 'trim', 'toLowerCase']],
+    ['String', String, ['charCodeAt', 'codePointAt', 'endsWith', 'repeat', 'slice', 'startsWith', 'trim', 'toLowerCase', 'includes', 'replaceAll', 'split']],
     ['RegExp', RegExp, ['exec']], ['Function', Function, ['call']],
 ]) {
     for (const method of methods) primordials[`${name}Prototype${method[0].toUpperCase()}${method.slice(1)}`] = uncurry(constructor.prototype[method])
@@ -106,10 +110,78 @@ function getStringWidth (string, strip = true) {
     return width
 }
 
+// In-memory subset of Node 24's internal/repl/history ReplHistory, which
+// readline's Interface now delegates history handling to. File persistence
+// (used only by the REPL via onHistoryFileLoaded/filePath) is omitted: the
+// browser has no file system and no consumer enables it.
+class ReplHistory {
+    #context; #history; #size; #index = -1; #removeDuplicates
+    constructor (context, options) {
+        if (options.history !== undefined) validateArray(options.history, 'history')
+        if (options.size !== undefined) validateNumber(options.size, 'size', 0)
+        this.#context = context
+        this.#removeDuplicates = options.removeHistoryDuplicates || false
+        this.#size = options.size ?? context.historySize ?? 30
+        this.#history = options.history ?? []
+    }
+    initialize (onReadyCallback) { return onReadyCallback(null, this.#context) }
+    get size () { return this.#size }
+    get isFlushing () { return false }
+    get history () { return this.#history }
+    set history (value) { this.#history = value }
+    get index () { return this.#index }
+    set index (value) { this.#index = value }
+    static #normalize (line, from, to) { return require('./utils.cjs').reverseString(line, from, to) }
+    addHistory (isMultiline, lastCommandErrored) {
+        const line = this.#context.line
+        if (line.length === 0) return ''
+        if (this.#size === 0) return line
+        if (line.trim().length === 0) return line
+        if ((isMultiline && this.#index === -1) || lastCommandErrored) this.#history.shift()
+        const normalizedLine = ReplHistory.#normalize(line, '\n', '\r')
+        if (this.#history.length === 0 || this.#history[0] !== normalizedLine) {
+            if (this.#removeDuplicates) {
+                const dupIndex = this.#history.indexOf(normalizedLine)
+                if (dupIndex !== -1) this.#history.splice(dupIndex, 1)
+            }
+            this.#history.unshift(normalizedLine)
+            if (this.#history.length > this.#size) this.#history.pop()
+        }
+        this.#index = -1
+        const finalLine = isMultiline ? ReplHistory.#normalize(this.#history[0], '\r', '\r') : this.#history[0]
+        this.#context.emit('history', this.#history)
+        return finalLine
+    }
+    canNavigateToNext () { return this.#index > -1 && this.#history.length > 0 }
+    navigateToNext (substringSearch) {
+        if (!this.canNavigateToNext()) return null
+        const search = substringSearch || ''
+        let index = this.#index - 1
+        while (index >= 0 && (!this.#history[index].startsWith(search) || this.#context.line === this.#history[index])) index--
+        this.#index = index
+        if (index === -1) return search
+        return ReplHistory.#normalize(this.#history[index], '\r', '\n')
+    }
+    canNavigateToPrevious () { return this.#history.length !== this.#index && this.#history.length > 0 }
+    navigateToPrevious (substringSearch = '') {
+        if (!this.canNavigateToPrevious()) return null
+        const search = substringSearch || ''
+        let index = this.#index + 1
+        while (index < this.#history.length && (!this.#history[index].startsWith(search) || this.#context.line === this.#history[index])) index++
+        this.#index = index
+        if (index === this.#history.length) return search
+        return ReplHistory.#normalize(this.#history[index], '\r', '\n')
+    }
+}
+
 module.exports = {
     primordials, codes, SymbolDispose, kEmptyObject: Object.freeze(Object.create(null)),
     inspect: util.inspect, getStringWidth, stripVTControlCharacters,
-    assignFunctionName: (symbol, fn) => Object.defineProperty(fn, 'name', { value: `[${symbol.description}]` }),
+    // Node 24 accepts either a string or a Symbol name.
+    assignFunctionName: (name, fn) => Object.defineProperty(fn, 'name', {
+        value: typeof name === 'string' ? name : `[${name.description}]`,
+    }),
+    ReplHistory,
     validateFunction: (value, name) => checkType(value, 'function', name),
     validateString: (value, name) => checkType(value, 'string', name),
     validateNumber,

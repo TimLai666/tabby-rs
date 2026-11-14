@@ -16,8 +16,10 @@ class SlowFeedMiddleware extends SessionMiddleware {
 }
 
 export class TauriSerialSession extends BaseSession {
+    /** Native-session teardown started; distinct from BaseSession.destroying, which guards destroy() re-entry. */
+    private nativeDestroying = false
+
     private id: string|null = null
-    private destroying = false
     private connected = false
     private readonly connectionId = window.crypto.randomUUID()
     private readonly serviceMessage = new Subject<string>()
@@ -56,7 +58,7 @@ export class TauriSerialSession extends BaseSession {
                     return
                 }
                 this.logger.warn('Serial write failed', error)
-                if (this.profile.options.reconnect.enabled && !this.destroying) {
+                if (this.profile.options.reconnect.enabled && !this.nativeDestroying) {
                     queue.close()
                     this.writeQueue = this.createWriteQueue()
                 } else {
@@ -68,13 +70,13 @@ export class TauriSerialSession extends BaseSession {
     }
 
     async start (): Promise<void> {
-        if (this.open || this.destroying) {
+        if (this.open || this.nativeDestroying) {
             return
         }
         try {
             await Promise.all([
                 this.bridge.listen('serial:output', event => {
-                    if (this.destroying || event.connectionId !== this.connectionId) {
+                    if (this.nativeDestroying || event.connectionId !== this.connectionId) {
                         return
                     }
                     if (!this.id) {
@@ -84,7 +86,7 @@ export class TauriSerialSession extends BaseSession {
                     }
                 }),
                 this.bridge.listen('serial:connectionState', event => {
-                    if (this.destroying || event.connectionId !== this.connectionId) {
+                    if (this.nativeDestroying || event.connectionId !== this.connectionId) {
                         return
                     }
                     if (!this.id) {
@@ -95,7 +97,7 @@ export class TauriSerialSession extends BaseSession {
                 }),
             ].map(async registration => {
                 const unlisten = await registration
-                if (this.destroying) {
+                if (this.nativeDestroying) {
                     unlisten()
                 } else {
                     this.unlisteners.push(unlisten)
@@ -108,7 +110,7 @@ export class TauriSerialSession extends BaseSession {
             throw error
         }
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-        if (this.destroying) {
+        if (this.nativeDestroying) {
             return
         }
 
@@ -127,7 +129,7 @@ export class TauriSerialSession extends BaseSession {
         }
         const info = await this.bridge.invoke('serial.open', request)
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-        if (this.destroying) {
+        if (this.nativeDestroying) {
             await this.bridge.invoke('serial.close', { id: info.id }).catch(error => this.logger.debug('Serial close failed after cancelled start', error))
             return
         }
@@ -181,10 +183,10 @@ export class TauriSerialSession extends BaseSession {
     kill (_signal?: string): void { void this.destroy() }
 
     async destroy (): Promise<void> {
-        if (this.destroying) {
+        if (this.nativeDestroying) {
             return
         }
-        this.destroying = true
+        this.nativeDestroying = true
         this.connected = false
         this.writeQueue.close()
         const id = this.id

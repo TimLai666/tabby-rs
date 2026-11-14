@@ -94,6 +94,7 @@ export class TauriPTYInterface extends PTYInterface {
             restoreFromPTYID: null,
             command,
             args,
+            homeDirArgs: [],
             cwd: options.cwd ?? null,
             env: options.env ?? {},
             width: options.cols ?? null,
@@ -103,6 +104,7 @@ export class TauriPTYInterface extends PTYInterface {
             runAsAdministrator: false,
             autoSudoPassword: options.autoSudoPassword ?? false,
             sudoSecretRef: options.sudoSecretRef ?? null,
+            fsBase: null,
         }
     }
 }

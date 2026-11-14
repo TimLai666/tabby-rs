@@ -277,7 +277,7 @@ function makeBridge ({ specs = [], forwardGate = null } = {}) {
 }
 
 function injectorFor () {
-    return { get: () => ({ create: () => logger, store: { ssh: { x11Display: null, agentType: null, agentPath: null } }, isEnabled: () => false, getProfiles: async () => [], getConfigProxyForProfile: () => ({}) }) }
+    return { get: () => ({ create: () => logger, store: { ssh: { x11Display: null, agentType: null, agentPath: null } }, isEnabled: () => false, getProfiles: async () => [], getConfigProxyForProfile: () => ({}), refreshConfigProxyForProfile: profile => profile }) }
 }
 
 const WinSCP_PATH = 'WinSCP.exe'
@@ -438,7 +438,7 @@ const CURRENT_VARIANT = {
 }
 
 function buildCurrentTab () {
-    return assemble(CURRENT_VARIANT, { TauriSshSession, KeyboardInteractivePrompt, _: text => text })
+    return assemble(CURRENT_VARIANT, { TauriSshSession, KeyboardInteractivePrompt, ProfilesService: class {}, _: text => text })
 }
 
 function makeCurrentTab (bridge, winscp, Tab = buildCurrentTab()) {

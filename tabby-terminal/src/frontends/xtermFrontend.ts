@@ -7,10 +7,13 @@ import {
     getWindows10Build,
     HostAppService,
     HotkeysService,
+    isWindowsBuild,
     Platform,
     PlatformService,
     TerminalColorScheme,
     ThemesService,
+    WIN_BUILD_BUNDLED_CONPTY_SUPPORTED,
+    WIN_BUILD_CONPTY_REFLOW_SUPPORTED,
 } from 'tabby-core'
 
 import {
@@ -31,6 +34,28 @@ import {
 } from '../renderer/terminalRenderer'
 
 const RESIZE_MIN_INTERVAL = 32
+
+// Fcitx5 applies Chinese punctuation during the browser's default text-input
+// processing. If xterm handles these keys on keydown, it calls preventDefault()
+// before Fcitx5 can emit the converted keypress/input event.
+const LINUX_IME_TEXT_KEY_CODES = new Set([
+    'Backquote',
+    'Backslash',
+    'BracketLeft',
+    'BracketRight',
+    'Comma',
+    'Period',
+    'Quote',
+    'Semicolon',
+    'Slash',
+])
+
+function isIMETextKey (event: KeyboardEvent): boolean {
+    if (event.ctrlKey || event.altKey || event.metaKey) {
+        return false
+    }
+    return LINUX_IME_TEXT_KEY_CODES.has(event.code) || event.code === 'Space' && event.shiftKey
+}
 
 /** @hidden */
 export class XTermFrontend extends Frontend {
@@ -56,12 +81,21 @@ export class XTermFrontend extends Frontend {
     private pinnedToBottom = true
     private resizeObserver?: ResizeObserver
     private hostListenerCleanups: (() => void)[] = []
+    private resizeTimeout?: ReturnType<typeof setTimeout>
+    private resizeAnimationFrame?: number
+    private resizePending = false
+    private opened = false
+    private disposed = false
 
     private configService: ConfigService
     private hotkeysService: HotkeysService
     private platformService: PlatformService
     private hostApp: HostAppService
     private themes: ThemesService
+
+    private isAttachActive (): boolean {
+        return !this.disposed && this.opened
+    }
 
     constructor (injector: Injector) {
         super(injector)
@@ -76,7 +110,10 @@ export class XTermFrontend extends Frontend {
             sixel: this.configService.store.terminal.sixel,
             windowsPty: this.hostApp.platform === Platform.Windows ? {
                 backend: this.configService.store.terminal.useConPTY ? 'conpty' : 'winpty',
-                buildNumber: getWindows10Build(this.hostApp.platform, this.hostApp.windowsBuild),
+                buildNumber: this.configService.store.terminal.useConPTY
+                    && isWindowsBuild(WIN_BUILD_BUNDLED_CONPTY_SUPPORTED, this.hostApp.platform, this.hostApp.windowsBuild)
+                    ? WIN_BUILD_CONPTY_REFLOW_SUPPORTED
+                    : getWindows10Build(this.hostApp.platform, this.hostApp.windowsBuild),
             } : undefined,
         })
 
@@ -152,7 +189,36 @@ export class XTermFrontend extends Frontend {
                 if (event.getModifierState('Meta') && event.key.startsWith('Arrow')) {
                     return false
                 }
-                return keyboardEventHandler('keydown', event)
+
+                // xterm calls this handler for keypress and keyup too, so pass the real
+                // event type - labelling them all as keydown makes the hotkey service
+                // match the same keystroke several times.
+                const handled = keyboardEventHandler(event.type, event)
+                if (!handled) {
+                    // a hotkey claimed the event and already cancelled it
+                    return false
+                }
+
+                // xterm 6 sends Alt+Left/Right as ESC[1;3D/C, which shells don't bind by default.
+                // Keep xterm 5's word-jump sequences.
+                if (
+                    event.type === 'keydown' && event.altKey && !event.ctrlKey && !event.shiftKey && !event.metaKey &&
+                    (event.key === 'ArrowLeft' || event.key === 'ArrowRight')
+                ) {
+                    const left = event.key === 'ArrowLeft'
+                    const seq = this.hostApp.platform === Platform.macOS ? left ? '\x1bb' : '\x1bf' : left ? '\x1b[1;5D' : '\x1b[1;5C'
+                    this.input.next(Buffer.from(seq, 'binary'))
+                    return false
+                }
+
+                if (event.type === 'keydown' && this.hostApp.platform === Platform.Linux && isIMETextKey(event)) {
+                    // Returning false keeps xterm from sending/cancelling keydown.
+                    // The resulting keypress/input event contains either the IME
+                    // commit string or the original character when IME is inactive.
+                    return false
+                }
+
+                return handled
             },
             event => keyboardEventHandler('keyup', event),
         )
@@ -169,23 +235,29 @@ export class XTermFrontend extends Frontend {
             }
         }
 
-        let resizePending = false
         let lastResize = 0
         const runResize = () => {
-            resizePending = false
+            this.resizeAnimationFrame = undefined
+            this.resizePending = false
+            if (!this.isAttachActive()) {
+                return
+            }
             lastResize = Date.now()
             doResize()
         }
         this.resizeHandler = () => {
-            if (resizePending) {
+            if (this.resizePending) {
                 return
             }
-            resizePending = true
+            this.resizePending = true
             const wait = Math.max(0, RESIZE_MIN_INTERVAL - (Date.now() - lastResize))
             if (wait > 0) {
-                setTimeout(() => requestAnimationFrame(runResize), wait)
+                this.resizeTimeout = setTimeout(() => {
+                    this.resizeTimeout = undefined
+                    this.resizeAnimationFrame = requestAnimationFrame(runResize)
+                }, wait)
             } else {
-                requestAnimationFrame(runResize)
+                this.resizeAnimationFrame = requestAnimationFrame(runResize)
             }
         }
     }
@@ -195,10 +267,17 @@ export class XTermFrontend extends Frontend {
     }
 
     async attach (host: HTMLElement, profile: BaseTerminalProfile): Promise<void> {
+        if (this.disposed) {
+            return
+        }
         this.element = host
         this.renderer.open(host)
+        this.opened = true
 
         await new Promise(resolve => setTimeout(resolve, this.hostApp.platform === Platform.Web ? 1000 : 0))
+        if (!this.isAttachActive()) {
+            return
+        }
         this.configureColors(profile.terminalColorScheme)
 
         this.platformService.displayMetricsChanged$.pipe(
@@ -209,6 +288,9 @@ export class XTermFrontend extends Frontend {
         })
 
         await new Promise(resolve => setTimeout(resolve, 100))
+        if (!this.isAttachActive()) {
+            return
+        }
         this.ready.next()
         this.ready.complete()
 
@@ -221,6 +303,9 @@ export class XTermFrontend extends Frontend {
 
         this.resizeHandler()
         await new Promise(resolve => setTimeout(resolve, 0))
+        if (!this.isAttachActive()) {
+            return
+        }
 
         this.addHostListener(host, 'wheel', (event: Event) => {
             const wheelEvent = event as WheelEvent
@@ -266,15 +351,32 @@ export class XTermFrontend extends Frontend {
     }
 
     detach (_host: HTMLElement): void {
+        if (this.resizeTimeout !== undefined) {
+            clearTimeout(this.resizeTimeout)
+            this.resizeTimeout = undefined
+        }
+        if (this.resizeAnimationFrame !== undefined) {
+            cancelAnimationFrame(this.resizeAnimationFrame)
+            this.resizeAnimationFrame = undefined
+        }
+        this.resizePending = false
         this.resizeObserver?.disconnect()
         this.resizeObserver = undefined
         for (const cleanup of this.hostListenerCleanups.splice(0)) {
             cleanup()
         }
+        this.opened = false
+        this.element = undefined
     }
 
     destroy (): void {
-        this.detach(this.element ?? document.createElement('div'))
+        if (this.disposed) {
+            return
+        }
+        this.disposed = true
+        if (this.element) {
+            this.detach(this.element)
+        }
         super.destroy()
         this.renderer.dispose()
     }
@@ -311,7 +413,22 @@ export class XTermFrontend extends Frontend {
     }
 
     focus (): void {
-        setTimeout(() => this.renderer.focus())
+        setTimeout(() => {
+            // Don't steal focus from modal dialogs (e.g. the SSH password prompt)
+            // or the tab's own overlay inputs - the deferred focus from a window
+            // focus event would otherwise land right after the user clicks into one
+            const active = document.activeElement
+            const tabHost = this.element?.parentElement
+            if (
+                active instanceof HTMLElement
+                && !(this.renderer.element?.contains(active) ?? false)
+                && active.matches('input, textarea, select')
+                && ((tabHost?.contains(active) ?? false) || active.closest('ngb-modal-window') !== null)
+            ) {
+                return
+            }
+            this.renderer.focus()
+        })
     }
 
     async write (data: string): Promise<void> {

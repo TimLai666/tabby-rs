@@ -1280,7 +1280,9 @@
   input/stream controls, and serial reconnect toggle. Search and terminal-toolbar
   interactions still need desktop acceptance.
 - The browser readline adapter restores the spinner and stream editor using the
-  fixed upstream lock's Electron 38.8.6 / Node 22.22.0 editing modules. Retain their
+  upstream lock's Electron 43.7.0 / Node 24.21.0 editing modules (regenerated from
+  the earlier 38.8.6 / 22.22.0 pin during the upstream sync; `runtime.cjs` adds
+  Node 24's primordials and an in-memory `ReplHistory`). Retain their
   MIT notices and the Unicode License V3 for the ICU-derived width table. The
   checked-in regeneration script and provenance hashes identify the exact source.
   The bundle test reproduces the original missing-clearLine failure and compares
@@ -1372,6 +1374,48 @@
   typewriter`; the macOS check verifies driver-error propagation, unchanged native
   reconnect settings, and continued port I/O. Successful physical rate changes,
   automatic reconnect at the new rate, and Windows/Linux execution remain pending.
+
+## Pending — upstream sync to 467ce8eb (ports still owed to the native host)
+
+- The shared Angular front end now follows upstream Tabby `467ce8eb` (xterm 6,
+  Electron 43 toolchain, split-pane labels, MRU tab switching, hotkey dedupe,
+  terminal/session leak fixes, Fcitx5 punctuation, retained search queries,
+  file links, per-profile SSH TERM, vault search, bell activity indicator).
+  Parity fixtures that cite `14e2d60` still compare against that commit as the
+  reference baseline; move them to `467ce8eb` only with a separate decision.
+- xterm 6 removed the Canvas addon. `XtermRenderer` falls back to the DOM
+  renderer after bounded WebGL recovery, replaces `core.browser` to set the
+  platform flags, uses `_viewport.queueSync()`, and disposes WebGL through
+  `disposeWebglAddon`. `scripts/ci/terminal-renderer-browser/fixture.ts` now
+  compares DOM row markup and canvas layer counts instead of Canvas pixels.
+- `BaseSession.destroy()` keeps upstream's private `destroying` guard; the
+  native SSH/Telnet/serial sessions use their own `nativeDestroying` flag so
+  `super.destroy()` still runs the shared teardown. Renderer fixtures that run
+  the shared `reconnect()` provide an injector whose `ProfilesService` has
+  `refreshConfigProxyForProfile`.
+- Tauri renderer directory checks go through the new `desktop.pathKind`
+  command (`app/src/shims/mz-fs.ts`); the synchronous `fs` shim stays
+  permissive so upstream's `usableCWD` does not drop working directories.
+- Upstream changes made only in the Electron host or Node back ends still need
+  native equivalents, each with its own test: WinSCP accepts `.ppk` keys without
+  conversion (`622c99b2`); SSH keeps the session open until the remote shell
+  exits (`9e7a251b`); blank configured/keychain passwords (`256f09dd`, the
+  native `tabby-tauri/src/ssh/session.ts` still uses truthy checks); chained
+  publickey + keyboard-interactive planning (`30347a61`); agent authentication
+  before disk keys for imported profiles (`41c242ad`); per-profile SSH TERM
+  (`a8abcc0b`, native session hardcodes `xterm-256color`); X11 display specs
+  without a screen number (`b67c0973`, compare with the native parser); serial
+  quick connect (`c9a7a54f`); SFTP upload error surfacing (`9e31ec6d`);
+  SSH config import without an explicit HostName (`084159c7`); forwarding
+  messages moved off the terminal (`a64ae78b`, decide against the native
+  `ssh:message` diagnostics); WSL `--cd ~` and guest cwd resolution
+  (`cdae0b6e`, `508dccc0`, the native shell provider does not expose
+  `homeDirArgs`); directory-only session cwd (`9f51fcce`); bundled ConPTY
+  (`4004cc51`, decide whether the Rust PTY path needs it); tab bar dragging
+  while a dialog is open (`54869e10`); bell flashes the taskbar/dock icon
+  (`ea801300`); docked window stays visible during native dialogs (`798e7cca`);
+  Windows 11 Acrylic (`6193527b`); pwsh MSIX detection (`2af22b99`);
+  CLI subcommand crash fix (`b326213a`). Track each as its own slot.
 
 ## Pending — lint from the shared Main checkout
 

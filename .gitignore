@@ -42,3 +42,4 @@ sentry-symbols.js
 crowdin.yml
 .crowdin.env
 release-gate.json
+

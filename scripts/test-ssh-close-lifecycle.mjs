@@ -158,6 +158,7 @@ function buildTabHost (methodsText, model) {
                 this.model = model
                 this.isDisconnectedByHand = false
                 this.profile = { options: {} }
+                this.injector = { get: () => ({ refreshConfigProxyForProfile: profile => profile }) }
                 this.session = null
                 this.frontend = {
                     resetTerminalModes () { model.events.push('resetTerminalModes') },
@@ -178,7 +179,7 @@ function buildTabHost (methodsText, model) {
     const module = { exports: {} }
     vm.runInNewContext(ts.transpileModule(code, {
         compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS, esModuleInterop: true },
-    }).outputText, { module, exports: module.exports, console, Promise, setTimeout, clearTimeout })
+    }).outputText, { module, exports: module.exports, console, Promise, setTimeout, clearTimeout, ProfilesService: class {} })
     return new module.exports.Host(model)
 }
 

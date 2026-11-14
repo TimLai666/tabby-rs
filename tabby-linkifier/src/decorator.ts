@@ -5,6 +5,14 @@ import { TerminalDecorator, BaseTerminalTabComponent } from 'tabby-terminal'
 import { LinkHandler } from './api'
 import { decideUri, UriPolicyContext } from './uriPolicy'
 
+function parseURL (uri: string): URL|null {
+    try {
+        return new URL(uri)
+    } catch {
+        return null
+    }
+}
+
 @Injectable()
 export class LinkHighlighterDecorator extends TerminalDecorator {
     constructor (
@@ -33,9 +41,14 @@ export class LinkHighlighterDecorator extends TerminalDecorator {
                 await this.activateUri(converted, tab, handler)
                 return
             }
+            // No registered handler claimed the link - still route it through the
+            // shared URI policy so plain links (including local file: URLs) open.
+            await this.activateUri(uri, tab)
         }
 
         frontend.setLinkHandler({
+            // xterm's built-in link provider only detects file: URLs when this is set.
+            allowNonHttpProtocols: true,
             activate: (event, uri) => {
                 if (!this.willHandleEvent(event)) {
                     return
@@ -82,6 +95,13 @@ export class LinkHighlighterDecorator extends TerminalDecorator {
         const decision = decideUri(raw, context)
         if (decision.action === 'reject') {
             console.debug('Rejected terminal URI:', decision.reason)
+            return
+        }
+        // A file: URL with a host is a UNC path - opening it would reach out
+        // over SMB to a server the remote side chose. Only allow local files.
+        const fileUrl = parseURL(decision.normalized)
+        if (fileUrl?.protocol === 'file:' && fileUrl.host) {
+            console.debug('Rejected remote file URI:', decision.normalized)
             return
         }
         if (decision.action === 'confirm') {

@@ -120,6 +120,7 @@ export class SFTPSession {
             await this.rename(tempPath, path)
             await transfer.closeAsync()
         } catch (e) {
+            transfer.setStatus(e instanceof Error ? e.message : String(e))
             transfer.cancel()
             this.unlink(tempPath).catch(() => null)
             throw e
@@ -140,6 +141,7 @@ export class SFTPSession {
             await transfer.closeAsync()
             await handle.close()
         } catch (e) {
+            transfer.setStatus(e instanceof Error ? e.message : String(e))
             transfer.cancel()
             throw e
         }

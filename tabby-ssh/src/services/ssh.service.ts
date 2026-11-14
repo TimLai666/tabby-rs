@@ -40,7 +40,7 @@ export class SSHService {
             uri += `;x-tunnelusername=${jumpUsername}`
             if (jumpHostProfile.options.auth === 'password') {
                 const jumpPassword = await this.passwordStorage.loadPassword(jumpHostProfile, jumpUsername)
-                if (jumpPassword) {
+                if (jumpPassword != null) {
                     uri += `;x-tunnelpasswordplain=${encodeURIComponent(jumpPassword)}`
                 }
             }
@@ -61,7 +61,7 @@ export class SSHService {
     async getWinSCPURI (profile: SSHProfile, cwd?: string, username?: string): Promise<{ uri: string, privateKeyFile?: tmp.FileResult|null }> {
         let uri = `scp://${username ?? profile.options.user}`
         const password = await this.passwordStorage.loadPassword(profile, username)
-        if (password) {
+        if (password != null) {
             uri += ':' + encodeURIComponent(password)
         }
         let tmpFile: tmp.FileResult|null = null
@@ -96,8 +96,15 @@ export class SSHService {
             privateKeyContent = buffer.toString()
             await fs.writeFile(tmpFile.path, privateKeyContent)
             const keyHash = crypto.createHash('sha512').update(privateKeyContent).digest('hex')
+            const savedPassphrase = await this.passwordStorage.loadPrivateKeyPassword(keyHash)
+            // WinSCP's /keygen refuses PPK input with nothing to change ("No action specified"), so use PuTTY keys as-is
+            if (privateKeyContent.trimStart().startsWith('PuTTY-User-Key-File-')) {
+                tmpPrivateKeyFile = tmpFile
+                passphrase = savedPassphrase
+                break
+            }
             // need to pass an default passphrase, otherwise it might get stuck at the passphrase input
-            const curPassphrase = await this.passwordStorage.loadPrivateKeyPassword(keyHash) ?? 'tabby'
+            const curPassphrase = savedPassphrase ?? 'tabby'
             const winSCPcom = path.slice(0, -3) + 'com'
             try {
                 await this.platform.exec(winSCPcom, ['/keygen', tmpFile.path, '-o', tmpFile.path, '--old-passphrase', curPassphrase])

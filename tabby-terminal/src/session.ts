@@ -4,6 +4,9 @@ import { LoginScriptProcessor, LoginScriptsOptions } from './middleware/loginScr
 import { OSCProcessor } from './middleware/oscProcessing'
 import { SessionMiddlewareStack } from './api/middleware'
 
+/** Output kept for a session whose terminal hasn't been shown yet (tab never focused) */
+const MAX_INITIAL_DATA_BUFFER = 8 * 1024 * 1024
+
 export interface SessionRenderOutput {
     data: string
     consumed: () => void
@@ -61,7 +64,9 @@ export abstract class BaseSession {
     protected destroyed = new Subject<void>()
     protected loginScriptProcessor: LoginScriptProcessor | null = null
     protected reportedCWD?: string
-    private initialDataBuffer = Buffer.from('')
+    private initialDataBuffer: Buffer[] = []
+    private initialDataBufferLength = 0
+    private initialDataBufferTruncated = false
     private initialDataBufferReleased = false
     private initialDataConsumptions: (() => void)[] = []
     private activeOutputBarrier?: OutputConsumptionBarrier
@@ -82,8 +87,19 @@ export abstract class BaseSession {
         this.middleware.outputToTerminal$.subscribe(data => {
             const consumed = this.activeOutputBarrier?.addOutput() ?? (() => undefined)
             if (!this.initialDataBufferReleased) {
-                this.initialDataBuffer = Buffer.concat([this.initialDataBuffer, data])
+                // Collect chunks instead of Buffer.concat per chunk (O(n^2), and unbounded for a
+                // tab that is never focused). Keep only the newest output - the terminal keeps
+                // just its scrollback anyway. PTY chunks start on UTF-8 boundaries, so dropping
+                // whole chunks from the front can't split a character.
+                this.initialDataBuffer.push(data)
                 this.initialDataConsumptions.push(consumed)
+                this.initialDataBufferLength += data.length
+                while (this.initialDataBufferLength > MAX_INITIAL_DATA_BUFFER && this.initialDataBuffer.length > 1) {
+                    this.initialDataBufferLength -= this.initialDataBuffer.shift()!.length
+                    // Dropped output never reaches the renderer; release its backpressure now.
+                    this.initialDataConsumptions.shift()?.()
+                    this.initialDataBufferTruncated = true
+                }
             } else {
                 this.deliverOutput(data, consumed)
             }
@@ -121,9 +137,16 @@ export abstract class BaseSession {
             return
         }
         this.initialDataBufferReleased = true
-        const data = this.initialDataBuffer
+        if (this.initialDataBufferTruncated) {
+            this.logger.warn(`Output buffered before the terminal was shown exceeded ${MAX_INITIAL_DATA_BUFFER} bytes; older output was dropped`)
+        }
+        const data = Buffer.concat([
+            ...this.initialDataBufferTruncated ? [Buffer.from('\x1b[0m[... earlier output dropped ...]\r\n')] : [],
+            ...this.initialDataBuffer,
+        ])
         const consumptions = this.initialDataConsumptions
-        this.initialDataBuffer = Buffer.from('')
+        this.initialDataBuffer = []
+        this.initialDataBufferLength = 0
         this.initialDataConsumptions = []
 
         if (!data.length) {
@@ -150,7 +173,18 @@ export abstract class BaseSession {
         this.loginScriptProcessor = newProcessor
     }
 
+    private destroying = false
+
     async destroy (): Promise<void> {
+        // closed$ subscribers can call destroy() again synchronously - closing a local tab
+        // runs LocalTerminalTabComponent.ngOnDestroy() -> session.destroy(). That inner call
+        // used to complete destroyed$ before this call emitted it, so destroyed$ subscribers
+        // (e.g. the local session's pty.unsubscribeAll()) never ran and every closed session
+        // stayed reachable through its PTY IPC listeners.
+        if (this.destroying) {
+            return
+        }
+        this.destroying = true
         if (this.open) {
             this.logger.info('Destroying')
             this.open = false
