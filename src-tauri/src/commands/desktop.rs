@@ -381,7 +381,6 @@ pub fn window_open_devtools(
     window: tauri::WebviewWindow,
     _request: serde_json::Value,
 ) -> Result<(), AppError> {
-    #[cfg(debug_assertions)]
     window.open_devtools();
     Ok(())
 }

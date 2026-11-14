@@ -4,6 +4,7 @@ mod desktop;
 mod diagnostics;
 mod error;
 mod font;
+mod gpu;
 mod identity;
 mod launch;
 mod message_box;
@@ -376,6 +377,7 @@ pub fn run() {
         webview_storage::defer_portable_startup(context.config_mut(), storage_directory.as_deref());
 
     let initial_launch = initial_launch_context();
+    let (gpu_executable, gpu_portable_root) = (executable.clone(), portable_root.clone());
     let (launch_sender, launch_receiver) = std::sync::mpsc::channel::<LaunchContext>();
     let mut builder = tauri::Builder::default()
         .manage(restart_environment(tauri::Env::default()))
@@ -413,7 +415,7 @@ pub fn run() {
 
     builder = builder.plugin(tauri_plugin_deep_link::init());
 
-    builder
+    let app = builder
         .setup(move |app| {
             use tauri_plugin_deep_link::DeepLinkExt;
 
@@ -695,6 +697,12 @@ pub fn run() {
             winscp_launch,
         ])
         .build(context)
-        .expect("failed to build Tabby RS")
-        .run(on_application_event);
+        .expect("failed to build Tabby RS");
+    // Config windows are created when the event loop starts (`setup`), so the
+    // GPU workaround set here reaches the first WebView.
+    match identity::AppPaths::detect(app.handle(), gpu_executable, gpu_portable_root) {
+        Ok(paths) => gpu::apply_startup_environment(&paths),
+        Err(error) => eprintln!("could not resolve the GPU startup setting: {error}"),
+    }
+    app.run(on_application_event);
 }

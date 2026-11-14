@@ -1446,12 +1446,6 @@
   only logs it; the settings UI and `TauriDockingService` never read
   `capabilities.docking`, so dock options still show. `always_on_top` is not
   applied. `window_toggle_quake` has no renderer caller.
-- `hacks.disableGPU` is shown to every desktop platform but has no native
-  effect; the Electron host passes `disable-gpu` and disables hardware
-  acceleration. A Tauri equivalent sets `WEBKIT_DISABLE_COMPOSITING_MODE` or
-  `WEBKIT_DISABLE_DMABUF_RENDERER` before the first WebView is created.
-- DevTools: `window_open_devtools` is a no-op in release (`debug_assertions`
-  gate, no `devtools` Cargo feature) and `-d`/`--debug` is parsed but unused.
 - Sleep inhibit: the Electron host holds `powerSaveBlocker` during SFTP
   transfers; the native host has no `org.freedesktop.login1` or ScreenSaver
   inhibit.
@@ -1490,6 +1484,29 @@
   `scripts/test-tauri-fonts.mjs` checks this with a fake bridge.
 - Font picker: the rendered picker on Linux is unverified. Also unverified is whether
   the font-kit monospace flag selects the same families as upstream `fc-list :spacing=mono`.
+
+## Ported — Linux GPU workaround and DevTools startup (2026-11-14)
+
+- `hacks.disableGPU: true` in the raw `config.yaml` exports
+  `WEBKIT_DISABLE_COMPOSITING_MODE=1` and `WEBKIT_DISABLE_DMABUF_RENDERER=1`
+  on Linux, before the first WebView. `src-tauri/src/gpu.rs` holds the pure
+  decision: only the boolean `true` counts, and a variable already exported
+  (even empty) is never overridden. Upstream `app/lib/app.ts` reads the config in
+  the Electron main process before any window exists. The native host instead
+  reads the same `config.yaml` between `build()` and `run()` in `lib.rs`, because
+  the `StartupWindowFrame` snapshot is taken at first bootstrap, after the
+  primary WebView exists. Encrypted configs without a raw `hacks` section disable
+  nothing. macOS and Windows skip the read.
+- `window_open_devtools` opens DevTools in release builds. The `tauri`
+  dependency enables the `devtools` feature, which adds no crates to
+  `Cargo.lock`. `-d`/`--debug` opens DevTools for the `main` window once, at its
+  first bootstrap (`commands/app.rs`, one-shot flag in `state.rs`). Windows
+  created later do not open DevTools, and a second instance's `-d` is ignored.
+  The argv decision is covered by `launch::tests::debug_flags_request_startup_devtools`.
+- Unverified: whether WebKitGTK rendering changes on a real Linux desktop with
+  the GPU variables set, whether the DevTools window appears on a desktop, and
+  the upstream per-window behavior of `-d` (electron-debug), which was not
+  compared. Compilation and unit tests do not establish either effect.
 
 ## Pending — upstream sync to 467ce8eb (ports still owed to the native host)
 

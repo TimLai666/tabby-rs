@@ -33,6 +33,7 @@ pub struct AppState {
     startup_window_frame: window_frame::StartupWindowFrame,
     window_bounds: Mutex<HashMap<String, WindowBoundaries>>,
     pending_maximize: Mutex<std::collections::HashSet<String>>,
+    startup_devtools: AtomicBool,
 }
 
 impl AppState {
@@ -42,6 +43,7 @@ impl AppState {
         persisted_state: TabbyRsState,
     ) -> Self {
         let launches = LaunchQueue::default();
+        let startup_devtools = AtomicBool::new(initial_launch.request.argv.debug);
         launches.push("main", initial_launch.for_new_window());
         Self {
             next_window_id: AtomicU64::new(0),
@@ -55,6 +57,7 @@ impl AppState {
             startup_window_frame: window_frame::StartupWindowFrame::default(),
             window_bounds: Mutex::new(HashMap::new()),
             pending_maximize: Mutex::new(std::collections::HashSet::new()),
+            startup_devtools,
         }
     }
 
@@ -110,6 +113,12 @@ impl AppState {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .remove(label)
+    }
+
+    /// Returns true once, for the first window that reads the process's
+    /// startup launch, when that launch was started with `-d`/`--debug`.
+    pub fn take_startup_devtools(&self) -> bool {
+        self.startup_devtools.swap(false, Ordering::AcqRel)
     }
 
     pub fn request_forced_quit(&self) {
