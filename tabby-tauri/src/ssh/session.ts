@@ -19,6 +19,14 @@ import { TauriSshHostKeyPromptModalComponent } from './hostKeyPromptModal.compon
 import { TauriSftpSession } from './sftp'
 import { TauriPasswordStorageService } from '../services/passwordStorage.service'
 
+// Mirrors resolveSSHTerminalType in tabby-ssh/src/session/shellChannel.ts.
+function resolveSshTerminalType (term: unknown): string {
+    if (typeof term !== 'string') {
+        return 'xterm-256color'
+    }
+    return term.trim() || 'xterm-256color'
+}
+
 export class TauriSshSession extends BaseSession {
     /** Native-session teardown started; distinct from BaseSession.destroying, which guards destroy() re-entry. */
     private nativeDestroying = false
@@ -383,7 +391,7 @@ export class TauriSshSession extends BaseSession {
             username: options.user || null,
             auth,
             terminal: {
-                term: 'xterm-256color',
+                term: resolveSshTerminalType(options.term),
                 columns: 80,
                 rows: 24,
                 pixelWidth: null,
@@ -407,25 +415,25 @@ export class TauriSshSession extends BaseSession {
         const auth: SshAuthMethodRef[] = []
         const authMode = String(options.auth ?? '')
         if (!options.auth) {
+            const socket = await this.resolveAgentSocket()
+            auth.push({ type: 'agent', socket })
             const privateKeys = options.privateKeys.length
                 ? options.privateKeys
                 : await this.bridge.invoke('ssh.listPrivateKeys', {})
             for (const fileRef of privateKeys) {
                 auth.push({ type: 'privateKey', fileRef, passphraseRef: null })
             }
-            const socket = await this.resolveAgentSocket()
-            auth.push({ type: 'agent', socket })
-            if (options.password) {
+            if (typeof options.password === 'string') {
                 auth.push({ type: 'providedPassword', password: options.password })
             }
-            if (options.password) {
+            if (typeof options.password === 'string') {
                 auth.push({ type: 'keyboardInteractive', password: options.password })
             }
             auth.push({ type: 'keyboardInteractive', secretRef: this.passwordSecretRef() })
             auth.push({ type: 'password', secretRef: this.passwordSecretRef() })
             auth.push({ type: 'promptPassword' })
         } else if (options.auth === 'password') {
-            if (options.password) {
+            if (typeof options.password === 'string') {
                 auth.push({ type: 'providedPassword', password: options.password })
             }
             auth.push({ type: 'password', secretRef: this.passwordSecretRef() })
@@ -441,7 +449,7 @@ export class TauriSshSession extends BaseSession {
             const socket = await this.resolveAgentSocket()
             auth.push({ type: 'agent', socket })
         } else if (authMode === 'keyboardInteractive') {
-            if (options.password) {
+            if (typeof options.password === 'string') {
                 auth.push({ type: 'keyboardInteractive', password: options.password })
             }
             auth.push({ type: 'keyboardInteractive', secretRef: this.passwordSecretRef() })
@@ -616,7 +624,8 @@ export class TauriSshSession extends BaseSession {
             }
             const saved = await this.injector.get(TauriPasswordStorageService).loadPassword(profile, target.username)
             if (!this.credentialModals.has(prompt.requestId)) { return }
-            responses = [saved ?? '']
+            // Nothing stored sends no responses; a stored blank password sends one empty response.
+            responses = saved != null ? [saved] : []
         } catch {
             abort = true
         } finally {

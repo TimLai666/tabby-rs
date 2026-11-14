@@ -407,12 +407,14 @@
 - The production shell loop continues reading ordered output while a control
   request awaits its result. Real loopback SSH tests exercise the shared helper
   with generic pending operations: binary stdout/stderr, queued output before
-  EOF, operation cancellation, remote CLOSE acknowledgement with blocked input
-  and a full queue, retained transport, status/signal, and operation results.
-  Ready control results take priority over queued output and EOF. After stopping
-  input on EOF or failed output delivery, preserve an available reply with one
-  non-blocking check which ignores cooperative scheduling yields; genuinely pending
-  work is cancelled. Retain EOF for the outer loop when returning a ready result.
+  EOF or CLOSE, operation cancellation, remote CLOSE acknowledgement with blocked
+  input and a full queue, status/signal, and operation results. Remote CLOSE ends
+  the shell like EOF, following upstream `9e7a251b`.
+  Ready control results take priority over queued output, EOF, and CLOSE. After
+  stopping input on EOF, CLOSE, or failed output delivery, preserve an available
+  reply with one non-blocking check which ignores cooperative scheduling yields;
+  genuinely pending work is cancelled. Retain EOF or CLOSE for the outer loop when
+  returning a ready result.
   Failed output delivery always ends the loop. Native loopback tests verify actual
   SftpList validation and Close replies; deterministic oneshot tests verify readiness
   between polls and exhausted Tokio task budget. These checks establish native reply
@@ -620,20 +622,24 @@
   the fixture's diagnostic and round-trip terminal input, matching the original methods.
   The rejection check previously displayed a shell-channel error instead. These synthetic
   exchanges verify the channel, not execution of a remote shell after rejection.
-- Shell lifecycle follows the original shell method: EOF or transport disconnection ends
-  the shell; standalone CLOSE, exit status, and exit signal do not. The native event loop
-  drains queued output before observing transport completion, retains tab controls after
-  channel CLOSE, and registers sessions before spawning their reader to avoid stale entries
-  when EOF arrives immediately. Real loopback tests cover these events, buffered output,
-  a second channel after CLOSE, tab controls, and disconnection with or without prior CLOSE.
-  Queued closure is processed before controls. CLOSE cancels shell input and rejects
-  resizes without ending the transport or blocking tab closure.
-  The exact upstream methods with the locked binding verify seven reference scenarios;
-  these are method-level probes, not original desktop UI acceptance.
-  macOS desktop checks verify EOF termination, continued input after status/signal,
-  retained output and reconnect prompts on transport disconnect with or without prior
-  CLOSE, and closing a CLOSE-only tab without disrupting another SSH tab. SFTP and
-  forwarding teardown, transport backpressure, and other platforms still need acceptance.
+- Shell lifecycle follows upstream `9e7a251b`: EOF, remote channel CLOSE without EOF,
+  or transport disconnection ends the shell; exit status and exit signal do not. Servers
+  may send CLOSE without EOF, for example when a `sudo` child delays the PTY EOF.
+  russh 0.54.4 reports remote CLOSE by ending the channel receiver. The native event loop
+  delivers queued and buffered output before the end, keeps tab controls working until
+  then, and registers sessions before spawning their reader to avoid stale entries when
+  EOF arrives immediately. CLOSE stops shell input, acknowledges the peer, cancels a
+  pending control without a ready reply, and emits the same `ssh:exit` teardown as EOF.
+  Queued CLOSE is observed before ready controls. Real loopback tests cover EOF, CLOSE
+  without EOF after buffered output, status/signal without ending, and disconnection
+  with or without prior CLOSE.
+  Before `9e7a251b`, a CLOSE-only shell stayed open until transport completion; the
+  former reference probes and macOS desktop CLOSE-only checks covered that older rule
+  and do not accept the new one. macOS desktop checks verify EOF termination, continued
+  input after status/signal, and reconnect prompts on transport disconnect. Re-verify
+  CLOSE-only termination, its reconnect policy, and other open SSH tabs on the desktop.
+  SFTP and forwarding teardown, transport backpressure, and other platforms still need
+  acceptance.
 - PTY setup shares `request_shell_pty` between the manager and engine. It does not request
   approval or wait for a reply, so rejecting or ignoring PTY cannot prevent later shell
   requests. The exact `14e2d60` shell method with the locked binding also proceeds under
@@ -704,12 +710,15 @@
   and disabled under password and private-key login. macOS desktop TCP forwarding displays
   xclock on a disposable Xvfb server that allows connections without cookie validation.
   Windows TCP forwarding acceptance and graphical multi-hop desktop acceptance remain pending.
-- DISPLAY parsing follows the fixed upstream regex, including fallback for screenless
-  values such as `host:12`, the wildcard separator, and the greedy `host:100` result
-  (`host:6001`). Hostless `:N` and `:N.screen` also fall back to the platform default.
-  Keep these behaviors when editing the parser. A checked-in fixture
-  contains 332 results generated by `14e2d60:tabby-ssh/src/session/x11.ts` for Unix and
-  Windows, covering absolute paths, Unicode, invalid syntax, and large numeric values.
+- DISPLAY parsing follows upstream `467ce8eb`'s regex (`b67c0973`): the host and the
+  screen number are optional and the separator is a literal dot, so `host:12` is TCP
+  port 6012, `:1.2` is `/tmp/.X11-unix/X1`, `host:100` is port 100, and a value with
+  another separator such as `host:1x2` falls back to display 0 on the platform default.
+  Keep these behaviors when editing the parser. A checked-in fixture contains 332
+  results generated from `tabby-ssh/src/session/x11.ts` at `467ce8eb` for Unix and
+  Windows, covering absolute paths, Unicode, invalid syntax, and large numeric values;
+  regenerate it with `scripts/generate-x11-display-oracle.mjs` after syncing that file
+  (the previous `14e2d60` oracle differed in 198 cases).
   TCP port range validation happens after resolution; Unix display numbers are not
   limited to 16 bits. Configured display, environment, and default selection share one helper.
   Invalid UTF-8 in a Unix DISPLAY environment value is decoded with replacement characters
@@ -717,7 +726,9 @@
   A macOS desktop check confirms the replacement-character path is retained in the
   connection diagnostic instead of connecting to `/tmp/.X11-unix/X0`.
   macOS desktop verification includes a real SSH X11 channel carrying a TCP round trip
-  with a screenless display (`127.0.0.1:5822400` resolves to port 58224), then a refused
+  with a screenless display (`127.0.0.1:5822400` resolved to port 58224 under the
+  former `14e2d60` regex; the `467ce8eb` rule now reads it as display 5822400 and
+  rejects the out-of-range port, so repeat that check with `127.0.0.1:58224`), then a refused
   connection to that same endpoint after the local listener exits. The SSH terminal remains usable.
   Failed local-display connections now emit upstream-style terminal diagnostics through
   `ssh:message`, retaining Tabby RS branding, before closing the X11 channel. Tests cover
@@ -1421,6 +1432,211 @@
   reconnect settings, and continued port I/O. Successful physical rate changes,
   automatic reconnect at the new rate, and Windows/Linux execution remain pending.
 
+## Pending — Linux host parity gaps (audit of the Electron host, 2026-11-14)
+
+- Static comparison of `app/lib`, `tabby-electron/src` and the Tauri host found
+  these Linux gaps; none has desktop evidence yet. Treat each as its own slot
+  with a test, and record acceptance separately.
+- `window_toggle_quake` has no renderer caller.
+- Already at parity or recorded elsewhere: hide-on-blur (this file's upstream
+  sync section), reveal path through tauri-plugin-opener (Linux D-Bus behavior
+  unverified), window placement capture during a WM maximize (startup geometry
+  section), Linux shell detection, clipboard text/html, CLI arguments, native
+  file drops (drag gestures pending). WSL `homeDirArgs` is Windows-only.
+
+## Ported — Linux updater release-page fallback (2026-11-14)
+
+- Without `TABBY_RS_UPDATE_ENDPOINT_*` or `TABBY_RS_UPDATE_PUBLIC_KEY`, `update.check`
+  returns `unsupported`, and `TauriUpdaterService.check()` calls
+  `update.checkReleasePage` (`update_check_release_page`, `src-tauri/src/update/release_page.rs`).
+  It GETs `releases/latest` for this project (`TimLai666/tabby-rs`) the way upstream's
+  `UPDATES_URL` reads `eugeny/tabby`, with a 15 s timeout and a 1 MiB body cap.
+  It returns `isNewer` when the tag's `x.y.z` is above the base of the app's `-tabbyrs.N` version.
+- Only `https://github.com/TimLai666/tabby-rs/releases/...` pages are handed to the
+  browser (`validate_release_url`). When the signed updater is configured but answers
+  `unsupported` itself, the refused fallback keeps that original error. This project has
+  published no GitHub release yet, so the tag format is undecided: `release_version`
+  compares the tag's `x.y.z` with the app's base version, and a `v1.0.231-tabbyrs.2`
+  style tag would never count as newer; settle the tag scheme before the first release.
+- `update()` and `install()` on that info open the release page through `platform.openExternal`.
+  `download()` and `cancel()` do nothing for it. The fallback never downloads or executes an artifact.
+  Signed-pipeline behavior is unchanged.
+- Differences from upstream: upstream opens any tag that differs from the app version, while this
+  fallback requires a newer base version. Both channels read the same latest-release endpoint,
+  because upstream does not distinguish channels. The release date comes from `published_at`,
+  where upstream uses the current time.
+- `update.check` marks the update state Failed (configuration) before the fallback runs and
+  the fallback does not reset it, so an `update:state` listener can still see that failure
+  while the release page is offered; decide whether to clear it before accepting updater parity.
+- Deb/rpm installation through the plugin is still unverified, and the fallback does not establish it.
+- Verification: `cargo test --lib update` covers the pure helpers. `test:tauri-platform` runs
+  `scripts/test-tauri-updater-fallback.mjs` with a fake bridge. Neither exercises the network request
+  or a real browser open.
+
+## Ported — Linux global hotkey, docking capability and external URLs (2026-11-14)
+
+- Global hotkey: `desktop.rs` `capabilities().global_hotkey` is false only on
+  Wayland under Plasma below 6.6, through `global_hotkey_supported`,
+  `is_plasma_session` and `parse_plasma_version`, mirroring `shouldRegisterGlobalHotkeys`
+  and `isPlasmaSession` in `app/lib/app.ts`. `desktopIntegration.service.ts`
+  `shouldRegisterGlobalHotkey` applies an explicit `hacks.globalHotkey` first, as
+  upstream does (true disables, false forces registration). A skipped registration
+  sends an empty `hotkey.replace` to clear older shortcuts and logs at info.
+  `hotkey_replace` toggles every webview window through `global_hotkey_hides_windows`.
+  A docked on-top window is approximated by the main window's always-on-top state,
+  because `window_set_docking` is the only caller that sets it in this host.
+- Docking: `TauriDockingService` reads `window.getState` capabilities into
+  `dockingSupported` and sends side `off` when docking is unsupported, logging once.
+  `windowSettingsTab.component` exposes `dockingAvailable` and its docking rows
+  use it; no shared capability hook existed, so the tabby-settings template changed.
+  `always_on_top` already flows from the docking request, so no new native call was added.
+- External URLs: `desktop_open_external` allows http, https, ftp and mailto. Other
+  schemes need `confirmed: true`, which the renderer sends after the upstream
+  `Open this app-specific "<scheme>" URI?` prompt. file, javascript and data are
+  refused without a prompt. Upstream prompts for those, so this is stricter.
+- Checks: `scripts/test-tauri-desktop-integration.mjs` (hotkey gating),
+  `scripts/test-tauri-docking.mjs` and `scripts/test-tauri-open-external.mjs` run
+  under `test:tauri-platform` with fake bridges. Rust unit tests live in
+  `src-tauri/src/desktop.rs` (`desktop::tests`).
+- Review follow-ups: windows are presented in creation order (`main`, then
+  `window-N`) so the newest keeps focus, because `webview_windows()` is a
+  HashMap; `parse_plasma_version` matches upstream's first `digit.digit` pair;
+  a failed `window.getState` read clears older shortcuts and no longer aborts
+  `initialize()` through appearance application. `plasma_version()` runs
+  `plasmashell --version` synchronously on first use with no timeout, like
+  upstream's `spawnSync`; sync commands such as `window.getState` call it on the
+  main thread, so measure the first-call delay on KDE Wayland. On Wayland the
+  settings page shows the Docking block until `window.getState` resolves
+  (`dockingSupported` is unknown until then); check the rendered page. Refusing
+  `file`, `javascript` and `data` without a prompt is stricter than upstream,
+  which asks for every non-safe scheme; record it as an approved exception in
+  docs/release-acceptance.md or relax it before accepting openExternal parity.
+- Unverified: real Wayland hotkey registration on KDE Plasma 6.5, 6.6 and GNOME,
+  the `plasmashell --version` probe in a live session, compositor docking and
+  always-on-top, the rendered settings rows, the rendered confirm dialog, and the
+  all-window toggle on Windows and macOS.
+
+## Ported — Linux notifications and font picker (2026-11-14)
+
+- Notifications: `app/src/entry.tauri.ts` installs
+  `tabby-tauri/src/services/notification.ts` before Angular bootstrap. The shared
+  `new Notification(title, { body })` calls, including "Process completed" and the
+  "Tab activity" path, now invoke native `notification.show`. IPC failures are
+  logged with `console.warn`, delivered through the web API's `error` event and
+  `onerror`, and never throw, so the in-app toast fallback in `tabContextMenu`
+  (which only caught a synchronous throw) no longer runs on native failure.
+  tauri-plugin-notification 2.3.3 shows desktop notifications on a spawned task
+  and drops delivery errors, so the IPC succeeds and `show` fires even without a
+  notification daemon; treat `show` as "handed to the plugin", not as delivery.
+  `scripts/test-tauri-notification.mjs` checks this with a fake bridge only. No
+  shared code reads `Notification.permission` or calls `requestPermission`
+  (grepped `tabby-*/src`, `app/src`); third-party plugins see `granted`.
+- Notification click-to-focus is not implemented. tauri-plugin-notification v2 does
+  not deliver click events to the WebView on Linux, so click listeners are accepted
+  and never fire. The "Notify when done" selection behavior is unverified on Linux.
+- Notification display and permission are unverified on Linux. The adapter reports
+  `permission` as `granted` without asking the desktop notification service.
+- Font picker: on Linux, `TauriPlatformService.listFonts` returns only families
+  whose native `monospace` flag is true when at least one family reports a flag,
+  matching upstream's `fc-list :spacing=mono`. Windows and macOS keep every
+  family like upstream. Without any flag, or when the detector flags no family
+  as monospace, it keeps every family so the picker never goes empty. Output is
+  sorted with `localeCompare` and de-duplicated.
+  `scripts/test-tauri-fonts.mjs` checks this with a fake bridge.
+- Font picker: the rendered picker on Linux is unverified. Also unverified is whether
+  the font-kit monospace flag selects the same families as upstream `fc-list :spacing=mono`.
+
+## Ported — Linux GPU workaround and DevTools startup (2026-11-14)
+
+- A truthy `hacks.disableGPU` in the raw `config.yaml` (JavaScript truthiness,
+  like upstream `hacks?.disableGPU`) exports `WEBKIT_DISABLE_COMPOSITING_MODE=1`
+  and `WEBKIT_DISABLE_DMABUF_RENDERER=1` on Linux, before the first WebView.
+  `src-tauri/src/gpu.rs` holds the pure decision; a variable the user already
+  exported (even empty) is never overridden. Upstream `app/lib/app.ts` reads the
+  config in the Electron main process before any window exists. The native host
+  reads the same `config.yaml` between `build()` and `run()` in `lib.rs`, because
+  the `StartupWindowFrame` snapshot is taken at first bootstrap, after the
+  primary WebView exists; Tauri 2.11.5 creates config windows in `setup()` on the
+  Ready event, so the variables reach the first WebView. Encrypted configs
+  without a raw `hacks` section disable nothing. macOS and Windows skip the read.
+- The process records the variables it exported in `TABBY_RS_GPU_ENV`.
+  `shell::environment::merge_environment` and `desktop_exec` strip the marker
+  and the variables it names before spawning, so PTY shells and other children
+  see the user's environment, as with upstream's in-process
+  `disableHardwareAcceleration`; a user's own export of the same variable is
+  kept. An in-app restart inherits the environment, so startup first removes the
+  marked variables and decides again, which lets a disabled setting take effect
+  without a full quit. `set_var` runs after `build()` while runtime threads
+  exist; no thread calling `getenv` at that moment was found, but that was not
+  measured. Remaining scope: processes started by tauri-plugin-opener
+  (`open_url`, `reveal_item_in_dir`, `open_path` through `xdg-open`) still
+  inherit the marker and both variables because the plugin offers no
+  environment control; a WebKit-based default browser opened from Tabby RS
+  would run without GPU compositing while the setting is on.
+- `window_open_devtools` opens DevTools in release builds. The `tauri`
+  dependency enables the `devtools` feature, which adds no crates to
+  `Cargo.lock` (Tauri documents macOS devtools as private API; reassess before
+  any App Store build). `-d`/`--debug` opens DevTools once per window at that
+  window's first bootstrap, before any step that can fail (`commands/app.rs`,
+  per-label set in `state.rs`), matching electron-debug's per-window behavior;
+  a renderer reload does not reopen them and a second instance's `-d` is
+  ignored. The argv decision is covered by
+  `launch::tests::debug_flags_request_startup_devtools`.
+- Unverified: whether WebKitGTK rendering changes on a real Linux desktop with
+  the GPU variables set, and whether the DevTools window appears on a desktop.
+  Compilation and unit tests do not establish either effect.
+
+## Ported — Linux sleep inhibit for file transfers (2026-11-14)
+
+- Uploads, downloads, and directory downloads acquire a native power-save inhibit
+  when the transfer object is created, matching the Electron `powerSaveBlocker`
+  placement. They release it on close, cancel, completion-close, and error. Each
+  transfer keeps its own id; the native hold is shared and reference counted.
+  `src-tauri/src/power.rs` holds the counter (cap 1024 outstanding ids) and the
+  pure tests in `power::tests`. `commands/power.rs` exposes
+  `power_inhibit_acquire` and `power_inhibit_release`, registered in `lib.rs`;
+  the counter lives on `AppState`. `tabby-tauri/src/services/platform.service.ts`
+  maps them to `power.inhibitAcquire` and `power.inhibitRelease`.
+- Backend on Linux: `org.freedesktop.login1.Manager.Inhibit('sleep:idle', ...)` on
+  the system bus, holding the returned fd. If that call fails, it falls back to
+  `org.freedesktop.ScreenSaver.Inhibit` on the session bus and calls `UnInhibit`
+  on release. The `dbus` crate (0.9.12, already locked through `dbus-secret-service`)
+  is a direct dependency. The XDG desktop portal is not used.
+- Backend on Windows: a worker thread calls `SetThreadExecutionState` with
+  `ES_CONTINUOUS | ES_SYSTEM_REQUIRED` while a hold exists. Execution state is
+  per thread, so one thread owns it.
+- Backend on macOS: a `/usr/bin/caffeinate -i -w <pid>` child. `-w` makes it exit
+  when the app exits, so a crash cannot leave the Mac awake. An IOPMAssertion via
+  raw FFI would avoid the child process; it was not chosen to keep the FFI surface
+  small.
+- Native failures are logged with `eprintln!` and never fail a transfer. Renderer
+  rejections are logged with `console.info`. Both commands are `async` and run
+  the native call on `spawn_blocking`: the D-Bus call has a 2 s timeout and runs
+  under the counter mutex, so a slow logind delays other acquires by up to that
+  long but never the main thread. Beyond 1024 outstanding ids the acquire is
+  refused and the transfer runs uninhibited. The native call runs outside the
+  counter lock with an in-flight marker, and a release drops the hold under the
+  lock, so a single-state backend (Windows execution state) never sees a stale
+  release after a newer acquire; a drop guard clears the in-flight marker if the
+  backend panics; a hold that completes after every id was
+  released is dropped at once (`release_during_an_in_flight_acquire_...`).
+  Review notes still open: `dbus` connection setup (`dbus_bus_get_private`)
+  uses libdbus's own timeout, about 25 s, outside the 2 s method timeout;
+  `sleep:idle` in `block` mode may refuse a user-initiated suspend where
+  Chromium's `prevent-app-suspension` only inhibits idle (compare on GNOME and
+  KDE before accepting); ids are not bound to a window, so a window closed or
+  reloaded mid-transfer keeps its inhibit until the process exits, as Electron's
+  main-process blocker does; whether the logind fd carries CLOEXEC was not read.
+- Checks: `cargo test --locked --offline --lib power` (6 tests, counter logic with a
+  fake backend), `scripts/test-tauri-power-inhibit.mjs` under `test:tauri-platform`
+  (fake bridge, real `tabby-core` transfer base classes). The fixture fails against
+  the pre-change service for 12 of its 13 cases; the 13th only checks that a rejected
+  acquire does not break a download.
+- Unverified: the actual systemd-logind inhibit on a desktop (`systemd-inhibit --list`
+  while a transfer runs), the ScreenSaver fallback on KDE and GNOME, whether the
+  inhibit stops the desktop from sleeping during a real transfer, Windows
+  `SetThreadExecutionState` behavior, and macOS `caffeinate` behavior. `cargo check` of a copy of `power.rs` passes for the Windows and macOS targets, but no Windows or macOS build of the app was run.
+
 ## Pending — upstream sync to 467ce8eb (ports still owed to the native host)
 
 - The shared Angular front end now follows upstream Tabby `467ce8eb` (xterm 6,
@@ -1442,26 +1658,74 @@
 - Tauri renderer directory checks go through the new `desktop.pathKind`
   command (`app/src/shims/mz-fs.ts`); the synchronous `fs` shim stays
   permissive so upstream's `usableCWD` does not drop working directories.
+- Ported to the native host with their own tests: SSH ends the shell on a
+  remote CHANNEL_CLOSE as well as EOF (`9e7a251b`, `src-tauri/src/ssh/lifecycle.rs`;
+  russh reports CLOSE by ending the receiver); blank configured passwords stay
+  candidates, and the keychain/Vault half of blank passwords (`256f09dd`) is ported:
+  the renderer replies `responses: []` for nothing stored and `['']` for a stored blank,
+  `prepare_stored_password` maps those to None and Some(""), the profile settings
+  confirm a blank save, and the inline panel prefills on `!= null`
+  (`scripts/test-ssh-stored-password-protocol.mjs`, `scripts/test-ssh-profile-settings-blank-password.mjs`,
+  and `cargo test ssh::credential_loading`). Unverified: desktop Keychain and Vault behavior
+  with a stored blank password, including whether each store accepts an empty value, and
+  the Vault path, which no check exercised. `scripts/test-ssh-credential-loading.mjs` now
+  asserts the `[]` reply for nothing stored. `resolve_password_ref` (legacy requests without
+  `load_stored_password`, explicit `keychain://` and `vault-secret://` references) still treats
+  an empty stored value as none; decide whether that legacy path should follow 256f09dd too.
+  `winscp.service.ts` passes `loadPassword` results through unchanged; its blank-password
+  behavior on Windows is unverified; agent authentication before disk keys in automatic
+  mode (`41c242ad`); per-profile SSH TERM with the upstream blank fallback
+  (`a8abcc0b`), all covered by `scripts/test-ssh-auth-candidates.mjs` and the
+  updated `test-ssh-agent-config.mjs`; serial quick connect `port@baud` /
+  `port:baud` with the bare default (`c9a7a54f`,
+  `scripts/test-serial-quick-connect.mjs` compares the upstream source);
+  SFTP upload errors set the transfer status before cancelling (`9e31ec6d`,
+  `scripts/test-sftp-upload-errors.mjs`); Linux tab-bar dragging on the top
+  `38px * --spaciness` strip of an open modal (`54869e10`,
+  `test-tauri-window-drag-region.mjs`); bell flashes the taskbar through
+  `window.flashFrame` / `request_user_attention`, cleared on focus
+  (`ea801300`); dock hide-on-blur asks `window.canHideOnBlur` so a native
+  dialog or another focused window keeps it visible (`798e7cca`,
+  `scripts/test-tauri-desktop-integration.mjs`); chained publickey or
+  keyboard-interactive planning (`30347a61`: after a partial-success failure
+  the native plan appends a bare keyboard-interactive candidate when the server
+  asks for it and none remains, verified against a real russh server in
+  `manager_authenticator_adds_keyboard_interactive_after_partial_success`;
+  the vendored russh server transmits the partial flag only from its
+  keyboard-interactive reply path); X11 display specs without a screen number
+  (`b67c0973`, see the DISPLAY parsing note above); SSH config import without
+  an explicit HostName already used the alias (`084159c7`,
+  `host_without_hostname_uses_the_alias_like_openssh`). Native flash, dock hiding,
+  CLOSE-only shell teardown, and the serial/SSH flows above still need desktop
+  acceptance; the renderer fixtures simulate the IPC boundary. Review of this
+  batch left these open: a double press on the modal drag strip sends no
+  native drag, so the second release may reach `.modal` and dismiss a
+  backdrop-closable dialog (check thin/full on Linux before accepting);
+  `window.canHideOnBlur` reads `is_enabled`, which may not reflect a native
+  file dialog opened without a parent window (`dialog_open`), so 798e7cca's
+  dialog case is unverified; the Tauri SSH profile settings now expose the
+  "Terminal type" field like upstream `sshProfileSettings.component.pug`, but
+  native `validate_request` still rejects TERM values over 64 characters or
+  with control characters, which upstream only trims (an accepted difference
+  only once recorded in docs/release-acceptance.md). Every HostRequestMap
+  key must resolve to a registered command; `scripts/test-host-command-registry.mjs`
+  (in `test:tauri-platform`) enforces that after review found an unregistered
+  `window.canHideOnBlur`.
 - Upstream changes made only in the Electron host or Node back ends still need
   native equivalents, each with its own test: WinSCP accepts `.ppk` keys without
-  conversion (`622c99b2`); SSH keeps the session open until the remote shell
-  exits (`9e7a251b`); blank configured/keychain passwords (`256f09dd`, the
-  native `tabby-tauri/src/ssh/session.ts` still uses truthy checks); chained
-  publickey + keyboard-interactive planning (`30347a61`); agent authentication
-  before disk keys for imported profiles (`41c242ad`); per-profile SSH TERM
-  (`a8abcc0b`, native session hardcodes `xterm-256color`); X11 display specs
-  without a screen number (`b67c0973`, compare with the native parser); serial
-  quick connect (`c9a7a54f`); SFTP upload error surfacing (`9e31ec6d`);
-  SSH config import without an explicit HostName (`084159c7`); forwarding
-  messages moved off the terminal (`a64ae78b`, decide against the native
-  `ssh:message` diagnostics); WSL `--cd ~` and guest cwd resolution
-  (`cdae0b6e`, `508dccc0`, the native shell provider does not expose
-  `homeDirArgs`); directory-only session cwd (`9f51fcce`); bundled ConPTY
-  (`4004cc51`, decide whether the Rust PTY path needs it); tab bar dragging
-  while a dialog is open (`54869e10`); bell flashes the taskbar/dock icon
-  (`ea801300`); docked window stays visible during native dialogs (`798e7cca`);
-  Windows 11 Acrylic (`6193527b`); pwsh MSIX detection (`2af22b99`);
-  CLI subcommand crash fix (`b326213a`). Track each as its own slot.
+  conversion (`622c99b2`); forwarding messages moved
+  off the terminal (`a64ae78b`, decide against the native `ssh:message`
+  diagnostics); WSL `--cd ~` and guest cwd resolution (`cdae0b6e`, `508dccc0`,
+  the native shell provider does not expose `homeDirArgs`); bundled ConPTY
+  (`4004cc51`, decide whether the Rust PTY path needs it); Windows 11 Acrylic
+  (`6193527b`); pwsh MSIX detection (`2af22b99`). Track each as its own slot.
+  Not owed: `b326213a` only de-duplicates `string-width`/`strip-ansi` in the
+  Electron yarn.lock for the Node CLI; the Tauri CLI is Rust. `9f51fcce`
+  (directory-only cwd) is covered by the shared `tabby-local` session: its
+  async check uses `desktop.pathKind`, its synchronous `isDirectorySync` is a
+  no-op through the permissive `fs` shim, and a spawn with an unusable cwd
+  fails in the native backend (`pty/backend.rs` `command.cwd`) and is printed
+  as "Could not start" by the shared catch; verify that message on a desktop.
 
 ## Pending — lint from the shared Main checkout
 

@@ -31,16 +31,20 @@ fn ready_after_first_pending(
 #[tokio::test]
 async fn reply_ready_between_operation_poll_and_eof_is_delivered_before_end() {
     tokio::time::timeout(Duration::from_secs(10), async {
-        for expected in [true, false] {
+        // Upstream 9e7a251b ends the shell on CHANNEL_CLOSE as well as EOF.
+        for (close, expected) in [(false, true), (false, false), (true, true), (true, false)] {
             let mut f = Fixture::new().await;
             let (mut task, _input) = input::start(Arc::clone(&f._writer));
-            f.pending.push_back(ChannelMsg::Eof);
+            f.pending.push_back(if close {
+                ChannelMsg::Close
+            } else {
+                ChannelMsg::Eof
+            });
             let (reply, mut received) = oneshot::channel();
             let mut emitted = 0;
             let result = run_control(
                 &mut f.reader,
                 &mut f.pending,
-                &mut f.channel_closed,
                 &mut task,
                 ready_after_first_pending(expected, reply),
                 |_| {
@@ -54,20 +58,20 @@ async fn reply_ready_between_operation_poll_and_eof_is_delivered_before_end() {
             if result {
                 assert!(
                     f.next().await.is_none(),
-                    "observed EOF must still end the shell"
+                    "observed EOF or CLOSE must still end the shell"
                 );
             }
             drop(task);
             f.finish().await;
             assert!(
                 matches!(delivered, Ok(actual) if actual == expected),
-                "reply became ready before EOF was selected but was lost: {delivered:?}"
+                "reply became ready before EOF/CLOSE (CLOSE={close}) was selected but was lost: {delivered:?}"
             );
             assert_eq!(result, expected, "preserve the available operation result");
             assert_eq!(emitted, 0);
             assert_eq!(
                 queued, 1,
-                "retain EOF for the outer loop when delivering the result"
+                "retain EOF or CLOSE for the outer loop when delivering the result"
             );
         }
     })
@@ -89,7 +93,6 @@ async fn reply_ready_before_emit_refusal_survives_while_output_failure_ends_loop
             let result = run_control(
                 &mut f.reader,
                 &mut f.pending,
-                &mut f.channel_closed,
                 &mut task,
                 ready_after_first_pending(expected, reply),
                 |message| {
@@ -174,7 +177,6 @@ async fn terminal_completion_preserves_ready_reply_after_budget_is_spent() {
                 let result = run_control(
                     &mut f.reader,
                     &mut f.pending,
-                    &mut f.channel_closed,
                     &mut task,
                     operation,
                     |_| { emitted += 1; false },

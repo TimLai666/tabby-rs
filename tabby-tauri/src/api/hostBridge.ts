@@ -23,6 +23,15 @@ export type UpdateStateDto =
     | { status: 'installing'; version: string }
     | { status: 'failed'; stage: string; publicError: string }
 
+// Release metadata from the GitHub releases endpoint, used only without the signed updater.
+export interface UpdateReleasePageDto {
+    version: string
+    releaseUrl: string
+    releaseNotes: string
+    releaseDate: string
+    isNewer: boolean
+}
+
 export interface ContextMenuItem {
     id: number
     type: 'normal' | 'separator' | 'submenu' | 'checkbox' | 'radio'
@@ -770,6 +779,10 @@ export interface HostRequestMap {
         request: Record<string, never>
         response: null
     }
+    'update.checkReleasePage': {
+        request: Record<string, never>
+        response: UpdateReleasePageDto
+    }
     'update.setChannel': {
         request: { channel: UpdateChannel }
         response: null
@@ -981,6 +994,14 @@ export interface HostRequestMap {
         request: Record<string, never>
         response: null
     }
+    'window.flashFrame': {
+        request: { flash: boolean }
+        response: null
+    }
+    'window.canHideOnBlur': {
+        request: Record<string, never>
+        response: { anyWindowFocused: boolean, enabled: boolean }
+    }
     'window.minimize': {
         request: Record<string, never>
         response: null
@@ -1050,7 +1071,7 @@ export interface HostRequestMap {
         response: null
     }
     'desktop.openExternal': {
-        request: { url: string }
+        request: { url: string, confirmed: boolean }
         response: null
     }
     'desktop.revealPath': {
@@ -1316,6 +1337,14 @@ export interface HostRequestMap {
     'font.refresh': {
         request: Record<string, never>
         response: InstalledFont[]
+    }
+    'power.inhibitAcquire': {
+        request: Record<string, never>
+        response: { id: number }
+    }
+    'power.inhibitRelease': {
+        request: { id: number }
+        response: null
     }
 }
 

@@ -11,6 +11,9 @@ export const WINDOW_DRAG_REGION_SELECTOR = '.tab-bar > .btn-space.drag, title-ba
 
 const CLICKABLE_SELECTOR = 'button, a, input, select, textarea, label'
 
+/** Upstream keeps a tab-bar-high strip of an open dialog draggable (54869e10). */
+const MODAL_DRAG_STRIP_HEIGHT = 38
+
 /**
  * Starts a native window move when the pointer presses a drag region on Linux,
  * matching upstream's frameless Electron window. A double press toggles
@@ -59,9 +62,12 @@ export class TauriWindowDragRegionService implements OnDestroy {
         }
     }
 
-    private dragRegionFor (target: EventTarget | null): Element | null {
+    private dragRegionFor (target: EventTarget | null, clientY = Number.POSITIVE_INFINITY): Element | null {
         if (!(target instanceof Element)) {
             return null
+        }
+        if (target.classList.contains('modal') && clientY < this.modalDragStripHeight()) {
+            return target
         }
         const region = target.closest(WINDOW_DRAG_REGION_SELECTOR)
         if (!region) {
@@ -71,12 +77,17 @@ export class TauriWindowDragRegionService implements OnDestroy {
         return clickable && region.contains(clickable) ? null : region
     }
 
+    private modalDragStripHeight (): number {
+        const spaciness = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--spaciness'))
+        return MODAL_DRAG_STRIP_HEIGHT * (Number.isFinite(spaciness) && spaciness > 0 ? spaciness : 1)
+    }
+
     private onDoubleClick (event: MouseEvent): void {
         // The toggle already happened on the second press; the matching
         // dblclick can land on a different target if the layout moved.
         const handledPress = this.swallowNextDoubleClick
         this.swallowNextDoubleClick = false
-        if (event.button === 0 && (handledPress || this.dragRegionFor(event.target))) {
+        if (event.button === 0 && (handledPress || this.dragRegionFor(event.target, event.clientY))) {
             event.preventDefault()
             event.stopImmediatePropagation()
         }
@@ -86,7 +97,7 @@ export class TauriWindowDragRegionService implements OnDestroy {
         if (event.button !== 0 || event.detail !== 1 && event.detail !== 2) {
             return
         }
-        if (!this.dragRegionFor(event.target)) {
+        if (!this.dragRegionFor(event.target, event.clientY)) {
             return
         }
         event.preventDefault()

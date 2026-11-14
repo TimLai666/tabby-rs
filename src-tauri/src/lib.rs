@@ -4,11 +4,13 @@ mod desktop;
 mod diagnostics;
 mod error;
 mod font;
+mod gpu;
 mod identity;
 mod launch;
 mod message_box;
 mod platform;
 mod plugins;
+mod power;
 mod pty;
 mod security;
 mod serial;
@@ -41,9 +43,9 @@ use commands::{
         clipboard_read_text, clipboard_write_text, desktop_exec, desktop_open_external,
         desktop_open_path, desktop_path_kind, desktop_read_file, desktop_reveal_path, dialog_open,
         dialog_save, hotkey_replace, notification_show, window_apply_state, window_bring_to_front,
-        window_close, window_get_state, window_list_screens, window_minimize, window_new,
-        window_open_devtools, window_reload, window_set_docking, window_start_dragging,
-        window_toggle_maximize, window_toggle_quake,
+        window_can_hide_on_blur, window_close, window_flash_frame, window_get_state,
+        window_list_screens, window_minimize, window_new, window_open_devtools, window_reload,
+        window_set_docking, window_start_dragging, window_toggle_maximize, window_toggle_quake,
     },
     diagnostics::{
         diagnostics_append, diagnostics_clear_logs, diagnostics_export, diagnostics_preview,
@@ -62,6 +64,7 @@ use commands::{
         plugins_node_status, plugins_prepare_operation, plugins_read_entry, plugins_remove,
         plugins_uninstall, plugins_update,
     },
+    power::{power_inhibit_acquire, power_inhibit_release},
     pty::{
         pty_ack, pty_attach, pty_detach, pty_discard, pty_exists, pty_get_children, pty_get_cwd,
         pty_get_pid, pty_get_true_pid, pty_is_alive, pty_kill, pty_resize, pty_spawn, pty_write,
@@ -90,8 +93,8 @@ use commands::{
         transfer_write,
     },
     update::{
-        update_cancel, update_check, update_download, update_get_channel, update_install,
-        update_set_channel,
+        update_cancel, update_check, update_check_release_page, update_download,
+        update_get_channel, update_install, update_set_channel,
     },
     vault::{
         vault_get_file, vault_get_secret, vault_lock, vault_put_file, vault_put_secret,
@@ -376,6 +379,7 @@ pub fn run() {
         webview_storage::defer_portable_startup(context.config_mut(), storage_directory.as_deref());
 
     let initial_launch = initial_launch_context();
+    let (gpu_executable, gpu_portable_root) = (executable.clone(), portable_root.clone());
     let (launch_sender, launch_receiver) = std::sync::mpsc::channel::<LaunchContext>();
     let mut builder = tauri::Builder::default()
         .manage(restart_environment(tauri::Env::default()))
@@ -413,7 +417,7 @@ pub fn run() {
 
     builder = builder.plugin(tauri_plugin_deep_link::init());
 
-    builder
+    let app = builder
         .setup(move |app| {
             use tauri_plugin_deep_link::DeepLinkExt;
 
@@ -549,6 +553,8 @@ pub fn run() {
             desktop_exec,
             font_list,
             font_refresh,
+            power_inhibit_acquire,
+            power_inhibit_release,
             desktop_read_file,
             desktop_reveal_path,
             desktop_path_kind,
@@ -656,6 +662,7 @@ pub fn run() {
             transfer_list_directory,
             terminal_export,
             update_check,
+            update_check_release_page,
             update_download,
             update_install,
             update_cancel,
@@ -680,6 +687,8 @@ pub fn run() {
             window_close,
             window_get_state,
             window_list_screens,
+            window_can_hide_on_blur,
+            window_flash_frame,
             window_minimize,
             window_open_devtools,
             window_new,
@@ -693,6 +702,12 @@ pub fn run() {
             winscp_launch,
         ])
         .build(context)
-        .expect("failed to build Tabby RS")
-        .run(on_application_event);
+        .expect("failed to build Tabby RS");
+    // Config windows are created when the event loop starts (`setup`), so the
+    // GPU workaround set here reaches the first WebView.
+    match identity::AppPaths::detect(app.handle(), gpu_executable, gpu_portable_root) {
+        Ok(paths) => gpu::apply_startup_environment(&paths),
+        Err(error) => eprintln!("could not resolve the GPU startup setting: {error}"),
+    }
+    app.run(on_application_event);
 }

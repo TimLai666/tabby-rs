@@ -12,6 +12,7 @@ use crate::{
         state_file::{PendingUpdateState, UpdateChannel},
     },
     update::{
+        release_page::{fetch_latest_release, release_page_info, ReleasePageInfo},
         rollback::{
             clear_pending_update_journal, prepare_binary_rollback, remember_stable_backup,
             write_pending_update_journal_with_binary,
@@ -118,6 +119,26 @@ pub async fn update_check(
 ) -> Result<Option<UpdateInfo>, AppError> {
     let _ = request;
     check_update(&app, &state).await
+}
+
+// Used only when the signed updater is not configured. It reads release metadata
+// and returns it for the renderer to open in the browser; it never downloads or installs.
+#[tauri::command]
+pub async fn update_check_release_page(
+    request: EmptyRequest,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<ReleasePageInfo, AppError> {
+    let _ = request;
+    let channel = state.persisted_state().update_channel;
+    if configured_endpoint(&channel).is_some() && configured_public_key().is_some() {
+        return Err(AppError::Unsupported(
+            "release page check is only used when the signed updater is not configured".into(),
+        ));
+    }
+    let current_version = app.package_info().version.to_string();
+    let release = fetch_latest_release().await?;
+    release_page_info(&release, &current_version)
 }
 
 #[tauri::command]

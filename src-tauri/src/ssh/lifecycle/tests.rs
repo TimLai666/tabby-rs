@@ -1,6 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
-use russh::{server, Channel, ChannelId, CryptoVec};
+use russh::{client, server, Channel, ChannelId, CryptoVec};
 use tokio::sync::oneshot;
 
 use super::*;
@@ -67,7 +67,6 @@ struct Fixture {
     pending: VecDeque<ChannelMsg>,
     controls: mpsc::Receiver<SshControl>,
     sender: mpsc::Sender<SshControl>,
-    channel_closed: bool,
     server: server::Handle,
     id: ChannelId,
     tasks: tokio::task::JoinSet<()>,
@@ -125,7 +124,6 @@ impl Fixture {
             pending: VecDeque::new(),
             controls,
             sender,
-            channel_closed: false,
             server,
             id,
             tasks,
@@ -134,14 +132,7 @@ impl Fixture {
     }
 
     async fn next(&mut self) -> Option<ShellEvent> {
-        next_shell_event(
-            &mut self.reader,
-            &mut self.pending,
-            &mut self.controls,
-            &mut self.handle,
-            &mut self.channel_closed,
-        )
-        .await
+        next_shell_event(&mut self.reader, &mut self.pending, &mut self.controls).await
     }
 
     async fn expect_data(&mut self, expected: &[u8]) {
@@ -160,9 +151,7 @@ impl Fixture {
     }
 
     async fn expect_end(&mut self) {
-        while let Some(event) = self.next().await {
-            assert!(matches!(event, ShellEvent::ChannelClosed));
-        }
+        assert!(self.next().await.is_none(), "the shell must end");
     }
 }
 
@@ -216,14 +205,14 @@ async fn stalled_shell_input_does_not_block_output_or_teardown() {
                         .unwrap();
                     f.expect_end().await;
                 }
+                "remote-close" => {
+                    f.server.close(f.id).await.unwrap();
+                    f.expect_end().await;
+                    input_task.stop().await;
+                    // The peer must receive our CLOSE acknowledgement even with pending input.
+                    assert_eq!(f.closed.recv().await, Some(f.id));
+                }
                 _ => {
-                    if ending == "remote-close" {
-                        f.server.close(f.id).await.unwrap();
-                        assert!(matches!(f.next().await, Some(ShellEvent::ChannelClosed)));
-                        input_task.stop().await;
-                        // The peer must receive our CLOSE acknowledgement even with pending input.
-                        assert_eq!(f.closed.recv().await, Some(f.id));
-                    }
                     let (tx, rx) = oneshot::channel();
                     f.sender.send(SshControl::Close(tx)).await.unwrap();
                     let Some(ShellEvent::Control(control)) = f.next().await else {
@@ -320,50 +309,30 @@ async fn eof_ends_shell_after_buffered_and_remote_output() {
     .unwrap();
 }
 
+// Upstream 9e7a251b: servers may send CHANNEL_CLOSE without CHANNEL_EOF.
 #[tokio::test]
-async fn channel_close_keeps_transport_and_controls_available() {
+async fn channel_close_without_eof_ends_shell_after_buffered_and_remote_output() {
     tokio::time::timeout(Duration::from_secs(5), async {
         let mut f = Fixture::new().await;
+        f.pending.push_back(ChannelMsg::Data {
+            data: CryptoVec::from_slice(b"buffered"),
+        });
         f.server
             .data(f.id, CryptoVec::from_slice(b"before close"))
             .await
             .unwrap();
         f.server.close(f.id).await.unwrap();
+        f.expect_data(b"buffered").await;
         f.expect_data(b"before close").await;
-        assert!(matches!(f.next().await, Some(ShellEvent::ChannelClosed)));
         assert!(
-            tokio::time::timeout(Duration::from_millis(50), f.next())
+            tokio::time::timeout(Duration::from_secs(2), f.next())
                 .await
-                .is_err(),
-            "CLOSE alone must not end the shell"
+                .expect("CLOSE without EOF must end the shell promptly")
+                .is_none(),
+            "CLOSE without EOF must end the shell"
         );
-        assert!(f.channel_closed);
-        let another = f.handle.channel_open_session().await.unwrap();
-        another.close().await.unwrap();
-        let (resize_tx, mut resize_rx) = oneshot::channel();
-        f.sender
-            .send(SshControl::Resize(
-                super::super::model::SshResizeRequest {
-                    id: "fixture".into(),
-                    columns: 80,
-                    rows: 24,
-                    pixel_width: None,
-                    pixel_height: None,
-                },
-                resize_tx,
-            ))
-            .await
-            .unwrap();
-        let (tx, _rx) = oneshot::channel();
-        f.sender.send(SshControl::Close(tx)).await.unwrap();
-        assert!(matches!(
-            f.next().await,
-            Some(ShellEvent::Control(SshControl::Close(_)))
-        ));
-        assert!(matches!(
-            resize_rx.try_recv(),
-            Ok(Err(super::super::SshError::Closed))
-        ));
+        // Our CLOSE acknowledgement reaches the peer.
+        assert_eq!(f.closed.recv().await, Some(f.id));
         f.finish().await;
     })
     .await
@@ -371,19 +340,18 @@ async fn channel_close_keeps_transport_and_controls_available() {
 }
 
 #[tokio::test]
-async fn queued_close_precedes_ready_controls() {
+async fn queued_close_ends_shell_before_ready_controls() {
     tokio::time::timeout(Duration::from_secs(5), async {
         let mut f = Fixture::new().await;
         for _ in 0..32 {
-            f.channel_closed = false;
             f.pending.push_back(ChannelMsg::Close);
             let (close_tx, _close_rx) = oneshot::channel();
             f.sender.send(SshControl::Close(close_tx)).await.unwrap();
-            assert!(matches!(f.next().await, Some(ShellEvent::ChannelClosed)));
-            assert!(matches!(
-                f.next().await,
-                Some(ShellEvent::Control(SshControl::Close(_)))
-            ));
+            assert!(f.next().await.is_none(), "queued CLOSE must end the shell");
+            assert!(
+                matches!(f.controls.try_recv(), Ok(SshControl::Close(_))),
+                "the ready control must not be dispatched after the shell ended"
+            );
         }
         f.finish().await;
     })

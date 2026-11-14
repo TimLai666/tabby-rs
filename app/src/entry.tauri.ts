@@ -35,6 +35,7 @@ import PluginManagerModule from '../../tabby-plugin-manager/src'
 import SettingsModule, * as SettingsExports from '../../tabby-settings/src'
 import * as TauriExports from '../../tabby-tauri/src'
 import * as TerminalExports from '../../tabby-terminal/src'
+import { installTauriNotifications } from '../../tabby-tauri/src/services/notification'
 import { bootstrapTabby } from './bootstrap'
 import {
     loadPluginModules,
@@ -47,6 +48,7 @@ const TauriModule = TauriExports.default
 const TAURI_RUNTIME_INFO = TauriExports.TAURI_RUNTIME_INFO
 const TauriHostBridge = TauriExports.TauriHostBridge
 
+installTauriNotifications(new TauriHostBridge())
 location.hash = ''
 
 function updateProgress (percent: number): void {

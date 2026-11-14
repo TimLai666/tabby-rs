@@ -20,7 +20,6 @@ async fn ready_native_sftp_reply_survives_queued_eof() {
         let keep_running = run_control(
             &mut f.reader,
             &mut f.pending,
-            &mut f.channel_closed,
             &mut task,
             crate::ssh::handle_control(
                 &mut f.handle,
@@ -34,7 +33,6 @@ async fn ready_native_sftp_reply_survives_queued_eof() {
         ).await;
         let result = received.try_recv();
         let queued = f.pending.len();
-        let closed = f.channel_closed;
         if keep_running {
             f.expect_data(&bytes).await;
             assert!(f.next().await.is_none(), "queued EOF still ends the shell");
@@ -45,7 +43,6 @@ async fn ready_native_sftp_reply_survives_queued_eof() {
         assert!(matches!(result, Ok(Err(SshError::InvalidRequest(ref message))) if message == "SFTP is not open"), "the caller must receive its actual SFTP error, not a dropped reply: {result:?}");
         assert_eq!(emitted, 0, "ready reply leaves output to the outer loop");
         assert_eq!(queued, 2);
-        assert!(!closed);
     }).await.unwrap();
 }
 
@@ -62,7 +59,6 @@ async fn ready_native_close_reply_survives_queued_eof() {
         let keep_running = run_control(
             &mut f.reader,
             &mut f.pending,
-            &mut f.channel_closed,
             &mut task,
             crate::ssh::handle_control(
                 &mut f.handle,

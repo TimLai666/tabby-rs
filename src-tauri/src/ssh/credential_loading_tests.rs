@@ -105,12 +105,12 @@ async fn disabled_flag_skips_load_and_enabled_flag_loads_for_every_auth_mode() {
 }
 
 #[tokio::test]
-async fn resolved_account_and_empty_or_null_response_have_one_empty_candidate() {
+async fn resolved_account_stored_blank_is_a_candidate_and_nothing_stored_is_not() {
     let mut target = request_with(vec![], true);
     target.username = Some("$SSH_USER".into());
     target.host = "resolved.test".into();
     target.port = 2202;
-    let prepared = super::prepare_stored_password(&target, "resolved-user", |prompt| {
+    let blank = super::prepare_stored_password(&target, "resolved-user", |prompt| {
         assert_eq!(
             prompt.stored_password.as_ref().unwrap().host,
             "resolved.test"
@@ -124,14 +124,23 @@ async fn resolved_account_and_empty_or_null_response_have_one_empty_candidate() 
     })
     .await
     .unwrap();
-    assert!(matches!(prepared, Some(None)));
+    assert_eq!(
+        blank
+            .as_ref()
+            .map(|value| value.as_ref().map(|s| s.expose_secret().as_str())),
+        Some(Some("")),
+        "a single empty response is a stored blank password candidate"
+    );
 
-    let absent = super::prepare_stored_password(&target, "resolved-user", |_| {
-        ready(Ok(vec![String::new()]))
-    })
-    .await
-    .unwrap();
-    assert!(matches!(absent, Some(None)));
+    // The renderer replies with an empty array when nothing is stored.
+    let absent =
+        super::prepare_stored_password(&target, "resolved-user", |_| ready(Ok(Vec::new())))
+            .await
+            .unwrap();
+    assert!(
+        matches!(absent, Some(None)),
+        "an empty response array means nothing is stored"
+    );
     let rejected = super::prepare_stored_password(&target, "resolved-user", |_| {
         ready(Err(SshError::AuthenticationRejected))
     })
@@ -139,11 +148,50 @@ async fn resolved_account_and_empty_or_null_response_have_one_empty_candidate() 
     assert!(rejected.is_err());
 }
 
+#[test]
+fn stored_blank_snapshot_adds_candidates_and_nothing_stored_adds_none() {
+    let credentials = CredentialState::default();
+    let locked = SecretState::default();
+    let methods: Vec<AuthMethodRef> = serde_json::from_value(serde_json::json!([
+        { "type": "password", "secretRef": "ssh-password://vault" },
+        { "type": "keyboardInteractive", "secretRef": "ssh-password://keychain" }
+    ]))
+    .unwrap();
+    let request = request_with(methods.clone(), true);
+    let blank = Some(Some(secrecy::SecretString::new(String::new())));
+    let resolved = super::resolve_auth_passwords(
+        &methods,
+        &request,
+        "alice",
+        &locked,
+        &credentials,
+        blank.as_ref(),
+    )
+    .unwrap();
+    let values: Vec<_> = resolved
+        .values
+        .iter()
+        .map(|value| value.as_ref().map(|secret| secret.expose_secret().as_str()))
+        .collect();
+    assert_eq!(values, vec![Some(""), Some("")]);
+
+    let absent = Some(None);
+    let resolved = super::resolve_auth_passwords(
+        &methods,
+        &request,
+        "alice",
+        &locked,
+        &credentials,
+        absent.as_ref(),
+    )
+    .unwrap();
+    assert!(resolved.values.iter().all(Option::is_none));
+}
+
 #[tokio::test]
 async fn malformed_reply_length_and_native_error_fail_without_password_candidates() {
     let request = request_with(vec![], true);
     for result in [
-        Ok(Vec::new()),
         Ok(vec!["one".into(), "two".into()]),
         Err(SshError::Connection),
     ] {

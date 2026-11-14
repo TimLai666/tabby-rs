@@ -3,6 +3,20 @@ import { Subject } from 'rxjs'
 
 import { HostBridge, RemoteFileEntry, SftpTransferDescriptor } from '../api/hostBridge'
 
+/** Native rejections arrive as serialized AppError `{ code, details }`, not `Error`. */
+function describeTransferError (error: unknown): string {
+    if (error instanceof Error) { return error.message }
+    if (typeof error === 'object' && error !== null) {
+        const details = 'details' in error ? error.details : null
+        if (typeof details === 'string' && details) { return details }
+        const message = 'message' in error ? error.message : null
+        if (typeof message === 'string' && message) { return message }
+        const code = 'code' in error ? error.code : null
+        if (typeof code === 'string' && code) { return code }
+    }
+    return String(error)
+}
+
 export class TauriSftpSession {
     private closed = false
     readonly closed$ = new Subject<void>()
@@ -78,6 +92,8 @@ export class TauriSftpSession {
             await transfer.closeAsync()
             return result
         } catch (error) {
+            // Upstream 9e31ec6d: show why the upload stopped instead of a bare cancellation.
+            transfer.setStatus(describeTransferError(error))
             transfer.cancel()
             await this.bridge.invoke('sftp.cancelTransfer', { id: this.id, transferId: descriptor.id }).catch(() => undefined)
             throw error

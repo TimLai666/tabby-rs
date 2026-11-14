@@ -45,7 +45,7 @@ function platformFor(calls) {
         return ts.createPrinter().printNode(ts.EmitHint.Unspecified,method,tree)
     }).join('\n')
     const core=run(source('tabby-core/src/api/platform.ts'))
-    const Platform=run(cls(nativeSource,'TauriFileDownload')+'\n'+cls(nativeSource,'TauriFileUpload')+'\nclass TestedPlatform {'+methods+'}\nmodule.exports=TestedPlatform',core)
+    const Platform=run(cls(nativeSource,'TransferPowerInhibit')+'\n'+cls(nativeSource,'TauriFileDownload')+'\n'+cls(nativeSource,'TauriFileUpload')+'\nclass TestedPlatform {'+methods+'}\nmodule.exports=TestedPlatform',core)
     const result=new Platform();result.fileTransferStarted=new Subject()
     result.bridge={invoke:async(c,r)=>{
         calls.push([c,r]);if(c==='dialog.open')throw new Error('editor upload must never open a picker')
@@ -56,7 +56,9 @@ function platformFor(calls) {
 await check('local editor upload uses explicit file and emits real streaming transfer',async()=>{
     const calls=[];const platform=platformFor(calls);const started=[];platform.fileTransferStarted.subscribe(t=>started.push(t))
     const transfers=await platform.startUpload({multiple:false},['/owned/note.txt'])
-    assert.equal(calls.length,1);assert.equal(calls[0][0],'transfer.openUpload');assert.deepEqual(Array.from(calls[0][1].paths),['/owned/note.txt'])
+    // Transfers also acquire the power-save inhibit; only the transfer commands are under test here.
+    const transferCalls=calls.filter(([command])=>!command.startsWith('power.'))
+    assert.equal(transferCalls.length,1);assert.equal(transferCalls[0][0],'transfer.openUpload');assert.deepEqual(Array.from(transferCalls[0][1].paths),['/owned/note.txt'])
     assert.equal(transfers[0],started[0]);assert.equal(transfers[0].getSize(),3)
 })
 await check('editor download reuses streaming handle and transfer notification',async()=>{

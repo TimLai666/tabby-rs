@@ -82,7 +82,8 @@ async function runAllTests () {
                 session.vault.isEnabled = () => vaultEnabled
                 const methods = normalize(await session.authForOptions(options))
                 const expected = !auth || auth === 'keyboardInteractive' ? [
-                    ...(password ? [{ type: 'keyboardInteractive', password }] : []),
+                    // Upstream 256f09dd: a blank configured password is still a candidate.
+                    ...(typeof password === 'string' ? [{ type: 'keyboardInteractive', password }] : []),
                     { type: 'keyboardInteractive', secretRef: `ssh-password://${vaultEnabled ? 'vault' : 'keychain'}` },
                 ] : []
                 assert.deepEqual(methods.filter(method => method.type === 'keyboardInteractive'), expected)
@@ -203,15 +204,15 @@ async function runAllTests () {
         console.log('  PASS: config mutation second call uses latest')
     }
 
-    // 9. automatic auth: keys, agent, keyboard-interactive, then stored password
+    // 9. automatic auth: agent, keys, keyboard-interactive, then stored password (upstream 41c242ad order)
     {
         const profile = { id: 'target', options: { host: 'h', port: 22, user: 'u', input: {}, privateKeys: ['/key1'], forwardedPorts: [], keepaliveInterval: 0, keepaliveCountMax: 0, jumpHost: null, auth: null } }
         const config = { store: { ssh: { agentType: 'auto', agentPath: null, x11Display: null } } }
         const bridge = { calls: [], invoke: async (cmd, req) => { bridge.calls.push({ cmd, req }); if (cmd === 'ssh.resolveAgentSocket') return '/agent.sock'; if (cmd === 'ssh.listPrivateKeys') return []; if (cmd === 'ssh.connect') return { id: 'conn-1', username: 'deploy', usedPrivateKey: true }; return {} } }
         const session = createSession(profile, config, bridge)
         const auth = await session.authForOptions(profile.options)
-        assert.equal(auth[0].type, 'privateKey', 'ordering: first privateKey')
-        assert.equal(auth[1].type, 'agent', 'ordering: second agent')
+        assert.equal(auth[0].type, 'agent', 'ordering: first agent')
+        assert.equal(auth[1].type, 'privateKey', 'ordering: second privateKey')
         assert.equal(auth[2].type, 'keyboardInteractive', 'ordering: third keyboardInteractive')
         assert.ok(auth[3], 'automatic auth includes a stored password candidate')
         assert.deepEqual(normalize(auth[3]), { type: 'password', secretRef: 'ssh-password://keychain' })
@@ -299,8 +300,8 @@ async function runAllTests () {
         { name: 'password+forward', auth: 'password', forward: true, config: customAgent, resolved: '/custom.sock', expectedAuth: passwordAuth, forwarding: { socket: '/custom.sock' }, resolverCalls: 1 },
         { name: 'publicKey+forward', auth: 'publicKey', forward: true, config: customAgent, resolved: '/custom.sock', expectedAuth: [keyAuth], forwarding: { socket: '/custom.sock' }, resolverCalls: 1 },
         { name: 'keyboardInteractive+forward', auth: 'keyboardInteractive', forward: true, config: customAgent, resolved: '/custom.sock', expectedAuth: [{ type: 'keyboardInteractive', secretRef: 'ssh-password://keychain' }], forwarding: { socket: '/custom.sock' }, resolverCalls: 1 },
-        { name: 'auto+forward reuses socket', auth: null, forward: true, config: autoAgent, resolved: '/auto.sock', expectedAuth: [keyAuth, { type: 'agent', socket: '/auto.sock' }, { type: 'keyboardInteractive', secretRef: 'ssh-password://keychain' }, ...passwordAuth], forwarding: { socket: '/auto.sock' }, resolverCalls: 1 },
-        { name: 'auto+forward reuses null', auth: null, forward: true, config: autoAgent, resolved: null, expectedAuth: [keyAuth, { type: 'agent', socket: null }, { type: 'keyboardInteractive', secretRef: 'ssh-password://keychain' }, ...passwordAuth], forwarding: { socket: null }, resolverCalls: 1 },
+        { name: 'auto+forward reuses socket', auth: null, forward: true, config: autoAgent, resolved: '/auto.sock', expectedAuth: [{ type: 'agent', socket: '/auto.sock' }, keyAuth, { type: 'keyboardInteractive', secretRef: 'ssh-password://keychain' }, ...passwordAuth], forwarding: { socket: '/auto.sock' }, resolverCalls: 1 },
+        { name: 'auto+forward reuses null', auth: null, forward: true, config: autoAgent, resolved: null, expectedAuth: [{ type: 'agent', socket: null }, keyAuth, { type: 'keyboardInteractive', secretRef: 'ssh-password://keychain' }, ...passwordAuth], forwarding: { socket: null }, resolverCalls: 1 },
         { name: 'agent(Pageant)+forward reuses null', auth: 'agent', forward: true, config: { agentType: 'pageant', agentPath: null }, resolved: null, expectedAuth: [{ type: 'agent', socket: null }], forwarding: { socket: null }, resolverCalls: 1 },
         { name: 'password+forward false', auth: 'password', forward: false, config: autoAgent, expectedAuth: passwordAuth, forwarding: null, resolverCalls: 0 },
         { name: 'password+forward absent', auth: 'password', forward: undefined, config: autoAgent, expectedAuth: passwordAuth, forwarding: null, resolverCalls: 0 },
@@ -340,9 +341,11 @@ async function runAllTests () {
             const session = createSession(profile, config, bridge)
             const auth = normalize(await session.authForOptions(options))
             const usesPassword = !mode || mode === 'password'
+            // Upstream 256f09dd keeps a blank configured password as a candidate.
+            const configured = typeof password === 'string'
             assert.deepEqual(auth.filter(method => method.type === 'providedPassword'),
-                usesPassword && password ? [{ type: 'providedPassword', password }] : [])
-            if (usesPassword && password) {
+                usesPassword && configured ? [{ type: 'providedPassword', password }] : [])
+            if (usesPassword && configured) {
                 assert.ok(auth.findIndex(method => method.type === 'providedPassword') < auth.findIndex(method => method.type === 'password'))
                 if (!mode) {
                     assert.ok(auth.findIndex(method => method.type === 'providedPassword') > auth.findIndex(method => method.type === 'agent'))

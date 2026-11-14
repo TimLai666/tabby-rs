@@ -140,11 +140,20 @@ pub struct DesktopNotification {
 }
 
 pub fn capabilities() -> WindowCapabilities {
-    let wayland = cfg!(target_os = "linux") && is_wayland_session();
+    let linux = cfg!(target_os = "linux");
+    let wayland = linux && is_wayland_session();
+    let plasma = wayland
+        && is_plasma_session(
+            std::env::var("XDG_CURRENT_DESKTOP").ok().as_deref(),
+            std::env::var("DESKTOP_SESSION").ok().as_deref(),
+            std::env::var("GDMSESSION").ok().as_deref(),
+            std::env::var("KDE_FULL_SESSION").ok().as_deref(),
+        );
+    let plasma_version = if plasma { plasma_version() } else { None };
     WindowCapabilities {
         absolute_positioning: !wayland,
         docking: !wayland,
-        global_hotkey: true,
+        global_hotkey: global_hotkey_supported(linux, wayland, plasma, plasma_version),
         opacity: cfg!(any(target_os = "windows", target_os = "macos")),
         vibrancy: cfg!(any(target_os = "windows", target_os = "macos")),
         progress: true,
@@ -159,6 +168,123 @@ pub fn is_wayland_session() -> bool {
         || std::env::var("XDG_SESSION_TYPE")
             .map(|value| value.eq_ignore_ascii_case("wayland"))
             .unwrap_or(false)
+}
+
+/// Mirrors `Application.isPlasmaSession` in app/lib/app.ts.
+pub fn is_plasma_session(
+    xdg_current_desktop: Option<&str>,
+    desktop_session: Option<&str>,
+    gdm_session: Option<&str>,
+    kde_full_session: Option<&str>,
+) -> bool {
+    let joined = [xdg_current_desktop, desktop_session, gdm_session]
+        .map(|value| value.unwrap_or(""))
+        .join(":")
+        .to_ascii_lowercase();
+    kde_full_session == Some("true") || joined.contains("kde") || joined.contains("plasma")
+}
+
+/// Mirrors `shouldRegisterGlobalHotkeys` in app/lib/app.ts without the explicit
+/// `hacks.globalHotkey` override, which the renderer applies first. Only Wayland
+/// sessions under Plasma are gated, and only Plasma 6.6 or later registers.
+pub fn global_hotkey_supported(
+    linux: bool,
+    wayland: bool,
+    plasma: bool,
+    plasma_version: Option<(u32, u32)>,
+) -> bool {
+    if !linux || !wayland || !plasma {
+        return true;
+    }
+    plasma_version.is_some_and(|version| version >= (6, 6))
+}
+
+/// Parses the first `major.minor` pair in `plasmashell --version` output, matching
+/// the regex used by `Application.getPlasmaVersion` in app/lib/app.ts.
+pub fn parse_plasma_version(output: &str) -> Option<(u32, u32)> {
+    // Same result as upstream's `/(\d+)\.(\d+)/`: the first digit run that is
+    // followed by a dot and another digit run, wherever it starts.
+    let bytes = output.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        if !bytes[index].is_ascii_digit() {
+            index += 1;
+            continue;
+        }
+        let start = index;
+        while index < bytes.len() && bytes[index].is_ascii_digit() {
+            index += 1;
+        }
+        let major = &output[start..index];
+        if bytes.get(index) == Some(&b'.') && bytes.get(index + 1).is_some_and(u8::is_ascii_digit) {
+            let minor_start = index + 1;
+            let mut minor_end = minor_start;
+            while minor_end < bytes.len() && bytes[minor_end].is_ascii_digit() {
+                minor_end += 1;
+            }
+            if let (Ok(major), Ok(minor)) = (
+                major.parse::<u32>(),
+                output[minor_start..minor_end].parse::<u32>(),
+            ) {
+                return Some((major, minor));
+            }
+        }
+    }
+    None
+}
+
+/// Reads the Plasma shell version once per process. Upstream spawns
+/// `plasmashell --version` synchronously and caches the result the same way.
+fn plasma_version() -> Option<(u32, u32)> {
+    static VERSION: std::sync::OnceLock<Option<(u32, u32)>> = std::sync::OnceLock::new();
+    *VERSION.get_or_init(|| {
+        let output = std::process::Command::new("plasmashell")
+            .arg("--version")
+            .output()
+            .ok()?;
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        parse_plasma_version(&text)
+    })
+}
+
+/// Mirrors `Application.onGlobalHotkey` in app/lib/app.ts. A docked, always-on-top
+/// main window counts as present while visible; otherwise a focused visible window
+/// does. Returns true when every window should hide, false when every window should
+/// be presented.
+pub fn global_hotkey_hides_windows(
+    any_focused_visible: bool,
+    any_visible: bool,
+    docked_on_top: bool,
+) -> bool {
+    if docked_on_top {
+        any_visible
+    } else {
+        any_focused_visible
+    }
+}
+
+/// How `desktop_open_external` treats a URL scheme. Upstream
+/// tabby-electron/src/services/platform.service.ts opens the safe set directly
+/// and asks before any other scheme, including file and javascript. This host
+/// refuses file, javascript and data without asking: a stricter, deliberate
+/// difference recorded in AGENTS.md and pending an approved exception.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExternalUrlPolicy {
+    Open,
+    RequiresConfirmation,
+    Forbidden,
+}
+
+pub fn external_url_policy(scheme: &str) -> ExternalUrlPolicy {
+    match scheme {
+        "http" | "https" | "ftp" | "mailto" => ExternalUrlPolicy::Open,
+        "file" | "javascript" | "data" => ExternalUrlPolicy::Forbidden,
+        _ => ExternalUrlPolicy::RequiresConfirmation,
+    }
 }
 
 pub fn screen_info(monitors: &[Monitor], primary: Option<&Monitor>) -> Vec<ScreenInfo> {
@@ -312,7 +438,105 @@ fn stable_screen_id(value: &str) -> i64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{clamp_bounds, docked_bounds, normalize_accelerator, DockingOptions, WindowBounds};
+    use super::{
+        clamp_bounds, docked_bounds, external_url_policy, global_hotkey_hides_windows,
+        global_hotkey_supported, is_plasma_session, normalize_accelerator, parse_plasma_version,
+        DockingOptions, ExternalUrlPolicy, WindowBounds,
+    };
+
+    #[test]
+    fn global_hotkey_gate_follows_upstream_plasma_rule() {
+        // X11: never gated.
+        assert!(global_hotkey_supported(true, false, false, None));
+        // Wayland under GNOME: not Plasma, so registration proceeds.
+        assert!(global_hotkey_supported(true, true, false, None));
+        // Non-Linux hosts never reach the Wayland branch.
+        assert!(global_hotkey_supported(false, false, false, None));
+        // Wayland Plasma: the version decides.
+        assert!(!global_hotkey_supported(true, true, true, Some((6, 5))));
+        assert!(global_hotkey_supported(true, true, true, Some((6, 6))));
+        assert!(global_hotkey_supported(true, true, true, Some((7, 0))));
+        // An unreadable version is treated as unsupported, as upstream returns false.
+        assert!(!global_hotkey_supported(true, true, true, None));
+    }
+
+    #[test]
+    fn plasma_version_parses_first_major_minor_pair() {
+        assert_eq!(parse_plasma_version("plasmashell 6.6.0\n"), Some((6, 6)));
+        assert_eq!(parse_plasma_version("plasmashell 6.5"), Some((6, 5)));
+        assert_eq!(parse_plasma_version("Plasma v7.0.1"), Some((7, 0)));
+        assert_eq!(parse_plasma_version("x.6.6"), Some((6, 6)));
+        assert_eq!(parse_plasma_version("plasmashell 6"), None);
+        assert_eq!(parse_plasma_version("no version here"), None);
+        assert_eq!(parse_plasma_version(""), None);
+    }
+
+    #[test]
+    fn plasma_session_detection_matches_upstream_environment_checks() {
+        assert!(is_plasma_session(Some("KDE"), None, None, None));
+        assert!(is_plasma_session(None, Some("plasma"), None, None));
+        assert!(is_plasma_session(None, None, Some("PLASMAWAYLAND"), None));
+        assert!(is_plasma_session(None, None, None, Some("true")));
+        assert!(!is_plasma_session(None, None, None, Some("false")));
+        assert!(!is_plasma_session(
+            Some("GNOME"),
+            Some("gnome"),
+            Some("gnome-wayland"),
+            None
+        ));
+        assert!(!is_plasma_session(None, None, None, None));
+    }
+
+    #[test]
+    fn global_toggle_treats_docked_on_top_as_present_while_visible() {
+        // Not docked: a focused visible window means present, so hide everything.
+        assert!(global_hotkey_hides_windows(true, true, false));
+        // Visible but unfocused windows do not count when nothing is docked.
+        assert!(!global_hotkey_hides_windows(false, true, false));
+        // Docked on top: hide when any window is visible, even if unfocused.
+        assert!(global_hotkey_hides_windows(false, true, true));
+        // Docked on top and nothing visible: present everything.
+        assert!(!global_hotkey_hides_windows(false, false, true));
+    }
+
+    #[test]
+    fn external_scheme_policy_allows_upstream_safe_set_and_refuses_local_schemes() {
+        for scheme in ["http", "https", "ftp", "mailto"] {
+            assert_eq!(
+                external_url_policy(scheme),
+                ExternalUrlPolicy::Open,
+                "{scheme}"
+            );
+        }
+        for scheme in ["file", "javascript", "data"] {
+            assert_eq!(
+                external_url_policy(scheme),
+                ExternalUrlPolicy::Forbidden,
+                "{scheme}"
+            );
+        }
+        for scheme in ["steam", "zoommtg", "vscode"] {
+            assert_eq!(
+                external_url_policy(scheme),
+                ExternalUrlPolicy::RequiresConfirmation,
+                "{scheme}"
+            );
+        }
+    }
+
+    #[test]
+    fn external_scheme_policy_sees_normalized_schemes_from_the_url_parser() {
+        let parsed = url::Url::parse("FILE:///etc/hosts").unwrap();
+        assert_eq!(
+            external_url_policy(parsed.scheme()),
+            ExternalUrlPolicy::Forbidden
+        );
+        let parsed = url::Url::parse("HTTPS://example.com").unwrap();
+        assert_eq!(
+            external_url_policy(parsed.scheme()),
+            ExternalUrlPolicy::Open
+        );
+    }
 
     #[test]
     fn normalizes_legacy_accelerators() {

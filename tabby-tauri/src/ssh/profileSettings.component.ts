@@ -23,6 +23,11 @@ import { TauriSshImportModalComponent } from './importModal.component'
             <input class="form-control" [(ngModel)]="profile.options.user" autocomplete="username">
         </div>
         <div class="form-group">
+            <label>Terminal type</label>
+            <input class="form-control" placeholder="xterm-256color" [(ngModel)]="profile.options.term" autocomplete="off">
+            <small class="form-text text-muted">Value of $TERM reported to the remote host (e.g. xterm-256color, vt100).</small>
+        </div>
+        <div class="form-group">
             <label>Authentication</label>
             <select class="form-control" [(ngModel)]="profile.options.auth">
                 <option [ngValue]="null">None</option>
@@ -85,7 +90,9 @@ export class TauriSshProfileSettingsComponent {
         this.forwardedPortsText = JSON.stringify(this.profile.options.forwardedPorts ?? [], null, 2)
         this.scriptsText = JSON.stringify(this.profile.options.scripts ?? [], null, 2)
         if (this.profile.options.user) {
-            this.hasSavedPassword = !!await this.passwordStorage.loadPassword(this.profile as SSHProfile).catch(() => null)
+            // A stored blank password (empty string) is still a saved password.
+            const savedPassword = await this.passwordStorage.loadPassword(this.profile as SSHProfile).catch(() => null)
+            this.hasSavedPassword = savedPassword != null
         }
     }
 
@@ -121,10 +128,28 @@ export class TauriSshProfileSettingsComponent {
         modal.componentInstance.prompt = `Password for ${this.profile.options.user}@${this.profile.options.host}`
         modal.componentInstance.password = true
         const result = await modal.result.catch(() => null)
-        if (result?.value) {
-            await this.passwordStorage.savePassword(this.profile as SSHProfile, result.value)
-            this.hasSavedPassword = true
+        if (typeof result?.value !== 'string') {
+            return
         }
+        // An empty field is more often an accidental OK than a deliberate blank password,
+        // and a stored blank is then offered on every connection, so confirm it first.
+        if (result.value === '' && !await this.confirmBlankPassword()) {
+            return
+        }
+        await this.passwordStorage.savePassword(this.profile as SSHProfile, result.value)
+        this.hasSavedPassword = true
+    }
+
+    private async confirmBlankPassword (): Promise<boolean> {
+        const confirmation = await this.bridge.invoke('dialog.message', {
+            type: 'warning',
+            message: 'Save an empty password?',
+            detail: 'This only works if the server permits empty passwords. Tabby will offer it on every connection.',
+            buttons: ['Save', 'Cancel'],
+            defaultId: 0,
+            cancelId: 1,
+        })
+        return confirmation.response === 0
     }
 
     clearSavedPassword (): void {

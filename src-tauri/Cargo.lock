@@ -5379,6 +5379,7 @@ dependencies = [
  "cbc",
  "cc",
  "chrono",
+ "dbus",
  "dispatch2",
  "font-kit",
  "gdkx11",

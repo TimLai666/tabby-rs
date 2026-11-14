@@ -72,9 +72,20 @@ export class TauriDesktopIntegrationService {
             }
             const appearance = this.config.store.appearance
             if (appearance.dock !== 'off' && appearance.dockHideOnBlur) {
-                void this.bridge.invoke('window.applyState', { visible: false })
+                void this.hideOnBlurIfIdle()
             }
         })
+    }
+
+    private async hideOnBlurIfIdle (): Promise<void> {
+        try {
+            const { anyWindowFocused, enabled } = await this.bridge.invoke('window.canHideOnBlur', {})
+            if (!anyWindowFocused && enabled) {
+                await this.bridge.invoke('window.applyState', { visible: false })
+            }
+        } catch (error) {
+            console.info('Could not hide the docked window on blur:', error)
+        }
     }
 
     private async registerGlobalHotkey (): Promise<void> {
@@ -92,18 +103,57 @@ export class TauriDesktopIntegrationService {
         }
 
         try {
+            const register = await this.shouldRegisterGlobalHotkey()
             await this.bridge.invoke('hotkey.replace', {
                 id: 'toggle-window',
-                accelerators,
+                accelerators: register ? accelerators : [],
             })
         } catch (error) {
             console.info('Global toggle shortcut is unavailable:', error)
         }
     }
 
+    /**
+     * Mirrors shouldRegisterGlobalHotkeys in app/lib/app.ts. An explicit
+     * hacks.globalHotkey value decides in either direction; otherwise the native
+     * capability decides. A skipped registration still clears older shortcuts.
+     */
+    private async shouldRegisterGlobalHotkey (): Promise<boolean> {
+        const override = this.config.store.hacks?.globalHotkey as boolean | null | undefined
+        if (override != null) {
+            if (override) {
+                console.info('Global toggle shortcut skipped: hacks.globalHotkey is true')
+                return false
+            }
+            return true
+        }
+        let supported = false
+        try {
+            const state = await this.bridge.invoke('window.getState', {})
+            supported = state.capabilities.globalHotkey
+        } catch (error) {
+            // Treat an unknown capability as unsupported so the caller still
+            // clears older shortcuts instead of leaving them registered.
+            console.info('Global toggle shortcut skipped: window state is unavailable', error)
+            return false
+        }
+        if (!supported) {
+            console.info('Global toggle shortcut skipped: this display session does not support global shortcuts')
+        }
+        return supported
+    }
+
     private async applyAppearance (): Promise<void> {
         const appearance = this.config.store.appearance
-        const state = await this.bridge.invoke('window.getState', {})
+        // Appearance is best effort; a failed state read must not abort
+        // initialize() and the progress/hotkey wiring that follows it.
+        const state = await this.bridge.invoke('window.getState', {}).catch((error: unknown) => {
+            console.info('Window appearance not applied: window state is unavailable', error)
+            return null
+        })
+        if (!state) {
+            return
+        }
         const patch: WindowStatePatch = {}
 
         const mode = appearance.colorSchemeMode

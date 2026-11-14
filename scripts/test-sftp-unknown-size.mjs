@@ -71,6 +71,7 @@ const nativeTransportExports = transpile('native-transport', [
 const NativeTransport = nativeTransportExports.TauriSftpPanelTransport
 
 const NativePlatform = transpile('native-platform', [
+    classText(nativePlatformSource, 'TransferPowerInhibit'),
     classText(nativePlatformSource, 'TauriFileDownload'),
     classText(nativePlatformSource, 'TauriDirectoryDownload'),
     `class NativePlatform { ${memberText(nativePlatformSource, 'TauriPlatformService', 'startDownload')} ${memberText(nativePlatformSource, 'TauriPlatformService', 'prepareEditableFile')} ${memberText(nativePlatformSource, 'TauriPlatformService', 'startDownloadDirectory')} ${memberText(nativePlatformSource, 'TauriPlatformService', 'pickDirectory')} }`,

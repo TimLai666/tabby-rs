@@ -133,6 +133,7 @@ const native = transpile('native-host', [
 let nativeBridge = () => { throw new Error('native bridge was not configured') }
 
 native.NativePlatform = transpile('native-platform', [
+    classText(tauriPlatformSource, 'TransferPowerInhibit'),
     classText(tauriPlatformSource, 'TauriFileDownload'),
     classText(tauriPlatformSource, 'TauriDirectoryDownload'),
     `class NativePlatform { ${[

@@ -34,7 +34,6 @@ async fn live_resize_returns_ok_and_keeps_shell_loop_usable() {
         let result = run_control(
             &mut f.reader,
             &mut f.pending,
-            &mut f.channel_closed,
             &mut task,
             crate::ssh::handle_control(
                 &mut f.handle,
@@ -132,7 +131,6 @@ async fn closed_transport_resize_delivers_error_but_keeps_loop_until_tail_draine
         let result = run_control(
             &mut f.reader,
             &mut f.pending,
-            &mut f.channel_closed,
             &mut task,
             crate::ssh::handle_control(
                 &mut f.handle,
@@ -157,7 +155,6 @@ async fn closed_transport_resize_delivers_error_but_keeps_loop_until_tail_draine
                     drained.extend_from_slice(&data)
                 }
                 Some(ShellEvent::Channel(_)) => {}
-                Some(ShellEvent::ChannelClosed) => {}
                 Some(ShellEvent::Control(_)) => panic!("no late controls expected"),
                 None => break,
             }

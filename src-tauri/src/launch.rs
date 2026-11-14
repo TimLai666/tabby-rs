@@ -579,6 +579,14 @@ mod tests {
     }
 
     #[test]
+    fn debug_flags_request_startup_devtools() {
+        assert!(parse(&["tabby-rs", "-d"]).argv.debug);
+        assert!(parse(&["tabby-rs", "--debug"]).argv.debug);
+        assert!(!parse(&["tabby-rs"]).argv.debug);
+        assert!(!parse(&["tabby-rs", "run", "-d", "printf"]).argv.debug);
+    }
+
+    #[test]
     fn preserves_command_arguments_as_an_array() {
         let request = parse(&["tabby-rs", "run", "printf", "%s", "a; rm -rf /"]);
         assert_eq!(request.command, ["printf", "%s", "a; rm -rf /"]);

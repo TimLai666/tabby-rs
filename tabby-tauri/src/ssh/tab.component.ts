@@ -192,7 +192,7 @@ export class TauriSshTabComponent extends ConnectableTerminalTabComponent<SSHPro
         }
         const interactive = new KeyboardInteractivePrompt(prompt.name, prompt.instructions,
             prompt.prompts.map(item => ({ prompt: item.text, echo: item.echo })))
-        if (prompt.savedPassword) {
+        if (prompt.savedPassword != null) {
             for (let i = 0; i < interactive.prompts.length; i++) {
                 if (interactive.isAPasswordPrompt(i)) {
                     interactive.responses[i] = prompt.savedPassword

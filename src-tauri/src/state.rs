@@ -33,6 +33,9 @@ pub struct AppState {
     startup_window_frame: window_frame::StartupWindowFrame,
     window_bounds: Mutex<HashMap<String, WindowBoundaries>>,
     pending_maximize: Mutex<std::collections::HashSet<String>>,
+    startup_devtools: bool,
+    devtools_windows: Mutex<std::collections::HashSet<String>>,
+    power_inhibitor: std::sync::Arc<crate::power::NativePowerInhibitor>,
 }
 
 impl AppState {
@@ -42,6 +45,7 @@ impl AppState {
         persisted_state: TabbyRsState,
     ) -> Self {
         let launches = LaunchQueue::default();
+        let startup_devtools = initial_launch.request.argv.debug;
         launches.push("main", initial_launch.for_new_window());
         Self {
             next_window_id: AtomicU64::new(0),
@@ -55,7 +59,18 @@ impl AppState {
             startup_window_frame: window_frame::StartupWindowFrame::default(),
             window_bounds: Mutex::new(HashMap::new()),
             pending_maximize: Mutex::new(std::collections::HashSet::new()),
+            startup_devtools,
+            devtools_windows: Mutex::new(std::collections::HashSet::new()),
+            power_inhibitor: std::sync::Arc::new(crate::power::PowerInhibitor::new(
+                crate::power::NativeBackend,
+            )),
         }
+    }
+
+    /// Reference-counted sleep inhibit held while file transfers run. Shared so
+    /// commands can do the blocking native call off the main thread.
+    pub fn power_inhibitor(&self) -> std::sync::Arc<crate::power::NativePowerInhibitor> {
+        std::sync::Arc::clone(&self.power_inhibitor)
     }
 
     pub fn next_window_id(&self) -> u64 {
@@ -110,6 +125,18 @@ impl AppState {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .remove(label)
+    }
+
+    /// Returns true once per window label when the process was started with
+    /// `-d`/`--debug`: upstream electron-debug opens DevTools for every window
+    /// as it is created, and a renderer reload must not open them again.
+    pub fn take_startup_devtools(&self, label: &str) -> bool {
+        self.startup_devtools
+            && self
+                .devtools_windows
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .insert(label.to_owned())
     }
 
     pub fn request_forced_quit(&self) {

@@ -47,6 +47,7 @@ const fixtureMarkup = `<!doctype html><html><head><style>
     </div>
     <title-bar><div class="title">Tabby RS<button class="inner">x</button></div></title-bar>
     <div class="content">terminal</div>
+    <div class="modal" style="position: fixed; inset: 0; display: block;"><div class="modal-dialog" style="margin-top: 120px;">dialog</div></div>
 </body></html>`
 
 const failures = []
@@ -279,6 +280,42 @@ async function main () {
             assert.deepEqual(result.calls, [])
         })
     }
+
+    await check('Linux treats the top 38px strip of an open modal as a drag region (upstream 54869e10)', async () => {
+        const result = await page.evaluate(() => {
+            const fixture = window.__dragRegionFixture
+            const { service, calls } = fixture.create('linux', {})
+            service.initialize()
+            try {
+                const press = (target, clientY, detail = 1) => {
+                    const event = new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0, detail, clientY })
+                    target.dispatchEvent(event)
+                    return event.defaultPrevented
+                }
+                const modal = fixture.target('.modal')
+                const dialog = fixture.target('.modal-dialog')
+                const inStrip = press(modal, 20)
+                const belowStrip = press(modal, 60)
+                const onDialog = press(dialog, 20)
+                document.documentElement.style.setProperty('--spaciness', '2')
+                const scaledStrip = press(modal, 60)
+                document.documentElement.style.removeProperty('--spaciness')
+                const doublePress = press(modal, 20, 2)
+                return {
+                    inStrip, belowStrip, onDialog, scaledStrip, doublePress,
+                    commands: calls.map(call => call.command),
+                }
+            } finally {
+                service.ngOnDestroy()
+            }
+        })
+        assert.equal(result.inStrip, true, 'a press in the strip starts dragging')
+        assert.equal(result.belowStrip, false, 'a press below the strip is left to the modal backdrop')
+        assert.equal(result.onDialog, false, 'the dialog body itself is not a drag region')
+        assert.equal(result.scaledStrip, true, '--spaciness scales the strip height')
+        assert.equal(result.doublePress, true)
+        assert.deepEqual(result.commands, ['window.startDragging', 'window.startDragging', 'window.toggleMaximize'])
+    })
 
     await check('Linux swallows the shared dblclick on a drag region so one gesture toggles once', async () => {
         const result = await page.evaluate(() => {

@@ -283,6 +283,50 @@ pub fn window_minimize(
     window.minimize().map_err(io_error)
 }
 
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FlashFrameRequest {
+    pub flash: bool,
+}
+
+#[tauri::command]
+pub fn window_flash_frame(
+    window: tauri::WebviewWindow,
+    request: FlashFrameRequest,
+) -> Result<(), AppError> {
+    if !request.flash {
+        return window.request_user_attention(None).map_err(io_error);
+    }
+    if window.is_focused().unwrap_or(false) {
+        return Ok(());
+    }
+    window
+        .request_user_attention(Some(tauri::UserAttentionType::Informational))
+        .map_err(io_error)
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CanHideOnBlurResponse {
+    pub any_window_focused: bool,
+    pub enabled: bool,
+}
+
+#[tauri::command]
+pub fn window_can_hide_on_blur(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    _request: serde_json::Value,
+) -> Result<CanHideOnBlurResponse, AppError> {
+    Ok(CanHideOnBlurResponse {
+        any_window_focused: app
+            .webview_windows()
+            .values()
+            .any(|candidate| candidate.is_focused().unwrap_or(false)),
+        enabled: window.is_enabled().map_err(io_error)?,
+    })
+}
+
 #[tauri::command]
 pub fn window_start_dragging(
     window: tauri::WebviewWindow,
@@ -337,7 +381,6 @@ pub fn window_open_devtools(
     window: tauri::WebviewWindow,
     _request: serde_json::Value,
 ) -> Result<(), AppError> {
-    #[cfg(debug_assertions)]
     window.open_devtools();
     Ok(())
 }
@@ -403,6 +446,67 @@ pub fn window_toggle_quake(
     }
 }
 
+/// Applies the upstream global toggle to every webview window. The main window's
+/// always-on-top state stands in for upstream's docked-on-top check, because
+/// window_set_docking is the only caller that sets always-on-top in this host.
+fn toggle_all_windows(app: &tauri::AppHandle) {
+    // `webview_windows()` is a HashMap; present windows in creation order
+    // (`main`, then `window-N` by number) so the newest window ends up focused,
+    // as upstream iterates `this.windows` in creation order.
+    let mut windows: Vec<tauri::WebviewWindow> = app.webview_windows().into_values().collect();
+    windows.sort_by_key(|window| window_creation_order(window.label()));
+    let any_focused_visible = windows
+        .iter()
+        .any(|window| window.is_focused().unwrap_or(false) && window.is_visible().unwrap_or(false));
+    let any_visible = windows
+        .iter()
+        .any(|window| window.is_visible().unwrap_or(false));
+    let docked_on_top = app
+        .get_webview_window("main")
+        .is_some_and(|window| window.is_always_on_top().unwrap_or(false));
+    let hide = crate::desktop::global_hotkey_hides_windows(
+        any_focused_visible,
+        any_visible,
+        docked_on_top,
+    );
+    for window in windows {
+        if hide {
+            let _ = window.hide();
+        } else {
+            let _ = window.show();
+            let _ = window.unminimize();
+            let _ = window.set_focus();
+        }
+    }
+}
+
+/// Orders window labels by creation: `main` first, then `window-N` by N; any
+/// other label sorts after them by name.
+fn window_creation_order(label: &str) -> (u8, u64, String) {
+    if label == "main" {
+        return (0, 0, String::new());
+    }
+    match label
+        .strip_prefix("window-")
+        .and_then(|number| number.parse::<u64>().ok())
+    {
+        Some(number) => (1, number, String::new()),
+        None => (2, 0, label.to_owned()),
+    }
+}
+
+#[cfg(test)]
+mod toggle_order_tests {
+    use super::window_creation_order;
+
+    #[test]
+    fn main_first_then_numbered_windows_then_other_labels() {
+        let mut labels = vec!["window-10", "other", "window-2", "main", "alpha"];
+        labels.sort_by_key(|label| window_creation_order(label));
+        assert_eq!(labels, ["main", "window-2", "window-10", "alpha", "other"]);
+    }
+}
+
 #[tauri::command]
 pub fn hotkey_replace(
     app: tauri::AppHandle,
@@ -439,17 +543,7 @@ pub fn hotkey_replace(
                 }
                 let accelerator = shortcut.to_string();
                 if id == "toggle-window" {
-                    if let Some(window) = app.get_webview_window("main") {
-                        let hide = window.is_visible().unwrap_or(false)
-                            && window.is_focused().unwrap_or(false);
-                        if hide {
-                            let _ = window.hide();
-                        } else {
-                            let _ = window.show();
-                            let _ = window.unminimize();
-                            let _ = window.set_focus();
-                        }
-                    }
+                    toggle_all_windows(app);
                 }
                 let _ = app.emit(
                     "desktop:hotkey",
@@ -573,6 +667,9 @@ pub fn notification_show(
 #[serde(rename_all = "camelCase")]
 pub struct OpenExternalRequest {
     pub url: String,
+    /// Set by the renderer after the user accepted the prompt for an app-specific scheme.
+    #[serde(default)]
+    pub confirmed: bool,
 }
 
 #[tauri::command]
@@ -582,10 +679,19 @@ pub fn desktop_open_external(
 ) -> Result<(), AppError> {
     let parsed = url::Url::parse(&request.url)
         .map_err(|_| AppError::InvalidArgument("invalid external URL".into()))?;
-    if !matches!(parsed.scheme(), "http" | "https" | "mailto") {
-        return Err(AppError::InvalidArgument(
-            "unsupported external URL scheme".into(),
-        ));
+    match crate::desktop::external_url_policy(parsed.scheme()) {
+        crate::desktop::ExternalUrlPolicy::Open => {}
+        crate::desktop::ExternalUrlPolicy::RequiresConfirmation if request.confirmed => {}
+        crate::desktop::ExternalUrlPolicy::RequiresConfirmation => {
+            return Err(AppError::InvalidArgument(
+                "external URL scheme requires confirmation".into(),
+            ));
+        }
+        crate::desktop::ExternalUrlPolicy::Forbidden => {
+            return Err(AppError::InvalidArgument(
+                "unsupported external URL scheme".into(),
+            ));
+        }
     }
     app.opener()
         .open_url(parsed.to_string(), None::<&str>)
@@ -614,11 +720,18 @@ pub async fn desktop_exec(request: ExecRequest) -> Result<(), AppError> {
         ));
     }
 
-    let status = Command::new(&request.executable)
-        .args(&request.args)
-        .status()
-        .await
-        .map_err(io_error)?;
+    let mut command = Command::new(&request.executable);
+    command.args(&request.args);
+    // The GPU workaround variables this process exported are for its own
+    // WebView only; children get the user's environment (see gpu.rs).
+    for name in crate::gpu::owned_variables(
+        std::env::var(crate::gpu::OWNED_VARIABLES_MARKER)
+            .ok()
+            .as_deref(),
+    ) {
+        command.env_remove(name);
+    }
+    let status = command.status().await.map_err(io_error)?;
     if !status.success() {
         return Err(AppError::Io(format!("process exited with {status}")));
     }

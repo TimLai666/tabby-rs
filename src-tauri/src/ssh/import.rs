@@ -786,6 +786,31 @@ mod tests {
     }
 
     #[test]
+    fn host_without_hostname_uses_the_alias_like_openssh() {
+        // Upstream 084159c7: OpenSSH defaults HostName to the Host alias, so a block
+        // without HostName is still importable instead of being skipped.
+        let directory = tempdir().unwrap();
+        let config = directory.path().join("config");
+        fs::write(
+            &config,
+            "Host bare.example\n  User alice\n  Port 2202\nHost named\n  HostName named.example\n",
+        )
+        .unwrap();
+        let profiles = parse_config(&config).unwrap();
+        assert_eq!(profiles.len(), 2, "{profiles:?}");
+        let bare = profiles
+            .iter()
+            .find(|profile| profile.name.starts_with("bare.example"))
+            .unwrap_or_else(|| panic!("alias-only host missing: {profiles:?}"));
+        assert_eq!(bare.host, "bare.example");
+        assert_eq!(bare.port, 2202);
+        assert_eq!(bare.user.as_deref(), Some("alice"));
+        assert!(profiles
+            .iter()
+            .any(|profile| profile.host == "named.example"));
+    }
+
+    #[test]
     fn parses_quoted_include_and_identity_paths() {
         let directory = tempdir().unwrap();
         let include_directory = directory.path().join("parts with spaces");

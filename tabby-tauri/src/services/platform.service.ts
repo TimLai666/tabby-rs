@@ -16,6 +16,7 @@ import {
     PlatformTheme,
     sanitizeTransferName,
     sanitizeTransferRelativePath,
+    TranslateService,
 } from 'tabby-core'
 
 import {
@@ -27,6 +28,9 @@ import {
     TAURI_RUNTIME_INFO,
     TransferDirectoryEntry,
 } from '../api/hostBridge'
+
+const safeExternalSchemes = new Set(['http', 'https', 'ftp', 'mailto'])
+const forbiddenExternalSchemes = new Set(['file', 'javascript', 'data'])
 
 @Injectable()
 export class TauriPlatformService extends PlatformService {
@@ -47,6 +51,7 @@ export class TauriPlatformService extends PlatformService {
         private bridge: HostBridge,
         @Inject(TAURI_RUNTIME_INFO) private runtimeInfo: RuntimeInfo,
         private zone: NgZone,
+        private translate: TranslateService,
     ) {
         super()
         this.supportsWindowControls = ['macos', 'windows', 'linux'].includes(runtimeInfo.platform)
@@ -232,8 +237,50 @@ export class TauriPlatformService extends PlatformService {
         return this.runtimeInfo.version
     }
 
+    // Mirrors tabby-electron platform.service.ts: safe schemes open directly, other
+    // app-specific schemes need confirmation, and file, javascript and data URLs never open.
     async openExternal (url: string): Promise<void> {
-        await this.bridge.invoke('desktop.openExternal', { url })
+        const scheme = this.getExternalScheme(url)
+        if (!scheme) {
+            // Unparseable input is left to the native validator, which rejects it.
+            await this.bridge.invoke('desktop.openExternal', { url, confirmed: false })
+            return
+        }
+        if (safeExternalSchemes.has(scheme)) {
+            await this.bridge.invoke('desktop.openExternal', { url, confirmed: false })
+            return
+        }
+        if (forbiddenExternalSchemes.has(scheme)) {
+            console.info(`Refused to open "${scheme}" URL: this scheme is never opened`)
+            return
+        }
+        if (await this.confirmExternalOpen(url, scheme)) {
+            await this.bridge.invoke('desktop.openExternal', { url, confirmed: true })
+        }
+    }
+
+    private getExternalScheme (url: string): string | null {
+        try {
+            const protocol = new URL(url.trim()).protocol
+            return protocol ? protocol.replace(':', '').toLowerCase() : null
+        } catch {
+            return null
+        }
+    }
+
+    private async confirmExternalOpen (url: string, scheme: string): Promise<boolean> {
+        const result = await this.showMessageBox({
+            type: 'warning',
+            message: this.translate.instant(`Open this app-specific "${scheme}" URI?`),
+            detail: url,
+            buttons: [
+                this.translate.instant('Open'),
+                this.translate.instant('Cancel'),
+            ],
+            defaultId: 0,
+            cancelId: 1,
+        })
+        return result.response === 0
     }
 
     async exec (app: string, argv: string[]): Promise<void> {
@@ -260,7 +307,15 @@ export class TauriPlatformService extends PlatformService {
     async listFonts (): Promise<string[]> {
         try {
             const fonts = await this.bridge.invoke('font.list', {})
-            return fonts.map(font => font.family)
+            // Upstream filters to monospace only on Linux (`fc-list :spacing=mono`);
+            // Windows and macOS list every family. Hosts that report no monospace
+            // flags at all keep every family, so the picker never goes empty.
+            const reportsMonospace = this.runtimeInfo.platform === 'linux'
+                && fonts.some(font => typeof font.monospace === 'boolean')
+            const monospace = fonts.filter(font => !reportsMonospace || font.monospace === true)
+            // A host whose detector flags nothing as monospace still gets the full list.
+            const families = (monospace.length ? monospace : fonts).map(font => font.family)
+            return [...new Set(families)].sort((left, right) => left.localeCompare(right))
         } catch (error) {
             console.warn('Could not enumerate installed fonts', error)
             return []
@@ -712,7 +767,52 @@ export class TauriPlatformService extends PlatformService {
     }
 }
 
+/**
+ * Holds a native power-save inhibit while one transfer runs, mirroring the
+ * Electron host's powerSaveBlocker. Acquire failures are logged and never fail
+ * the transfer; release is idempotent and waits for a pending acquire.
+ */
+class TransferPowerInhibit {
+    private readonly id: Promise<number|null>
+    private released = false
+
+    constructor (private readonly bridge: HostBridge) {
+        this.id = this.acquire()
+    }
+
+    release (): void {
+        if (this.released) {
+            return
+        }
+        this.released = true
+        void this.id.then(id => this.releaseNative(id))
+    }
+
+    private async acquire (): Promise<number|null> {
+        try {
+            const result = await this.bridge.invoke('power.inhibitAcquire', {})
+            return result.id
+        } catch (error) {
+            console.info('Power inhibit unavailable for file transfer', error)
+            return null
+        }
+    }
+
+    private async releaseNative (id: number|null): Promise<void> {
+        if (id === null) {
+            return
+        }
+        try {
+            await this.bridge.invoke('power.inhibitRelease', { id })
+        } catch (error) {
+            console.info('Failed to release power inhibit for file transfer', error)
+        }
+    }
+}
+
 class TauriFileUpload extends FileUpload {
+    private readonly powerInhibit: TransferPowerInhibit
+
     constructor (
         private bridge: HostBridge,
         id: string,
@@ -721,6 +821,7 @@ class TauriFileUpload extends FileUpload {
     ) {
         super(id)
         this.setTotalSize(size)
+        this.powerInhibit = new TransferPowerInhibit(bridge)
     }
 
     getName (): string { return this.name }
@@ -729,6 +830,10 @@ class TauriFileUpload extends FileUpload {
 
     async read (): Promise<Uint8Array> {
         const data = await this.bridge.invoke('transfer.read', { id: this.id, maxBytes: 256 * 1024 })
+            .catch((error: unknown) => {
+                this.powerInhibit.release()
+                throw error
+            })
         const bytes = Uint8Array.from(data)
         this.setRunning()
         this.increaseProgress(bytes.length)
@@ -739,20 +844,25 @@ class TauriFileUpload extends FileUpload {
     }
 
     close (): void {
+        this.powerInhibit.release()
         void this.bridge.invoke('transfer.close', { id: this.id })
     }
 
     override async closeAsync (): Promise<void> {
+        this.powerInhibit.release()
         await this.bridge.invoke('transfer.close', { id: this.id })
     }
 
     override cancel (): void {
         this.markCancelled()
+        this.powerInhibit.release()
         void this.bridge.invoke('transfer.cancel', { id: this.id })
     }
 }
 
 class TauriFileDownload extends FileDownload {
+    private readonly powerInhibit: TransferPowerInhibit
+
     constructor (
         private bridge: HostBridge,
         id: string,
@@ -761,6 +871,7 @@ class TauriFileDownload extends FileDownload {
     ) {
         super(id)
         this.setTotalSize(size ?? 0)
+        this.powerInhibit = new TransferPowerInhibit(bridge)
     }
 
     getName (): string { return this.name }
@@ -768,6 +879,10 @@ class TauriFileDownload extends FileDownload {
 
     async write (buffer: Uint8Array): Promise<void> {
         await this.bridge.invoke('transfer.write', { id: this.id, data: Array.from(buffer) })
+            .catch((error: unknown) => {
+                this.powerInhibit.release()
+                throw error
+            })
         this.setRunning()
         this.increaseProgress(buffer.length)
         if (this.getCompletedBytes() >= this.getSize()) {
@@ -776,20 +891,25 @@ class TauriFileDownload extends FileDownload {
     }
 
     close (): void {
+        this.powerInhibit.release()
         void this.bridge.invoke('transfer.close', { id: this.id })
     }
 
     override async closeAsync (): Promise<void> {
+        this.powerInhibit.release()
         await this.bridge.invoke('transfer.close', { id: this.id })
     }
 
     override cancel (): void {
         this.markCancelled()
+        this.powerInhibit.release()
         void this.bridge.invoke('transfer.cancel', { id: this.id })
     }
 }
 
 export class TauriDirectoryDownload extends DirectoryDownload {
+    private readonly powerInhibit: TransferPowerInhibit
+
     constructor (
         private bridge: HostBridge,
         private basePath: string,
@@ -798,6 +918,7 @@ export class TauriDirectoryDownload extends DirectoryDownload {
     ) {
         super()
         this.setTotalSize(estimatedSize)
+        this.powerInhibit = new TransferPowerInhibit(bridge)
     }
 
     getName (): string { return this.name }
@@ -807,6 +928,9 @@ export class TauriDirectoryDownload extends DirectoryDownload {
         await this.bridge.invoke('transfer.createDirectory', {
             baseDirectory: this.basePath,
             relativePath: `${sanitizeTransferName(this.name)}/${sanitizeTransferRelativePath(relativePath)}`,
+        }).catch((error: unknown) => {
+            this.powerInhibit.release()
+            throw error
         })
     }
 
@@ -819,15 +943,20 @@ export class TauriDirectoryDownload extends DirectoryDownload {
             destination: '',
             baseDirectory: this.basePath,
             relativePath: safePath,
+        }).catch((error: unknown) => {
+            this.powerInhibit.release()
+            throw error
         })
         return new TauriFileDownload(this.bridge, descriptor.id, descriptor.name, size)
     }
 
     close (): void {
         // Directory transfers have no open handle; their files close independently.
+        this.powerInhibit.release()
     }
 
     override cancel (): void {
         this.markCancelled()
+        this.powerInhibit.release()
     }
 }

@@ -125,6 +125,13 @@ pub trait SshAuthContext: Send {
     fn private_key_was_accepted(&self) -> bool {
         false
     }
+    /// Whether the most recent failure carried SSH `partial success`: the
+    /// server accepted that method but requires another factor. Upstream
+    /// `30347a61` then adds a keyboard-interactive candidate when the server
+    /// asks for it and none remains.
+    fn last_failure_was_partial_success(&self) -> bool {
+        false
+    }
     async fn authenticate_agent(
         &mut self,
         username: &str,
@@ -384,6 +391,11 @@ pub(super) struct RusshAuthContext<'a, H: russh::client::Handler> {
     handle: &'a mut russh::client::Handle<H>,
     private_key_accepted: bool,
     remaining_methods: Vec<String>,
+    /// Partial-success flag of the most recent server reply. Reset before every
+    /// request so a candidate that ends locally (empty prompt response, missing
+    /// stored password, unreadable key) cannot reuse a stale flag and append
+    /// another keyboard-interactive fallback.
+    partial_success: bool,
 }
 
 impl<'a, H: russh::client::Handler> RusshAuthContext<'a, H> {
@@ -392,6 +404,7 @@ impl<'a, H: russh::client::Handler> RusshAuthContext<'a, H> {
             handle,
             private_key_accepted: false,
             remaining_methods: Vec::new(),
+            partial_success: false,
         }
     }
 
@@ -403,10 +416,12 @@ impl<'a, H: russh::client::Handler> RusshAuthContext<'a, H> {
 
     fn remember_result(&mut self, result: &russh::client::AuthResult) {
         if let russh::client::AuthResult::Failure {
-            remaining_methods, ..
+            remaining_methods,
+            partial_success,
         } = result
         {
             self.remember_methods(remaining_methods);
+            self.partial_success = *partial_success;
         }
     }
 
@@ -415,10 +430,12 @@ impl<'a, H: russh::client::Handler> RusshAuthContext<'a, H> {
         response: russh::client::KeyboardInteractiveAuthResponse,
     ) -> Result<KeyboardInteractiveResponse, SshError> {
         if let russh::client::KeyboardInteractiveAuthResponse::Failure {
-            remaining_methods, ..
+            remaining_methods,
+            partial_success,
         } = &response
         {
             self.remember_methods(remaining_methods);
+            self.partial_success = *partial_success;
         }
         map_keyboard_interactive(response)
     }
@@ -434,6 +451,7 @@ where
     }
 
     async fn authenticate_none(&mut self, username: &str) -> Result<bool, SshError> {
+        self.partial_success = false;
         let result = self
             .handle
             .authenticate_none(username)
@@ -448,6 +466,7 @@ where
         username: &str,
         password: &SecretString,
     ) -> Result<bool, SshError> {
+        self.partial_success = false;
         let result = self
             .handle
             .authenticate_password(username, secrecy::ExposeSecret::expose_secret(password))
@@ -463,6 +482,7 @@ where
         key: PrivateKeyMaterial,
     ) -> Result<bool, SshError> {
         self.private_key_accepted = false;
+        self.partial_success = false;
         let private_key = key.decode()?;
         let result = self
             .handle
@@ -481,11 +501,16 @@ where
         self.private_key_accepted
     }
 
+    fn last_failure_was_partial_success(&self) -> bool {
+        self.partial_success
+    }
+
     async fn authenticate_agent(
         &mut self,
         username: &str,
         socket: Option<&str>,
     ) -> Result<bool, SshError> {
+        self.partial_success = false;
         #[cfg(not(any(unix, windows)))]
         {
             let _ = (username, socket);
@@ -526,6 +551,7 @@ where
         &mut self,
         username: &str,
     ) -> Result<KeyboardInteractiveResponse, SshError> {
+        self.partial_success = false;
         let response = self
             .handle
             .authenticate_keyboard_interactive_start(username, None::<String>)
@@ -538,6 +564,7 @@ where
         &mut self,
         responses: Vec<String>,
     ) -> Result<KeyboardInteractiveResponse, SshError> {
+        self.partial_success = false;
         let response = self
             .handle
             .authenticate_keyboard_interactive_respond(responses)
