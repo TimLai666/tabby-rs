@@ -12,6 +12,8 @@ import { HostBridge, ScreenInfo } from '../api/hostBridge'
 
 @Injectable()
 export class TauriDockingService extends DockingService {
+    /** null until the native window reports its capabilities; false on Wayland and other hosts without docking. */
+    dockingSupported: boolean | null = null
     private screens: ScreenInfo[] = []
 
     constructor (
@@ -22,14 +24,19 @@ export class TauriDockingService extends DockingService {
     ) {
         super()
         void this.refreshScreens()
+        void this.loadDockingCapability()
         platform.displayMetricsChanged$.subscribe(() => {
             void this.refreshScreens().then(() => this.dock())
         })
     }
 
     dock (): void {
+        // Wait for the capability; loadDockingCapability applies the dock once it is known.
+        if (this.dockingSupported === null) {
+            return
+        }
         const appearance = this.config.store.appearance
-        const side = this.bootstrapData.isMainWindow ? appearance.dock : 'off'
+        const side = this.bootstrapData.isMainWindow && this.dockingSupported ? appearance.dock : 'off'
         const screenId = typeof appearance.dockScreen === 'number' ? appearance.dockScreen : null
 
         void this.bridge.invoke('window.setDocking', {
@@ -52,6 +59,20 @@ export class TauriDockingService extends DockingService {
             id: screen.id,
             name: screen.name,
         }))
+    }
+
+    private async loadDockingCapability (): Promise<void> {
+        try {
+            const state = await this.bridge.invoke('window.getState', {})
+            this.dockingSupported = state.capabilities.docking
+        } catch (error) {
+            console.info('Could not read window capabilities; docking is off:', error)
+            this.dockingSupported = false
+        }
+        if (!this.dockingSupported && this.bootstrapData.isMainWindow && this.config.store.appearance.dock !== 'off') {
+            console.info('Window docking is unavailable in this display session; the dock setting is ignored')
+        }
+        this.dock()
     }
 
     private async refreshScreens (): Promise<void> {

@@ -63,7 +63,7 @@ async function check (name, run) {
     }
 }
 
-function platformWithFonts (fonts) {
+function platformWithFonts (fonts, platformName = 'linux') {
     const bridge = {
         calls: [],
         listen: async () => () => undefined,
@@ -73,7 +73,7 @@ function platformWithFonts (fonts) {
             return fonts
         },
     }
-    return { bridge, platform: new TauriPlatformService(bridge, { platform: 'linux' }, {}) }
+    return { bridge, platform: new TauriPlatformService(bridge, { platform: platformName }, {}) }
 }
 
 await check('listFonts keeps only monospace families when the native side reports flags', async () => {
@@ -121,6 +121,16 @@ await check('listFonts keeps every family when the detector flags none as monosp
         { family: 'DejaVu Sans', fullName: null, monospace: false, styles: [] },
     ])
     assert.deepEqual([...await platform.listFonts()], ['DejaVu Sans', 'Noto Sans'])
+})
+
+await check('listFonts keeps every family on Windows and macOS like upstream', async () => {
+    for (const platformName of ['windows', 'macos']) {
+        const { platform } = platformWithFonts([
+            { family: 'Segoe UI', fullName: null, monospace: false, styles: [] },
+            { family: 'Cascadia Mono', fullName: null, monospace: true, styles: [] },
+        ], platformName)
+        assert.deepEqual([...await platform.listFonts()], ['Cascadia Mono', 'Segoe UI'], platformName)
+    }
 })
 
 await check('listFonts returns an empty list when the bridge fails', async () => {

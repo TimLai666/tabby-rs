@@ -103,13 +103,36 @@ export class TauriDesktopIntegrationService {
         }
 
         try {
+            const register = await this.shouldRegisterGlobalHotkey()
             await this.bridge.invoke('hotkey.replace', {
                 id: 'toggle-window',
-                accelerators,
+                accelerators: register ? accelerators : [],
             })
         } catch (error) {
             console.info('Global toggle shortcut is unavailable:', error)
         }
+    }
+
+    /**
+     * Mirrors shouldRegisterGlobalHotkeys in app/lib/app.ts. An explicit
+     * hacks.globalHotkey value decides in either direction; otherwise the native
+     * capability decides. A skipped registration still clears older shortcuts.
+     */
+    private async shouldRegisterGlobalHotkey (): Promise<boolean> {
+        const override = this.config.store.hacks?.globalHotkey as boolean | null | undefined
+        if (override != null) {
+            if (override) {
+                console.info('Global toggle shortcut skipped: hacks.globalHotkey is true')
+                return false
+            }
+            return true
+        }
+        const state = await this.bridge.invoke('window.getState', {})
+        if (!state.capabilities.globalHotkey) {
+            console.info('Global toggle shortcut skipped: this display session does not support global shortcuts')
+            return false
+        }
+        return true
     }
 
     private async applyAppearance (): Promise<void> {

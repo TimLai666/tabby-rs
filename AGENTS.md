@@ -1437,21 +1437,10 @@
 - Static comparison of `app/lib`, `tabby-electron/src` and the Tauri host found
   these Linux gaps; none has desktop evidence yet. Treat each as its own slot
   with a test, and record acceptance separately.
-- Global hotkey: `desktop.rs` `capabilities()` reports `global_hotkey: true`
-  unconditionally and `hotkey_replace` toggles only the `main` window; upstream
-  `app/lib/app.ts` honors `hacks.globalHotkey`, gates Wayland (Plasma below
-  6.6 only), toggles every window, and treats a docked always-on-top window as
-  present. The plugin's Wayland behavior is unverified.
-- Docking: `window_set_docking` returns Unsupported on Wayland and the renderer
-  only logs it; the settings UI and `TauriDockingService` never read
-  `capabilities.docking`, so dock options still show. `always_on_top` is not
-  applied. `window_toggle_quake` has no renderer caller.
+- `window_toggle_quake` has no renderer caller.
 - Sleep inhibit: the Electron host holds `powerSaveBlocker` during SFTP
   transfers; the native host has no `org.freedesktop.login1` or ScreenSaver
   inhibit.
-- `desktop_open_external` allows only http, https and mailto; upstream also
-  allows ftp and asks before opening other app-specific schemes instead of
-  rejecting them.
 - Updater: the signed pipeline needs `TABBY_RS_UPDATE_*` at build time and has
   no release-page fallback; Linux deb/rpm installation through the plugin is
   unverified.
@@ -1461,52 +1450,101 @@
   section), Linux shell detection, clipboard text/html, CLI arguments, native
   file drops (drag gestures pending). WSL `homeDirArgs` is Windows-only.
 
+## Ported — Linux global hotkey, docking capability and external URLs (2026-11-14)
+
+- Global hotkey: `desktop.rs` `capabilities().global_hotkey` is false only on
+  Wayland under Plasma below 6.6, through `global_hotkey_supported`,
+  `is_plasma_session` and `parse_plasma_version`, mirroring `shouldRegisterGlobalHotkeys`
+  and `isPlasmaSession` in `app/lib/app.ts`. `desktopIntegration.service.ts`
+  `shouldRegisterGlobalHotkey` applies an explicit `hacks.globalHotkey` first, as
+  upstream does (true disables, false forces registration). A skipped registration
+  sends an empty `hotkey.replace` to clear older shortcuts and logs at info.
+  `hotkey_replace` toggles every webview window through `global_hotkey_hides_windows`.
+  A docked on-top window is approximated by the main window's always-on-top state,
+  because `window_set_docking` is the only caller that sets it in this host.
+- Docking: `TauriDockingService` reads `window.getState` capabilities into
+  `dockingSupported` and sends side `off` when docking is unsupported, logging once.
+  `windowSettingsTab.component` exposes `dockingAvailable` and its docking rows
+  use it; no shared capability hook existed, so the tabby-settings template changed.
+  `always_on_top` already flows from the docking request, so no new native call was added.
+- External URLs: `desktop_open_external` allows http, https, ftp and mailto. Other
+  schemes need `confirmed: true`, which the renderer sends after the upstream
+  `Open this app-specific "<scheme>" URI?` prompt. file, javascript and data are
+  refused without a prompt. Upstream prompts for those, so this is stricter.
+- Checks: `scripts/test-tauri-desktop-integration.mjs` (hotkey gating),
+  `scripts/test-tauri-docking.mjs` and `scripts/test-tauri-open-external.mjs` run
+  under `test:tauri-platform` with fake bridges. Rust unit tests live in
+  `src-tauri/src/desktop.rs` (`desktop::tests`).
+- Unverified: real Wayland hotkey registration on KDE Plasma 6.5, 6.6 and GNOME,
+  the `plasmashell --version` probe in a live session, compositor docking and
+  always-on-top, the rendered settings rows, the rendered confirm dialog, and the
+  all-window toggle on Windows and macOS.
+
 ## Ported — Linux notifications and font picker (2026-11-14)
 
 - Notifications: `app/src/entry.tauri.ts` installs
   `tabby-tauri/src/services/notification.ts` before Angular bootstrap. The shared
   `new Notification(title, { body })` calls, including "Process completed" and the
-  "Tab activity" path, now invoke native `notification.show`. Bridge failures are
+  "Tab activity" path, now invoke native `notification.show`. IPC failures are
   logged with `console.warn`, delivered through the web API's `error` event and
   `onerror`, and never throw, so the in-app toast fallback in `tabContextMenu`
-  (which only caught a synchronous throw) no longer runs on native failure; a
-  successful send fires `show`. `scripts/test-tauri-notification.mjs` checks this
-  with a fake bridge only.
+  (which only caught a synchronous throw) no longer runs on native failure.
+  tauri-plugin-notification 2.3.3 shows desktop notifications on a spawned task
+  and drops delivery errors, so the IPC succeeds and `show` fires even without a
+  notification daemon; treat `show` as "handed to the plugin", not as delivery.
+  `scripts/test-tauri-notification.mjs` checks this with a fake bridge only. No
+  shared code reads `Notification.permission` or calls `requestPermission`
+  (grepped `tabby-*/src`, `app/src`); third-party plugins see `granted`.
 - Notification click-to-focus is not implemented. tauri-plugin-notification v2 does
   not deliver click events to the WebView on Linux, so click listeners are accepted
   and never fire. The "Notify when done" selection behavior is unverified on Linux.
 - Notification display and permission are unverified on Linux. The adapter reports
   `permission` as `granted` without asking the desktop notification service.
-- Font picker: `TauriPlatformService.listFonts` returns only families whose native
-  `monospace` flag is true when at least one family reports a flag. Without any flag,
-  or when the detector flags no family as monospace, it keeps every family so the
-  picker never goes empty. Output is sorted with `localeCompare` and de-duplicated.
+- Font picker: on Linux, `TauriPlatformService.listFonts` returns only families
+  whose native `monospace` flag is true when at least one family reports a flag,
+  matching upstream's `fc-list :spacing=mono`. Windows and macOS keep every
+  family like upstream. Without any flag, or when the detector flags no family
+  as monospace, it keeps every family so the picker never goes empty. Output is
+  sorted with `localeCompare` and de-duplicated.
   `scripts/test-tauri-fonts.mjs` checks this with a fake bridge.
 - Font picker: the rendered picker on Linux is unverified. Also unverified is whether
   the font-kit monospace flag selects the same families as upstream `fc-list :spacing=mono`.
 
 ## Ported — Linux GPU workaround and DevTools startup (2026-11-14)
 
-- `hacks.disableGPU: true` in the raw `config.yaml` exports
-  `WEBKIT_DISABLE_COMPOSITING_MODE=1` and `WEBKIT_DISABLE_DMABUF_RENDERER=1`
-  on Linux, before the first WebView. `src-tauri/src/gpu.rs` holds the pure
-  decision: only the boolean `true` counts, and a variable already exported
-  (even empty) is never overridden. Upstream `app/lib/app.ts` reads the config in
-  the Electron main process before any window exists. The native host instead
+- A truthy `hacks.disableGPU` in the raw `config.yaml` (JavaScript truthiness,
+  like upstream `hacks?.disableGPU`) exports `WEBKIT_DISABLE_COMPOSITING_MODE=1`
+  and `WEBKIT_DISABLE_DMABUF_RENDERER=1` on Linux, before the first WebView.
+  `src-tauri/src/gpu.rs` holds the pure decision; a variable the user already
+  exported (even empty) is never overridden. Upstream `app/lib/app.ts` reads the
+  config in the Electron main process before any window exists. The native host
   reads the same `config.yaml` between `build()` and `run()` in `lib.rs`, because
   the `StartupWindowFrame` snapshot is taken at first bootstrap, after the
-  primary WebView exists. Encrypted configs without a raw `hacks` section disable
-  nothing. macOS and Windows skip the read.
+  primary WebView exists; Tauri 2.11.5 creates config windows in `setup()` on the
+  Ready event, so the variables reach the first WebView. Encrypted configs
+  without a raw `hacks` section disable nothing. macOS and Windows skip the read.
+- The process records the variables it exported in `TABBY_RS_GPU_ENV`.
+  `shell::environment::merge_environment` and `desktop_exec` strip the marker
+  and the variables it names before spawning, so PTY shells and other children
+  see the user's environment, as with upstream's in-process
+  `disableHardwareAcceleration`; a user's own export of the same variable is
+  kept. An in-app restart inherits the environment, so startup first removes the
+  marked variables and decides again, which lets a disabled setting take effect
+  without a full quit. `set_var` runs after `build()` while runtime threads
+  exist; no thread calling `getenv` at that moment was found, but that was not
+  measured.
 - `window_open_devtools` opens DevTools in release builds. The `tauri`
   dependency enables the `devtools` feature, which adds no crates to
-  `Cargo.lock`. `-d`/`--debug` opens DevTools for the `main` window once, at its
-  first bootstrap (`commands/app.rs`, one-shot flag in `state.rs`). Windows
-  created later do not open DevTools, and a second instance's `-d` is ignored.
-  The argv decision is covered by `launch::tests::debug_flags_request_startup_devtools`.
+  `Cargo.lock` (Tauri documents macOS devtools as private API; reassess before
+  any App Store build). `-d`/`--debug` opens DevTools once per window at that
+  window's first bootstrap, before any step that can fail (`commands/app.rs`,
+  per-label set in `state.rs`), matching electron-debug's per-window behavior;
+  a renderer reload does not reopen them and a second instance's `-d` is
+  ignored. The argv decision is covered by
+  `launch::tests::debug_flags_request_startup_devtools`.
 - Unverified: whether WebKitGTK rendering changes on a real Linux desktop with
-  the GPU variables set, whether the DevTools window appears on a desktop, and
-  the upstream per-window behavior of `-d` (electron-debug), which was not
-  compared. Compilation and unit tests do not establish either effect.
+  the GPU variables set, and whether the DevTools window appears on a desktop.
+  Compilation and unit tests do not establish either effect.
 
 ## Pending — upstream sync to 467ce8eb (ports still owed to the native host)
 

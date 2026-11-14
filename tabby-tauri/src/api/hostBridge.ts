@@ -1058,7 +1058,7 @@ export interface HostRequestMap {
         response: null
     }
     'desktop.openExternal': {
-        request: { url: string }
+        request: { url: string, confirmed: boolean }
         response: null
     }
     'desktop.revealPath': {

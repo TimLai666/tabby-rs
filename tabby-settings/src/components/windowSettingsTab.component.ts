@@ -50,6 +50,12 @@ export class WindowSettingsTabComponent extends BaseComponent {
         this.isFluentVibrancySupported = isWindowsBuild(WIN_BUILD_FLUENT_BG_SUPPORTED, hostApp.platform, hostApp.windowsBuild)
     }
 
+    /** False only when the host reports that docking is unavailable (Tauri on Wayland). */
+    get dockingAvailable (): boolean {
+        const docking = this.docking as (DockingService & { dockingSupported?: boolean | null }) | undefined
+        return !!docking && docking.dockingSupported !== false
+    }
+
     @debounce(500)
     saveConfiguration (requireRestart?: boolean) {
         this.config.save()

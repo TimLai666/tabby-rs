@@ -33,7 +33,9 @@ assert.match(bridge, /'desktop\.exec':[\s\S]*?request: \{ executable: string; ar
 assert.match(desktop, /pub async fn desktop_exec/)
 assert.match(app, /#\[serde\(rename = "winSCPPath"\)\]\s*pub win_scp_path: Option<String>,/)
 assert.match(app, /win_scp_path: crate::winscp::detect_path\(\),/)
-assert.match(desktop, /Command::new\(&request\.executable\)\s*\.args\(&request\.args\)/)
+assert.match(desktop, /Command::new\(&request\.executable\);\s*command\.args\(&request\.args\)/)
+// The GPU workaround variables this process exported stay out of child processes.
+assert.match(desktop, /crate::gpu::owned_variables\([\s\S]*?command\.env_remove\(name\)/)
 assert.doesNotMatch(desktop, /Command::new\("(?:sh|bash|cmd|powershell)"\)/)
 assert.match(registration, /desktop_exec/)
 assert.match(registration, /use message_box::dialog_message/)

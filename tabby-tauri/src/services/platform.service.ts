@@ -16,6 +16,7 @@ import {
     PlatformTheme,
     sanitizeTransferName,
     sanitizeTransferRelativePath,
+    TranslateService,
 } from 'tabby-core'
 
 import {
@@ -27,6 +28,9 @@ import {
     TAURI_RUNTIME_INFO,
     TransferDirectoryEntry,
 } from '../api/hostBridge'
+
+const safeExternalSchemes = new Set(['http', 'https', 'ftp', 'mailto'])
+const forbiddenExternalSchemes = new Set(['file', 'javascript', 'data'])
 
 @Injectable()
 export class TauriPlatformService extends PlatformService {
@@ -47,6 +51,7 @@ export class TauriPlatformService extends PlatformService {
         private bridge: HostBridge,
         @Inject(TAURI_RUNTIME_INFO) private runtimeInfo: RuntimeInfo,
         private zone: NgZone,
+        private translate: TranslateService,
     ) {
         super()
         this.supportsWindowControls = ['macos', 'windows', 'linux'].includes(runtimeInfo.platform)
@@ -232,8 +237,50 @@ export class TauriPlatformService extends PlatformService {
         return this.runtimeInfo.version
     }
 
+    // Mirrors tabby-electron platform.service.ts: safe schemes open directly, other
+    // app-specific schemes need confirmation, and file, javascript and data URLs never open.
     async openExternal (url: string): Promise<void> {
-        await this.bridge.invoke('desktop.openExternal', { url })
+        const scheme = this.getExternalScheme(url)
+        if (!scheme) {
+            // Unparseable input is left to the native validator, which rejects it.
+            await this.bridge.invoke('desktop.openExternal', { url, confirmed: false })
+            return
+        }
+        if (safeExternalSchemes.has(scheme)) {
+            await this.bridge.invoke('desktop.openExternal', { url, confirmed: false })
+            return
+        }
+        if (forbiddenExternalSchemes.has(scheme)) {
+            console.info(`Refused to open "${scheme}" URL: this scheme is never opened`)
+            return
+        }
+        if (await this.confirmExternalOpen(url, scheme)) {
+            await this.bridge.invoke('desktop.openExternal', { url, confirmed: true })
+        }
+    }
+
+    private getExternalScheme (url: string): string | null {
+        try {
+            const protocol = new URL(url.trim()).protocol
+            return protocol ? protocol.replace(':', '').toLowerCase() : null
+        } catch {
+            return null
+        }
+    }
+
+    private async confirmExternalOpen (url: string, scheme: string): Promise<boolean> {
+        const result = await this.showMessageBox({
+            type: 'warning',
+            message: this.translate.instant(`Open this app-specific "${scheme}" URI?`),
+            detail: url,
+            buttons: [
+                this.translate.instant('Open'),
+                this.translate.instant('Cancel'),
+            ],
+            defaultId: 0,
+            cancelId: 1,
+        })
+        return result.response === 0
     }
 
     async exec (app: string, argv: string[]): Promise<void> {
@@ -260,8 +307,11 @@ export class TauriPlatformService extends PlatformService {
     async listFonts (): Promise<string[]> {
         try {
             const fonts = await this.bridge.invoke('font.list', {})
-            // Hosts that report no monospace flags at all keep every family, so the picker never goes empty.
-            const reportsMonospace = fonts.some(font => typeof font.monospace === 'boolean')
+            // Upstream filters to monospace only on Linux (`fc-list :spacing=mono`);
+            // Windows and macOS list every family. Hosts that report no monospace
+            // flags at all keep every family, so the picker never goes empty.
+            const reportsMonospace = this.runtimeInfo.platform === 'linux'
+                && fonts.some(font => typeof font.monospace === 'boolean')
             const monospace = fonts.filter(font => !reportsMonospace || font.monospace === true)
             // A host whose detector flags nothing as monospace still gets the full list.
             const families = (monospace.length ? monospace : fonts).map(font => font.family)

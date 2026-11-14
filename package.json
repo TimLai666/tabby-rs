@@ -179,7 +179,7 @@
     "benchmark": "node scripts/run-benchmarks.mjs",
     "test:benchmark": "node scripts/test-benchmark-harness.mjs",
     "test:runtime-capabilities": "node scripts/test-runtime-capabilities.mjs",
-    "test:tauri-platform": "node scripts/test-tauri-platform-contract.mjs && node scripts/test-host-command-registry.mjs && node scripts/test-tauri-desktop-integration.mjs && node scripts/test-tauri-notification.mjs && node scripts/test-tauri-fonts.mjs",
+    "test:tauri-platform": "node scripts/test-tauri-platform-contract.mjs && node scripts/test-host-command-registry.mjs && node scripts/test-tauri-desktop-integration.mjs && node scripts/test-tauri-docking.mjs && node scripts/test-tauri-open-external.mjs && node scripts/test-tauri-notification.mjs && node scripts/test-tauri-fonts.mjs",
     "test:tab-body-lifecycle": "node scripts/test-tab-body-lifecycle.mjs",
     "test:app-root-recovery": "node scripts/test-app-root-recovery-contract.mjs",
     "test:tauri-opacity": "node scripts/test-tauri-window-opacity.mjs && node scripts/test-tauri-window-frame.mjs && node scripts/test-tauri-window-drag-region.mjs",

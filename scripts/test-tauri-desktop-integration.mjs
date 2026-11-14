@@ -42,14 +42,14 @@ const settle = async () => {
     for (let i = 0; i < 20; i++) await new Promise(resolve => setImmediate(resolve))
 }
 
-async function makeService (appearance, hideCheck) {
+async function makeService (appearance, hideCheck, options = {}) {
     const listeners = new Map()
     const calls = []
     const bridge = {
         listen: async (event, callback) => { listeners.set(event, callback); return () => listeners.delete(event) },
         invoke: async (command, request) => {
             calls.push({ command, request })
-            if (command === 'window.getState') return { capabilities: { opacity: false, vibrancy: false } }
+            if (command === 'window.getState') return { capabilities: { opacity: false, vibrancy: false, globalHotkey: options.globalHotkey } }
             if (command === 'window.canHideOnBlur') return hideCheck()
             return null
         },
@@ -57,7 +57,7 @@ async function makeService (appearance, hideCheck) {
     const config = {
         ready$: { toPromise: async () => undefined },
         changed$: new rxjs.Subject(),
-        store: { hotkeys: {}, appearance },
+        store: { hotkeys: options.hotkeys ?? {}, hacks: options.hacks, appearance },
     }
     const app = { tabs: [], activeTab: null, tabOpened$: new rxjs.Subject(), tabRemoved$: new rxjs.Subject(),
         activeTabChange$: new rxjs.Subject() }
@@ -70,6 +70,22 @@ async function makeService (appearance, hideCheck) {
         focus: async () => { listeners.get('desktop:windowFocused')(true); await settle() },
         hides: () => calls.filter(c => c.command === 'window.applyState' && c.request.visible === false).length,
         checks: () => calls.filter(c => c.command === 'window.canHideOnBlur').length,
+        hotkeyCalls: () => JSON.parse(JSON.stringify(calls.filter(c => c.command === 'hotkey.replace').map(c => c.request))),
+    }
+}
+
+async function hotkeyService (options) {
+    const infos = []
+    const originalInfo = console.info
+    console.info = (...args) => infos.push(args.map(String).join(' '))
+    try {
+        const s = await makeService({ dock: 'off' }, () => ({ anyWindowFocused: false, enabled: true }), {
+            hotkeys: { 'toggle-window': ['Ctrl+Alt+T'] },
+            ...options,
+        })
+        return { ...s, infos }
+    } finally {
+        console.info = originalInfo
     }
 }
 
@@ -114,6 +130,28 @@ await test('failed check does not hide and is consumed', async () => {
     const s = await makeService(docked, () => { throw new Error('fixture') })
     await s.blur()
     assert.equal(s.hides(), 0)
+})
+
+await test('global hotkey registers when the window reports support and no override is set', async () => {
+    const s = await hotkeyService({ globalHotkey: true })
+    assert.deepEqual(s.hotkeyCalls(), [{ id: 'toggle-window', accelerators: ['Ctrl+Alt+T'] }])
+    assert.equal(s.infos.length, 0)
+})
+await test('unsupported global hotkey skips registration, clears old shortcuts, and logs why', async () => {
+    const s = await hotkeyService({ globalHotkey: false })
+    assert.deepEqual(s.hotkeyCalls(), [{ id: 'toggle-window', accelerators: [] }])
+    assert.equal(s.infos.length, 1)
+    assert.match(s.infos[0], /global toggle shortcut skipped.*does not support global shortcuts/i)
+})
+await test('hacks.globalHotkey false forces registration despite an unsupported capability', async () => {
+    const s = await hotkeyService({ globalHotkey: false, hacks: { globalHotkey: false } })
+    assert.deepEqual(s.hotkeyCalls(), [{ id: 'toggle-window', accelerators: ['Ctrl+Alt+T'] }])
+    assert.equal(s.infos.length, 0)
+})
+await test('hacks.globalHotkey true disables registration like upstream app.ts', async () => {
+    const s = await hotkeyService({ globalHotkey: true, hacks: { globalHotkey: true } })
+    assert.deepEqual(s.hotkeyCalls(), [{ id: 'toggle-window', accelerators: [] }])
+    assert.equal(s.infos.length, 1)
 })
 
 for (const result of cases) {

@@ -446,6 +446,36 @@ pub fn window_toggle_quake(
     }
 }
 
+/// Applies the upstream global toggle to every webview window. The main window's
+/// always-on-top state stands in for upstream's docked-on-top check, because
+/// window_set_docking is the only caller that sets always-on-top in this host.
+fn toggle_all_windows(app: &tauri::AppHandle) {
+    let windows: Vec<tauri::WebviewWindow> = app.webview_windows().into_values().collect();
+    let any_focused_visible = windows
+        .iter()
+        .any(|window| window.is_focused().unwrap_or(false) && window.is_visible().unwrap_or(false));
+    let any_visible = windows
+        .iter()
+        .any(|window| window.is_visible().unwrap_or(false));
+    let docked_on_top = app
+        .get_webview_window("main")
+        .is_some_and(|window| window.is_always_on_top().unwrap_or(false));
+    let hide = crate::desktop::global_hotkey_hides_windows(
+        any_focused_visible,
+        any_visible,
+        docked_on_top,
+    );
+    for window in windows {
+        if hide {
+            let _ = window.hide();
+        } else {
+            let _ = window.show();
+            let _ = window.unminimize();
+            let _ = window.set_focus();
+        }
+    }
+}
+
 #[tauri::command]
 pub fn hotkey_replace(
     app: tauri::AppHandle,
@@ -482,17 +512,7 @@ pub fn hotkey_replace(
                 }
                 let accelerator = shortcut.to_string();
                 if id == "toggle-window" {
-                    if let Some(window) = app.get_webview_window("main") {
-                        let hide = window.is_visible().unwrap_or(false)
-                            && window.is_focused().unwrap_or(false);
-                        if hide {
-                            let _ = window.hide();
-                        } else {
-                            let _ = window.show();
-                            let _ = window.unminimize();
-                            let _ = window.set_focus();
-                        }
-                    }
+                    toggle_all_windows(app);
                 }
                 let _ = app.emit(
                     "desktop:hotkey",
@@ -616,6 +636,9 @@ pub fn notification_show(
 #[serde(rename_all = "camelCase")]
 pub struct OpenExternalRequest {
     pub url: String,
+    /// Set by the renderer after the user accepted the prompt for an app-specific scheme.
+    #[serde(default)]
+    pub confirmed: bool,
 }
 
 #[tauri::command]
@@ -625,10 +648,19 @@ pub fn desktop_open_external(
 ) -> Result<(), AppError> {
     let parsed = url::Url::parse(&request.url)
         .map_err(|_| AppError::InvalidArgument("invalid external URL".into()))?;
-    if !matches!(parsed.scheme(), "http" | "https" | "mailto") {
-        return Err(AppError::InvalidArgument(
-            "unsupported external URL scheme".into(),
-        ));
+    match crate::desktop::external_url_policy(parsed.scheme()) {
+        crate::desktop::ExternalUrlPolicy::Open => {}
+        crate::desktop::ExternalUrlPolicy::RequiresConfirmation if request.confirmed => {}
+        crate::desktop::ExternalUrlPolicy::RequiresConfirmation => {
+            return Err(AppError::InvalidArgument(
+                "external URL scheme requires confirmation".into(),
+            ));
+        }
+        crate::desktop::ExternalUrlPolicy::Forbidden => {
+            return Err(AppError::InvalidArgument(
+                "unsupported external URL scheme".into(),
+            ));
+        }
     }
     app.opener()
         .open_url(parsed.to_string(), None::<&str>)
@@ -657,11 +689,18 @@ pub async fn desktop_exec(request: ExecRequest) -> Result<(), AppError> {
         ));
     }
 
-    let status = Command::new(&request.executable)
-        .args(&request.args)
-        .status()
-        .await
-        .map_err(io_error)?;
+    let mut command = Command::new(&request.executable);
+    command.args(&request.args);
+    // The GPU workaround variables this process exported are for its own
+    // WebView only; children get the user's environment (see gpu.rs).
+    for name in crate::gpu::owned_variables(
+        std::env::var(crate::gpu::OWNED_VARIABLES_MARKER)
+            .ok()
+            .as_deref(),
+    ) {
+        command.env_remove(name);
+    }
+    let status = command.status().await.map_err(io_error)?;
     if !status.success() {
         return Err(AppError::Io(format!("process exited with {status}")));
     }
