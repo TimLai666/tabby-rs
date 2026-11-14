@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { createRequire } from 'node:module'
 import { spawn } from 'node:child_process'
 import net from 'node:net'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
@@ -353,9 +354,11 @@ function waitForFixtureURL () {
 }
 
 function electronBinary () {
-    if (process.platform === 'win32') return path.join(root, 'node_modules', 'electron', 'dist', 'electron.exe')
-    if (process.platform === 'darwin') return path.join(root, 'node_modules', 'electron', 'dist', 'Electron.app', 'Contents', 'MacOS', 'Electron')
-    return path.join(root, 'node_modules', 'electron', 'dist', 'electron')
+    // Electron 43 no longer downloads its binary in a postinstall script;
+    // requiring the package resolves the executable path and downloads it on
+    // demand (node_modules/electron/index.js). Building the dist path by hand
+    // skips that download and fails on a fresh CI checkout.
+    return createRequire(import.meta.url)('electron')
 }
 
 async function stopProcess (child, { processGroup = false } = {}) {
