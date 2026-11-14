@@ -35,6 +35,7 @@ pub struct AppState {
     pending_maximize: Mutex<std::collections::HashSet<String>>,
     startup_devtools: bool,
     devtools_windows: Mutex<std::collections::HashSet<String>>,
+    power_inhibitor: std::sync::Arc<crate::power::NativePowerInhibitor>,
 }
 
 impl AppState {
@@ -60,7 +61,16 @@ impl AppState {
             pending_maximize: Mutex::new(std::collections::HashSet::new()),
             startup_devtools,
             devtools_windows: Mutex::new(std::collections::HashSet::new()),
+            power_inhibitor: std::sync::Arc::new(crate::power::PowerInhibitor::new(
+                crate::power::NativeBackend,
+            )),
         }
+    }
+
+    /// Reference-counted sleep inhibit held while file transfers run. Shared so
+    /// commands can do the blocking native call off the main thread.
+    pub fn power_inhibitor(&self) -> std::sync::Arc<crate::power::NativePowerInhibitor> {
+        std::sync::Arc::clone(&self.power_inhibitor)
     }
 
     pub fn next_window_id(&self) -> u64 {

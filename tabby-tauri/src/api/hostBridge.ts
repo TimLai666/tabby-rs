@@ -1325,6 +1325,14 @@ export interface HostRequestMap {
         request: Record<string, never>
         response: InstalledFont[]
     }
+    'power.inhibitAcquire': {
+        request: Record<string, never>
+        response: { id: number }
+    }
+    'power.inhibitRelease': {
+        request: { id: number }
+        response: null
+    }
 }
 
 export interface HostEventMap {

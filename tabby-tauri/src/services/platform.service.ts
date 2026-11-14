@@ -767,7 +767,52 @@ export class TauriPlatformService extends PlatformService {
     }
 }
 
+/**
+ * Holds a native power-save inhibit while one transfer runs, mirroring the
+ * Electron host's powerSaveBlocker. Acquire failures are logged and never fail
+ * the transfer; release is idempotent and waits for a pending acquire.
+ */
+class TransferPowerInhibit {
+    private readonly id: Promise<number|null>
+    private released = false
+
+    constructor (private readonly bridge: HostBridge) {
+        this.id = this.acquire()
+    }
+
+    release (): void {
+        if (this.released) {
+            return
+        }
+        this.released = true
+        void this.id.then(id => this.releaseNative(id))
+    }
+
+    private async acquire (): Promise<number|null> {
+        try {
+            const result = await this.bridge.invoke('power.inhibitAcquire', {})
+            return result.id
+        } catch (error) {
+            console.info('Power inhibit unavailable for file transfer', error)
+            return null
+        }
+    }
+
+    private async releaseNative (id: number|null): Promise<void> {
+        if (id === null) {
+            return
+        }
+        try {
+            await this.bridge.invoke('power.inhibitRelease', { id })
+        } catch (error) {
+            console.info('Failed to release power inhibit for file transfer', error)
+        }
+    }
+}
+
 class TauriFileUpload extends FileUpload {
+    private readonly powerInhibit: TransferPowerInhibit
+
     constructor (
         private bridge: HostBridge,
         id: string,
@@ -776,6 +821,7 @@ class TauriFileUpload extends FileUpload {
     ) {
         super(id)
         this.setTotalSize(size)
+        this.powerInhibit = new TransferPowerInhibit(bridge)
     }
 
     getName (): string { return this.name }
@@ -784,6 +830,10 @@ class TauriFileUpload extends FileUpload {
 
     async read (): Promise<Uint8Array> {
         const data = await this.bridge.invoke('transfer.read', { id: this.id, maxBytes: 256 * 1024 })
+            .catch((error: unknown) => {
+                this.powerInhibit.release()
+                throw error
+            })
         const bytes = Uint8Array.from(data)
         this.setRunning()
         this.increaseProgress(bytes.length)
@@ -794,20 +844,25 @@ class TauriFileUpload extends FileUpload {
     }
 
     close (): void {
+        this.powerInhibit.release()
         void this.bridge.invoke('transfer.close', { id: this.id })
     }
 
     override async closeAsync (): Promise<void> {
+        this.powerInhibit.release()
         await this.bridge.invoke('transfer.close', { id: this.id })
     }
 
     override cancel (): void {
         this.markCancelled()
+        this.powerInhibit.release()
         void this.bridge.invoke('transfer.cancel', { id: this.id })
     }
 }
 
 class TauriFileDownload extends FileDownload {
+    private readonly powerInhibit: TransferPowerInhibit
+
     constructor (
         private bridge: HostBridge,
         id: string,
@@ -816,6 +871,7 @@ class TauriFileDownload extends FileDownload {
     ) {
         super(id)
         this.setTotalSize(size ?? 0)
+        this.powerInhibit = new TransferPowerInhibit(bridge)
     }
 
     getName (): string { return this.name }
@@ -823,6 +879,10 @@ class TauriFileDownload extends FileDownload {
 
     async write (buffer: Uint8Array): Promise<void> {
         await this.bridge.invoke('transfer.write', { id: this.id, data: Array.from(buffer) })
+            .catch((error: unknown) => {
+                this.powerInhibit.release()
+                throw error
+            })
         this.setRunning()
         this.increaseProgress(buffer.length)
         if (this.getCompletedBytes() >= this.getSize()) {
@@ -831,20 +891,25 @@ class TauriFileDownload extends FileDownload {
     }
 
     close (): void {
+        this.powerInhibit.release()
         void this.bridge.invoke('transfer.close', { id: this.id })
     }
 
     override async closeAsync (): Promise<void> {
+        this.powerInhibit.release()
         await this.bridge.invoke('transfer.close', { id: this.id })
     }
 
     override cancel (): void {
         this.markCancelled()
+        this.powerInhibit.release()
         void this.bridge.invoke('transfer.cancel', { id: this.id })
     }
 }
 
 export class TauriDirectoryDownload extends DirectoryDownload {
+    private readonly powerInhibit: TransferPowerInhibit
+
     constructor (
         private bridge: HostBridge,
         private basePath: string,
@@ -853,6 +918,7 @@ export class TauriDirectoryDownload extends DirectoryDownload {
     ) {
         super()
         this.setTotalSize(estimatedSize)
+        this.powerInhibit = new TransferPowerInhibit(bridge)
     }
 
     getName (): string { return this.name }
@@ -862,6 +928,9 @@ export class TauriDirectoryDownload extends DirectoryDownload {
         await this.bridge.invoke('transfer.createDirectory', {
             baseDirectory: this.basePath,
             relativePath: `${sanitizeTransferName(this.name)}/${sanitizeTransferRelativePath(relativePath)}`,
+        }).catch((error: unknown) => {
+            this.powerInhibit.release()
+            throw error
         })
     }
 
@@ -874,15 +943,20 @@ export class TauriDirectoryDownload extends DirectoryDownload {
             destination: '',
             baseDirectory: this.basePath,
             relativePath: safePath,
+        }).catch((error: unknown) => {
+            this.powerInhibit.release()
+            throw error
         })
         return new TauriFileDownload(this.bridge, descriptor.id, descriptor.name, size)
     }
 
     close (): void {
         // Directory transfers have no open handle; their files close independently.
+        this.powerInhibit.release()
     }
 
     override cancel (): void {
         this.markCancelled()
+        this.powerInhibit.release()
     }
 }

@@ -10,6 +10,7 @@ mod launch;
 mod message_box;
 mod platform;
 mod plugins;
+mod power;
 mod pty;
 mod security;
 mod serial;
@@ -63,6 +64,7 @@ use commands::{
         plugins_node_status, plugins_prepare_operation, plugins_read_entry, plugins_remove,
         plugins_uninstall, plugins_update,
     },
+    power::{power_inhibit_acquire, power_inhibit_release},
     pty::{
         pty_ack, pty_attach, pty_detach, pty_discard, pty_exists, pty_get_children, pty_get_cwd,
         pty_get_pid, pty_get_true_pid, pty_is_alive, pty_kill, pty_resize, pty_spawn, pty_write,
@@ -551,6 +553,8 @@ pub fn run() {
             desktop_exec,
             font_list,
             font_refresh,
+            power_inhibit_acquire,
+            power_inhibit_release,
             desktop_read_file,
             desktop_reveal_path,
             desktop_path_kind,

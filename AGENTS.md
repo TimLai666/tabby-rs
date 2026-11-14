@@ -1438,9 +1438,6 @@
   these Linux gaps; none has desktop evidence yet. Treat each as its own slot
   with a test, and record acceptance separately.
 - `window_toggle_quake` has no renderer caller.
-- Sleep inhibit: the Electron host holds `powerSaveBlocker` during SFTP
-  transfers; the native host has no `org.freedesktop.login1` or ScreenSaver
-  inhibit.
 - Updater: the signed pipeline needs `TABBY_RS_UPDATE_*` at build time and has
   no release-page fallback; Linux deb/rpm installation through the plugin is
   unverified.
@@ -1475,6 +1472,19 @@
   `scripts/test-tauri-docking.mjs` and `scripts/test-tauri-open-external.mjs` run
   under `test:tauri-platform` with fake bridges. Rust unit tests live in
   `src-tauri/src/desktop.rs` (`desktop::tests`).
+- Review follow-ups: windows are presented in creation order (`main`, then
+  `window-N`) so the newest keeps focus, because `webview_windows()` is a
+  HashMap; `parse_plasma_version` matches upstream's first `digit.digit` pair;
+  a failed `window.getState` read clears older shortcuts and no longer aborts
+  `initialize()` through appearance application. `plasma_version()` runs
+  `plasmashell --version` synchronously on first use with no timeout, like
+  upstream's `spawnSync`; sync commands such as `window.getState` call it on the
+  main thread, so measure the first-call delay on KDE Wayland. On Wayland the
+  settings page shows the Docking block until `window.getState` resolves
+  (`dockingSupported` is unknown until then); check the rendered page. Refusing
+  `file`, `javascript` and `data` without a prompt is stricter than upstream,
+  which asks for every non-safe scheme; record it as an approved exception in
+  docs/release-acceptance.md or relax it before accepting openExternal parity.
 - Unverified: real Wayland hotkey registration on KDE Plasma 6.5, 6.6 and GNOME,
   the `plasmashell --version` probe in a live session, compositor docking and
   always-on-top, the rendered settings rows, the rendered confirm dialog, and the
@@ -1532,7 +1542,11 @@
   marked variables and decides again, which lets a disabled setting take effect
   without a full quit. `set_var` runs after `build()` while runtime threads
   exist; no thread calling `getenv` at that moment was found, but that was not
-  measured.
+  measured. Remaining scope: processes started by tauri-plugin-opener
+  (`open_url`, `reveal_item_in_dir`, `open_path` through `xdg-open`) still
+  inherit the marker and both variables because the plugin offers no
+  environment control; a WebKit-based default browser opened from Tabby RS
+  would run without GPU compositing while the setting is on.
 - `window_open_devtools` opens DevTools in release builds. The `tauri`
   dependency enables the `devtools` feature, which adds no crates to
   `Cargo.lock` (Tauri documents macOS devtools as private API; reassess before
@@ -1545,6 +1559,45 @@
 - Unverified: whether WebKitGTK rendering changes on a real Linux desktop with
   the GPU variables set, and whether the DevTools window appears on a desktop.
   Compilation and unit tests do not establish either effect.
+
+## Ported — Linux sleep inhibit for file transfers (2026-11-14)
+
+- Uploads, downloads, and directory downloads acquire a native power-save inhibit
+  when the transfer object is created, matching the Electron `powerSaveBlocker`
+  placement. They release it on close, cancel, completion-close, and error. Each
+  transfer keeps its own id; the native hold is shared and reference counted.
+  `src-tauri/src/power.rs` holds the counter (cap 1024 outstanding ids) and the
+  pure tests in `power::tests`. `commands/power.rs` exposes
+  `power_inhibit_acquire` and `power_inhibit_release`, registered in `lib.rs`;
+  the counter lives on `AppState`. `tabby-tauri/src/services/platform.service.ts`
+  maps them to `power.inhibitAcquire` and `power.inhibitRelease`.
+- Backend on Linux: `org.freedesktop.login1.Manager.Inhibit('sleep:idle', ...)` on
+  the system bus, holding the returned fd. If that call fails, it falls back to
+  `org.freedesktop.ScreenSaver.Inhibit` on the session bus and calls `UnInhibit`
+  on release. The `dbus` crate (0.9.12, already locked through `dbus-secret-service`)
+  is a direct dependency. The XDG desktop portal is not used.
+- Backend on Windows: a worker thread calls `SetThreadExecutionState` with
+  `ES_CONTINUOUS | ES_SYSTEM_REQUIRED` while a hold exists. Execution state is
+  per thread, so one thread owns it.
+- Backend on macOS: a `/usr/bin/caffeinate -i -w <pid>` child. `-w` makes it exit
+  when the app exits, so a crash cannot leave the Mac awake. An IOPMAssertion via
+  raw FFI would avoid the child process; it was not chosen to keep the FFI surface
+  small.
+- Native failures are logged with `eprintln!` and never fail a transfer. Renderer
+  rejections are logged with `console.info`. Both commands are `async` and run
+  the native call on `spawn_blocking`: the D-Bus call has a 2 s timeout and runs
+  under the counter mutex, so a slow logind delays other acquires by up to that
+  long but never the main thread. Beyond 1024 outstanding ids the acquire is
+  refused and the transfer runs uninhibited.
+- Checks: `cargo test --locked --offline --lib power` (6 tests, counter logic with a
+  fake backend), `scripts/test-tauri-power-inhibit.mjs` under `test:tauri-platform`
+  (fake bridge, real `tabby-core` transfer base classes). The fixture fails against
+  the pre-change service for 12 of its 13 cases; the 13th only checks that a rejected
+  acquire does not break a download.
+- Unverified: the actual systemd-logind inhibit on a desktop (`systemd-inhibit --list`
+  while a transfer runs), the ScreenSaver fallback on KDE and GNOME, whether the
+  inhibit stops the desktop from sleeping during a real transfer, Windows
+  `SetThreadExecutionState` behavior, and macOS `caffeinate` behavior. `cargo check` of a copy of `power.rs` passes for the Windows and macOS targets, but no Windows or macOS build of the app was run.
 
 ## Pending — upstream sync to 467ce8eb (ports still owed to the native host)
 
