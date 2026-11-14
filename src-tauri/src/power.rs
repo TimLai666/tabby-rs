@@ -70,9 +70,18 @@ impl<B: InhibitBackend> PowerInhibitor<B> {
         if needs_hold {
             // The native call (D-Bus connection, child process) runs outside
             // the lock so other acquires and releases are not held up by it.
+            // A panic inside the backend must not leave `acquiring` set for the
+            // rest of the process, or no later acquire would ever retry.
+            struct ClearAcquiring<'a, B: InhibitBackend>(&'a PowerInhibitor<B>);
+            impl<B: InhibitBackend> Drop for ClearAcquiring<'_, B> {
+                fn drop(&mut self) {
+                    self.0.lock().acquiring = false;
+                }
+            }
+            let guard = ClearAcquiring(self);
             let result = self.backend.acquire();
+            drop(guard);
             let mut state = self.lock();
-            state.acquiring = false;
             match result {
                 // Every id was released while the call was in flight: drop the
                 // fresh hold under the lock so no later acquire can interleave.

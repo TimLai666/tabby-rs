@@ -91,6 +91,21 @@ function harness ({ checkResult, releasePageResult = RELEASE_PAGE, channel = 'st
 
 const unsupported = () => Object.assign(new Error('unsupported'), { code: 'unsupported', details: 'updater endpoint is not configured' })
 
+await check('an unsupported fallback keeps the signed updater\'s original error', async () => {
+    // A configured signed updater can also answer `unsupported` (e.g. "updater is
+    // unavailable"); the fallback is then refused and must not hide that reason.
+    const original = Object.assign(new Error('unsupported'), { code: 'unsupported', details: 'updater is unavailable' })
+    const refused = Object.assign(new Error('unsupported'), { code: 'unsupported', details: 'release page check is only used when the signed updater is not configured' })
+    const { service } = harness({ checkResult: original, releasePageResult: refused })
+    await assert.rejects(service.check(), error => error.details === 'updater is unavailable')
+})
+
+await check('a non-unsupported fallback failure propagates as itself', async () => {
+    const network = Object.assign(new Error('io'), { code: 'io', details: 'connection refused' })
+    const { service } = harness({ checkResult: unsupported(), releasePageResult: network })
+    await assert.rejects(service.check(), error => error.details === 'connection refused')
+})
+
 const failures = []
 async function check (name, run) {
     try {

@@ -33,7 +33,16 @@ export class TauriUpdaterService extends UpdaterService {
             if (!isUnsupportedError(error)) {
                 throw error
             }
-            return this.checkReleasePage()
+            try {
+                return await this.checkReleasePage()
+            } catch (fallbackError) {
+                // `unsupported` also covers a configured but unavailable signed
+                // updater; keep that original reason when the fallback is refused.
+                if (isUnsupportedError(fallbackError)) {
+                    throw error
+                }
+                throw fallbackError
+            }
         }
     }
 

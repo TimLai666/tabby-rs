@@ -83,8 +83,21 @@ pub fn validate_release_url(value: &str) -> Result<String, AppError> {
             "release URL must be HTTPS without credentials".into(),
         ));
     }
+    // Defence in depth: `html_url` comes from GitHub over TLS without redirects,
+    // but only this project's release pages are ever handed to the browser.
+    if url.host_str() != Some(RELEASE_PAGE_HOST)
+        || !url.path().starts_with(RELEASE_PAGE_PATH_PREFIX)
+    {
+        return Err(AppError::PermissionDenied(
+            "release URL must point at this project's GitHub releases".into(),
+        ));
+    }
     Ok(value.to_string())
 }
+
+/// Host and path prefix every release page must have before it is opened.
+pub const RELEASE_PAGE_HOST: &str = "github.com";
+pub const RELEASE_PAGE_PATH_PREFIX: &str = "/TimLai666/tabby-rs/releases/";
 
 pub fn parse_latest_release(body: &[u8]) -> Result<GithubRelease, AppError> {
     Ok(serde_json::from_slice(body)?)
@@ -215,7 +228,7 @@ mod tests {
         let info = release_page_info(
             &release(
                 "v1.0.235",
-                "https://github.com/eugeny/tabby/releases/tag/v1.0.235",
+                "https://github.com/TimLai666/tabby-rs/releases/tag/v1.0.235",
                 Some("notes"),
                 Some("2026-11-10T12:00:00Z"),
             ),
@@ -226,7 +239,7 @@ mod tests {
             info,
             ReleasePageInfo {
                 version: "1.0.235".into(),
-                release_url: "https://github.com/eugeny/tabby/releases/tag/v1.0.235".into(),
+                release_url: "https://github.com/TimLai666/tabby-rs/releases/tag/v1.0.235".into(),
                 release_notes: "notes".into(),
                 release_date: "2026-11-10T12:00:00Z".into(),
                 is_newer: true,
@@ -237,7 +250,12 @@ mod tests {
     #[test]
     fn missing_body_and_date_become_empty_strings() {
         let info = release_page_info(
-            &release("v1.0.231", "https://example.com/release", None, None),
+            &release(
+                "v1.0.231",
+                "https://github.com/TimLai666/tabby-rs/releases/tag/v1.0.231",
+                None,
+                None,
+            ),
             "1.0.231-tabbyrs.1",
         )
         .unwrap();
@@ -249,10 +267,13 @@ mod tests {
     #[test]
     fn release_urls_must_be_https_without_credentials() {
         for url in [
-            "http://github.com/eugeny/tabby/releases/tag/v1.0.235",
+            "http://github.com/TimLai666/tabby-rs/releases/tag/v1.0.235",
             "javascript:alert(1)",
             "file:///etc/passwd",
-            "https://user:secret@github.com/eugeny/tabby",
+            "https://user:secret@github.com/TimLai666/tabby-rs/releases/tag/v1.0.235",
+            "https://github.com/eugeny/tabby/releases/tag/v1.0.235",
+            "https://example.com/TimLai666/tabby-rs/releases/tag/v1.0.235",
+            "https://github.com/TimLai666/tabby-rs/issues/1",
             "not a url",
         ] {
             assert!(
@@ -266,12 +287,15 @@ mod tests {
     #[test]
     fn parses_only_json_release_objects() {
         let parsed = parse_latest_release(
-            br#"{"tag_name":"v1.0.235","html_url":"https://github.com/x/y","body":"b","published_at":"d","assets":[]}"#,
+            br#"{"tag_name":"v1.0.235","html_url":"https://github.com/TimLai666/tabby-rs/releases/tag/v1.0.235","body":"b","published_at":"d","assets":[]}"#,
         )
         .unwrap();
         assert_eq!(parsed.tag_name, "v1.0.235");
         assert!(parse_latest_release(b"<html>").is_err());
-        assert!(parse_latest_release(br#"{"html_url":"https://github.com/x/y"}"#).is_err());
+        assert!(parse_latest_release(
+            br#"{"html_url":"https://github.com/TimLai666/tabby-rs/releases/tag/v1.0.235"}"#
+        )
+        .is_err());
     }
 
     #[test]
@@ -296,13 +320,16 @@ mod tests {
     fn serializes_the_camel_case_response_shape() {
         let value = serde_json::to_value(ReleasePageInfo {
             version: "1.0.235".into(),
-            release_url: "https://github.com/x/y".into(),
+            release_url: "https://github.com/TimLai666/tabby-rs/releases/tag/v1.0.235".into(),
             release_notes: String::new(),
             release_date: String::new(),
             is_newer: true,
         })
         .unwrap();
-        assert_eq!(value["releaseUrl"], "https://github.com/x/y");
+        assert_eq!(
+            value["releaseUrl"],
+            "https://github.com/TimLai666/tabby-rs/releases/tag/v1.0.235"
+        );
         assert_eq!(value["releaseNotes"], "");
         assert_eq!(value["releaseDate"], "");
         assert_eq!(value["isNewer"], true);

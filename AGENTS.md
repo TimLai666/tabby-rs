@@ -1452,6 +1452,12 @@
   It GETs `releases/latest` for this project (`TimLai666/tabby-rs`) the way upstream's
   `UPDATES_URL` reads `eugeny/tabby`, with a 15 s timeout and a 1 MiB body cap.
   It returns `isNewer` when the tag's `x.y.z` is above the base of the app's `-tabbyrs.N` version.
+- Only `https://github.com/TimLai666/tabby-rs/releases/...` pages are handed to the
+  browser (`validate_release_url`). When the signed updater is configured but answers
+  `unsupported` itself, the refused fallback keeps that original error. This project has
+  published no GitHub release yet, so the tag format is undecided: `release_version`
+  compares the tag's `x.y.z` with the app's base version, and a `v1.0.231-tabbyrs.2`
+  style tag would never count as newer; settle the tag scheme before the first release.
 - `update()` and `install()` on that info open the release page through `platform.openExternal`.
   `download()` and `cancel()` do nothing for it. The fallback never downloads or executes an artifact.
   Signed-pipeline behavior is unchanged.
@@ -1611,7 +1617,8 @@
   refused and the transfer runs uninhibited. The native call runs outside the
   counter lock with an in-flight marker, and a release drops the hold under the
   lock, so a single-state backend (Windows execution state) never sees a stale
-  release after a newer acquire; a hold that completes after every id was
+  release after a newer acquire; a drop guard clears the in-flight marker if the
+  backend panics; a hold that completes after every id was
   released is dropped at once (`release_during_an_in_flight_acquire_...`).
   Review notes still open: `dbus` connection setup (`dbus_bus_get_private`)
   uses libdbus's own timeout, about 25 s, outside the 2 s method timeout;
