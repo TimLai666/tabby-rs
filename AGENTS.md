@@ -726,7 +726,9 @@
   A macOS desktop check confirms the replacement-character path is retained in the
   connection diagnostic instead of connecting to `/tmp/.X11-unix/X0`.
   macOS desktop verification includes a real SSH X11 channel carrying a TCP round trip
-  with a screenless display (`127.0.0.1:5822400` resolves to port 58224), then a refused
+  with a screenless display (`127.0.0.1:5822400` resolved to port 58224 under the
+  former `14e2d60` regex; the `467ce8eb` rule now reads it as display 5822400 and
+  rejects the out-of-range port, so repeat that check with `127.0.0.1:58224`), then a refused
   connection to that same endpoint after the local listener exits. The SSH terminal remains usable.
   Failed local-display connections now emit upstream-style terminal diagnostics through
   `ssh:message`, retaining Tabby RS branding, before closing the X11 channel. Tests cover
@@ -1429,6 +1431,47 @@
   typewriter`; the macOS check verifies driver-error propagation, unchanged native
   reconnect settings, and continued port I/O. Successful physical rate changes,
   automatic reconnect at the new rate, and Windows/Linux execution remain pending.
+
+## Pending — Linux host parity gaps (audit of the Electron host, 2026-11-14)
+
+- Static comparison of `app/lib`, `tabby-electron/src` and the Tauri host found
+  these Linux gaps; none has desktop evidence yet. Treat each as its own slot
+  with a test, and record acceptance separately.
+- Global hotkey: `desktop.rs` `capabilities()` reports `global_hotkey: true`
+  unconditionally and `hotkey_replace` toggles only the `main` window; upstream
+  `app/lib/app.ts` honors `hacks.globalHotkey`, gates Wayland (Plasma below
+  6.6 only), toggles every window, and treats a docked always-on-top window as
+  present. The plugin's Wayland behavior is unverified.
+- Docking: `window_set_docking` returns Unsupported on Wayland and the renderer
+  only logs it; the settings UI and `TauriDockingService` never read
+  `capabilities.docking`, so dock options still show. `always_on_top` is not
+  applied. `window_toggle_quake` has no renderer caller.
+- Notifications: `notification.show` exists natively but nothing invokes it;
+  the shared code calls the web `Notification` API inside WebKitGTK, whose
+  permission state is unverified, and the "notify on activity" path has no
+  fallback or click-to-focus handler.
+- `hacks.disableGPU` is shown to every desktop platform but has no native
+  effect; the Electron host passes `disable-gpu` and disables hardware
+  acceleration. A Tauri equivalent sets `WEBKIT_DISABLE_COMPOSITING_MODE` or
+  `WEBKIT_DISABLE_DMABUF_RENDERER` before the first WebView is created.
+- DevTools: `window_open_devtools` is a no-op in release (`debug_assertions`
+  gate, no `devtools` Cargo feature) and `-d`/`--debug` is parsed but unused.
+- Sleep inhibit: the Electron host holds `powerSaveBlocker` during SFTP
+  transfers; the native host has no `org.freedesktop.login1` or ScreenSaver
+  inhibit.
+- Font picker: native `font.rs` reports a `monospace` flag but `listFonts`
+  returns every family; upstream Linux lists `fc-list :spacing=mono` only.
+- `desktop_open_external` allows only http, https and mailto; upstream also
+  allows ftp and asks before opening other app-specific schemes instead of
+  rejecting them.
+- Updater: the signed pipeline needs `TABBY_RS_UPDATE_*` at build time and has
+  no release-page fallback; Linux deb/rpm installation through the plugin is
+  unverified.
+- Already at parity or recorded elsewhere: hide-on-blur (this file's upstream
+  sync section), reveal path through tauri-plugin-opener (Linux D-Bus behavior
+  unverified), window placement capture during a WM maximize (startup geometry
+  section), Linux shell detection, clipboard text/html, CLI arguments, native
+  file drops (drag gestures pending). WSL `homeDirArgs` is Windows-only.
 
 ## Pending — upstream sync to 467ce8eb (ports still owed to the native host)
 
