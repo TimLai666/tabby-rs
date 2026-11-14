@@ -313,7 +313,7 @@ pub struct CanHideOnBlurResponse {
 }
 
 #[tauri::command]
-pub fn window_dock_hide_check(
+pub fn window_can_hide_on_blur(
     app: tauri::AppHandle,
     window: tauri::WebviewWindow,
     _request: serde_json::Value,

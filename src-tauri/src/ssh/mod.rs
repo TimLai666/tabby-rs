@@ -619,18 +619,19 @@ impl SshAuthenticator for ManagerAuthenticator<'_> {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(resolved_username.clone());
         let username = resolved_username.as_str();
-        let methods = if methods.is_empty() {
-            &self.request.auth
+        // Owned so a partial-success fallback (upstream 30347a61) can extend the plan.
+        let mut methods: Vec<AuthMethodRef> = if methods.is_empty() {
+            self.request.auth.clone()
         } else {
-            methods
+            methods.to_vec()
         };
         let prepared_password = prepare_stored_password(&self.request, username, |prompt| async {
             let app = self.app.as_ref().ok_or(SshError::Closed)?;
             self.manager.prompt_for_responses(app, prompt).await
         })
         .await?;
-        let passwords = resolve_auth_passwords(
-            methods,
+        let mut passwords = resolve_auth_passwords(
+            &methods,
             &self.request,
             username,
             self.secrets,
@@ -852,6 +853,24 @@ impl SshAuthenticator for ManagerAuthenticator<'_> {
             }?;
             if result {
                 return Ok(true);
+            }
+            // Upstream 30347a61: after a partially accepted factor, follow the
+            // server into keyboard-interactive even when the profile planned none.
+            if context.last_failure_was_partial_success()
+                && context
+                    .remaining_auth_methods()
+                    .iter()
+                    .any(|name| name == "keyboard-interactive")
+                && !remaining
+                    .iter()
+                    .any(|&index| auth_method_name(&methods[index]) == "keyboard-interactive")
+            {
+                methods.push(AuthMethodRef::KeyboardInteractive {
+                    password: None,
+                    secret_ref: None,
+                });
+                passwords.values.push(None);
+                remaining.push(methods.len() - 1);
             }
         }
         // An unreadable store may contain a password that never became a candidate.
@@ -2588,17 +2607,22 @@ fn parse_x11_display(display: &str, windows: bool) -> X11Address {
     if display.starts_with('/') {
         return X11Address::Unix(display.into());
     }
-    // Preserve 14e2d60's greedy JS regex, including its wildcard separator and
-    // default on a missing match. JS's non-Unicode dot matches one UTF-16 unit.
+    // Preserve upstream 467ce8eb's JS regex `^(.+)?:(\d+)(?:\.(\d+))?$`
+    // (b67c0973): the host and the screen number are optional and the
+    // separator is a literal dot. JS's dot excludes line terminators; `$`
+    // matches only at the end. A non-matching value falls back to display 0
+    // on the platform default host.
     static SPEC: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    let spec = SPEC.get_or_init(|| regex::Regex::new(
-        r"\A([^\n\r\u{2028}\u{2029}]+):([0-9]+)[^\n\r\u{2028}\u{2029}\u{10000}-\u{10ffff}]([0-9]+)\z",
-    ).expect("fixed upstream DISPLAY regex"));
+    let spec = SPEC.get_or_init(|| {
+        regex::Regex::new(r"\A([^\n\r\u{2028}\u{2029}]+)?:([0-9]+)(?:\.([0-9]+))?\z")
+            .expect("fixed upstream DISPLAY regex")
+    });
     let captures = spec.captures(display);
     let host = captures
         .as_ref()
-        .map_or(if windows { "localhost" } else { "unix" }, |c| {
-            c.get(1).unwrap().as_str()
+        .and_then(|c| c.get(1))
+        .map_or(if windows { "localhost" } else { "unix" }, |host| {
+            host.as_str()
         });
     let number = captures
         .as_ref()
@@ -5025,6 +5049,147 @@ mod tests {
             if mode != "empty update" {
                 disconnect.unwrap();
             }
+            tokio::time::timeout(Duration::from_secs(5), server)
+                .await
+                .unwrap()
+                .unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn manager_authenticator_adds_keyboard_interactive_after_partial_success() {
+        // Upstream 30347a61: when the server accepts a factor with "partial
+        // success" and asks for keyboard-interactive, the client follows even
+        // though the profile planned no further keyboard-interactive candidate.
+        // A plain rejection that merely advertises keyboard-interactive must not
+        // add one. The vendored russh server only transmits the partial flag from
+        // its keyboard-interactive reply path, so the first factor here is a
+        // keyboard-interactive round that the server partially accepts.
+        use russh::{server, MethodKind, MethodSet};
+        struct Client;
+        impl russh::client::Handler for Client {
+            type Error = russh::Error;
+            async fn check_server_key(
+                &mut self,
+                _: &russh::keys::PublicKey,
+            ) -> Result<bool, Self::Error> {
+                Ok(true)
+            }
+        }
+        struct Server {
+            calls: Arc<Mutex<Vec<&'static str>>>,
+            partial: bool,
+        }
+        impl server::Handler for Server {
+            type Error = russh::Error;
+            async fn auth_none(&mut self, _: &str) -> Result<server::Auth, Self::Error> {
+                self.calls.lock().unwrap().push("none");
+                Ok(server::Auth::Reject {
+                    proceed_with_methods: Some(MethodSet::from(
+                        &[MethodKind::KeyboardInteractive][..],
+                    )),
+                    partial_success: false,
+                })
+            }
+            async fn auth_keyboard_interactive<'a>(
+                &'a mut self,
+                _: &str,
+                _: &str,
+                _: Option<server::Response<'a>>,
+            ) -> Result<server::Auth, Self::Error> {
+                let mut calls = self.calls.lock().unwrap();
+                calls.push("keyboard-interactive");
+                let rounds = calls
+                    .iter()
+                    .filter(|call| **call == "keyboard-interactive")
+                    .count();
+                Ok(if rounds == 1 {
+                    server::Auth::Reject {
+                        proceed_with_methods: Some(MethodSet::from(
+                            &[MethodKind::KeyboardInteractive][..],
+                        )),
+                        partial_success: self.partial,
+                    }
+                } else {
+                    server::Auth::Accept
+                })
+            }
+        }
+        for partial in [true, false] {
+            let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+                .await
+                .unwrap();
+            let address = listener.local_addr().unwrap();
+            let mut config = server::Config::default();
+            config.auth_rejection_time = Duration::ZERO;
+            config.auth_rejection_time_initial = Some(Duration::ZERO);
+            config.keys.push(
+                russh::keys::PrivateKey::random(
+                    &mut rand::rngs::OsRng,
+                    russh::keys::Algorithm::Ed25519,
+                )
+                .unwrap(),
+            );
+            let calls = Arc::new(Mutex::new(Vec::new()));
+            let observed = calls.clone();
+            let server = tokio::spawn(async move {
+                let (socket, _) = listener.accept().await.unwrap();
+                let result =
+                    server::run_stream(Arc::new(config), socket, Server { calls, partial })
+                        .await
+                        .unwrap()
+                        .await;
+                assert!(
+                    result.is_ok()
+                        || matches!(result, Err(russh::Error::IO(ref error)) if error.kind() == std::io::ErrorKind::UnexpectedEof)
+                );
+            });
+            let mut handle =
+                russh::client::connect(Arc::new(russh::client::Config::default()), address, Client)
+                    .await
+                    .unwrap();
+            let directory = tempdir().unwrap();
+            let secrets = SecretState::default();
+            let credentials = CredentialState::with_store(Arc::new(TestCredentialStore::default()));
+            let authenticator = authenticator_for(
+                directory.path(),
+                &secrets,
+                &credentials,
+                vec![AuthMethodRef::KeyboardInteractive {
+                    password: None,
+                    secret_ref: None,
+                }],
+            );
+            let mut context = super::engine::RusshAuthContext::new(&mut handle);
+            let result = tokio::time::timeout(
+                Duration::from_secs(5),
+                authenticator.authenticate(&mut context, "alice", &[]),
+            )
+            .await
+            .unwrap();
+            if partial {
+                assert!(
+                    matches!(result, Ok(true)),
+                    "partial success: {result:?}; observed {:?}",
+                    observed.lock().unwrap()
+                );
+                assert_eq!(
+                    *observed.lock().unwrap(),
+                    vec!["none", "keyboard-interactive", "keyboard-interactive"]
+                );
+            } else {
+                assert!(
+                    !matches!(result, Ok(true)),
+                    "plain rejection must not add keyboard-interactive: {result:?}"
+                );
+                assert_eq!(
+                    *observed.lock().unwrap(),
+                    vec!["none", "keyboard-interactive"]
+                );
+            }
+            let _ = handle
+                .disconnect(russh::Disconnect::ByApplication, "fixture done", "")
+                .await;
             tokio::time::timeout(Duration::from_secs(5), server)
                 .await
                 .unwrap()

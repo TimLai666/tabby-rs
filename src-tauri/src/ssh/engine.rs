@@ -125,6 +125,13 @@ pub trait SshAuthContext: Send {
     fn private_key_was_accepted(&self) -> bool {
         false
     }
+    /// Whether the most recent failure carried SSH `partial success`: the
+    /// server accepted that method but requires another factor. Upstream
+    /// `30347a61` then adds a keyboard-interactive candidate when the server
+    /// asks for it and none remains.
+    fn last_failure_was_partial_success(&self) -> bool {
+        false
+    }
     async fn authenticate_agent(
         &mut self,
         username: &str,
@@ -384,6 +391,7 @@ pub(super) struct RusshAuthContext<'a, H: russh::client::Handler> {
     handle: &'a mut russh::client::Handle<H>,
     private_key_accepted: bool,
     remaining_methods: Vec<String>,
+    partial_success: bool,
 }
 
 impl<'a, H: russh::client::Handler> RusshAuthContext<'a, H> {
@@ -392,6 +400,7 @@ impl<'a, H: russh::client::Handler> RusshAuthContext<'a, H> {
             handle,
             private_key_accepted: false,
             remaining_methods: Vec::new(),
+            partial_success: false,
         }
     }
 
@@ -403,10 +412,12 @@ impl<'a, H: russh::client::Handler> RusshAuthContext<'a, H> {
 
     fn remember_result(&mut self, result: &russh::client::AuthResult) {
         if let russh::client::AuthResult::Failure {
-            remaining_methods, ..
+            remaining_methods,
+            partial_success,
         } = result
         {
             self.remember_methods(remaining_methods);
+            self.partial_success = *partial_success;
         }
     }
 
@@ -415,10 +426,12 @@ impl<'a, H: russh::client::Handler> RusshAuthContext<'a, H> {
         response: russh::client::KeyboardInteractiveAuthResponse,
     ) -> Result<KeyboardInteractiveResponse, SshError> {
         if let russh::client::KeyboardInteractiveAuthResponse::Failure {
-            remaining_methods, ..
+            remaining_methods,
+            partial_success,
         } = &response
         {
             self.remember_methods(remaining_methods);
+            self.partial_success = *partial_success;
         }
         map_keyboard_interactive(response)
     }
@@ -479,6 +492,10 @@ where
 
     fn private_key_was_accepted(&self) -> bool {
         self.private_key_accepted
+    }
+
+    fn last_failure_was_partial_success(&self) -> bool {
+        self.partial_success
     }
 
     async fn authenticate_agent(

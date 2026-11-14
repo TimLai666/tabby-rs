@@ -22,7 +22,14 @@ function run (text) {
         { module, exports: module.exports, require: id => { assert.equal(id, 'rxjs'); return { Subject } }, Error, Date, Uint8Array, Array, String })
     return module.exports
 }
-const Session = run("const { Subject } = require('rxjs');" + cls(source('tabby-tauri/src/ssh/sftp.ts'), 'TauriSftpSession') + ';module.exports=TauriSftpSession')
+function fn (text, name) {
+    const tree = ts.createSourceFile('source.ts', text, ts.ScriptTarget.Latest, true)
+    const node = tree.statements.find(x => ts.isFunctionDeclaration(x) && x.name?.text === name)
+    assert.ok(node, `${name} must exist`)
+    return ts.createPrinter().printNode(ts.EmitHint.Unspecified, node, tree)
+}
+const sftpSource = source('tabby-tauri/src/ssh/sftp.ts')
+const Session = run("const { Subject } = require('rxjs');" + fn(sftpSource, 'describeTransferError') + cls(sftpSource, 'TauriSftpSession') + ';module.exports=TauriSftpSession')
 
 function transferFixture (chunks) {
     const events = []
@@ -65,6 +72,27 @@ await check('a non-Error rejection is stringified into the status', async () => 
     assert.deepEqual(events, [['status', 'disk full'], ['cancel']])
 })
 
+await check('a serialized native AppError shows its details, not [object Object]', async () => {
+    const session = await Session.open({ invoke: async command => {
+        // The real IPC rejection is the serde form of AppError: { code, details }.
+        if (command === 'sftp.write') { throw { code: 'io', details: 'Permission denied' } } // eslint-disable-line no-throw-literal
+        return { id: 'transfer-4', name: 'a.bin' }
+    } }, 'ssh-id')
+    const { transfer, events } = transferFixture([new Uint8Array([1])])
+    await assert.rejects(session.upload('/data/a.bin', transfer))
+    assert.deepEqual(events, [['status', 'Permission denied'], ['cancel']])
+})
+
+await check('a code-only native error falls back to its code', async () => {
+    const session = await Session.open({ invoke: async command => {
+        if (command === 'sftp.write') { throw { code: 'closed' } } // eslint-disable-line no-throw-literal
+        return { id: 'transfer-5', name: 'a.bin' }
+    } }, 'ssh-id')
+    const { transfer, events } = transferFixture([new Uint8Array([1])])
+    await assert.rejects(session.upload('/data/a.bin', transfer))
+    assert.deepEqual(events, [['status', 'closed'], ['cancel']])
+})
+
 await check('a successful upload never sets a status', async () => {
     const session = await Session.open({ invoke: async () => ({ id: 'transfer-3', name: 'a.bin' }) }, 'ssh-id')
     const { transfer, events } = transferFixture([new Uint8Array([1, 2, 3]), new Uint8Array([4, 5, 6])])
@@ -73,4 +101,4 @@ await check('a successful upload never sets a status', async () => {
 })
 
 if (failures.length) { console.error(`SFTP upload errors: ${failures.length} failed`); process.exit(1) }
-console.log('SFTP upload errors: 3 passed; native IPC is simulated')
+console.log('SFTP upload errors: 5 passed; native IPC is simulated')

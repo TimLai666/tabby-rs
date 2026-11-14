@@ -204,7 +204,7 @@ async function runAllTests () {
         console.log('  PASS: config mutation second call uses latest')
     }
 
-    // 9. automatic auth: agent, keys, keyboard-interactive, then stored password (upstream 467ce8eb order)
+    // 9. automatic auth: agent, keys, keyboard-interactive, then stored password (upstream 41c242ad order)
     {
         const profile = { id: 'target', options: { host: 'h', port: 22, user: 'u', input: {}, privateKeys: ['/key1'], forwardedPorts: [], keepaliveInterval: 0, keepaliveCountMax: 0, jumpHost: null, auth: null } }
         const config = { store: { ssh: { agentType: 'auto', agentPath: null, x11Display: null } } }
