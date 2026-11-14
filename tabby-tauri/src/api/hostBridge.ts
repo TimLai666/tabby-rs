@@ -981,6 +981,14 @@ export interface HostRequestMap {
         request: Record<string, never>
         response: null
     }
+    'window.flashFrame': {
+        request: { flash: boolean }
+        response: null
+    }
+    'window.canHideOnBlur': {
+        request: Record<string, never>
+        response: { anyWindowFocused: boolean, enabled: boolean }
+    }
     'window.minimize': {
         request: Record<string, never>
         response: null

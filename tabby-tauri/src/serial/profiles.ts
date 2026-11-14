@@ -58,16 +58,17 @@ export class TauriSerialProfilesService extends QuickConnectProfileProvider<Taur
         return profile.options?.port ?? ''
     }
 
+    // Mirrors upstream tabby-serial c9a7a54f: `port@baud` or `port:baud`,
+    // an unparsable rate falls back to 115200.
     quickConnect (query: string): PartialProfile<TauriSerialProfile> {
-        let port = query.trim()
+        let port = query
         let baudRate = 115200
-        const separator = port.lastIndexOf('@')
-        if (separator > 0) {
-            const parsed = Number(port.slice(separator + 1))
-            if (Number.isInteger(parsed) && parsed > 0) {
-                baudRate = parsed
-                port = port.slice(0, separator)
-            }
+        if (query.includes('@')) {
+            baudRate = parseInt(port.split('@')[1]) || baudRate
+            port = port.split('@')[0]
+        } else if (query.includes(':')) {
+            baudRate = parseInt(port.split(':')[1]) || baudRate
+            port = port.split(':')[0]
         }
         return {
             name: query,
@@ -80,6 +81,8 @@ export class TauriSerialProfilesService extends QuickConnectProfileProvider<Taur
         if (!profile.options.port) {
             return null
         }
-        return `${profile.options.port}@${profile.options.baudRate ?? 115200}`
+        // Like upstream, the default rate renders bare and parses back to 115200.
+        const { port, baudRate } = profile.options
+        return baudRate && baudRate !== 115200 ? `${port}@${baudRate}` : port
     }
 }

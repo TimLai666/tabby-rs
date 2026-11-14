@@ -55,6 +55,10 @@ export class TauriHostWindowService extends HostWindowService {
         void this.invoke('window.minimize', {})
     }
 
+    flashFrame (): void {
+        void this.invoke('window.flashFrame', { flash: true }).catch(() => null)
+    }
+
     isMaximized (): boolean {
         return this.state.maximized
     }
@@ -106,6 +110,7 @@ export class TauriHostWindowService extends HostWindowService {
                 this.state.focused = focused
                 void this.refreshState()
                 if (focused) {
+                    void this.invoke('window.flashFrame', { flash: false }).catch(() => null)
                     this.windowFocused.next()
                 }
             }),

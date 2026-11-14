@@ -72,9 +72,20 @@ export class TauriDesktopIntegrationService {
             }
             const appearance = this.config.store.appearance
             if (appearance.dock !== 'off' && appearance.dockHideOnBlur) {
-                void this.bridge.invoke('window.applyState', { visible: false })
+                void this.hideOnBlurIfIdle()
             }
         })
+    }
+
+    private async hideOnBlurIfIdle (): Promise<void> {
+        try {
+            const { anyWindowFocused, enabled } = await this.bridge.invoke('window.canHideOnBlur', {})
+            if (!anyWindowFocused && enabled) {
+                await this.bridge.invoke('window.applyState', { visible: false })
+            }
+        } catch (error) {
+            console.info('Could not hide the docked window on blur:', error)
+        }
     }
 
     private async registerGlobalHotkey (): Promise<void> {

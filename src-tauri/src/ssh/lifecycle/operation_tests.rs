@@ -108,7 +108,6 @@ async fn pending_operation_emits_data_and_extended_data_in_order() {
         let Fixture {
             reader,
             pending,
-            channel_closed,
             server,
             ..
         } = &mut f;
@@ -135,19 +134,11 @@ async fn pending_operation_emits_data_and_extended_data_in_order() {
             release.send(true).unwrap();
         };
         let (result, ()) = tokio::join!(
-            run_control(
-                reader,
-                pending,
-                channel_closed,
-                &mut input_task,
-                operation,
-                emit
-            ),
+            run_control(reader, pending, &mut input_task, operation, emit),
             driver
         );
         assert!(result);
         assert!(rx.try_recv().is_err(), "no unexpected extra output");
-        assert!(!f.channel_closed);
         f.finish().await;
     })
     .await
@@ -185,14 +176,7 @@ async fn eof_during_pending_operation_drains_output_and_ends_without_completion(
         let (emit, mut rx) = collector();
         let result = tokio::time::timeout(
             STEP,
-            run_control(
-                &mut f.reader,
-                &mut f.pending,
-                &mut f.channel_closed,
-                &mut task,
-                operation,
-                emit,
-            ),
+            run_control(&mut f.reader, &mut f.pending, &mut task, operation, emit),
         )
         .await
         .expect("EOF must end the helper promptly while the operation is pending");
@@ -218,8 +202,9 @@ async fn eof_during_pending_operation_drains_output_and_ends_without_completion(
     .unwrap();
 }
 
+// Upstream 9e7a251b ends the shell on CHANNEL_CLOSE even without CHANNEL_EOF.
 #[tokio::test]
-async fn remote_close_during_pending_operation_stops_input_and_retains_operation() {
+async fn remote_close_during_pending_operation_drains_output_and_ends_without_completion() {
     tokio::time::timeout(CASE, async {
         let mut f = Fixture::with_window(1).await;
         let id = f.id;
@@ -236,46 +221,41 @@ async fn remote_close_during_pending_operation_stops_input_and_retains_operation
                 .await
                 .is_err()
         );
+        f.pending.push_back(ChannelMsg::Data {
+            data: CryptoVec::from_slice(b"buffered"),
+        });
+        f.server
+            .data(id, CryptoVec::from_slice(b"remote"))
+            .await
+            .unwrap();
+        f.server.close(id).await.unwrap();
         let (operation, release, completed) = pending_operation();
-        let (emit, _rx) = collector();
-        let Fixture {
-            reader,
-            pending,
-            channel_closed,
-            server,
-            closed,
-            ..
-        } = &mut f;
-        let driver = async {
-            server.close(id).await.unwrap();
-            tokio::time::timeout(STEP, input.closed())
-                .await
-                .expect("remote CLOSE must stop input");
-            let ack = tokio::time::timeout(STEP, closed.recv())
-                .await
-                .expect("peer must receive the CLOSE acknowledgement");
-            assert_eq!(ack, Some(id));
-            assert!(!release.is_closed(), "operation must remain pending");
-            assert!(!completed.load(Ordering::SeqCst));
-            release.send(true).unwrap();
-        };
-        let (result, ()) = tokio::join!(
-            run_control(reader, pending, channel_closed, &mut task, operation, emit),
-            driver
+        let (emit, mut rx) = collector();
+        let result = tokio::time::timeout(
+            STEP,
+            run_control(&mut f.reader, &mut f.pending, &mut task, operation, emit),
+        )
+        .await
+        .expect("CLOSE without EOF must end the helper promptly while the operation is pending");
+        assert!(!result, "CLOSE must end the shell");
+        assert_data(rx.try_recv().expect("buffered output first"), b"buffered");
+        assert_data(rx.try_recv().expect("remote output second"), b"remote");
+        assert!(rx.try_recv().is_err());
+        assert!(
+            !completed.load(Ordering::SeqCst),
+            "operation must not complete"
         );
-        assert!(result, "operation result must be preserved after CLOSE");
-        assert!(completed.load(Ordering::SeqCst));
-        assert!(f.channel_closed);
+        assert!(release.is_closed(), "operation must be dropped");
+        assert!(input.is_closed(), "input must be stopped");
         assert!(write_reply.await.is_err(), "blocked input waiter released");
         for reply in queued {
             assert!(reply.await.is_err());
         }
         assert!(blocked_send.await.is_err(), "full-queue sender released");
-        let another = tokio::time::timeout(STEP, f.handle.channel_open_session())
+        let ack = tokio::time::timeout(STEP, f.closed.recv())
             .await
-            .expect("transport must remain usable")
-            .unwrap();
-        another.close().await.unwrap();
+            .expect("peer must receive the CLOSE acknowledgement");
+        assert_eq!(ack, Some(id));
         drop(task);
         f.finish().await;
     })
@@ -294,7 +274,6 @@ async fn exit_status_and_signal_keep_pending_operation_and_input_alive() {
         let Fixture {
             reader,
             pending,
-            channel_closed,
             server,
             ..
         } = &mut f;
@@ -322,11 +301,10 @@ async fn exit_status_and_signal_keep_pending_operation_and_input_alive() {
             release.send(true).unwrap();
         };
         let (result, ()) = tokio::join!(
-            run_control(reader, pending, channel_closed, &mut task, operation, emit),
+            run_control(reader, pending, &mut task, operation, emit),
             driver
         );
         assert!(result);
-        assert!(!f.channel_closed);
         assert!(!input.is_closed());
         drop(task);
         f.finish().await;
@@ -348,7 +326,6 @@ async fn completed_operation_results_are_preserved_without_output() {
                     run_control(
                         &mut f.reader,
                         &mut f.pending,
-                        &mut f.channel_closed,
                         &mut task,
                         async move {
                             if yielding {
@@ -363,7 +340,6 @@ async fn completed_operation_results_are_preserved_without_output() {
                 .expect("completed operation must not hang without output");
                 assert_eq!(result, expected);
                 assert!(rx.try_recv().is_err());
-                assert!(!f.channel_closed);
             }
         }
         drop(task);
@@ -407,7 +383,6 @@ async fn emit_refusal_ends_pending_operation_and_stops_input() {
             run_control(
                 &mut f.reader,
                 &mut f.pending,
-                &mut f.channel_closed,
                 &mut task,
                 operation,
                 move |_| {

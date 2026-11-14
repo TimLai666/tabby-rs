@@ -1472,18 +1472,10 @@ impl SshManager {
         tauri::async_runtime::spawn(async move {
             let mut pending = pending;
             let mut sftp = None;
-            let mut channel_closed = false;
-            while let Some(event) = lifecycle::next_shell_event(
-                &mut reader,
-                &mut pending,
-                &mut controls,
-                &mut handle,
-                &mut channel_closed,
-            )
-            .await
+            while let Some(event) =
+                lifecycle::next_shell_event(&mut reader, &mut pending, &mut controls).await
             {
                 match event {
-                    lifecycle::ShellEvent::ChannelClosed => input_task.stop().await,
                     lifecycle::ShellEvent::Channel(message) => {
                         if !emit_channel_message(
                             &task_app,
@@ -1502,7 +1494,6 @@ impl SshManager {
                         if !lifecycle::run_control(
                             &mut reader,
                             &mut pending,
-                            &mut channel_closed,
                             &mut input_task,
                             handle_control(
                                 &mut handle,

@@ -241,6 +241,21 @@ await test('separate bridges keep their window snapshots isolated', async () => 
     assert.equal(b.calls.filter(call => call.command === 'window.getState').length, 1)
 })
 
+await test('flashFrame invokes window.flashFrame and focus clears it', async () => {
+    const win = makeWindow()
+    await settle()
+    const flashes = () => win.calls.filter(call => call.command === 'window.flashFrame').map(call => ({ ...call.request }))
+    win.service.flashFrame()
+    await settle()
+    assert.deepEqual(flashes(), [{ flash: true }])
+    win.emit('desktop:windowFocused', false)
+    await settle()
+    assert.deepEqual(flashes(), [{ flash: true }], 'losing focus does not clear')
+    win.emit('desktop:windowFocused', true)
+    await settle()
+    assert.deepEqual(flashes(), [{ flash: true }, { flash: false }], 'gaining focus clears the flash')
+})
+
 for (const result of cases) {
     if (result.ok) console.log(`PASS ${result.name}`)
     else console.error(`FAIL ${result.name}: ${result.error?.stack ?? result.error}`)

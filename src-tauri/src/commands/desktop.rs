@@ -283,6 +283,50 @@ pub fn window_minimize(
     window.minimize().map_err(io_error)
 }
 
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FlashFrameRequest {
+    pub flash: bool,
+}
+
+#[tauri::command]
+pub fn window_flash_frame(
+    window: tauri::WebviewWindow,
+    request: FlashFrameRequest,
+) -> Result<(), AppError> {
+    if !request.flash {
+        return window.request_user_attention(None).map_err(io_error);
+    }
+    if window.is_focused().unwrap_or(false) {
+        return Ok(());
+    }
+    window
+        .request_user_attention(Some(tauri::UserAttentionType::Informational))
+        .map_err(io_error)
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CanHideOnBlurResponse {
+    pub any_window_focused: bool,
+    pub enabled: bool,
+}
+
+#[tauri::command]
+pub fn window_dock_hide_check(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    _request: serde_json::Value,
+) -> Result<CanHideOnBlurResponse, AppError> {
+    Ok(CanHideOnBlurResponse {
+        any_window_focused: app
+            .webview_windows()
+            .values()
+            .any(|candidate| candidate.is_focused().unwrap_or(false)),
+        enabled: window.is_enabled().map_err(io_error)?,
+    })
+}
+
 #[tauri::command]
 pub fn window_start_dragging(
     window: tauri::WebviewWindow,

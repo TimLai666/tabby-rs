@@ -407,12 +407,14 @@
 - The production shell loop continues reading ordered output while a control
   request awaits its result. Real loopback SSH tests exercise the shared helper
   with generic pending operations: binary stdout/stderr, queued output before
-  EOF, operation cancellation, remote CLOSE acknowledgement with blocked input
-  and a full queue, retained transport, status/signal, and operation results.
-  Ready control results take priority over queued output and EOF. After stopping
-  input on EOF or failed output delivery, preserve an available reply with one
-  non-blocking check which ignores cooperative scheduling yields; genuinely pending
-  work is cancelled. Retain EOF for the outer loop when returning a ready result.
+  EOF or CLOSE, operation cancellation, remote CLOSE acknowledgement with blocked
+  input and a full queue, status/signal, and operation results. Remote CLOSE ends
+  the shell like EOF, following upstream `9e7a251b`.
+  Ready control results take priority over queued output, EOF, and CLOSE. After
+  stopping input on EOF, CLOSE, or failed output delivery, preserve an available
+  reply with one non-blocking check which ignores cooperative scheduling yields;
+  genuinely pending work is cancelled. Retain EOF or CLOSE for the outer loop when
+  returning a ready result.
   Failed output delivery always ends the loop. Native loopback tests verify actual
   SftpList validation and Close replies; deterministic oneshot tests verify readiness
   between polls and exhausted Tokio task budget. These checks establish native reply
@@ -620,20 +622,24 @@
   the fixture's diagnostic and round-trip terminal input, matching the original methods.
   The rejection check previously displayed a shell-channel error instead. These synthetic
   exchanges verify the channel, not execution of a remote shell after rejection.
-- Shell lifecycle follows the original shell method: EOF or transport disconnection ends
-  the shell; standalone CLOSE, exit status, and exit signal do not. The native event loop
-  drains queued output before observing transport completion, retains tab controls after
-  channel CLOSE, and registers sessions before spawning their reader to avoid stale entries
-  when EOF arrives immediately. Real loopback tests cover these events, buffered output,
-  a second channel after CLOSE, tab controls, and disconnection with or without prior CLOSE.
-  Queued closure is processed before controls. CLOSE cancels shell input and rejects
-  resizes without ending the transport or blocking tab closure.
-  The exact upstream methods with the locked binding verify seven reference scenarios;
-  these are method-level probes, not original desktop UI acceptance.
-  macOS desktop checks verify EOF termination, continued input after status/signal,
-  retained output and reconnect prompts on transport disconnect with or without prior
-  CLOSE, and closing a CLOSE-only tab without disrupting another SSH tab. SFTP and
-  forwarding teardown, transport backpressure, and other platforms still need acceptance.
+- Shell lifecycle follows upstream `9e7a251b`: EOF, remote channel CLOSE without EOF,
+  or transport disconnection ends the shell; exit status and exit signal do not. Servers
+  may send CLOSE without EOF, for example when a `sudo` child delays the PTY EOF.
+  russh 0.54.4 reports remote CLOSE by ending the channel receiver. The native event loop
+  delivers queued and buffered output before the end, keeps tab controls working until
+  then, and registers sessions before spawning their reader to avoid stale entries when
+  EOF arrives immediately. CLOSE stops shell input, acknowledges the peer, cancels a
+  pending control without a ready reply, and emits the same `ssh:exit` teardown as EOF.
+  Queued CLOSE is observed before ready controls. Real loopback tests cover EOF, CLOSE
+  without EOF after buffered output, status/signal without ending, and disconnection
+  with or without prior CLOSE.
+  Before `9e7a251b`, a CLOSE-only shell stayed open until transport completion; the
+  former reference probes and macOS desktop CLOSE-only checks covered that older rule
+  and do not accept the new one. macOS desktop checks verify EOF termination, continued
+  input after status/signal, and reconnect prompts on transport disconnect. Re-verify
+  CLOSE-only termination, its reconnect policy, and other open SSH tabs on the desktop.
+  SFTP and forwarding teardown, transport backpressure, and other platforms still need
+  acceptance.
 - PTY setup shares `request_shell_pty` between the manager and engine. It does not request
   approval or wait for a reply, so rejecting or ignoring PTY cannot prevent later shell
   requests. The exact `14e2d60` shell method with the locked binding also proceeds under
@@ -1442,26 +1448,37 @@
 - Tauri renderer directory checks go through the new `desktop.pathKind`
   command (`app/src/shims/mz-fs.ts`); the synchronous `fs` shim stays
   permissive so upstream's `usableCWD` does not drop working directories.
+- Ported to the native host with their own tests: SSH ends the shell on a
+  remote CHANNEL_CLOSE as well as EOF (`9e7a251b`, `src-tauri/src/ssh/lifecycle.rs`;
+  russh reports CLOSE by ending the receiver); blank configured passwords stay
+  candidates (`256f09dd`); agent authentication before disk keys in automatic
+  mode (`41c242ad`); per-profile SSH TERM with the upstream blank fallback
+  (`a8abcc0b`), all covered by `scripts/test-ssh-auth-candidates.mjs` and the
+  updated `test-ssh-agent-config.mjs`; serial quick connect `port@baud` /
+  `port:baud` with the bare default (`c9a7a54f`,
+  `scripts/test-serial-quick-connect.mjs` compares the upstream source);
+  SFTP upload errors set the transfer status before cancelling (`9e31ec6d`,
+  `scripts/test-sftp-upload-errors.mjs`); Linux tab-bar dragging on the top
+  `38px * --spaciness` strip of an open modal (`54869e10`,
+  `test-tauri-window-drag-region.mjs`); bell flashes the taskbar through
+  `window.flashFrame` / `request_user_attention`, cleared on focus
+  (`ea801300`); dock hide-on-blur asks `window.canHideOnBlur` so a native
+  dialog or another focused window keeps it visible (`798e7cca`,
+  `scripts/test-tauri-desktop-integration.mjs`). Native flash, dock hiding,
+  CLOSE-only shell teardown, and the serial/SSH flows above still need desktop
+  acceptance; the renderer fixtures simulate the IPC boundary.
 - Upstream changes made only in the Electron host or Node back ends still need
   native equivalents, each with its own test: WinSCP accepts `.ppk` keys without
-  conversion (`622c99b2`); SSH keeps the session open until the remote shell
-  exits (`9e7a251b`); blank configured/keychain passwords (`256f09dd`, the
-  native `tabby-tauri/src/ssh/session.ts` still uses truthy checks); chained
-  publickey + keyboard-interactive planning (`30347a61`); agent authentication
-  before disk keys for imported profiles (`41c242ad`); per-profile SSH TERM
-  (`a8abcc0b`, native session hardcodes `xterm-256color`); X11 display specs
-  without a screen number (`b67c0973`, compare with the native parser); serial
-  quick connect (`c9a7a54f`); SFTP upload error surfacing (`9e31ec6d`);
-  SSH config import without an explicit HostName (`084159c7`); forwarding
-  messages moved off the terminal (`a64ae78b`, decide against the native
-  `ssh:message` diagnostics); WSL `--cd ~` and guest cwd resolution
-  (`cdae0b6e`, `508dccc0`, the native shell provider does not expose
-  `homeDirArgs`); directory-only session cwd (`9f51fcce`); bundled ConPTY
-  (`4004cc51`, decide whether the Rust PTY path needs it); tab bar dragging
-  while a dialog is open (`54869e10`); bell flashes the taskbar/dock icon
-  (`ea801300`); docked window stays visible during native dialogs (`798e7cca`);
-  Windows 11 Acrylic (`6193527b`); pwsh MSIX detection (`2af22b99`);
-  CLI subcommand crash fix (`b326213a`). Track each as its own slot.
+  conversion (`622c99b2`); chained publickey + keyboard-interactive planning
+  (`30347a61`); X11 display specs without a screen number (`b67c0973`, compare
+  with the native parser); SSH config import without an explicit HostName
+  (`084159c7`, check `src-tauri/src/ssh/import.rs`); forwarding messages moved
+  off the terminal (`a64ae78b`, decide against the native `ssh:message`
+  diagnostics); WSL `--cd ~` and guest cwd resolution (`cdae0b6e`, `508dccc0`,
+  the native shell provider does not expose `homeDirArgs`); directory-only
+  session cwd (`9f51fcce`); bundled ConPTY (`4004cc51`, decide whether the Rust
+  PTY path needs it); Windows 11 Acrylic (`6193527b`); pwsh MSIX detection
+  (`2af22b99`); CLI subcommand crash fix (`b326213a`). Track each as its own slot.
 
 ## Pending — lint from the shared Main checkout
 

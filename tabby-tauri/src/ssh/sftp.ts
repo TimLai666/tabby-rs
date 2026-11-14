@@ -78,6 +78,8 @@ export class TauriSftpSession {
             await transfer.closeAsync()
             return result
         } catch (error) {
+            // Upstream 9e31ec6d: show why the upload stopped instead of a bare cancellation.
+            transfer.setStatus(error instanceof Error ? error.message : String(error))
             transfer.cancel()
             await this.bridge.invoke('sftp.cancelTransfer', { id: this.id, transferId: descriptor.id }).catch(() => undefined)
             throw error

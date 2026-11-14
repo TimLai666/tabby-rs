@@ -1,6 +1,6 @@
 use std::{collections::VecDeque, future::poll_fn, task::Poll};
 
-use russh::{client, ChannelMsg, ChannelReadHalf};
+use russh::{ChannelMsg, ChannelReadHalf};
 use tokio::sync::mpsc;
 
 use super::SshControl;
@@ -10,20 +10,17 @@ mod tests;
 
 pub(super) enum ShellEvent {
     Channel(ChannelMsg),
-    ChannelClosed,
     Control(SshControl),
 }
 
-pub(super) async fn next_shell_event<H: client::Handler>(
+pub(super) async fn next_shell_event(
     reader: &mut ChannelReadHalf,
     pending: &mut VecDeque<ChannelMsg>,
     controls: &mut mpsc::Receiver<SshControl>,
-    handle: &mut client::Handle<H>,
-    channel_closed: &mut bool,
 ) -> Option<ShellEvent> {
     loop {
         tokio::select! {
-            // Observe already queued closure before dispatching controls.
+            // Observe already queued output and closure before dispatching controls.
             biased;
             message = async {
                 if let Some(message) = pending.pop_front() {
@@ -31,27 +28,15 @@ pub(super) async fn next_shell_event<H: client::Handler>(
                 } else {
                     reader.wait().await
                 }
-            }, if !*channel_closed => match message {
-                // Upstream SSHShellSession ends on EOF, not channel CLOSE or status.
-                Some(ChannelMsg::Eof) => return None,
+            } => match message {
+                // Upstream SSHShellSession (9e7a251b) ends on EOF or channel CLOSE,
+                // since servers may send CLOSE without EOF. Status alone does not end it.
+                // A closed reader (transport disconnection) ends it after queued output.
+                Some(ChannelMsg::Eof | ChannelMsg::Close) | None => return None,
                 Some(ChannelMsg::ExitStatus { .. } | ChannelMsg::ExitSignal { .. }) => {},
-                Some(ChannelMsg::Close) | None => {
-                    *channel_closed = true;
-                    return Some(ShellEvent::ChannelClosed);
-                },
                 Some(message) => return Some(ShellEvent::Channel(message)),
             },
-            // Drain queued channel output before observing transport completion.
-            // After CLOSE, disable the exhausted reader and retain tab controls.
-            _ = &mut *handle, if *channel_closed => return None,
-            control = controls.recv() => match control {
-                // Reject resizing a removed shell while retaining transport controls.
-                Some(SshControl::Resize(_, sender))
-                    if *channel_closed => {
-                        let _ = sender.send(Err(super::SshError::Closed));
-                    },
-                other => return other.map(ShellEvent::Control),
-            },
+            control = controls.recv() => return control.map(ShellEvent::Control),
         }
     }
 }
@@ -59,7 +44,6 @@ pub(super) async fn next_shell_event<H: client::Handler>(
 pub(super) async fn run_control<F, E>(
     reader: &mut ChannelReadHalf,
     pending: &mut VecDeque<ChannelMsg>,
-    channel_closed: &mut bool,
     input_task: &mut super::input::InputTask,
     operation: F,
     mut emit: E,
@@ -80,28 +64,27 @@ where
                 } else {
                     reader.wait().await
                 }
-            }, if !*channel_closed => match message {
-                // Upstream SSHShellSession ends on EOF, not channel CLOSE or status.
-                Some(ChannelMsg::Eof) => {
+            } => match message {
+                // Upstream SSHShellSession (9e7a251b) ends on EOF or channel CLOSE.
+                // A closed reader (transport disconnection) ends it as well.
+                terminal @ (Some(ChannelMsg::Eof | ChannelMsg::Close) | None) => {
                     input_task.stop().await;
-                    // Completion may arrive while observing EOF or stopping input.
+                    // Completion may arrive while observing the end or stopping input.
                     // A ready Tokio reply must not look pending because of task budget.
                     if let Poll::Ready(result) = tokio::task::unconstrained(poll_fn(|cx| {
                         Poll::Ready(operation.as_mut().poll(cx))
                     }))
                     .await
                     {
-                        pending.push_front(ChannelMsg::Eof);
+                        // Retain the end for the outer loop; a closed reader repeats None.
+                        if let Some(message) = terminal {
+                            pending.push_front(message);
+                        }
                         return result;
                     }
                     return false;
                 }
                 Some(ChannelMsg::ExitStatus { .. } | ChannelMsg::ExitSignal { .. }) => {},
-                // Retain the transport and pending operation until it finishes.
-                Some(ChannelMsg::Close) | None => {
-                    *channel_closed = true;
-                    input_task.stop().await;
-                },
                 Some(message) => {
                     if !emit(message) {
                         input_task.stop().await;
