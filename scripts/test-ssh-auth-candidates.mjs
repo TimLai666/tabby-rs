@@ -157,4 +157,10 @@ for (const [term, expected] of [
     assert.equal(request.terminal.term, expected, `term ${JSON.stringify(term)}`)
 }
 
+// The Tauri SSH profile settings expose the field like upstream
+// sshProfileSettings.component.pug ("Terminal type", $TERM placeholder).
+const settings = fs.readFileSync(path.join(root, 'tabby-tauri/src/ssh/profileSettings.component.ts'), 'utf8')
+assert.match(settings, /<label>Terminal type<\/label>/, 'settings template labels the TERM field')
+assert.match(settings, /placeholder="xterm-256color" \[\(ngModel\)\]="profile\.options\.term"/, 'settings template binds profile.options.term')
+
 console.log('ssh auth candidate and TERM tests passed')

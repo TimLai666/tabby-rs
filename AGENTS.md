@@ -1484,10 +1484,11 @@
   backdrop-closable dialog (check thin/full on Linux before accepting);
   `window.canHideOnBlur` reads `is_enabled`, which may not reflect a native
   file dialog opened without a parent window (`dialog_open`), so 798e7cca's
-  dialog case is unverified; the custom TERM has no field in the Tauri SSH
-  profile settings yet (upstream `sshProfileSettings.component.pug`) and
+  dialog case is unverified; the Tauri SSH profile settings now expose the
+  "Terminal type" field like upstream `sshProfileSettings.component.pug`, but
   native `validate_request` still rejects TERM values over 64 characters or
-  with control characters, which upstream only trims. Every HostRequestMap
+  with control characters, which upstream only trims (an accepted difference
+  only once recorded in docs/release-acceptance.md). Every HostRequestMap
   key must resolve to a registered command; `scripts/test-host-command-registry.mjs`
   (in `test:tauri-platform`) enforces that after review found an unregistered
   `window.canHideOnBlur`.
@@ -1501,10 +1502,16 @@
   checks and confirms blank saves); forwarding messages moved
   off the terminal (`a64ae78b`, decide against the native `ssh:message`
   diagnostics); WSL `--cd ~` and guest cwd resolution (`cdae0b6e`, `508dccc0`,
-  the native shell provider does not expose `homeDirArgs`); directory-only
-  session cwd (`9f51fcce`); bundled ConPTY (`4004cc51`, decide whether the Rust
-  PTY path needs it); Windows 11 Acrylic (`6193527b`); pwsh MSIX detection
-  (`2af22b99`); CLI subcommand crash fix (`b326213a`). Track each as its own slot.
+  the native shell provider does not expose `homeDirArgs`); bundled ConPTY
+  (`4004cc51`, decide whether the Rust PTY path needs it); Windows 11 Acrylic
+  (`6193527b`); pwsh MSIX detection (`2af22b99`). Track each as its own slot.
+  Not owed: `b326213a` only de-duplicates `string-width`/`strip-ansi` in the
+  Electron yarn.lock for the Node CLI; the Tauri CLI is Rust. `9f51fcce`
+  (directory-only cwd) is covered by the shared `tabby-local` session: its
+  async check uses `desktop.pathKind`, its synchronous `isDirectorySync` is a
+  no-op through the permissive `fs` shim, and a spawn with an unusable cwd
+  fails in the native backend (`pty/backend.rs` `command.cwd`) and is printed
+  as "Could not start" by the shared catch; verify that message on a desktop.
 
 ## Pending — lint from the shared Main checkout
 

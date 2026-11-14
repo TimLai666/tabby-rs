@@ -23,6 +23,11 @@ import { TauriSshImportModalComponent } from './importModal.component'
             <input class="form-control" [(ngModel)]="profile.options.user" autocomplete="username">
         </div>
         <div class="form-group">
+            <label>Terminal type</label>
+            <input class="form-control" placeholder="xterm-256color" [(ngModel)]="profile.options.term" autocomplete="off">
+            <small class="form-text text-muted">Value of $TERM reported to the remote host (e.g. xterm-256color, vt100).</small>
+        </div>
+        <div class="form-group">
             <label>Authentication</label>
             <select class="form-control" [(ngModel)]="profile.options.auth">
                 <option [ngValue]="null">None</option>
