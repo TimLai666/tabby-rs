@@ -260,7 +260,12 @@ export class TauriPlatformService extends PlatformService {
     async listFonts (): Promise<string[]> {
         try {
             const fonts = await this.bridge.invoke('font.list', {})
-            return fonts.map(font => font.family)
+            // Hosts that report no monospace flags at all keep every family, so the picker never goes empty.
+            const reportsMonospace = fonts.some(font => typeof font.monospace === 'boolean')
+            const monospace = fonts.filter(font => !reportsMonospace || font.monospace === true)
+            // A host whose detector flags nothing as monospace still gets the full list.
+            const families = (monospace.length ? monospace : fonts).map(font => font.family)
+            return [...new Set(families)].sort((left, right) => left.localeCompare(right))
         } catch (error) {
             console.warn('Could not enumerate installed fonts', error)
             return []

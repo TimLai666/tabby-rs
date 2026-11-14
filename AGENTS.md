@@ -1446,10 +1446,6 @@
   only logs it; the settings UI and `TauriDockingService` never read
   `capabilities.docking`, so dock options still show. `always_on_top` is not
   applied. `window_toggle_quake` has no renderer caller.
-- Notifications: `notification.show` exists natively but nothing invokes it;
-  the shared code calls the web `Notification` API inside WebKitGTK, whose
-  permission state is unverified, and the "notify on activity" path has no
-  fallback or click-to-focus handler.
 - `hacks.disableGPU` is shown to every desktop platform but has no native
   effect; the Electron host passes `disable-gpu` and disables hardware
   acceleration. A Tauri equivalent sets `WEBKIT_DISABLE_COMPOSITING_MODE` or
@@ -1459,8 +1455,6 @@
 - Sleep inhibit: the Electron host holds `powerSaveBlocker` during SFTP
   transfers; the native host has no `org.freedesktop.login1` or ScreenSaver
   inhibit.
-- Font picker: native `font.rs` reports a `monospace` flag but `listFonts`
-  returns every family; upstream Linux lists `fc-list :spacing=mono` only.
 - `desktop_open_external` allows only http, https and mailto; upstream also
   allows ftp and asks before opening other app-specific schemes instead of
   rejecting them.
@@ -1472,6 +1466,30 @@
   unverified), window placement capture during a WM maximize (startup geometry
   section), Linux shell detection, clipboard text/html, CLI arguments, native
   file drops (drag gestures pending). WSL `homeDirArgs` is Windows-only.
+
+## Ported — Linux notifications and font picker (2026-11-14)
+
+- Notifications: `app/src/entry.tauri.ts` installs
+  `tabby-tauri/src/services/notification.ts` before Angular bootstrap. The shared
+  `new Notification(title, { body })` calls, including "Process completed" and the
+  "Tab activity" path, now invoke native `notification.show`. Bridge failures are
+  logged with `console.warn`, delivered through the web API's `error` event and
+  `onerror`, and never throw, so the in-app toast fallback in `tabContextMenu`
+  (which only caught a synchronous throw) no longer runs on native failure; a
+  successful send fires `show`. `scripts/test-tauri-notification.mjs` checks this
+  with a fake bridge only.
+- Notification click-to-focus is not implemented. tauri-plugin-notification v2 does
+  not deliver click events to the WebView on Linux, so click listeners are accepted
+  and never fire. The "Notify when done" selection behavior is unverified on Linux.
+- Notification display and permission are unverified on Linux. The adapter reports
+  `permission` as `granted` without asking the desktop notification service.
+- Font picker: `TauriPlatformService.listFonts` returns only families whose native
+  `monospace` flag is true when at least one family reports a flag. Without any flag,
+  or when the detector flags no family as monospace, it keeps every family so the
+  picker never goes empty. Output is sorted with `localeCompare` and de-duplicated.
+  `scripts/test-tauri-fonts.mjs` checks this with a fake bridge.
+- Font picker: the rendered picker on Linux is unverified. Also unverified is whether
+  the font-kit monospace flag selects the same families as upstream `fc-list :spacing=mono`.
 
 ## Pending — upstream sync to 467ce8eb (ports still owed to the native host)
 
