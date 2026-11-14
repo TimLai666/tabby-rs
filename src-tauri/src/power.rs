@@ -24,6 +24,9 @@ struct State<H> {
     last_id: u64,
     outstanding: BTreeSet<u64>,
     hold: Option<H>,
+    /// A native acquire is in flight outside the lock; later acquires wait
+    /// for it instead of starting a second one.
+    acquiring: bool,
 }
 
 pub struct PowerInhibitor<B: InhibitBackend> {
@@ -39,6 +42,7 @@ impl<B: InhibitBackend> PowerInhibitor<B> {
                 last_id: 0,
                 outstanding: BTreeSet::new(),
                 hold: None,
+                acquiring: false,
             }),
         }
     }
@@ -47,40 +51,53 @@ impl<B: InhibitBackend> PowerInhibitor<B> {
     /// A native failure still returns an id, so the caller's release stays
     /// balanced; the native hold is retried on the next acquire.
     pub fn acquire(&self) -> Result<u64, String> {
-        let mut state = self.lock();
-        if state.outstanding.len() >= MAX_OUTSTANDING_INHIBITS {
-            return Err(format!(
-                "too many outstanding power inhibits (limit {MAX_OUTSTANDING_INHIBITS})"
-            ));
-        }
-        if state.hold.is_none() {
-            match self.backend.acquire() {
+        let (id, needs_hold) = {
+            let mut state = self.lock();
+            if state.outstanding.len() >= MAX_OUTSTANDING_INHIBITS {
+                return Err(format!(
+                    "too many outstanding power inhibits (limit {MAX_OUTSTANDING_INHIBITS})"
+                ));
+            }
+            state.last_id += 1;
+            let id = state.last_id;
+            state.outstanding.insert(id);
+            let needs_hold = state.hold.is_none() && !state.acquiring;
+            if needs_hold {
+                state.acquiring = true;
+            }
+            (id, needs_hold)
+        };
+        if needs_hold {
+            // The native call (D-Bus connection, child process) runs outside
+            // the lock so other acquires and releases are not held up by it.
+            let result = self.backend.acquire();
+            let mut state = self.lock();
+            state.acquiring = false;
+            match result {
+                // Every id was released while the call was in flight: drop the
+                // fresh hold under the lock so no later acquire can interleave.
+                Ok(hold) if state.outstanding.is_empty() => drop(hold),
                 Ok(hold) => state.hold = Some(hold),
                 Err(error) => eprintln!("power inhibit unavailable: {error}"),
             }
         }
-        state.last_id += 1;
-        let id = state.last_id;
-        state.outstanding.insert(id);
         Ok(id)
     }
 
     /// Releases one id. Unknown or already released ids are ignored and return
-    /// false. The native hold is dropped once, when the last id is released.
+    /// false. The native hold is dropped once, when the last id is released,
+    /// and under the lock: a backend with a single process-wide state (Windows
+    /// `SetThreadExecutionState`) must see this release before any acquire
+    /// that follows it.
     pub fn release(&self, id: u64) -> bool {
-        let dropped_hold = {
-            let mut state = self.lock();
-            if !state.outstanding.remove(&id) {
-                return false;
-            }
-            if state.outstanding.is_empty() {
-                state.hold.take()
-            } else {
-                None
-            }
-        };
-        // Dropping outside the lock keeps slow native teardown from blocking acquires.
-        drop(dropped_hold);
+        let mut state = self.lock();
+        if !state.outstanding.remove(&id) {
+            return false;
+        }
+        if state.outstanding.is_empty() {
+            let hold = state.hold.take();
+            drop(hold);
+        }
         true
     }
 
@@ -361,6 +378,61 @@ mod tests {
     fn inhibitor() -> (PowerInhibitor<FakeBackend>, FakeBackend) {
         let backend = FakeBackend::default();
         (PowerInhibitor::new(backend.clone()), backend)
+    }
+
+    /// A backend whose acquire blocks until the test lets it continue, to
+    /// exercise releases that arrive while the native call is in flight.
+    #[derive(Clone)]
+    struct GatedBackend {
+        inner: FakeBackend,
+        started: std::sync::mpsc::Sender<()>,
+        proceed: Arc<std::sync::Mutex<std::sync::mpsc::Receiver<()>>>,
+    }
+
+    impl InhibitBackend for GatedBackend {
+        type Hold = FakeHold;
+
+        fn acquire(&self) -> Result<FakeHold, String> {
+            self.started.send(()).unwrap();
+            self.proceed.lock().unwrap().recv().unwrap();
+            self.inner.acquire()
+        }
+    }
+
+    #[test]
+    fn release_during_an_in_flight_acquire_drops_the_fresh_hold_and_runs_outside_the_lock() {
+        let inner = FakeBackend::default();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (proceed_tx, proceed_rx) = std::sync::mpsc::channel();
+        let inhibitor = Arc::new(PowerInhibitor::new(GatedBackend {
+            inner: inner.clone(),
+            started: started_tx,
+            proceed: Arc::new(std::sync::Mutex::new(proceed_rx)),
+        }));
+        let worker = {
+            let inhibitor = Arc::clone(&inhibitor);
+            std::thread::spawn(move || inhibitor.acquire().unwrap())
+        };
+        started_rx.recv().unwrap();
+        // The native call is blocked, yet the counter is usable: a second
+        // acquire does not start another native call and a release goes through.
+        let second = inhibitor.acquire().unwrap();
+        assert_eq!(inhibitor.outstanding(), 2);
+        assert!(inhibitor.release(second));
+        assert!(inhibitor.release(1));
+        assert_eq!(inhibitor.outstanding(), 0);
+        proceed_tx.send(()).unwrap();
+        let first = worker.join().unwrap();
+        assert_eq!(first, 1);
+        // Only the first acquire reached the backend; the second waited on it.
+        assert_eq!(inner.starts.load(Ordering::SeqCst), 1);
+        // Nothing is outstanding any more, so the late hold was dropped at once.
+        assert!(!inhibitor.is_holding());
+        assert_eq!(inner.releases.load(Ordering::SeqCst), 1);
+        // A new acquire starts a fresh native hold.
+        let third = inhibitor.acquire().unwrap();
+        proceed_tx.send(()).unwrap_or(());
+        let _ = third;
     }
 
     #[test]
