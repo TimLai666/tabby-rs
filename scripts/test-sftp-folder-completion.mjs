@@ -22,7 +22,7 @@ function classText(source, name) {
 const core=run(fs.readFileSync(path.join(root,'tabby-core/src/api/platform.ts'),'utf8'))
 const nativeSource=fs.readFileSync(path.join(root,'tabby-tauri/src/services/platform.service.ts'),'utf8')
 const originalSource=execFileSync('git',['show','14e2d60:tabby-electron/src/services/platform.service.ts'],{cwd:root,encoding:'utf8'})
-const Native=run(classText(nativeSource,'TauriDirectoryDownload')+'; module.exports=TauriDirectoryDownload',{DirectoryDownload:core.DirectoryDownload})
+const Native=run(classText(nativeSource,'TransferPowerInhibit')+'\n'+classText(nativeSource,'TauriDirectoryDownload')+'; module.exports=TauriDirectoryDownload',{DirectoryDownload:core.DirectoryDownload})
 const Original=run(classText(originalSource,'ElectronDirectoryDownload')+'; module.exports=ElectronDirectoryDownload',{DirectoryDownload:core.DirectoryDownload})
 const original=new Original('/tmp','folder',15,{powerSaveBlocker:{start:()=>0,stop:()=>{}}},{})
 const native=new Native({},'/tmp','folder',15)
