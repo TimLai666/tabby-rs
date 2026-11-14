@@ -202,14 +202,35 @@ pub fn global_hotkey_supported(
 /// Parses the first `major.minor` pair in `plasmashell --version` output, matching
 /// the regex used by `Application.getPlasmaVersion` in app/lib/app.ts.
 pub fn parse_plasma_version(output: &str) -> Option<(u32, u32)> {
-    output
-        .split(|character: char| !(character.is_ascii_digit() || character == '.'))
-        .find_map(|token| {
-            let mut parts = token.split('.');
-            let major = parts.next()?.parse::<u32>().ok()?;
-            let minor = parts.next()?.parse::<u32>().ok()?;
-            Some((major, minor))
-        })
+    // Same result as upstream's `/(\d+)\.(\d+)/`: the first digit run that is
+    // followed by a dot and another digit run, wherever it starts.
+    let bytes = output.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        if !bytes[index].is_ascii_digit() {
+            index += 1;
+            continue;
+        }
+        let start = index;
+        while index < bytes.len() && bytes[index].is_ascii_digit() {
+            index += 1;
+        }
+        let major = &output[start..index];
+        if bytes.get(index) == Some(&b'.') && bytes.get(index + 1).is_some_and(u8::is_ascii_digit) {
+            let minor_start = index + 1;
+            let mut minor_end = minor_start;
+            while minor_end < bytes.len() && bytes[minor_end].is_ascii_digit() {
+                minor_end += 1;
+            }
+            if let (Ok(major), Ok(minor)) = (
+                major.parse::<u32>(),
+                output[minor_start..minor_end].parse::<u32>(),
+            ) {
+                return Some((major, minor));
+            }
+        }
+    }
+    None
 }
 
 /// Reads the Plasma shell version once per process. Upstream spawns
@@ -247,9 +268,10 @@ pub fn global_hotkey_hides_windows(
 }
 
 /// How `desktop_open_external` treats a URL scheme. Upstream
-/// tabby-electron/src/services/platform.service.ts opens the safe set directly,
-/// asks before any other scheme, and never opens file or javascript URLs.
-/// The `data` scheme is refused here too, as a deliberate extension.
+/// tabby-electron/src/services/platform.service.ts opens the safe set directly
+/// and asks before any other scheme, including file and javascript. This host
+/// refuses file, javascript and data without asking: a stricter, deliberate
+/// difference recorded in AGENTS.md and pending an approved exception.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExternalUrlPolicy {
     Open,
@@ -443,6 +465,8 @@ mod tests {
         assert_eq!(parse_plasma_version("plasmashell 6.6.0\n"), Some((6, 6)));
         assert_eq!(parse_plasma_version("plasmashell 6.5"), Some((6, 5)));
         assert_eq!(parse_plasma_version("Plasma v7.0.1"), Some((7, 0)));
+        assert_eq!(parse_plasma_version("x.6.6"), Some((6, 6)));
+        assert_eq!(parse_plasma_version("plasmashell 6"), None);
         assert_eq!(parse_plasma_version("no version here"), None);
         assert_eq!(parse_plasma_version(""), None);
     }

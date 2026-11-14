@@ -127,17 +127,33 @@ export class TauriDesktopIntegrationService {
             }
             return true
         }
-        const state = await this.bridge.invoke('window.getState', {})
-        if (!state.capabilities.globalHotkey) {
-            console.info('Global toggle shortcut skipped: this display session does not support global shortcuts')
+        let supported = false
+        try {
+            const state = await this.bridge.invoke('window.getState', {})
+            supported = state.capabilities.globalHotkey
+        } catch (error) {
+            // Treat an unknown capability as unsupported so the caller still
+            // clears older shortcuts instead of leaving them registered.
+            console.info('Global toggle shortcut skipped: window state is unavailable', error)
             return false
         }
-        return true
+        if (!supported) {
+            console.info('Global toggle shortcut skipped: this display session does not support global shortcuts')
+        }
+        return supported
     }
 
     private async applyAppearance (): Promise<void> {
         const appearance = this.config.store.appearance
-        const state = await this.bridge.invoke('window.getState', {})
+        // Appearance is best effort; a failed state read must not abort
+        // initialize() and the progress/hotkey wiring that follows it.
+        const state = await this.bridge.invoke('window.getState', {}).catch((error: unknown) => {
+            console.info('Window appearance not applied: window state is unavailable', error)
+            return null
+        })
+        if (!state) {
+            return
+        }
         const patch: WindowStatePatch = {}
 
         const mode = appearance.colorSchemeMode

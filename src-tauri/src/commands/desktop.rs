@@ -450,7 +450,11 @@ pub fn window_toggle_quake(
 /// always-on-top state stands in for upstream's docked-on-top check, because
 /// window_set_docking is the only caller that sets always-on-top in this host.
 fn toggle_all_windows(app: &tauri::AppHandle) {
-    let windows: Vec<tauri::WebviewWindow> = app.webview_windows().into_values().collect();
+    // `webview_windows()` is a HashMap; present windows in creation order
+    // (`main`, then `window-N` by number) so the newest window ends up focused,
+    // as upstream iterates `this.windows` in creation order.
+    let mut windows: Vec<tauri::WebviewWindow> = app.webview_windows().into_values().collect();
+    windows.sort_by_key(|window| window_creation_order(window.label()));
     let any_focused_visible = windows
         .iter()
         .any(|window| window.is_focused().unwrap_or(false) && window.is_visible().unwrap_or(false));
@@ -473,6 +477,33 @@ fn toggle_all_windows(app: &tauri::AppHandle) {
             let _ = window.unminimize();
             let _ = window.set_focus();
         }
+    }
+}
+
+/// Orders window labels by creation: `main` first, then `window-N` by N; any
+/// other label sorts after them by name.
+fn window_creation_order(label: &str) -> (u8, u64, String) {
+    if label == "main" {
+        return (0, 0, String::new());
+    }
+    match label
+        .strip_prefix("window-")
+        .and_then(|number| number.parse::<u64>().ok())
+    {
+        Some(number) => (1, number, String::new()),
+        None => (2, 0, label.to_owned()),
+    }
+}
+
+#[cfg(test)]
+mod toggle_order_tests {
+    use super::window_creation_order;
+
+    #[test]
+    fn main_first_then_numbered_windows_then_other_labels() {
+        let mut labels = vec!["window-10", "other", "window-2", "main", "alpha"];
+        labels.sort_by_key(|label| window_creation_order(label));
+        assert_eq!(labels, ["main", "window-2", "window-10", "alpha", "other"]);
     }
 }
 

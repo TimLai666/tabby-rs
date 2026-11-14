@@ -49,7 +49,10 @@ async function makeService (appearance, hideCheck, options = {}) {
         listen: async (event, callback) => { listeners.set(event, callback); return () => listeners.delete(event) },
         invoke: async (command, request) => {
             calls.push({ command, request })
-            if (command === 'window.getState') return { capabilities: { opacity: false, vibrancy: false, globalHotkey: options.globalHotkey } }
+            if (command === 'window.getState') {
+                if (options.getStateFails) throw { code: 'io', details: 'window state unavailable' } // eslint-disable-line no-throw-literal
+                return { capabilities: { opacity: false, vibrancy: false, globalHotkey: options.globalHotkey } }
+            }
             if (command === 'window.canHideOnBlur') return hideCheck()
             return null
         },
@@ -142,6 +145,11 @@ await test('unsupported global hotkey skips registration, clears old shortcuts, 
     assert.deepEqual(s.hotkeyCalls(), [{ id: 'toggle-window', accelerators: [] }])
     assert.equal(s.infos.length, 1)
     assert.match(s.infos[0], /global toggle shortcut skipped.*does not support global shortcuts/i)
+})
+await test('a failed window state read still clears older shortcuts instead of leaving them registered', async () => {
+    const s = await hotkeyService({ getStateFails: true })
+    assert.deepEqual(s.hotkeyCalls(), [{ id: 'toggle-window', accelerators: [] }])
+    assert.ok(s.infos.some(line => /window state is unavailable/i.test(line)), s.infos.join('\n'))
 })
 await test('hacks.globalHotkey false forces registration despite an unsupported capability', async () => {
     const s = await hotkeyService({ globalHotkey: false, hacks: { globalHotkey: false } })
