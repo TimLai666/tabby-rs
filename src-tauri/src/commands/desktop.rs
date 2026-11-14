@@ -263,6 +263,14 @@ pub fn window_minimize(
 }
 
 #[tauri::command]
+pub fn window_start_dragging(
+    window: tauri::WebviewWindow,
+    _request: serde_json::Value,
+) -> Result<(), AppError> {
+    window.start_dragging().map_err(io_error)
+}
+
+#[tauri::command]
 pub fn window_toggle_maximize(
     window: tauri::WebviewWindow,
     _request: serde_json::Value,

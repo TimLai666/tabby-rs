@@ -376,6 +376,12 @@ jobs:
           fi
           grep -Eq 'window_geometry_linux completed: checks=24 failures=[1-9][0-9]*' "$output"
 
+      - name: Test Linux window frame on real Wry windows
+        timeout-minutes: 6
+        env:
+          GDK_BACKEND: x11
+        run: xvfb-run -a cargo run --locked --manifest-path src-tauri/Cargo.toml --example window_frame_linux
+
       - name: Test Linux client positions on real Wry windows
         timeout-minutes: 6
         env:

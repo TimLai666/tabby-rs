@@ -1102,7 +1102,27 @@
   the PowerShell command in CONTRIBUTING.md and preserve the CI linker flags.
   Compare actual Wry rendering, physical input, restart persistence, secondary
   isolation, Windows 11, and display scaling with fixed upstream before accepting
-  the corresponding desktop behavior. Linux frame controls remain unavailable.
+  the corresponding desktop behavior.
+- Linux Thin and Full frames disable GTK decorations through the shared
+  `set_window_frame` before the window becomes visible; the shared Angular
+  window controls and title bar render as on upstream Linux. WebKitGTK ignores
+  `-webkit-app-region`, so `TauriWindowDragRegionService` (Linux thin/full
+  only) turns a left press on the upstream drag regions into the native
+  `window.startDragging` command and a double press into `window.toggleMaximize`,
+  and swallows the shared templates' `dblclick` on those regions so one gesture
+  toggles once (both firing cancelled each other under openbox). Keep
+  `scripts/test-tauri-window-frame.mjs`, `scripts/test-tauri-window-drag-region.mjs`
+  (Chromium DOM, fake bridge), and the `window_frame_linux` example (Xvfb,
+  decoration state and inner size across frame changes). A sandboxed sway
+  session verified the frameless window, rendered controls, and a 200px tab-bar
+  drag moving the floating window by 200px. The full app under Xvfb + openbox
+  starts at the stock 800x600, moves exactly +120,+80 from a tab-bar drag,
+  resizes from the frameless right edge, maximizes and restores from the
+  rendered button, and maximizes from a double-click on the tab bar (xdotool
+  presses need a pause before moving so the native move grab is active).
+  Native/Full restarts, Wayland maximize, and original desktop comparison
+  remain pending. Linux URL-scheme registration failures (missing xdg-utils)
+  are logged instead of aborting startup.
 - Verify actual process replacement, restored startup configuration, all-window
   closure, and native session cleanup before accepting restart parity. A browser
   reload fixture only verifies renderer delivery and persistence.

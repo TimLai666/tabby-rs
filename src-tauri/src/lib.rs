@@ -41,7 +41,8 @@ use commands::{
         desktop_open_path, desktop_read_file, desktop_reveal_path, dialog_open, dialog_save,
         hotkey_replace, notification_show, window_apply_state, window_bring_to_front, window_close,
         window_get_state, window_list_screens, window_minimize, window_new, window_open_devtools,
-        window_reload, window_set_docking, window_toggle_maximize, window_toggle_quake,
+        window_reload, window_set_docking, window_start_dragging, window_toggle_maximize,
+        window_toggle_quake,
     },
     diagnostics::{
         diagnostics_append, diagnostics_clear_logs, diagnostics_export, diagnostics_preview,
@@ -661,6 +662,7 @@ pub fn run() {
             window_new,
             window_reload,
             window_set_docking,
+            window_start_dragging,
             window_toggle_maximize,
             window_toggle_quake,
             windows_integration_status,
