@@ -4,3 +4,4 @@ pub mod config_file;
 pub mod migration;
 pub mod paths;
 pub mod state_file;
+pub mod window_state;

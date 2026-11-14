@@ -1,7 +1,7 @@
 mod window_frame;
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex, MutexGuard,
@@ -16,6 +16,7 @@ use crate::{
     storage::{
         paths::StoragePaths,
         state_file::{save_state, TabbyRsState},
+        window_state::WindowBoundaries,
     },
     update::service::UpdateManager,
 };
@@ -30,6 +31,8 @@ pub struct AppState {
     persisted_state: Mutex<TabbyRsState>,
     update_manager: Arc<UpdateManager>,
     startup_window_frame: window_frame::StartupWindowFrame,
+    window_bounds: Mutex<HashMap<String, WindowBoundaries>>,
+    pending_maximize: Mutex<std::collections::HashSet<String>>,
 }
 
 impl AppState {
@@ -50,6 +53,8 @@ impl AppState {
             persisted_state: Mutex::new(persisted_state),
             update_manager: Arc::new(UpdateManager::default()),
             startup_window_frame: window_frame::StartupWindowFrame::default(),
+            window_bounds: Mutex::new(HashMap::new()),
+            pending_maximize: Mutex::new(std::collections::HashSet::new()),
         }
     }
 
@@ -59,6 +64,52 @@ impl AppState {
 
     pub fn startup_window_frame(&self, config: &BTreeMap<String, serde_json::Value>) -> &str {
         self.startup_window_frame.get(config)
+    }
+
+    /// Remembers the latest unmaximized placement of a window, like upstream's
+    /// `resize`/`move` handlers. Later calls for the same label replace it.
+    pub fn remember_window_bounds(&self, label: &str, bounds: WindowBoundaries) {
+        self.window_bounds
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(label.to_owned(), bounds);
+    }
+
+    /// The last remembered unmaximized placement of a window, if any.
+    pub fn remembered_window_bounds(&self, label: &str) -> Option<WindowBoundaries> {
+        self.window_bounds
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(label)
+            .copied()
+    }
+
+    /// Drops the remembered placement after the window is destroyed.
+    pub fn forget_window_bounds(&self, label: &str) {
+        self.window_bounds
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(label);
+        self.pending_maximize
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(label);
+    }
+
+    /// Records that a restored window must be maximized once it is shown.
+    pub fn set_pending_maximize(&self, label: &str) {
+        self.pending_maximize
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(label.to_owned());
+    }
+
+    /// Clears and returns whether a maximize was pending for the window.
+    pub fn take_pending_maximize(&self, label: &str) -> bool {
+        self.pending_maximize
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(label)
     }
 
     pub fn request_forced_quit(&self) {
@@ -114,3 +165,7 @@ impl AppState {
         Ok(state.clone())
     }
 }
+
+#[cfg(test)]
+#[path = "state_window_bounds_tests.rs"]
+mod window_bounds_tests;

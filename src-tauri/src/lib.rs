@@ -22,6 +22,7 @@ mod transfer;
 pub mod update;
 mod webview_storage;
 mod window_geometry;
+mod window_persistence;
 mod windows_integration;
 mod winscp;
 
@@ -42,7 +43,8 @@ use commands::{
         dialog_save,
         hotkey_replace, notification_show, window_apply_state, window_bring_to_front, window_close,
         window_get_state, window_list_screens, window_minimize, window_new, window_open_devtools,
-        window_reload, window_set_docking, window_toggle_maximize, window_toggle_quake,
+        window_reload, window_set_docking, window_start_dragging, window_toggle_maximize,
+        window_toggle_quake,
     },
     diagnostics::{
         diagnostics_append, diagnostics_clear_logs, diagnostics_export, diagnostics_preview,
@@ -200,6 +202,7 @@ pub(crate) fn register_desktop_window_events(window: &tauri::WebviewWindow) {
             let _ = emitter.emit_to(emitter.label(), "desktop:windowFocused", *focused);
         }
         tauri::WindowEvent::Moved(_position) => {
+            window_persistence::remember(&emitter);
             #[cfg(target_os = "linux")]
             let Ok((position, _)) = crate::platform::window_bounds(&emitter) else {
                 return;
@@ -213,6 +216,7 @@ pub(crate) fn register_desktop_window_events(window: &tauri::WebviewWindow) {
             );
         }
         tauri::WindowEvent::Resized(size) => {
+            window_persistence::remember(&emitter);
             let _ = emitter.emit_to(
                 emitter.label(),
                 "desktop:windowResized",
@@ -234,6 +238,9 @@ pub(crate) fn register_desktop_window_events(window: &tauri::WebviewWindow) {
                 .state::<AppState>()
                 .launches()
                 .remove(emitter.label());
+            emitter
+                .state::<AppState>()
+                .forget_window_bounds(emitter.label());
         }
         tauri::WindowEvent::DragDrop(
             tauri::DragDropEvent::Enter { position, .. } | tauri::DragDropEvent::Over { position },
@@ -470,9 +477,20 @@ pub fn run() {
                 register_desktop_window_events(&window);
                 #[cfg(any(windows, target_os = "linux"))]
                 if let Some(pending) = primary_geometry.as_ref() {
-                    let result = platform::initialize_window_geometry(&window);
+                    let result = platform::initialize_window_geometry(&window).and_then(|()| {
+                        commands::desktop::restore_window_placement(&window).unwrap_or_else(
+                            |error| {
+                                eprintln!("could not restore the saved window placement: {error}")
+                            },
+                        );
+                        Ok(())
+                    });
                     pending.complete(result.as_ref().map(|_| ()).map_err(ToString::to_string));
                     result?;
+                }
+                #[cfg(not(any(windows, target_os = "linux")))]
+                if let Err(error) = commands::desktop::restore_window_placement(&window) {
+                    eprintln!("could not restore the saved window placement: {error}");
                 }
             }
             let launch_app = app.handle().clone();
@@ -482,8 +500,13 @@ pub fn run() {
                 }
             });
 
+            // URL-scheme registration shells out to xdg-utils on Linux; a host
+            // without them must still start (an Xvfb container reproduced the
+            // ENOENT abort).
             #[cfg(any(target_os = "linux", all(debug_assertions, windows)))]
-            app.deep_link().register_all()?;
+            if let Err(error) = app.deep_link().register_all() {
+                eprintln!("could not register the tabby-rs URL scheme: {error}");
+            }
 
             #[cfg(target_os = "macos")]
             {
@@ -663,6 +686,7 @@ pub fn run() {
             window_new,
             window_reload,
             window_set_docking,
+            window_start_dragging,
             window_toggle_maximize,
             window_toggle_quake,
             windows_integration_status,

@@ -68,6 +68,7 @@ import { TauriRuntimeCapabilitiesService } from './services/runtimeCapabilities.
 import { TauriVaultService } from './services/vault.service'
 import { TauriPathDropDecorator } from './pathDrop'
 import { TauriFileDropDirective } from './fileDrop.directive'
+import { TauriWindowDragRegionService } from './services/windowDragRegion.service'
 import { TauriExportTerminalContextMenu } from './terminalContextMenu'
 import TabbyTerminalModule, { TerminalContextMenuItemProvider, TerminalDecorator } from 'tabby-terminal'
 import { KeyboardInteractiveAuthComponent } from '../../tabby-ssh/src/components/keyboardInteractiveAuthPanel.component'
@@ -117,6 +118,10 @@ function initializeWindowsCaption (service: TauriWindowsCaptionService): () => P
     return () => service.initialize()
 }
 
+function initializeWindowDragRegion (service: TauriWindowDragRegionService): () => void {
+    return () => service.initialize()
+}
+
 @NgModule({
     imports: [CommonModule, FormsModule, NgbModule, NgxFilesizeModule, TabbyCoreModule, TabbyTerminalModule, KeyboardInteractiveAuthComponent],
     declarations: [
@@ -155,6 +160,7 @@ function initializeWindowsCaption (service: TauriWindowsCaptionService): () => P
         { provide: FileProvider, useClass: TauriFileProvider, multi: true },
         TauriDesktopIntegrationService,
         TauriWindowsCaptionService,
+        TauriWindowDragRegionService,
         TauriDiagnosticsService,
         { provide: LogService, useClass: TauriLogService },
         { provide: SettingsTabProvider, useClass: TauriDiagnosticsSettingsTabProvider, multi: true },
@@ -197,6 +203,12 @@ function initializeWindowsCaption (service: TauriWindowsCaptionService): () => P
             provide: APP_INITIALIZER,
             useFactory: initializeWindowsCaption,
             deps: [TauriWindowsCaptionService],
+            multi: true,
+        },
+        {
+            provide: APP_INITIALIZER,
+            useFactory: initializeWindowDragRegion,
+            deps: [TauriWindowDragRegionService],
             multi: true,
         },
         { provide: ConfigProvider, useClass: TauriConfigProvider, multi: true },

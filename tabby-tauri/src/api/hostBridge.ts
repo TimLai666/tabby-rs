@@ -985,6 +985,10 @@ export interface HostRequestMap {
         request: Record<string, never>
         response: null
     }
+    'window.startDragging': {
+        request: Record<string, never>
+        response: null
+    }
     'window.toggleMaximize': {
         request: Record<string, never>
         response: null

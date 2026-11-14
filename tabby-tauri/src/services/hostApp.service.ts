@@ -62,7 +62,7 @@ export class TauriHostAppService extends HostAppService {
     }
 
     emitReady (): void {
-        const state = this.platform === Platform.macOS || this.platform === Platform.Windows
+        const state = this.platform === Platform.macOS || this.platform === Platform.Windows || this.platform === Platform.Linux
             ? { frame: this.startupWindowFrame, visible: true }
             : { visible: true }
         void this.bridge.invoke('window.applyState', state).catch(error => {
