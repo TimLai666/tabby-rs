@@ -36,7 +36,10 @@ export class TauriWindowDragRegionService implements OnDestroy {
      */
     initialize (): void {
         // Native frames keep GTK's own title bar, so nothing in the page drags the window.
-        if (this.listener || this.runtimeInfo.platform !== 'linux' || this.runtimeInfo.startupWindowFrame === 'native') {
+        if (this.listener) {
+            return
+        }
+        if (this.runtimeInfo.platform !== 'linux' || this.runtimeInfo.startupWindowFrame === 'native') {
             return
         }
         this.listener = event => this.onMouseDown(event)
