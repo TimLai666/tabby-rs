@@ -95,6 +95,19 @@ impl AppPaths {
         })
     }
 
+    /// Test-only layout rooted at an arbitrary data directory; production code
+    /// always goes through [`AppPaths::detect`].
+    #[cfg(test)]
+    pub(crate) fn for_tests(data_dir: PathBuf) -> Self {
+        Self {
+            executable: data_dir.join("tabby-rs"),
+            plugins_dir: data_dir.join("plugins"),
+            logs_dir: data_dir.join("logs"),
+            data_dir,
+            portable_root: None,
+        }
+    }
+
     pub fn executable(&self) -> &PathBuf {
         &self.executable
     }

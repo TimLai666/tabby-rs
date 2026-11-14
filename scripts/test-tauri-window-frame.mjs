@@ -94,7 +94,7 @@ async function createHost (platform, startupWindowFrame, { rejectRestart = false
     return { service, calls, runtimeInfo, get configReads () { return configReads } }
 }
 
-for (const platform of ['macos', 'windows']) {
+for (const platform of ['macos', 'windows', 'linux']) {
     for (const [saved, expected] of [
         ['native', 'native'], ['full', 'full'], ['thin', 'thin'],
         [undefined, 'thin'], [null, 'thin'], ['', 'thin'], ['invalid', 'thin'], [[], 'thin'],
@@ -103,7 +103,7 @@ for (const platform of ['macos', 'windows']) {
         assert.equal(host.calls.filter(call => call.command === 'window.applyState').length, 0,
             'the constructor does not send frame before emitReady')
         host.runtimeInfo.startupWindowFrame = 'full'
-        host.runtimeInfo.platform = 'linux'
+        host.runtimeInfo.platform = 'web'
         assert.doesNotThrow(() => host.service.emitReady())
         await settle()
         assert.equal(host.configReads, 0, 'constructor and emitReady do not read ConfigService')
@@ -113,7 +113,7 @@ for (const platform of ['macos', 'windows']) {
     }
 }
 
-for (const platform of ['linux', 'web']) {
+for (const platform of ['web']) {
     const host = await createHost(platform, 'native')
     host.service.emitReady()
     await settle()
@@ -156,7 +156,8 @@ async function checkPlatformService (platform, expected) {
 }
 await checkPlatformService('macos', true)
 await checkPlatformService('windows', true)
-await checkPlatformService('linux', false)
+await checkPlatformService('linux', true)
+await checkPlatformService('web', false)
 
 const template = fs.readFileSync(path.join(root, 'tabby-settings/src/components/windowSettingsTab.component.pug'), 'utf8')
 const frameRow = template.split(/(?=^\.form-line)/m).find(block => block.includes('.title(translate) Window frame'))
@@ -204,5 +205,18 @@ frameProperty('WindowStatePatch', 'frame')
 assert.match(desktop, /pub struct WindowStatePatch\s*\{[\s\S]*?pub frame:\s*Option<String>/)
 assert.match(appRegistration, /ExitRequested\s*\{\s*code:\s*None\s*\|\s*Some\(0\)/,
     'ordinary quit confirmation keeps its existing exit-code scope')
+
+const frameSource = fs.readFileSync(path.join(root, 'src-tauri/src/platform/frame.rs'), 'utf8')
+const tauriEntry = fs.readFileSync(path.join(root, 'tabby-tauri/src/index.ts'), 'utf8')
+assert.match(frameSource, /#\[cfg\(target_os = "linux"\)\][\s\S]*?set_decorations\(native\)/,
+    'Linux frame applies GTK decorations from the shared native/thin/full decision')
+assert.match(appRegistration, /window_start_dragging/,
+    'the native host registers the Linux drag command')
+assert.match(bridge, /'window\.startDragging':\s*\{/,
+    'the renderer bridge declares the native drag command')
+assert.match(tauriEntry, /TauriWindowDragRegionService/, 'the module provides the drag region service')
+assert.match(tauriEntry, /function initializeWindowDragRegion \(service: TauriWindowDragRegionService\)/,
+    'the drag region service initializes during application startup')
+assert.match(tauriEntry, /useFactory:\s*initializeWindowDragRegion/, 'the initializer factory is wired')
 
 console.log('Tauri window frame: startup snapshot, application restart, platform/settings gate, and source wiring passed')

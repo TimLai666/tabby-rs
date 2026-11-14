@@ -84,7 +84,7 @@ function visible (label, platform) {
     assert.ok(condition, 'row is capability gated: ' + label)
     return Boolean(Function('platform', 'return ' + condition)(platform))
 }
-for (const [platform, expected, frameExpected] of [['macos', true, true], ['windows', true, true], ['linux', false, false]]) {
+for (const [platform, expected, frameExpected] of [['macos', true, true], ['windows', true, true], ['linux', false, true]]) {
     const instance = new native.TauriPlatformService({
         listen: async () => () => {},
         invoke: async () => '',

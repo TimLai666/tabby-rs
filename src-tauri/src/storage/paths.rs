@@ -7,6 +7,7 @@ pub struct StoragePaths {
     data_dir: PathBuf,
     config_file: PathBuf,
     state_file: PathBuf,
+    window_state_file: PathBuf,
     pending_update_file: PathBuf,
     backups_dir: PathBuf,
     update_staging_dir: PathBuf,
@@ -22,6 +23,7 @@ impl StoragePaths {
         Self {
             config_file: data_dir.join("config.yaml"),
             state_file: data_dir.join("tabby-rs.json"),
+            window_state_file: data_dir.join("window.json"),
             pending_update_file: data_dir.join("pending-update.json"),
             backups_dir: data_dir.join("backups"),
             update_staging_dir: data_dir.join("update-staging"),
@@ -48,6 +50,11 @@ impl StoragePaths {
 
     pub fn state_file(&self) -> &Path {
         &self.state_file
+    }
+
+    /// Upstream-compatible window placement store (`window.json`).
+    pub fn window_state_file(&self) -> &Path {
+        &self.window_state_file
     }
 
     pub fn pending_update_file(&self) -> &Path {

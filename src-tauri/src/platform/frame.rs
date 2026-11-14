@@ -80,11 +80,21 @@ pub fn set_window_frame(window: &tauri::WebviewWindow, frame: &str) -> Result<()
     #[cfg(target_os = "windows")]
     return windows::set_window_frame(window, native);
 
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    #[cfg(target_os = "linux")]
+    {
+        // Upstream creates a frameless Electron window for thin/full and lets
+        // the renderer draw the title bar and window controls. GTK applies the
+        // decoration change before the window is mapped during startup.
+        return window
+            .set_decorations(native)
+            .map_err(|error| AppError::Io(error.to_string()));
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
     {
         let _ = (window, native);
         Err(AppError::Unsupported(
-            "window frame is available only on macOS and Windows".into(),
+            "window frame is available only on macOS, Windows, and Linux".into(),
         ))
     }
 }

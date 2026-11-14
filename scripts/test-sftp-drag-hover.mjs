@@ -58,7 +58,9 @@ mod window_geometry { pub mod initialization {
 #[derive(Clone)] struct AppState { cleanup: Arc<Mutex<Vec<String>>> }
 struct Launches { cleanup: Arc<Mutex<Vec<String>>> }
 impl Launches { fn remove(&self,label:&str){ self.cleanup.lock().unwrap().push(format!("launch:{}",label)); } }
-impl AppState { fn launches(&self)->Launches {Launches { cleanup:self.cleanup.clone() }} }
+impl AppState { fn launches(&self)->Launches {Launches { cleanup:self.cleanup.clone() }} fn forget_window_bounds(&self,_label:&str){} }
+// Placement capture is covered by its own Rust tests; the callback only has to call it.
+mod window_persistence { pub fn remember(_window:&crate::tauri::WebviewWindow){} }
 mod tauri {
  use super::{Arc,Mutex,Value,IntoValue,AppState,window_geometry::initialization::Initializations}; use std::{any::Any,path::PathBuf};
  #[derive(Clone)] pub struct WebviewWindow { label:String, events:Arc<Mutex<Vec<(String,String,Value)>>>, cleanup:Arc<Mutex<Vec<String>>>, geometry:Option<Initializations>, destroy_only:bool, move_only:bool }

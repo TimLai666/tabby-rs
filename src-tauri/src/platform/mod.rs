@@ -2,6 +2,8 @@ use crate::{desktop::VibrancyOptions, error::AppError};
 
 mod frame;
 pub use frame::{set_window_frame, window_caption_controls};
+mod window_flags;
+pub(crate) use window_flags::{live_window_flags, WindowFlags};
 
 #[cfg(target_os = "linux")]
 mod window_bounds_linux;
