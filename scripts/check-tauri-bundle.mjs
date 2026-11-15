@@ -25,7 +25,12 @@ const forbiddenContentRules = [
     { id: 'mixpanel-sdk-or-endpoint', pattern: /(?:mixpanel(?:-browser)?|mixpanel\.com)/i },
     {
         id: 'private-key-material',
-        pattern: /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----\s*(?:[A-Z0-9+/]{20,}=?\s*)+-----END [A-Z0-9 ]*PRIVATE KEY-----|TAURI_SIGNING_PRIVATE_KEY(?:_PASSWORD)?|TABBY_RS_UPDATE_PRIVATE_KEY/i,
+        // One flat character class keeps the body scan linear. A nested
+        // quantifier here backtracked exponentially on a header followed by a
+        // long base64 alphabet without an END marker, as in the Linux binary.
+        // The upper bound keeps V8 from overflowing its stack on a run of
+        // millions of base64 bytes; 65536 is far above a 16384-bit RSA key.
+        pattern: /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----\s*[A-Z0-9+/][A-Z0-9+/=\s]{19,65536}-----END [A-Z0-9 ]*PRIVATE KEY-----|TAURI_SIGNING_PRIVATE_KEY(?:_PASSWORD)?|TABBY_RS_UPDATE_PRIVATE_KEY/i,
     },
 ]
 

@@ -43,6 +43,8 @@ assert.match(
     /if\s+!release_probe_mode\(\)\s*\{[\s\S]*?tauri_plugin_single_instance::Builder::new/,
     'installer smoke must isolate the Tauri single-instance plugin',
 )
+assert.match(smokeSource, /'--appimage-extract'\], \{ cwd: root \}/, 'AppImage must be extracted in the temporary root, not the staging directory')
+assert.doesNotMatch(smokeSource, /path\.join\(staging, 'squashfs-root'\)/, 'the AppImage smoke must not read or remove squashfs-root in staging')
 assert.match(smokeSource, /--force-not-root/)
 assert.match(smokeSource, /--nodeps/)
 assert.match(smokeSource, /icon-audit/)

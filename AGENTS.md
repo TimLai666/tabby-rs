@@ -119,6 +119,40 @@
   Verify those independently before accepting Linux parity; compilation and
   native tests do not establish supported-platform runtime acceptance.
 
+## Pending — Linux x64 release-gate evidence (revision `cf031c82`)
+
+- `scripts/acceptance/linux-release-gate.sh` reproduces the linux-x64 bundle job
+  of `.github/workflows/release.yml` with an ephemeral evidence-only updater key:
+  build, stage, audit, bench, smoke, parity and gate phases. Staging goes to
+  `release-staging/`; logs and keys go to `release-staging-work/`, outside the
+  audited directory. Run it in the build container with `CARGO_TARGET_DIR` set.
+- `scripts/acceptance/linux-release-gate-checks.sh` drives the built AppImage,
+  deb and rpm under Xvfb + openbox and weston headless and writes evidence to
+  `release-staging/manual/linux-x64/`. `write-linux-manual-record.mjs` turns that
+  into the draft `manual-acceptance/linux-x64.json`. Run both after the build.
+- On `cf031c82` in the Ubuntu 24.04 container: all 44 automated parity checks,
+  benchmarks, license and dependency reports pass. Eight of ten platform checks
+  pass in the draft record: local-shell, x11-or-wayland, webkitgtk, ssh, appimage,
+  deb, rpm and side-by-side. Serial and secret-service were not run, and every
+  feature's manual flow stays not-run. The manifests stay `pending`.
+- The bundle audit and installer smoke fail on the AppImage's bundled
+  `libgnutls.so.30`. It holds gnutls's own test keys, and its hash differs from the
+  Ubuntu 22.04 copy pinned in `scripts/check-tauri-bundle.mjs`. Build on the
+  `ubuntu-22.04` release runner before deciding to pin another hash.
+- These checks are not desktop acceptance. The container has no FUSE, no Secret
+  Service, no serial device and no real session, so AppImage ran with
+  `APPIMAGE_EXTRACT_AND_RUN=1` and Wayland was launch-only. The SSH check
+  pre-seeds `known_hosts`, so the host-key prompt is untested there.
+- A person still has to run every platform check and feature manual flow
+  against the CI-built artifacts on a real Ubuntu 22.04 X11 and Wayland desktop.
+  That includes system apt/dnf install and removal, the AppImage under FUSE,
+  Secret Service available and unavailable, a serial device, and the host-key
+  prompt. Record results in `manual-acceptance/linux-x64.json`.
+- In a bind-mounted checkout, keep rpm's database and Wayland sockets on a local
+  short path. sqlite WAL fails on the mount, and long socket paths exceed 108 bytes.
+  Use `timeout` on container runs: the Electron renderer fixture can hang for hours
+  after its network service crashes.
+
 ## P2 — WinSCP temporary key files are only cleaned up by `TempPath` drop
 
 - `src-tauri/src/winscp/key.rs:24` — `ConvertedKey::path` is a `tempfile::TempPath`;

@@ -319,10 +319,11 @@ async function smokeMacos () {
 }
 
 async function smokeAppImage (artifact, root, operations) {
+    // Extract inside the temporary root so the rename stays on one file
+    // system; staging and the temp directory can be different mounts.
     const extractDirectory = path.join(root, 'appimage')
-    fs.mkdirSync(extractDirectory)
-    await assertCommand(artifact, ['--appimage-extract'], { cwd: staging })
-    const extracted = path.join(staging, 'squashfs-root')
+    await assertCommand(artifact, ['--appimage-extract'], { cwd: root })
+    const extracted = path.join(root, 'squashfs-root')
     assert.ok(fs.existsSync(extracted), `AppImage extraction did not create ${extracted}`)
     fs.renameSync(extracted, extractDirectory)
     const executable = path.join(extractDirectory, 'AppRun')
@@ -388,7 +389,6 @@ async function smokeLinux () {
         }
         writeReport(operations)
     } finally {
-        fs.rmSync(path.join(staging, 'squashfs-root'), { recursive: true, force: true })
         fs.rmSync(root, { recursive: true, force: true })
     }
 }

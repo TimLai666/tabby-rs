@@ -125,6 +125,33 @@ const largeBinaryReport = auditBundle(largeBinaryFixture, { release: true })
 assert.equal(largeBinaryReport.passed, false)
 assert.ok(largeBinaryReport.findings.some(finding => finding.rule === 'electron-runtime-binary'))
 
+// A native binary can hold a private-key header next to a base64 alphabet
+// table with no END marker, as the Linux release tabby-rs does. The scan
+// must finish quickly and must not report that header as key material.
+const keyHeaderFixture = createReleaseFixture()
+const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+fs.writeFileSync(
+    path.join(keyHeaderFixture, 'bundle', 'tabby-rs'),
+    Buffer.concat([
+        Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0]),
+        Buffer.from(`-----BEGIN OPENSSH PRIVATE KEY----------BEGIN ENCRYPTED PRIVATE KEY-----${alphabet.repeat(4)}\0`, 'latin1'),
+    ]),
+)
+const keyHeaderStarted = Date.now()
+const keyHeaderReport = auditBundle(keyHeaderFixture, { release: true })
+assert.ok(Date.now() - keyHeaderStarted < 5000, 'private-key scan backtracked on a header without an END marker')
+assert.equal(keyHeaderReport.findings.some(finding => finding.rule === 'private-key-material'), false)
+
+// Millions of consecutive base64 bytes after a header must not overflow the
+// regular expression engine's stack and abort the audit.
+const longRunFixture = createReleaseFixture()
+fs.writeFileSync(
+    path.join(longRunFixture, 'bundle', 'tabby-rs'),
+    Buffer.concat([Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0]), Buffer.from(`-----BEGIN PRIVATE KEY-----${'A'.repeat(6_000_000)}\0`, 'latin1')]),
+)
+const longRunReport = auditBundle(longRunFixture, { release: true })
+assert.equal(longRunReport.findings.some(finding => finding.rule === 'private-key-material'), false)
+
 const incompleteFixture = fs.mkdtempSync(path.join(os.tmpdir(), 'tabby-rs-bundle-audit-incomplete-'))
 fs.writeFileSync(path.join(incompleteFixture, 'bundle.js'), 'renderer')
 const incompleteReport = auditBundle(incompleteFixture, { release: true })
