@@ -12,7 +12,7 @@ platforms:
     status: pending
     evidence: []
   - id: macos-arm64
-    runner: macos-14
+    runner: macos-15
     target: aarch64-apple-darwin
     requiredChecks: [local-shell, keychain, ssh, serial, dmg, side-by-side]
     status: pending
