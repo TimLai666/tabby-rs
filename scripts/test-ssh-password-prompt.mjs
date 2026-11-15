@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import vm from 'node:vm'
 import { createRequire } from 'node:module'
 import ts from 'typescript'
+import { loadNativeProfileId } from './lib/native-profile-id.mjs'
 
 const require = createRequire(import.meta.url)
 const source = fs.readFileSync(new URL('../tabby-tauri/src/ssh/session.ts', import.meta.url), 'utf8')
@@ -24,6 +25,7 @@ const fakes = {
     '../../../tabby-ssh/src/api/interfaces': {},
     '../api/hostBridge': {},
     '../services/passwordStorage.service': { TauriPasswordStorageService: class {} },
+    '../nativeProfileId': loadNativeProfileId(),
     './hostKeyPromptModal.component': { TauriSshHostKeyPromptModalComponent: class {} },
     './sftp': { TauriSftpSession: class {} },
 }
