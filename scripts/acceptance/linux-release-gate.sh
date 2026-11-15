@@ -115,7 +115,11 @@ phase_stage() {
 # Audit, benchmark and smoke failures are recorded in their reports and logs;
 # later phases still run so the release gate sees every input.
 phase_audit() {
-  step bundle-audit node scripts/check-tauri-bundle.mjs "$STAGING" --release --output "$STAGING/bundle-audit.json" || true
+  # Audit the snapshot taken at stage time. CI audits staging before any
+  # evidence is added, and the gate requires the audit and the benchmarks to
+  # hash the same files; auditing staging after the checks would not.
+  [ -d "$WORK/release-benchmark-bundle" ] || { echo "missing $WORK/release-benchmark-bundle: run the stage phase first" >&2; exit 1; }
+  step bundle-audit node scripts/check-tauri-bundle.mjs "$WORK/release-benchmark-bundle" --release --output "$STAGING/bundle-audit.json" || true
 }
 
 phase_bench() {
