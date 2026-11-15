@@ -389,7 +389,6 @@ async function smokeLinux () {
         }
         writeReport(operations)
     } finally {
-        fs.rmSync(path.join(staging, 'squashfs-root'), { recursive: true, force: true })
         fs.rmSync(root, { recursive: true, force: true })
     }
 }
