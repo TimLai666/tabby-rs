@@ -43,3 +43,8 @@ crowdin.yml
 .crowdin.env
 release-gate.json
 
+
+release-staging/
+release-staging-work/
+release-benchmark-bundle/
+src-tauri/tauri.release.conf.json
