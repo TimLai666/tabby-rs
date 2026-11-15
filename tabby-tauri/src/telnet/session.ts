@@ -5,6 +5,7 @@ import { BaseSession, InputProcessor, SessionMiddleware, TerminalStreamProcessor
 
 import { HostBridge, TelnetConnectRequest, TelnetEchoEvent } from '../api/hostBridge'
 import { TauriTelnetProfile } from './profile'
+import { nativeProfileId } from '../nativeProfileId'
 
 class TelnetEncodingMiddleware extends SessionMiddleware {
     private decoder: TextDecoder
@@ -119,7 +120,7 @@ export class TauriTelnetSession extends BaseSession {
 
         const options = this.profile.options
         const info = await this.bridge.invoke('telnet.connect', {
-            profileId: this.profile.id,
+            profileId: nativeProfileId(this.profile, this.connectionId),
             connectionId: this.connectionId,
             host: options.host,
             port: options.port ?? 23,
