@@ -154,6 +154,7 @@
     "test:serial-write-queue": "node scripts/test-serial-write-queue.mjs",
     "test:serial-tab-controls": "node scripts/test-serial-tab-controls.mjs",
     "test:serial-quick-connect": "node scripts/test-serial-quick-connect.mjs",
+    "test:native-session-profile-id": "node scripts/test-native-session-profile-id.mjs",
     "test:telnet-tab-controls": "node scripts/test-telnet-tab-controls.mjs && node scripts/test-tauri-application-quit.mjs && node scripts/test-macos-native-quit.mjs",
     "test:tauri-readline": "node scripts/test-tauri-readline.mjs",
     "test:plugin-search": "node scripts/test-plugin-search-contract.mjs",
