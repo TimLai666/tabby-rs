@@ -133,6 +133,9 @@ jobs:
       - name: Test terminal bell resource
         run: yarn test:terminal-bell
 
+      - name: Test native session profile ids for quick connect
+        run: yarn test:native-session-profile-id
+
       - name: Test terminal path quoting
         run: node scripts/ci/test-path-quoting.mjs
       - name: Test workspace model

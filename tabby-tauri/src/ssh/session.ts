@@ -18,6 +18,7 @@ import {
 import { TauriSshHostKeyPromptModalComponent } from './hostKeyPromptModal.component'
 import { TauriSftpSession } from './sftp'
 import { TauriPasswordStorageService } from '../services/passwordStorage.service'
+import { nativeProfileId } from '../nativeProfileId'
 
 // Mirrors resolveSSHTerminalType in tabby-ssh/src/session/shellChannel.ts.
 function resolveSshTerminalType (term: unknown): string {
@@ -384,7 +385,7 @@ export class TauriSshSession extends BaseSession {
             agentForwarding = { socket }
         }
         return {
-            profileId: this.profile.id,
+            profileId: nativeProfileId(this.profile, this.connectionId),
             connectionId: this.connectionId,
             host: options.host,
             port: options.port ?? 22,

@@ -28,6 +28,10 @@ const config = {
         targets: bundleTargets,
         createUpdaterArtifacts: true,
         icon: iconAssets,
+        macOS: {
+            // Ad-hoc sign the whole bundle so Info.plist and resources are sealed.
+            signingIdentity: '-',
+        },
     },
     plugins: {
         updater: {

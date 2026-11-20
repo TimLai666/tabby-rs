@@ -32,6 +32,9 @@ try {
         '../build/mac/icon.icns',
     ])
     assert.deepEqual(config.bundle.targets, ['dmg', 'nsis'])
+    // Without an identity Tauri leaves only the linker's ad-hoc signature, which
+    // seals no resources; a downloaded copy is then rejected by Gatekeeper.
+    assert.equal(config.bundle.macOS?.signingIdentity, '-')
 } finally {
     fs.rmSync(temporaryDirectory, { recursive: true, force: true })
 }

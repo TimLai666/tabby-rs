@@ -5,6 +5,7 @@ import { BaseSession, InputProcessor, SessionMiddleware, TerminalStreamProcessor
 
 import { HostBridge, SerialConnectionStateEvent, SerialOpenRequest, SerialSignalState } from '../api/hostBridge'
 import { TauriSerialProfile } from './profile'
+import { nativeProfileId } from '../nativeProfileId'
 import { SerialWriteQueue } from './writeQueue'
 
 class SlowFeedMiddleware extends SessionMiddleware {
@@ -116,7 +117,7 @@ export class TauriSerialSession extends BaseSession {
 
         const options = this.profile.options
         const request: SerialOpenRequest = {
-            profileId: this.profile.id,
+            profileId: nativeProfileId(this.profile, this.connectionId),
             connectionId: this.connectionId,
             port: options.port ?? '',
             baudRate: options.baudRate ?? 115200,
